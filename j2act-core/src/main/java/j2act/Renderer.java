@@ -31,7 +31,7 @@ final class Renderer {
     session.dirty.remove(scope);
     scope.dirty = false;
     scope.unsubscribeAll();
-    session.removeHandlers(scope);
+    session.beginHandlers(scope);
     scope.previousChildren = scope.children;
     scope.children = new java.util.LinkedHashMap<>();
 
@@ -45,6 +45,7 @@ final class Renderer {
       Tracking.swap(previous);
     }
     renderTag(scope, "", root, scope.anchor);
+    session.endHandlers(scope);
 
     Map<Scope, Boolean> kept = new IdentityHashMap<>();
     for (Scope child : scope.children.values()) {
@@ -63,15 +64,22 @@ final class Renderer {
     if (anchor != null) {
       attribute("data-j2s", anchor);
     }
+    String controlled = Html.controlled(tag);
+    if (controlled != null) {
+      attribute("data-j2-ctl", controlled);
+    }
     for (Map.Entry<String, String> attr : tag.attributes.entrySet()) {
       attribute(attr.getKey(), attr.getValue());
     }
     for (Map.Entry<String, Handler<?>> event : tag.events.entrySet()) {
-      String id = session.registerHandler(scope, event.getKey(), event.getValue());
+      String id = session.registerHandler(scope, path, event.getKey(), event.getValue());
       attribute("data-j2-" + event.getKey(), id);
     }
     if (tag.debounceMillis >= 0) {
       attribute("data-j2-debounce", String.valueOf(tag.debounceMillis));
+    }
+    if (tag.keyFilter != null) {
+      attribute("data-j2-keys", tag.keyFilter);
     }
     out.append('>');
     if (tag.isVoid()) {

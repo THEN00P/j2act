@@ -69,10 +69,11 @@ public final class SelectTag extends ContainerTag<SelectTag> {
   }
 
   /**
-   * Applies {@link #isDisabled()} only when {@code condition} is true.
+   * Applies {@link #isDisabled()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public SelectTag withCondDisabled(boolean condition) {
-    return condition ? attr("disabled") : self();
+    return condition ? attr("disabled") : attr("disabled", null);
   }
 
   /**
@@ -116,10 +117,11 @@ public final class SelectTag extends ContainerTag<SelectTag> {
   }
 
   /**
-   * Applies {@link #isMultiple()} only when {@code condition} is true.
+   * Applies {@link #isMultiple()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public SelectTag withCondMultiple(boolean condition) {
-    return condition ? attr("multiple") : self();
+    return condition ? attr("multiple") : attr("multiple", null);
   }
 
   /**
@@ -158,10 +160,11 @@ public final class SelectTag extends ContainerTag<SelectTag> {
   }
 
   /**
-   * Applies {@link #isRequired()} only when {@code condition} is true.
+   * Applies {@link #isRequired()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public SelectTag withCondRequired(boolean condition) {
-    return condition ? attr("required") : self();
+    return condition ? attr("required") : attr("required", null);
   }
 
   /**

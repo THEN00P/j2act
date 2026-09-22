@@ -38,10 +38,11 @@ public final class OlTag extends ContainerTag<OlTag> {
   }
 
   /**
-   * Applies {@link #isReversed()} only when {@code condition} is true.
+   * Applies {@link #isReversed()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public OlTag withCondReversed(boolean condition) {
-    return condition ? attr("reversed") : self();
+    return condition ? attr("reversed") : attr("reversed", null);
   }
 
   /**

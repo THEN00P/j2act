@@ -44,10 +44,11 @@ public final class OptionTag extends ContainerTag<OptionTag> {
   }
 
   /**
-   * Applies {@link #isDisabled()} only when {@code condition} is true.
+   * Applies {@link #isDisabled()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public OptionTag withCondDisabled(boolean condition) {
-    return condition ? attr("disabled") : self();
+    return condition ? attr("disabled") : attr("disabled", null);
   }
 
   /**
@@ -96,10 +97,11 @@ public final class OptionTag extends ContainerTag<OptionTag> {
   }
 
   /**
-   * Applies {@link #isSelected()} only when {@code condition} is true.
+   * Applies {@link #isSelected()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public OptionTag withCondSelected(boolean condition) {
-    return condition ? attr("selected") : self();
+    return condition ? attr("selected") : attr("selected", null);
   }
 
   /**

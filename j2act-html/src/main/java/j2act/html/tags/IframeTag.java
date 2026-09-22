@@ -197,10 +197,11 @@ public final class IframeTag extends ContainerTag<IframeTag> {
   }
 
   /**
-   * Applies {@link #isSeamless()} only when {@code condition} is true.
+   * Applies {@link #isSeamless()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public IframeTag withCondSeamless(boolean condition) {
-    return condition ? attr("seamless") : self();
+    return condition ? attr("seamless") : attr("seamless", null);
   }
 
   /**
@@ -223,10 +224,11 @@ public final class IframeTag extends ContainerTag<IframeTag> {
   }
 
   /**
-   * Applies {@link #isAllowfullscreen()} only when {@code condition} is true.
+   * Applies {@link #isAllowfullscreen()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public IframeTag withCondAllowfullscreen(boolean condition) {
-    return condition ? attr("allowfullscreen") : self();
+    return condition ? attr("allowfullscreen") : attr("allowfullscreen", null);
   }
 
   /**

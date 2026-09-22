@@ -2,6 +2,7 @@ package com.example.counter.pages;
 
 import static com.example.counter.components.ClockFeed.clockFeed;
 import static com.example.counter.components.Counter.counter;
+import static com.example.counter.components.GreetingForm.greetingForm;
 import static com.example.counter.components.NameRows.nameRows;
 import static com.example.counter.components.ProfileCard.profileCard;
 import static com.example.counter.components.SearchBox.searchBox;
@@ -63,6 +64,10 @@ public class HomePage extends LiveComponent implements Page {
           showProfile.get()
             ? profileCard().withName("Grace Hopper")
             : null
+        ),
+        section(
+          h2("Forms, keys and focus"),
+          greetingForm()
         ),
         section(
           h2("Pending UI"),

@@ -68,7 +68,8 @@ public final class Generate {
     StringBuilder b = new StringBuilder(HEADER).append("package j2act;\n\n");
     b.append(new Javadoc()
       .paragraph("Global attributes, valid on every element. Inline `on*` handler attributes are left out on purpose:"
-        + " events are server handlers (`onClick`, `onInput`, `onChange`) declared on Tag.")
+        + " events are server handlers (`onClick`, `onInput`, `onChange`, `onSubmit`, `onKeyDown`,"
+        + " `onFocus`, `onBlur`) declared on Tag.")
       .render(""));
     b.append("public interface GlobalAttributes<T extends Tag<T>> {\n\n");
     b.append("  T self();\n\n  T attr(String name, Object value);\n\n  T attr(String name);\n");
@@ -135,7 +136,7 @@ public final class Generate {
         + indent + "  return attr(\"" + name + "\");\n" + indent + "}\n");
       method(b, seen, "withCond" + suffix + "(boolean)", condDoc(indent, "is" + suffix + "()") + deprecated
         + indent + modifier + self + " withCond" + suffix + "(boolean condition) {\n"
-        + indent + "  return condition ? attr(\"" + name + "\") : self();\n" + indent + "}\n");
+        + indent + "  return condition ? attr(\"" + name + "\") : attr(\"" + name + "\", null);\n" + indent + "}\n");
       return;
     }
     method(b, seen, "with" + suffix + "(String)", doc.render(indent) + deprecated
@@ -162,13 +163,18 @@ public final class Generate {
   }
 
   private static String condDoc(String indent, String target) {
-    return new Javadoc().html("Applies {@link #" + target + "} only when {@code condition} is true.").render(indent);
+    String what = target.startsWith("is")
+      ? "Applies {@link #" + target + "} when {@code condition} is true and removes the attribute otherwise, so"
+        + " a form control stays controlled either way (ADR 0013)."
+      : "Applies {@link #" + target + "} only when {@code condition} is true.";
+    return new Javadoc().html(what).render(indent);
   }
 
   /** Handwritten Tag/ContainerTag methods a generated attribute must never shadow. */
   private static final Set<String> RESERVED = Set.of(
     "withText(String)", "withKey(Object)", "withClasses(String...)", "withPending(DomContent)",
-    "withDebounce(Duration)", "withData(String,String)", "withCondData(boolean,String,String)");
+    "withDebounce(Duration)", "withKeyFilter(String...)", "withData(String,String)",
+    "withCondData(boolean,String,String)");
 
   private static void method(StringBuilder b, Set<String> seen, String signature, String source) {
     if (RESERVED.contains(signature)) {

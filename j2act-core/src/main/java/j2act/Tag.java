@@ -3,9 +3,11 @@ package j2act;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * An HTML element. Params are children only; everything else is a with* builder
@@ -18,9 +20,12 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
 
   final String name;
   final Map<String, String> attributes = new LinkedHashMap<>();
+  /** Attributes this render removed on purpose, e.g. withCondChecked(false): controlled, not absent. */
+  final Set<String> removed = new HashSet<>();
   final Map<String, Handler<?>> events = new LinkedHashMap<>();
   Object key;
   long debounceMillis = -1;
+  String keyFilter;
   DomContent pending;
 
   protected Tag(String name) {
@@ -39,12 +44,14 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
     return name;
   }
 
-  /** Sets an attribute; a null value removes it. */
+  /** Sets an attribute; a null value removes it and marks it as removed on purpose. */
   @Override public T attr(String name, Object value) {
     if (value == null) {
       attributes.remove(name);
+      removed.add(name);
     } else {
       attributes.put(name, String.valueOf(value));
+      removed.remove(name);
     }
     return self();
   }
@@ -52,6 +59,7 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   /** Sets a boolean attribute such as disabled or checked. */
   @Override public T attr(String name) {
     attributes.put(name, "");
+    removed.remove(name);
     return self();
   }
 
@@ -100,6 +108,34 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
 
   public T onChange(Handler<ValueEvent> handler) {
     events.put("change", handler);
+    return self();
+  }
+
+  /** A form submit; the browser's own submit is prevented and the fields arrive decoded. */
+  public T onSubmit(Handler<SubmitEvent> handler) {
+    events.put("submit", handler);
+    return self();
+  }
+
+  /** Every keydown, unless narrowed with withKeyFilter so typing does not become traffic. */
+  public T onKeyDown(Handler<KeyEvent> handler) {
+    events.put("keydown", handler);
+    return self();
+  }
+
+  /** Only these DOM key names reach onKeyDown, filtered on the client, e.g. "Enter", "Escape". */
+  public T withKeyFilter(String... keys) {
+    this.keyFilter = String.join(" ", keys);
+    return self();
+  }
+
+  public T onFocus(Handler<ValueEvent> handler) {
+    events.put("focus", handler);
+    return self();
+  }
+
+  public T onBlur(Handler<ValueEvent> handler) {
+    events.put("blur", handler);
     return self();
   }
 

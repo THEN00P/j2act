@@ -40,10 +40,11 @@ public final class TrackTag extends EmptyTag<TrackTag> {
   }
 
   /**
-   * Applies {@link #isDefault()} only when {@code condition} is true.
+   * Applies {@link #isDefault()} when {@code condition} is true and removes the attribute otherwise,
+   * so a form control stays controlled either way (ADR 0013).
    */
   public TrackTag withCondDefault(boolean condition) {
-    return condition ? attr("default") : self();
+    return condition ? attr("default") : attr("default", null);
   }
 
   /**

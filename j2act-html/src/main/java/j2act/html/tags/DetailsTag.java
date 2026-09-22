@@ -40,10 +40,11 @@ public final class DetailsTag extends ContainerTag<DetailsTag> {
   }
 
   /**
-   * Applies {@link #isOpen()} only when {@code condition} is true.
+   * Applies {@link #isOpen()} when {@code condition} is true and removes the attribute otherwise, so
+   * a form control stays controlled either way (ADR 0013).
    */
   public DetailsTag withCondOpen(boolean condition) {
-    return condition ? attr("open") : self();
+    return condition ? attr("open") : attr("open", null);
   }
 
   /**

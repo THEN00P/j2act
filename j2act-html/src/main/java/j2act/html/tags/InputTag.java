@@ -94,10 +94,11 @@ public final class InputTag extends EmptyTag<InputTag> {
   }
 
   /**
-   * Applies {@link #isChecked()} only when {@code condition} is true.
+   * Applies {@link #isChecked()} when {@code condition} is true and removes the attribute otherwise,
+   * so a form control stays controlled either way (ADR 0013).
    */
   public InputTag withCondChecked(boolean condition) {
-    return condition ? attr("checked") : self();
+    return condition ? attr("checked") : attr("checked", null);
   }
 
   /**
@@ -132,10 +133,11 @@ public final class InputTag extends EmptyTag<InputTag> {
   }
 
   /**
-   * Applies {@link #isDisabled()} only when {@code condition} is true.
+   * Applies {@link #isDisabled()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public InputTag withCondDisabled(boolean condition) {
-    return condition ? attr("disabled") : self();
+    return condition ? attr("disabled") : attr("disabled", null);
   }
 
   /**
@@ -231,10 +233,11 @@ public final class InputTag extends EmptyTag<InputTag> {
   }
 
   /**
-   * Applies {@link #isFormnovalidate()} only when {@code condition} is true.
+   * Applies {@link #isFormnovalidate()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public InputTag withCondFormnovalidate(boolean condition) {
-    return condition ? attr("formnovalidate") : self();
+    return condition ? attr("formnovalidate") : attr("formnovalidate", null);
   }
 
   /**
@@ -378,10 +381,11 @@ public final class InputTag extends EmptyTag<InputTag> {
   }
 
   /**
-   * Applies {@link #isMultiple()} only when {@code condition} is true.
+   * Applies {@link #isMultiple()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public InputTag withCondMultiple(boolean condition) {
-    return condition ? attr("multiple") : self();
+    return condition ? attr("multiple") : attr("multiple", null);
   }
 
   /**
@@ -495,10 +499,11 @@ public final class InputTag extends EmptyTag<InputTag> {
   }
 
   /**
-   * Applies {@link #isReadonly()} only when {@code condition} is true.
+   * Applies {@link #isReadonly()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public InputTag withCondReadonly(boolean condition) {
-    return condition ? attr("readonly") : self();
+    return condition ? attr("readonly") : attr("readonly", null);
   }
 
   /**
@@ -515,10 +520,11 @@ public final class InputTag extends EmptyTag<InputTag> {
   }
 
   /**
-   * Applies {@link #isRequired()} only when {@code condition} is true.
+   * Applies {@link #isRequired()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public InputTag withCondRequired(boolean condition) {
-    return condition ? attr("required") : self();
+    return condition ? attr("required") : attr("required", null);
   }
 
   /**

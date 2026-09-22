@@ -141,10 +141,11 @@ public final class ScriptTag extends ContainerTag<ScriptTag> {
   }
 
   /**
-   * Applies {@link #isAsync()} only when {@code condition} is true.
+   * Applies {@link #isAsync()} when {@code condition} is true and removes the attribute otherwise,
+   * so a form control stays controlled either way (ADR 0013).
    */
   public ScriptTag withCondAsync(boolean condition) {
-    return condition ? attr("async") : self();
+    return condition ? attr("async") : attr("async", null);
   }
 
   /**
@@ -175,10 +176,11 @@ public final class ScriptTag extends ContainerTag<ScriptTag> {
   }
 
   /**
-   * Applies {@link #isDefer()} only when {@code condition} is true.
+   * Applies {@link #isDefer()} when {@code condition} is true and removes the attribute otherwise,
+   * so a form control stays controlled either way (ADR 0013).
    */
   public ScriptTag withCondDefer(boolean condition) {
-    return condition ? attr("defer") : self();
+    return condition ? attr("defer") : attr("defer", null);
   }
 
   /**

@@ -53,10 +53,11 @@ public final class ButtonTag extends ContainerTag<ButtonTag> {
   }
 
   /**
-   * Applies {@link #isDisabled()} only when {@code condition} is true.
+   * Applies {@link #isDisabled()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public ButtonTag withCondDisabled(boolean condition) {
-    return condition ? attr("disabled") : self();
+    return condition ? attr("disabled") : attr("disabled", null);
   }
 
   /**
@@ -204,10 +205,11 @@ public final class ButtonTag extends ContainerTag<ButtonTag> {
   }
 
   /**
-   * Applies {@link #isFormnovalidate()} only when {@code condition} is true.
+   * Applies {@link #isFormnovalidate()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public ButtonTag withCondFormnovalidate(boolean condition) {
-    return condition ? attr("formnovalidate") : self();
+    return condition ? attr("formnovalidate") : attr("formnovalidate", null);
   }
 
   /**

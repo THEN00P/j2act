@@ -85,9 +85,10 @@ public final class StyleTag extends ContainerTag<StyleTag> {
   }
 
   /**
-   * Applies {@link #isScoped()} only when {@code condition} is true.
+   * Applies {@link #isScoped()} when {@code condition} is true and removes the attribute otherwise,
+   * so a form control stays controlled either way (ADR 0013).
    */
   public StyleTag withCondScoped(boolean condition) {
-    return condition ? attr("scoped") : self();
+    return condition ? attr("scoped") : attr("scoped", null);
   }
 }

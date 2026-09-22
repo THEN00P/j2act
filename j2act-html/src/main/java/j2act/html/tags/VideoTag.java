@@ -124,10 +124,11 @@ public final class VideoTag extends ContainerTag<VideoTag> {
   }
 
   /**
-   * Applies {@link #isAutoplay()} only when {@code condition} is true.
+   * Applies {@link #isAutoplay()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public VideoTag withCondAutoplay(boolean condition) {
-    return condition ? attr("autoplay") : self();
+    return condition ? attr("autoplay") : attr("autoplay", null);
   }
 
   /**
@@ -160,10 +161,11 @@ public final class VideoTag extends ContainerTag<VideoTag> {
   }
 
   /**
-   * Applies {@link #isLoop()} only when {@code condition} is true.
+   * Applies {@link #isLoop()} when {@code condition} is true and removes the attribute otherwise, so
+   * a form control stays controlled either way (ADR 0013).
    */
   public VideoTag withCondLoop(boolean condition) {
-    return condition ? attr("loop") : self();
+    return condition ? attr("loop") : attr("loop", null);
   }
 
   /**
@@ -179,10 +181,11 @@ public final class VideoTag extends ContainerTag<VideoTag> {
   }
 
   /**
-   * Applies {@link #isMuted()} only when {@code condition} is true.
+   * Applies {@link #isMuted()} when {@code condition} is true and removes the attribute otherwise,
+   * so a form control stays controlled either way (ADR 0013).
    */
   public VideoTag withCondMuted(boolean condition) {
-    return condition ? attr("muted") : self();
+    return condition ? attr("muted") : attr("muted", null);
   }
 
   /**
@@ -198,10 +201,11 @@ public final class VideoTag extends ContainerTag<VideoTag> {
   }
 
   /**
-   * Applies {@link #isControls()} only when {@code condition} is true.
+   * Applies {@link #isControls()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public VideoTag withCondControls(boolean condition) {
-    return condition ? attr("controls") : self();
+    return condition ? attr("controls") : attr("controls", null);
   }
 
   /**

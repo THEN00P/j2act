@@ -57,11 +57,15 @@ final class Harness implements AutoCloseable {
     return this;
   }
 
-  /** Sends an event and waits for its ack; returns the patches that arrived in between. */
-  List<Map<String, String>> fire(String handlerId, String value) {
-    int from = conn.size();
+  /** Sends an event with extra wire fields (k, m for keys) and waits for its ack. */
+  List<Map<String, String>> fire(String handlerId, String value, String... extra) {
+    String[] fields = new String[8 + extra.length];
     String ack = String.valueOf(++ackSeq);
-    engine.onMessage(conn, Json.object("t", "ev", "h", handlerId, "v", value, "a", ack));
+    String[] base = {"t", "ev", "h", handlerId, "v", value, "a", ack};
+    System.arraycopy(base, 0, fields, 0, base.length);
+    System.arraycopy(extra, 0, fields, base.length, extra.length);
+    int from = conn.size();
+    engine.onMessage(conn, Json.object(fields));
     conn.await(from, m -> "ack".equals(m.get("t")) && ack.equals(m.get("a")));
     return conn.since(from, m -> "patch".equals(m.get("t")));
   }

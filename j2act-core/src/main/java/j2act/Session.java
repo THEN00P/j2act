@@ -212,23 +212,49 @@ final class Session {
 
   // ---- handlers
 
-  String registerHandler(Scope scope, String event, Handler<?> handler) {
-    String handlerId = engine.newSecret(12);
+  /**
+   * Binds a handler for the element at {@code path}. The id stays the same while that
+   * element keeps rendering there, so an event sent against the previous render still
+   * lands; it is dropped when the element stops rendering (ADR 0013).
+   */
+  String registerHandler(Scope scope, String path, String event, Handler<?> handler) {
+    String slot = path + "|" + event;
+    String handlerId = scope.previousHandlerIds.remove(slot);
+    if (handlerId == null) {
+      handlerId = engine.newSecret(12);
+    }
     handlers.put(handlerId, new HandlerEntry(scope, event, handler));
-    scope.handlerIds.add(handlerId);
+    scope.handlerIds.put(slot, handlerId);
     return handlerId;
   }
 
+  /** Called at the start of a scope's render: its current ids become reusable candidates. */
+  void beginHandlers(Scope scope) {
+    scope.previousHandlerIds = scope.handlerIds;
+    scope.handlerIds = new java.util.LinkedHashMap<>();
+  }
+
+  /** Called at the end of a scope's render: ids of elements that did not render again are dropped. */
+  void endHandlers(Scope scope) {
+    for (String handlerId : scope.previousHandlerIds.values()) {
+      handlers.remove(handlerId);
+    }
+    scope.previousHandlerIds.clear();
+  }
+
   void removeHandlers(Scope scope) {
-    for (String handlerId : scope.handlerIds) {
+    for (String handlerId : scope.handlerIds.values()) {
       handlers.remove(handlerId);
     }
     scope.handlerIds.clear();
+    endHandlers(scope);
   }
 
   /** Runs a handler from the latest render. Unknown or stale ids are rejected (ADR 0013). */
   @SuppressWarnings("unchecked")
-  boolean dispatch(String handlerId, String value) {
+  boolean dispatch(Map<String, String> message) {
+    String handlerId = message.get("h");
+    String value = message.get("v");
     HandlerEntry entry = handlerId == null ? null : handlers.get(handlerId);
     if (entry == null || entry.scope.disposed) {
       engine.stats.rejectedEvents.incrementAndGet();
@@ -236,10 +262,18 @@ final class Session {
     }
     lastActivity = engine.clock.millis();
     try {
-      if ("click".equals(entry.event)) {
-        ((Handler<ClickEvent>) entry.handler).handle(new ClickEvent());
-      } else {
-        ((Handler<ValueEvent>) entry.handler).handle(new ValueEvent(value));
+      switch (entry.event) {
+        case "click":
+          ((Handler<ClickEvent>) entry.handler).handle(new ClickEvent());
+          break;
+        case "submit":
+          ((Handler<SubmitEvent>) entry.handler).handle(new SubmitEvent(value));
+          break;
+        case "keydown":
+          ((Handler<KeyEvent>) entry.handler).handle(new KeyEvent(message.get("k"), value, message.get("m")));
+          break;
+        default:
+          ((Handler<ValueEvent>) entry.handler).handle(new ValueEvent(value));
       }
       return true;
     } catch (Throwable t) {

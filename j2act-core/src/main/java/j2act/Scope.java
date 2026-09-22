@@ -22,7 +22,9 @@ final class Scope implements Observer {
   final Set<Cell> deps = new HashSet<>();
   Map<String, Scope> children = new LinkedHashMap<>();
   Map<String, Scope> previousChildren = new LinkedHashMap<>();
-  final List<String> handlerIds = new ArrayList<>();
+  /** Handler id per element position and event ("path|event"), kept while that element keeps rendering. */
+  Map<String, String> handlerIds = new LinkedHashMap<>();
+  Map<String, String> previousHandlerIds = new LinkedHashMap<>();
   /** Primitive count after the first render; later renders must create exactly as many (ADR 0019). */
   int settledCount = -1;
   boolean dirty;

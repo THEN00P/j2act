@@ -128,10 +128,11 @@ public final class TextareaTag extends ContainerTag<TextareaTag> {
   }
 
   /**
-   * Applies {@link #isDisabled()} only when {@code condition} is true.
+   * Applies {@link #isDisabled()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public TextareaTag withCondDisabled(boolean condition) {
-    return condition ? attr("disabled") : self();
+    return condition ? attr("disabled") : attr("disabled", null);
   }
 
   /**
@@ -278,10 +279,11 @@ public final class TextareaTag extends ContainerTag<TextareaTag> {
   }
 
   /**
-   * Applies {@link #isReadonly()} only when {@code condition} is true.
+   * Applies {@link #isReadonly()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public TextareaTag withCondReadonly(boolean condition) {
-    return condition ? attr("readonly") : self();
+    return condition ? attr("readonly") : attr("readonly", null);
   }
 
   /**
@@ -299,10 +301,11 @@ public final class TextareaTag extends ContainerTag<TextareaTag> {
   }
 
   /**
-   * Applies {@link #isRequired()} only when {@code condition} is true.
+   * Applies {@link #isRequired()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public TextareaTag withCondRequired(boolean condition) {
-    return condition ? attr("required") : self();
+    return condition ? attr("required") : attr("required", null);
   }
 
   /**

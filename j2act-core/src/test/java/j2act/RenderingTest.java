@@ -26,9 +26,32 @@ class RenderingTest {
       assertTrue(html.startsWith("<!DOCTYPE html><html data-j2s=\"s1\">"), html);
       assertTrue(html.contains("<title>A &amp; B</title>"), html);
       assertTrue(html.contains("<span>&lt;b&gt;x&lt;/b&gt;</span><p>after</p>"), html);
-      assertTrue(html.contains("<input value=\"&quot;q&quot;\" disabled>"), html);
+      assertTrue(html.contains("<input data-j2-ctl=\"value\" value=\"&quot;q&quot;\" disabled>"), html);
       assertFalse(html.contains("secret-key"), html);
       assertFalse(html.contains("</input>"), html);
+    }
+  }
+
+  static final class Fields extends LiveComponent {
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.input().withId("free"),
+        T.input().withId("bound").attr("value", "x"),
+        T.input().withId("unticked").attr("checked", null),
+        T.tag("textarea").withId("empty"),
+        T.tag("textarea", "hi").withId("filled")));
+    }
+  }
+
+  @Test
+  void formControlsDeclareWhatTheRenderControls() {
+    try (Harness h = new Harness(Fields::new)) {
+      String html = h.load();
+      assertTrue(html.contains("<input data-j2-ctl id=\"free\">"), html);
+      assertTrue(html.contains("<input data-j2-ctl=\"value\" id=\"bound\" value=\"x\">"), html);
+      assertTrue(html.contains("<input data-j2-ctl=\"checked\" id=\"unticked\">"), html);
+      assertTrue(html.contains("<textarea data-j2-ctl id=\"empty\"></textarea>"), html);
+      assertTrue(html.contains("<textarea data-j2-ctl=\"value\" id=\"filled\">hi</textarea>"), html);
     }
   }
 

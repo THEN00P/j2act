@@ -74,6 +74,15 @@ class CounterAppTest {
   }
 
   @Test
+  void formSubmitArrivesAsDecodedFields() throws Exception {
+    Client client = connect();
+    String handler = find(client.html, "id=\"greet\"[^>]*data-j2-submit=\"([^\"]+)\"");
+    client.send("{\"t\":\"ev\",\"h\":\"" + handler + "\",\"v\":\"name=Grace+H&loud=yes\",\"a\":\"7\"}");
+    client.await(m -> m.contains("HELLO, GRACE H!"));
+    client.close();
+  }
+
+  @Test
   void schedulerThreadPushesReachTheClient() throws Exception {
     Client client = connect();
     String patch = client.await(m -> m.contains("ticks pushed") && !m.contains(" 0 ticks pushed"));

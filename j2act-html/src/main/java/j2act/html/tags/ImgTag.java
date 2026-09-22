@@ -232,10 +232,11 @@ public final class ImgTag extends EmptyTag<ImgTag> {
   }
 
   /**
-   * Applies {@link #isIsmap()} only when {@code condition} is true.
+   * Applies {@link #isIsmap()} when {@code condition} is true and removes the attribute otherwise,
+   * so a form control stays controlled either way (ADR 0013).
    */
   public ImgTag withCondIsmap(boolean condition) {
-    return condition ? attr("ismap") : self();
+    return condition ? attr("ismap") : attr("ismap", null);
   }
 
   /**

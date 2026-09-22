@@ -131,12 +131,10 @@ public final class J2Act implements AutoCloseable {
       return;
     }
     if ("ev".equals(type)) {
-      String handlerId = message.get("h");
-      String value = message.get("v");
       String ack = message.get("a");
       boolean[] ok = new boolean[1];
       session.lane.execute(session.task(
-        () -> ok[0] = session.dispatch(handlerId, value),
+        () -> ok[0] = session.dispatch(message),
         () -> session.send(Json.object("t", "ack", "a", ack, "ok", ok[0] ? "1" : "0"))));
     } else if ("bye".equals(type)) {
       byConnection.remove(connection);

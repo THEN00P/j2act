@@ -83,10 +83,11 @@ public final class ObjectTag extends ContainerTag<ObjectTag> {
   }
 
   /**
-   * Applies {@link #isTypemustmatch()} only when {@code condition} is true.
+   * Applies {@link #isTypemustmatch()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public ObjectTag withCondTypemustmatch(boolean condition) {
-    return condition ? attr("typemustmatch") : self();
+    return condition ? attr("typemustmatch") : attr("typemustmatch", null);
   }
 
   /**

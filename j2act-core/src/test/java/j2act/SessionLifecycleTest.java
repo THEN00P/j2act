@@ -47,16 +47,27 @@ class SessionLifecycleTest {
   }
 
   @Test
-  void onlyHandlersFromTheLatestRenderAreInvokable() {
+  void handlerIdsSurviveReRendersOfTheirElement() {
     try (Harness h = new Harness(IdentityTest.TwoCounters::new)) {
       h.load();
       h.connect();
-      String stale = Harness.clickOn(h.html, "A:0");
-      assertEquals(1, h.click(stale).size());
+      String id = Harness.clickOn(h.html, "A:0");
+      assertTrue(h.click(id).get(0).get("h").contains("A:1"));
+      assertTrue(h.click(id).get(0).get("h").contains("A:2"), "same element, same id, still invokable");
+    }
+  }
+
+  @Test
+  void handlersOfElementsThatStoppedRenderingAreRejected() {
+    try (Harness h = new Harness(IdentityTest.Toggle::new)) {
+      h.load();
+      h.connect();
+      String shown = h.click(Harness.clickOn(h.html, "toggle")).get(0).get("h");
+      String x = Harness.clickOn(shown, "X:0");
+      h.click(Harness.clickOn(shown, "toggle"));
 
       int from = h.conn.size();
-      List<Map<String, String>> patches = h.click(stale);
-      assertTrue(patches.isEmpty());
+      assertTrue(h.click(x).isEmpty());
       assertEquals("0", h.conn.since(from, m -> "ack".equals(m.get("t"))).get(0).get("ok"));
       h.click("made-up-id");
       assertEquals(2, h.engine.stats().rejectedEvents.get());

@@ -7,7 +7,8 @@ package j2act;
 /**
  * Global attributes, valid on every element. Inline <code>on*</code> handler attributes are left
  * out on purpose: events are server handlers (<code>onClick</code>, <code>onInput</code>,
- * <code>onChange</code>) declared on Tag.
+ * <code>onChange</code>, <code>onSubmit</code>, <code>onKeyDown</code>, <code>onFocus</code>,
+ * <code>onBlur</code>) declared on Tag.
  */
 public interface GlobalAttributes<T extends Tag<T>> {
 
@@ -111,10 +112,11 @@ public interface GlobalAttributes<T extends Tag<T>> {
   }
 
   /**
-   * Applies {@link #isAutofocus()} only when {@code condition} is true.
+   * Applies {@link #isAutofocus()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   default T withCondAutofocus(boolean condition) {
-    return condition ? attr("autofocus") : self();
+    return condition ? attr("autofocus") : attr("autofocus", null);
   }
 
   /**
@@ -341,10 +343,11 @@ public interface GlobalAttributes<T extends Tag<T>> {
   }
 
   /**
-   * Applies {@link #isHidden()} only when {@code condition} is true.
+   * Applies {@link #isHidden()} when {@code condition} is true and removes the attribute otherwise,
+   * so a form control stays controlled either way (ADR 0013).
    */
   default T withCondHidden(boolean condition) {
-    return condition ? attr("hidden") : self();
+    return condition ? attr("hidden") : attr("hidden", null);
   }
 
   /**
@@ -388,10 +391,11 @@ public interface GlobalAttributes<T extends Tag<T>> {
   }
 
   /**
-   * Applies {@link #isInert()} only when {@code condition} is true.
+   * Applies {@link #isInert()} when {@code condition} is true and removes the attribute otherwise,
+   * so a form control stays controlled either way (ADR 0013).
    */
   default T withCondInert(boolean condition) {
-    return condition ? attr("inert") : self();
+    return condition ? attr("inert") : attr("inert", null);
   }
 
   /**
@@ -514,10 +518,11 @@ public interface GlobalAttributes<T extends Tag<T>> {
   }
 
   /**
-   * Applies {@link #isItemscope()} only when {@code condition} is true.
+   * Applies {@link #isItemscope()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   default T withCondItemscope(boolean condition) {
-    return condition ? attr("itemscope") : self();
+    return condition ? attr("itemscope") : attr("itemscope", null);
   }
 
   /**

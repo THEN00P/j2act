@@ -25,8 +25,8 @@
   var retry = 0;
   var leaving = false;
   var remounting = false;
-  var inFlight = new Map();        // ack id -> element
-  var pendingEls = new Set();      // elements with a click in flight
+  var inFlight = new Map();        // ack id -> { el, swap }
+  var pendingEls = new Set();      // elements with a click or submit in flight
   var timers = new WeakMap();      // element -> debounce timer
 
   var morphConfig = {
@@ -34,7 +34,14 @@
     ignoreActiveValue: true,
     callbacks: {
       beforeAttributeUpdated: function (name, el) {
-        return !(pendingEls.has(el) && (name === "data-pending" || name === "aria-busy"));
+        if (pendingEls.has(el) && (name === "data-pending" || name === "aria-busy")) {
+          return false;
+        }
+        // Form state the render did not set is the user's: keep it (ADR 0013).
+        if ((name === "value" || name === "checked" || name === "selected") && el.hasAttribute("data-j2-ctl")) {
+          return el.getAttribute("data-j2-ctl").split(" ").indexOf(name) >= 0;
+        }
+        return true;
       }
     }
   };
@@ -106,8 +113,11 @@
 
   // ---- events
 
-  function dispatch(el, type, value) {
-    if (pendingEls.has(el)) {
+  // extra carries event-specific fields (k, m for keys); pendingOn is the element whose
+  // withPending markup swaps in, which for a submit is the submitter button.
+  function dispatch(el, type, value, extra, pendingOn) {
+    var blocking = type === "click" || type === "submit";
+    if (blocking && pendingEls.has(el)) {
       return;
     }
     var handlerId = el.getAttribute("data-j2-" + type);
@@ -115,10 +125,14 @@
       return;
     }
     var a = String(++ackSeq);
-    if (type === "click") {
-      startPending(el, a);
+    if (blocking) {
+      startPending(el, a, pendingOn || el);
     }
-    send({ t: "ev", h: handlerId, v: value == null ? "" : value, a: a });
+    var message = { t: "ev", h: handlerId, v: value == null ? "" : value, a: a };
+    for (var name in extra || {}) {
+      message[name] = extra[name];
+    }
+    send(message);
   }
 
   function schedule(el, type) {
@@ -155,33 +169,82 @@
     });
   });
 
+  // focus and blur do not bubble; focusin and focusout do.
+  [["focusin", "focus"], ["focusout", "blur"]].forEach(function (pair) {
+    document.addEventListener(pair[0], function (e) {
+      var el = e.target;
+      if (el && el.hasAttribute && el.hasAttribute("data-j2-" + pair[1])) {
+        dispatch(el, pair[1], el.value);
+      }
+    });
+  });
+
+  // Keys are filtered here, never debounced, so only the keys the server asked for travel.
+  document.addEventListener("keydown", function (e) {
+    var el = e.target;
+    if (!el || !el.hasAttribute || !el.hasAttribute("data-j2-keydown")) {
+      return;
+    }
+    var filter = el.getAttribute("data-j2-keys");
+    if (filter && filter.split(" ").indexOf(e.key) < 0) {
+      return;
+    }
+    var mods = (e.ctrlKey ? "c" : "") + (e.shiftKey ? "s" : "") + (e.altKey ? "a" : "") + (e.metaKey ? "m" : "");
+    dispatch(el, "keydown", el.value, { k: e.key, m: mods });
+  });
+
+  // The browser's own submit never happens; fields travel URL-encoded, file inputs excluded.
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form || !form.hasAttribute || !form.hasAttribute("data-j2-submit")) {
+      return;
+    }
+    e.preventDefault();
+    var fields = new FormData(form);
+    if (e.submitter && e.submitter.name) {
+      fields.append(e.submitter.name, e.submitter.value);
+    }
+    var encoded = [];
+    fields.forEach(function (value, name) {
+      if (typeof value === "string") {
+        encoded.push(encodeURIComponent(name) + "=" + encodeURIComponent(value));
+      }
+    });
+    dispatch(form, "submit", encoded.join("&"), null, e.submitter || form);
+  });
+
   // ---- pending (ADR 0013): instant on click, reverted on ack unless a morph already replaced it
 
-  function startPending(el, a) {
+  function startPending(el, a, swap) {
     pendingEls.add(el);
-    inFlight.set(a, el);
-    el.setAttribute("data-pending", "");
-    el.setAttribute("aria-busy", "true");
-    var tpl = el.querySelector(":scope > template[data-j2-pending]");
+    inFlight.set(a, { el: el, swap: swap });
+    [el, swap].forEach(function (target) {
+      target.setAttribute("data-pending", "");
+      target.setAttribute("aria-busy", "true");
+    });
+    var tpl = swap.querySelector(":scope > template[data-j2-pending]");
     if (tpl) {
-      el.__j2saved = el.innerHTML;
-      el.innerHTML = tpl.outerHTML + "<span data-j2-pending-live>" + tpl.innerHTML + "</span>";
+      swap.__j2saved = swap.innerHTML;
+      swap.innerHTML = tpl.outerHTML + "<span data-j2-pending-live>" + tpl.innerHTML + "</span>";
     }
   }
 
   function ack(a) {
-    var el = inFlight.get(a);
+    var entry = inFlight.get(a);
     inFlight.delete(a);
-    if (!el) {
+    if (!entry) {
       return;
     }
-    pendingEls.delete(el);
-    el.removeAttribute("data-pending");
-    el.removeAttribute("aria-busy");
-    if (el.__j2saved != null && el.querySelector(":scope > [data-j2-pending-live]")) {
-      el.innerHTML = el.__j2saved;
+    pendingEls.delete(entry.el);
+    [entry.el, entry.swap].forEach(function (target) {
+      target.removeAttribute("data-pending");
+      target.removeAttribute("aria-busy");
+    });
+    var swap = entry.swap;
+    if (swap.__j2saved != null && swap.querySelector(":scope > [data-j2-pending-live]")) {
+      swap.innerHTML = swap.__j2saved;
     }
-    el.__j2saved = null;
+    swap.__j2saved = null;
   }
 
   // ---- session lifetime (ADR 0010)

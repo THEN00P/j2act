@@ -253,10 +253,11 @@ public final class FormTag extends ContainerTag<FormTag> {
   }
 
   /**
-   * Applies {@link #isNovalidate()} only when {@code condition} is true.
+   * Applies {@link #isNovalidate()} when {@code condition} is true and removes the attribute
+   * otherwise, so a form control stays controlled either way (ADR 0013).
    */
   public FormTag withCondNovalidate(boolean condition) {
-    return condition ? attr("novalidate") : self();
+    return condition ? attr("novalidate") : attr("novalidate", null);
   }
 
   /**
