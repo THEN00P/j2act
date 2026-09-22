@@ -14,7 +14,7 @@ public class Counter extends LiveComponent {
     private String label = "Clicked";
     public CounterTag withLabel(String label) { this.label = label; return this; }
     @Override protected ContainerTag render(State scope) {
-      State<Integer> count = scope.state(0); // memoized per call site
+      State<Integer> count = scope.state(0); // bound to this tree slot (ADR 0019)
       return div(
         UI.button(label + " " + count.get() + " times").withVariant(PRIMARY)
           .onClick(e -> count.set(count.get() + 1)),
@@ -32,12 +32,13 @@ div(counter().withLabel("A"), counter().withLabel("B"))
 
 ```java
 public class UsersPage extends LiveComponent implements Page {
+  @Inject private Users repo; // host bean via the members-injector seam; no em()
+
   @Override public ContainerTag render() {
     State<String> filter = state("");
     Query<List<User>> users = query(
       () -> "users:" + filter.get(),
-      () -> em.createQuery("select u from User u where u.name like :n", User.class)
-        .setParameter("n", "%" + filter.get() + "%").getResultList());
+      () -> repo.search("%" + filter.get() + "%"));
 
     return html(
       head(
@@ -45,10 +46,11 @@ public class UsersPage extends LiveComponent implements Page {
         meta().withName("description").withContent("Team member directory")),
       body(div(
         input().withPlaceholder("Filter by name").withValue(filter.get())
-          .onChange(e -> filter.set(e.value())),
+          .withDebounce(ofMillis(250))          // client-side, ADR 0013
+          .onInput(e -> filter.set(e.value())),
         table(
           thead(tr(th("Name"), th("Email"), th(""))),
-          tbody(each(users.get(), u -> userRow().withUser(u)))))));
+          tbody(each(users.get(), u -> userRow().withUser(u).withKey(u.getId())))))));
   }
 
   @Override public ContainerTag loading() {
@@ -65,7 +67,8 @@ public class UsersPage extends LiveComponent implements Page {
 ## Row (auth ternary, enforced, no require())
 
 ```java
-tbody(each(users.get(), u -> userRow().withUser(u)))
+// withKey rides on the row, so a stream works the same as each()
+tbody(users.get().stream().map(u -> userRow().withUser(u).withKey(u.getId())).collect(toList()))
 
 // userRow factory takes children only; user arrives via with*
 tr(
@@ -73,7 +76,8 @@ tr(
   td(u.getEmail()),
   td(auth.hasRole("superadmin")
     ? UI.button("Delete").withVariant(DESTRUCTIVE)
-        .onClick(e -> deleteUser(u.getId()))
+        .withPending(spinner())                 // swaps in instantly, reverts on ack
+        .onClick(e -> repo.delete(u.getId()))
     : null)
 )
 ```
@@ -86,13 +90,43 @@ Mutation<UploadRef> up = upload()
   .withNaming((orig, ctx) -> ctx.username() + "_" + ctx.timestamp() + "_" + orig)
   .withAccept("image/*").withMaxFileSize("10MB").withMaxFiles(1)
   .withInvalidates("user:" + userId)
-  .onSuccess(ref -> em.createQuery("update User u set u.avatarPath = :p where u.id = :id")
-    .setParameter("p", ref.path()).setParameter("id", userId).executeUpdate());
+  .onSuccess(ref -> repo.updateAvatar(userId, ref.path()));
 
 div(
   input().withType("file").onChange(e -> up.mutate(e.file())),
   up.status().get() == UPLOADING ? progress().withValue(up.progress().get()) : null,
   up.error().get() == null ? null : p(up.error().get()))
+```
+
+## Download (upload's twin, ADR 0012)
+
+```java
+Mutation<Void> export = download(out -> repo.writeCsv(filter.get(), out))
+  .withFileName("users.csv").withContentType("text/csv");
+
+UI.button("Export CSV").withPending(spinner()).onClick(e -> export.mutate())
+// export.isPending() stays true until the last byte is streamed
+```
+
+## notFound and redirect (ADR 0015)
+
+```java
+Query<User> user = query(
+  () -> "user:" + id,
+  () -> repo.find(id).orElseThrow(() -> notFound())); // 404 on full serve, soft nav over WS
+```
+
+## Push from outside the session (ADR 0014)
+
+```java
+// bus is the app's own scheduler/JMS/Debezium listener; subscribe returns the unsubscribe
+effect(() -> bus.subscribe(entry -> entries.update(list -> prepend(entry, list))));
+```
+
+## Soft navigation and preload (ADR 0011)
+
+```java
+nav(a("Users").withHref("/admin").withPreload(INTENT)) // plain a(); no link() factory
 ```
 
 ## Router (nested, index, guard, outlet)

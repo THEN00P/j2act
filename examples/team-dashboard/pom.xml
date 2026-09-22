@@ -15,6 +15,8 @@
     <dependency><groupId>dev.j2act</groupId><artifactId>j2act-router</artifactId><version>${j2act.version}</version></dependency>
     <dependency><groupId>dev.j2act</groupId><artifactId>j2act-spring</artifactId><version>${j2act.version}</version></dependency>
     <dependency><groupId>dev.j2act</groupId><artifactId>j2act-jakarta</artifactId><version>${j2act.version}</version></dependency>
-    <dependency><groupId>org.hibernate</groupId><artifactId>hibernate-core</artifactId></dependency>
+    <!-- Host stack, not J2ACT deps: JPA, JTA annotations, scheduling and javax.inject. -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-jpa</artifactId><version>${spring-boot.version}</version></dependency>
+    <dependency><groupId>javax.inject</groupId><artifactId>javax.inject</artifactId><version>1</version></dependency>
   </dependencies>
 </project>

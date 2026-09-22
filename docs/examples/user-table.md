@@ -1,19 +1,18 @@
 # User table (target shape)
 
-Lazy filter by default (`onChange` commits on blur, no DB spam). Eager opt-in is `onInput` plus `query(...).withDebounce(250)`. No row keys — cells are stateless text. `em` is the host's request-scoped `EntityManager`.
+Lazy filter by default (`onChange` commits on blur, no DB spam). Eager opt-in is `onInput` plus a client-side `withDebounce(...)` on the input (ADR 0013). No `withKey` — cells are stateless text, so position plus Idiomorph is enough (ADR 0019). `users` is the host's own repository bean, injected; J2ACT defines no `em()`.
 
 ```java
 import static j2act.html.TagCreator.*;
 import static j2act.Routes.*;
 
 public class UserTablePage extends LiveComponent implements Page {
+  @Inject private Users users;
+
   private final State<String> nameFilter = state("");
-  private final Query<List<User>> users = query(
+  private final Query<List<User>> list = query(
     () -> "users:" + nameFilter.get(),
-    () -> em.createQuery(
-        "select u from User u where u.name like :n", User.class)
-      .setParameter("n", "%" + nameFilter.get() + "%")
-      .getResultList()
+    () -> users.search("%" + nameFilter.get() + "%")
   );
 
   @Override public ContainerTag render() {
@@ -25,7 +24,7 @@ public class UserTablePage extends LiveComponent implements Page {
       table(
         thead(tr(th("Name"), th("Email"))),
         tbody(
-          each(users.get(), u -> tr(
+          each(list.get(), u -> tr(
             td(u.getName()),
             td(u.getEmail())
           ))

@@ -1,6 +1,6 @@
 # Foreign-thread State writes
 
-Server push is not a framework feature. The user's scheduler, message listener or Debezium consumer is the push source; J2ACT only makes it safe to call. State.set() from any thread is legal: it never mutates on the caller's thread, it enqueues onto the owning session's serial lane (ADR 0001), coalesces with other pending writes, and results in one re-render and one morph. Per-session single-threading therefore still holds: foreign writes are just more work items on the same lane.
+Server push is not a framework feature. The user's scheduler, message listener or Debezium consumer is the push source; J2ACT only makes it safe to call. State.set() from any thread is legal: it never mutates on the caller's thread, it enqueues onto the owning session's serial lane (ADR 0001), coalesces with other pending writes, and results in one re-render and one morph. Per-session single-threading therefore still holds: foreign writes are just more work items on the same lane. A read-modify-write from a foreign thread uses State.update(fn), which runs fn on the lane against the current value; get() followed by set() off-lane can lose updates, and dev mode warns on get() from a foreign thread.
 
 Session isolation rests on four rules:
 

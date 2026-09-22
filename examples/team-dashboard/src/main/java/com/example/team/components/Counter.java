@@ -11,7 +11,8 @@ import j2act.Variant;
 
 /**
  * Stateful counter. Factory takes children only; label arrives via with*.
- * Memoized per call site: two siblings never share state or morph targets.
+ * State binds to the tree slot (ADR 0019): two siblings never share state
+ * or morph targets.
  */
 public final class Counter {
 
