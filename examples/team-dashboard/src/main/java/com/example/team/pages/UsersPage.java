@@ -1,5 +1,6 @@
 package com.example.team.pages;
 
+import static com.example.team.components.UserRow.userRow;
 import static j2act.html.TagCreator.*;
 import static j2act.ui.Ui.*;
 
@@ -9,15 +10,14 @@ import java.util.List;
 
 import javax.inject.Inject;
 
-import com.example.team.components.UserRow;
 import com.example.team.db.Users;
-import j2act.ContainerTag;
 import j2act.LiveComponent;
 import j2act.Mutation;
 import j2act.Page;
 import j2act.PageError;
 import j2act.Query;
 import j2act.State;
+import j2act.html.tags.HtmlTag;
 
 /**
  * Filterable directory. Eager filter via onInput plus a client-side debounce.
@@ -30,9 +30,10 @@ public class UsersPage extends LiveComponent implements Page {
 
   @Inject private Users users;
 
-  @Override public ContainerTag render() {
-    State<String> filter = state("");
-    Query<List<Users.User>> list = query(() -> users.search("%" + filter.get() + "%"));
+  private final State<String> filter = state("");
+  private final Query<List<Users.User>> list = query(() -> users.search("%" + filter.get() + "%"));
+
+  @Override public HtmlTag render() {
     Mutation<String> export = download((String like, OutputStream out) -> users.writeCsv(like, out))
       .withFileName("users.csv")
       .withContentType("text/csv");
@@ -48,6 +49,7 @@ public class UsersPage extends LiveComponent implements Page {
         div(
           h1("Users"),
           input()
+            .withType("search")
             .withPlaceholder("Filter by name")
             .withValue(filter.get())
             .withDebounce(Duration.ofMillis(250))
@@ -67,7 +69,7 @@ public class UsersPage extends LiveComponent implements Page {
               )
             ),
             tbody(
-              each(list.get(), u -> UserRow.userRow()
+              each(list.get(), u -> userRow()
                 .withUser(u)
                 .withKey(u.getId()))
             )
@@ -77,7 +79,7 @@ public class UsersPage extends LiveComponent implements Page {
     );
   }
 
-  @Override public ContainerTag loading() {
+  @Override public HtmlTag loading() {
     return html(
       head(
         title("Users…")
@@ -89,7 +91,7 @@ public class UsersPage extends LiveComponent implements Page {
     );
   }
 
-  @Override public ContainerTag error(PageError e) {
+  @Override public HtmlTag error(PageError e) {
     return html(
       head(
         title("Users — error")

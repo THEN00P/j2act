@@ -3,9 +3,9 @@ package com.example.team.pages;
 import static j2act.Preload.INTENT;
 import static j2act.html.TagCreator.*;
 
-import j2act.ContainerTag;
 import j2act.DomContent;
 import j2act.Layout;
+import j2act.html.tags.HtmlTag;
 
 /**
  * Layout for /admin/*: matched child arrives as a plain child node. Nav links
@@ -14,7 +14,7 @@ import j2act.Layout;
  */
 public class AdminLayout extends Layout {
 
-  @Override public ContainerTag render(DomContent content) {
+  @Override public HtmlTag render(DomContent content) {
     return html(
       head(
         title("Admin"),

@@ -9,8 +9,8 @@ import javax.inject.Inject;
 
 import com.example.team.events.ActivityBus;
 import j2act.ComponentTag;
-import j2act.ContainerTag;
 import j2act.State;
+import j2act.html.tags.UlTag;
 
 /**
  * Live feed pushed from outside the session. ActivityBus is the app's own
@@ -19,29 +19,25 @@ import j2act.State;
  * read-modify-write runs on this session's lane, so no heartbeat is lost.
  * The unsubscribe cleanup runs on unmount, navigation away and eviction.
  */
-public final class ActivityFeed {
+public final class ActivityFeed extends ComponentTag {
 
-  private ActivityFeed() {}
+  @Inject private ActivityBus bus;
 
-  public static ActivityFeedTag activityFeed() {
-    return new ActivityFeedTag();
+  private final State<List<String>> entries = state(new ArrayList<>());
+
+  public static ActivityFeed activityFeed() {
+    return new ActivityFeed();
   }
 
-  public static final class ActivityFeedTag extends ComponentTag {
-    @Inject private ActivityBus bus;
+  @Override protected UlTag render() {
+    effect(() -> bus.subscribe(entry -> entries.update(current -> {
+      List<String> next = new ArrayList<>(current);
+      next.add(0, entry);
+      return next.subList(0, Math.min(next.size(), 20));
+    })));
 
-    private final State<List<String>> entries = state(new ArrayList<>());
-
-    @Override protected ContainerTag render() {
-      effect(() -> bus.subscribe(entry -> entries.update(current -> {
-        List<String> next = new ArrayList<>(current);
-        next.add(0, entry);
-        return next.subList(0, Math.min(next.size(), 20));
-      })));
-
-      return ul(
-        each(entries.get(), entry -> li(entry))
-      );
-    }
+    return ul(
+      each(entries.get(), entry -> li(entry))
+    );
   }
 }

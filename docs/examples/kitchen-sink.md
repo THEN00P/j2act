@@ -1,26 +1,24 @@
 # Kitchen sink: team dashboard as it will feel
 
-One mini-app exercising every locked shape. Static factories, children-only params, `with*` props, ternary/`null`, `State`, no `new` at call sites.
+One mini-app exercising every locked shape. Static factories, children-only params, `with*` props, ternary/`null`, `State`, no `new` at call sites. Tags are the generated typed classes (`DivTag`, `HtmlTag`, ADR 0021). `UI.*`, preload, layouts, mutations and auth are still design targets; `examples/counter-spring` shows what runs today.
 
 ## Counter (stateful component, own state, twice on a page)
 
 ```java
-public class Counter extends LiveComponent {
-  private final State<Integer> count = state(0);
+public final class Counter extends ComponentTag {
+  private final Prop<String> label = prop("Clicked"); // tracked prop, ADR 0020
 
-  public static CounterTag counter() { return new CounterTag(); } // children only
+  public static Counter counter() { return new Counter(); } // children only
 
-  public static final class CounterTag extends ComponentTag {
-    private final Prop<String> label = prop("Clicked"); // tracked prop, ADR 0020
-    public CounterTag withLabel(String l) { label.set(l); return this; }
-    @Override protected ContainerTag render(State scope) {
-      State<Integer> count = scope.state(0); // bound to this tree slot (ADR 0019)
-      return div(
-        UI.button(label.get() + " " + count.get() + " times").withVariant(PRIMARY)
-          .onClick(e -> count.set(count.get() + 1)),
-        count.get() > 5 ? p("warming up…") : null
-      );
-    }
+  public Counter withLabel(String l) { label.set(l); return this; }
+
+  @Override protected DivTag render() {
+    State<Integer> count = state(0); // bound to this tree slot (ADR 0019)
+    return div(
+      UI.button(label.get() + " " + count.get() + " times").withVariant(PRIMARY)
+        .onClick(e -> count.set(count.get() + 1)),
+      count.get() > 5 ? p("warming up…") : null
+    );
   }
 }
 
@@ -34,7 +32,7 @@ div(counter().withLabel("A"), counter().withLabel("B"))
 public class UsersPage extends LiveComponent implements Page {
   @Inject private Users repo; // host bean via the members-injector seam; no em()
 
-  @Override public ContainerTag render() {
+  @Override public HtmlTag render() {
     State<String> filter = state("");
     Query<List<User>> users = query(() -> repo.search("%" + filter.get() + "%")); // keyless, ADR 0020
 
@@ -51,11 +49,11 @@ public class UsersPage extends LiveComponent implements Page {
           tbody(each(users.get(), u -> userRow().withUser(u).withKey(u.getId())))))));
   }
 
-  @Override public ContainerTag loading() {
+  @Override public HtmlTag loading() {
     return html(head(title("Users…")), body(div("Loading…").withClass("skeleton")));
   }
 
-  @Override public ContainerTag error(PageError e) {
+  @Override public HtmlTag error(PageError e) {
     return html(head(title("Users — error")),
       body(div(p("Failed: " + e.message()), button("Retry").onClick(ev -> e.retry()))));
   }
@@ -108,7 +106,19 @@ mutation(...).withInvalidates("users");          // prefix: hits every "users" e
 
 ```java
 private final Prop<User> user = prop();
-public UserRowTag withUser(User u) { user.set(u); return this; }
+public UserRow withUser(User u) { user.set(u); return this; }
+```
+
+## Forms, keys and focus (ADR 0013)
+
+```java
+form(
+  input().withName("name")                         // uncontrolled: re-renders keep what was typed
+    .withKeyFilter("Enter", "Escape")              // only these keys travel
+    .onKeyDown(e -> lastKey.set(e.key()))
+    .onBlur(e -> touched.set(true)),
+  button("Save").withType("submit").withPending(span("Saving…"))
+).onSubmit(e -> repo.rename(id, e.value("name"))) // fields arrive decoded; the browser submit never fires
 ```
 
 ## Download (upload's twin, ADR 0012)
