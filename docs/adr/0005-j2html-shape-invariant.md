@@ -14,4 +14,4 @@ No bound overloads (text(State), withClass(State), ...): they smuggle non-child 
 
 State placement: state() may be called as a field initializer or inside render(), bound to the component's tree slot by creation order (unconditional, hooks-like, ADR 0019). Props flow explicitly: factories take children only, all props (data, State handles) arrive via with* builders. Reads of enclosing state inside tag-building fns are for small private helpers only.
 
-Instance identity: each tree slot gets its own State and its own stable scope anchor, so two counter() siblings never share state or morph targets. Held objects keep identity by reference, and each() keys children by item (ADR 0019). No per-element key attribute. Never hardcode withId inside a reusable component — derive ids from props.
+Instance identity: each tree slot gets its own State and its own stable scope anchor, so two counter() siblings never share state or morph targets. Held objects keep identity by reference, and repeated stateful rows take withKey(...) on the row itself, in each() or a stream alike (ADR 0019). Never hardcode withId inside a reusable component — derive ids from props.
