@@ -22,8 +22,9 @@ import j2act.State;
 /**
  * Filterable directory. Eager filter via onInput plus a client-side debounce.
  * The query is keyless: filter is read inside the loader, so it is the
- * dependency. SSR awaits the users query, so the first paint already has rows. CSV export
- * streams through download(), and the button spins until the last byte.
+ * dependency. SSR awaits the users query, so the first paint already has
+ * rows. CSV export streams through download(), and the button spins until
+ * the last byte.
  */
 public class UsersPage extends LiveComponent implements Page {
 

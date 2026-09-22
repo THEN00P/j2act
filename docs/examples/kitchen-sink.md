@@ -11,8 +11,8 @@ public class Counter extends LiveComponent {
   public static CounterTag counter() { return new CounterTag(); } // children only
 
   public static final class CounterTag extends ComponentTag {
-    private String label = "Clicked";
-    public CounterTag withLabel(String label) { this.label = label; return this; }
+    private final Prop<String> label = prop("Clicked"); // tracked prop, ADR 0020
+    public CounterTag withLabel(String l) { label.set(l); return this; }
     @Override protected ContainerTag render(State scope) {
       State<Integer> count = scope.state(0); // bound to this tree slot (ADR 0019)
       return div(
