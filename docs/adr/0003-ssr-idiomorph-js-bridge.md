@@ -4,4 +4,4 @@ LiveView's JS hooks drift from markup and full re-renders lose focus/scroll. We 
 
 No retained HTML snapshots: per session we keep only the dependency graph and the bounded query cache. Dirty scopes re-run and resend full HTML against a stable anchor; Idiomorph resolves minimal DOM churn on the client. Server diffing is out — rebuild is cheap, bandwidth is fine.
 
-List identity: no keys by default — positional plus id-set matching suffices for stateless rows like text cells. Stateful or reorderable rows use an opt-in morph-only withKey(...) hint that is never rendered as HTML. withId stays a real page-unique HTML id, never a morph key.
+List identity: no key attribute. Positional plus id-set matching suffices for stateless rows; stateful rows get their identity on the server from each()'s item keying (ADR 0019), and morph anchors derive from that. withId stays a real page-unique HTML id, never a morph key.
