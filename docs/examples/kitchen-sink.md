@@ -16,7 +16,7 @@ public class Counter extends LiveComponent {
     @Override protected ContainerTag render(State scope) {
       State<Integer> count = scope.state(0); // bound to this tree slot (ADR 0019)
       return div(
-        UI.button(label + " " + count.get() + " times").withVariant(PRIMARY)
+        UI.button(label.get() + " " + count.get() + " times").withVariant(PRIMARY)
           .onClick(e -> count.set(count.get() + 1)),
         count.get() > 5 ? p("warming up…") : null
       );
