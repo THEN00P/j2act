@@ -13,7 +13,11 @@
 
   <artifactId>counter-spring</artifactId>
   <name>counter-spring</name>
-  <description>First-slice demo on Spring Boot 2.7: counters, keyed rows, validated queries, foreign-thread push.</description>
+  <description>First-slice demo on Spring Boot 3+ (Java 17): counters, keyed rows, validated queries, foreign-thread push, forms.</description>
+
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+  </properties>
 
   <dependencyManagement>
     <dependencies>
@@ -41,9 +45,10 @@
       <artifactId>j2act-spring</artifactId>
     </dependency>
     <dependency>
-      <groupId>javax.inject</groupId>
-      <artifactId>javax.inject</artifactId>
-      <version>1</version>
+      <groupId>jakarta.inject</groupId>
+      <artifactId>jakarta.inject-api</artifactId>
+      <!-- Explicit: Boot 3.0's BOM does not manage it. -->
+      <version>2.0.1</version>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>

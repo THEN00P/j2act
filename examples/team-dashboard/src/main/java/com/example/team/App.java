@@ -32,7 +32,7 @@ public class App {
     );
   }
 
-  // Spring Boot standalone (Boot 2.7, javax.servlet, Java 11). Every setting is
+  // Spring Boot standalone (Boot 3+, Java 17). Every setting is
   // optional; the values shown are the defaults except the rate limit.
   //   J2ActSpring.mount(springApp, router())
   //     .withIdentity(AppIdentity::resolve)

@@ -2,7 +2,7 @@ package com.example.counter.components;
 
 import static j2act.html.TagCreator.*;
 
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 import com.example.counter.services.Directory;
 import j2act.ComponentTag;

@@ -26,7 +26,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <junit.version>5.10.3</junit.version>
     <jackson.version>2.13.5</jackson.version>
-    <spring-boot.version>2.7.18</spring-boot.version>
+    <spring-boot.version>3.5.16</spring-boot.version>
   </properties>
 
   <!-- The Spring Boot BOM is imported only by the Spring modules: it pins javax-era jakarta.* APIs. -->
@@ -68,6 +68,30 @@
   </dependencyManagement>
 
   <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <version>3.5.0</version>
+        <executions>
+          <execution>
+            <id>build-jdk</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireJavaVersion>
+                  <!-- The Spring modules target 17; everything else is still compiled with release 11. -->
+                  <version>[17,)</version>
+                  <message>Build with JDK 17 or newer. Libraries still target Java 11 bytecode except the Spring modules.</message>
+                </requireJavaVersion>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
     <pluginManagement>
       <plugins>
         <plugin>

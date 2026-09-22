@@ -4,7 +4,7 @@ import static com.example.team.components.AvatarUploader.avatarUploader;
 import static j2act.html.TagCreator.*;
 import static j2act.ui.Ui.*;
 
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 import com.example.team.db.Users;
 import com.example.team.stores.AppStores;

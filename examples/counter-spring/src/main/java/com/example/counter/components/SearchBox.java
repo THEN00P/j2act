@@ -5,7 +5,7 @@ import static j2act.html.TagCreator.*;
 import java.time.Duration;
 import java.util.List;
 
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 import com.example.counter.services.Directory;
 import j2act.ComponentTag;

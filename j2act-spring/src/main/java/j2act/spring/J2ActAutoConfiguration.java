@@ -2,7 +2,7 @@ package j2act.spring;
 
 import java.util.concurrent.Executor;
 
-import javax.servlet.ServletContext;
+import jakarta.servlet.ServletContext;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -11,7 +11,6 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
-import org.springframework.boot.autoconfigure.task.TaskExecutionAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
@@ -22,11 +21,11 @@ import j2act.J2Act;
 import j2act.PageResolver;
 
 /**
- * Mounts j2act when the app declares a PageResolver bean (e.g. Routes.routes(...)).
+ * Mounts j2act on Spring Boot 3+ when the app declares a PageResolver bean (e.g. Routes.routes(...)).
  * DI goes through autowireBean, so @Autowired, @Inject and @PersistenceContext work in
  * components; lanes and query runs use the app's task executor (ADR 0004, 0017).
  */
-@AutoConfiguration(after = TaskExecutionAutoConfiguration.class)
+@AutoConfiguration
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @ConditionalOnBean(PageResolver.class)
 public class J2ActAutoConfiguration {

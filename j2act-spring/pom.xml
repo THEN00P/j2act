@@ -12,7 +12,12 @@
 
   <artifactId>j2act-spring</artifactId>
   <name>j2act-spring</name>
-  <description>Spring Boot 2.7 transport mount: page handler mapping, WebSocket endpoint, DI and executor seams.</description>
+  <description>Spring Boot 3+ transport mount (Java 17): page handler mapping, WebSocket endpoint, DI and executor seams.</description>
+
+  <properties>
+    <!-- Spring Boot 3+ requires Java 17; core, html, router and jakarta stay on 11. -->
+    <maven.compiler.release>17</maven.compiler.release>
+  </properties>
 
   <dependencyManagement>
     <dependencies>

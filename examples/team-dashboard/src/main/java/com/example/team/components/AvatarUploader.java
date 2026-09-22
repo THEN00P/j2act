@@ -2,7 +2,7 @@ package com.example.team.components;
 
 import static j2act.html.TagCreator.*;
 
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 import com.example.team.db.Users;
 import com.example.team.stores.AppStores;

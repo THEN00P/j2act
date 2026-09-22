@@ -4,7 +4,7 @@ import static j2act.Routes.*;
 import static j2act.html.TagCreator.*;
 import static j2act.ui.Ui.*;
 
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 import com.example.team.db.Users;
 import j2act.LiveComponent;

@@ -20,8 +20,8 @@ import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.web.server.LocalServerPort;
 
 import com.example.counter.services.TickBus;
 import j2act.J2Act;
@@ -30,7 +30,8 @@ import j2act.J2Act;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class CounterAppTest {
 
-  @LocalServerPort int port;
+  // Not @LocalServerPort: its package moved in Boot 3.0 and again in 4.0.
+  @Value("${local.server.port}") int port;
   @Autowired J2Act j2Act;
   @Autowired TickBus bus;
 
