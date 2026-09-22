@@ -15,6 +15,18 @@
   <name>counter-spring</name>
   <description>First-slice demo on Spring Boot 2.7: counters, keyed rows, validated queries, foreign-thread push.</description>
 
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <dependency>
       <groupId>dev.j2act</groupId>

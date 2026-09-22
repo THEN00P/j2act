@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.j2act</groupId>
+    <artifactId>j2act-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>j2act-jakarta</artifactId>
+  <name>j2act-jakarta</name>
+  <description>
+    Jakarta EE 10 transport mount (WildFly 27+, Java 11): page filter, WebSocket endpoint, CDI members
+    injection and the container's ManagedExecutorService with an active CDI request context.
+  </description>
+
+  <properties>
+    <!-- Explicit versions: the Spring Boot 2.7 BOM in the parent pins the javax-era artifacts. -->
+    <jakarta.servlet.version>6.0.0</jakarta.servlet.version>
+    <jakarta.websocket.version>2.1.1</jakarta.websocket.version>
+    <jakarta.cdi.version>4.0.1</jakarta.cdi.version>
+    <tomcat.version>10.1.54</tomcat.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-core</artifactId>
+    </dependency>
+
+    <!-- Provided by the container. -->
+    <dependency>
+      <groupId>jakarta.servlet</groupId>
+      <artifactId>jakarta.servlet-api</artifactId>
+      <version>${jakarta.servlet.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>jakarta.websocket</groupId>
+      <artifactId>jakarta.websocket-api</artifactId>
+      <version>${jakarta.websocket.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- Since WebSocket 2.1 the core jakarta.websocket package lives in the client API. -->
+    <dependency>
+      <groupId>jakarta.websocket</groupId>
+      <artifactId>jakarta.websocket-client-api</artifactId>
+      <version>${jakarta.websocket.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>jakarta.enterprise</groupId>
+      <artifactId>jakarta.enterprise.cdi-api</artifactId>
+      <version>${jakarta.cdi.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <!-- Test: a plain servlet container without CDI or managed executors. -->
+    <dependency>
+      <groupId>org.apache.tomcat.embed</groupId>
+      <artifactId>tomcat-embed-core</artifactId>
+      <version>${tomcat.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.tomcat</groupId>
+      <artifactId>tomcat-annotations-api</artifactId>
+      <version>${tomcat.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.tomcat.embed</groupId>
+      <artifactId>tomcat-embed-websocket</artifactId>
+      <version>${tomcat.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-html</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-router</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

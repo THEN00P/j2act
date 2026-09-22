@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.j2act</groupId>
+    <artifactId>j2act-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>counter-jakarta</artifactId>
+  <packaging>war</packaging>
+  <name>counter-jakarta</name>
+  <description>
+    The slice on WildFly 29 / Jakarta EE 10 / Java 11: CDI injection into components, JPA through
+    @PersistenceContext on ExampleDS, pushes from a ManagedScheduledExecutorService, forms.
+  </description>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-jakarta</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-html</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-router</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>jakarta.platform</groupId>
+      <artifactId>jakarta.jakartaee-api</artifactId>
+      <version>10.0.0</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>counter-jakarta</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-war-plugin</artifactId>
+        <version>3.4.0</version>
+        <configuration>
+          <failOnMissingWebXml>false</failOnMissingWebXml>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

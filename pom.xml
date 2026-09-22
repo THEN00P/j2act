@@ -16,25 +16,22 @@
     <module>j2act-html</module>
     <module>j2act-router</module>
     <module>j2act-spring</module>
+    <module>j2act-jakarta</module>
     <module>examples/counter-spring</module>
+    <module>examples/counter-jakarta</module>
   </modules>
 
   <properties>
     <maven.compiler.release>11</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <junit.version>5.10.3</junit.version>
+    <jackson.version>2.13.5</jackson.version>
     <spring-boot.version>2.7.18</spring-boot.version>
   </properties>
 
+  <!-- The Spring Boot BOM is imported only by the Spring modules: it pins javax-era jakarta.* APIs. -->
   <dependencyManagement>
     <dependencies>
-      <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-dependencies</artifactId>
-        <version>${spring-boot.version}</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
       <dependency>
         <groupId>org.junit</groupId>
         <artifactId>junit-bom</artifactId>
@@ -60,6 +57,11 @@
       <dependency>
         <groupId>dev.j2act</groupId>
         <artifactId>j2act-spring</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.j2act</groupId>
+        <artifactId>j2act-jakarta</artifactId>
         <version>${project.version}</version>
       </dependency>
     </dependencies>

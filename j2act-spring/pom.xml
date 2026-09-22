@@ -14,6 +14,18 @@
   <name>j2act-spring</name>
   <description>Spring Boot 2.7 transport mount: page handler mapping, WebSocket endpoint, DI and executor seams.</description>
 
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <dependency>
       <groupId>dev.j2act</groupId>
