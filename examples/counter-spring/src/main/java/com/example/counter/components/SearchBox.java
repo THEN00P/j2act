@@ -9,7 +9,7 @@ import javax.inject.Inject;
 
 import com.example.counter.services.Directory;
 import j2act.ComponentTag;
-import j2act.ContainerTag;
+import j2act.html.tags.DivTag;
 import j2act.Query;
 import j2act.State;
 
@@ -28,7 +28,7 @@ public final class SearchBox extends ComponentTag {
     return new SearchBox();
   }
 
-  @Override protected ContainerTag render() {
+  @Override protected DivTag render() {
     return div(
       input()
         .withId("search")

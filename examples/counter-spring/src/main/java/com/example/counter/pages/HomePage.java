@@ -8,7 +8,7 @@ import static com.example.counter.components.SearchBox.searchBox;
 import static j2act.html.TagCreator.*;
 
 import com.example.counter.components.Counter;
-import j2act.ContainerTag;
+import j2act.html.tags.HtmlTag;
 import j2act.LiveComponent;
 import j2act.Page;
 import j2act.State;
@@ -28,7 +28,7 @@ public class HomePage extends LiveComponent implements Page {
   private final State<Boolean> showProfile = state(true);
   private final State<String> saved = state("never");
 
-  @Override public ContainerTag render() {
+  @Override public HtmlTag render() {
     return html(
       head(
         title("j2act · first slice"),

@@ -18,4 +18,13 @@ final class Html {
       }
     }
   }
+
+  /** script and style are raw-text elements: text must not be entity-escaped, only kept from closing the element. */
+  static boolean isRawText(String tagName) {
+    return "script".equals(tagName) || "style".equals(tagName);
+  }
+
+  static void rawText(String s, StringBuilder out) {
+    out.append(s.replace("</", "<\\/"));
+  }
 }

@@ -8,7 +8,8 @@ import java.util.Collections;
 import java.util.List;
 
 import j2act.ComponentTag;
-import j2act.ContainerTag;
+import j2act.html.tags.DivTag;
+import j2act.html.tags.LiTag;
 import j2act.Prop;
 import j2act.State;
 
@@ -21,7 +22,7 @@ public final class NameRows extends ComponentTag {
     return new NameRows();
   }
 
-  @Override protected ContainerTag render() {
+  @Override protected DivTag render() {
     return div(
       button("Reverse")
         .onClick(e -> {
@@ -51,7 +52,7 @@ public final class NameRows extends ComponentTag {
       return this;
     }
 
-    @Override protected ContainerTag render() {
+    @Override protected LiTag render() {
       return li(
         button(open.get() ? "▾ " + name.get() : "▸ " + name.get())
           .onClick(e -> open.set(!open.get())),

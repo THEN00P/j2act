@@ -79,17 +79,17 @@ final class Renderer {
     }
     if (tag.pending != null) {
       out.append("<template data-j2-pending>");
-      renderNode(scope, path + "/pending", tag.pending);
+      renderNode(scope, path + "/pending", tag.pending, false);
       out.append("</template>");
     }
-    renderChildren(scope, path, ((ContainerTag) tag).children);
+    renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(tag.name));
     if (bootstrap != null && tag.name.equals("head")) {
       out.append(bootstrap);
     }
     out.append("</").append(tag.name).append('>');
   }
 
-  private void renderChildren(Scope scope, String path, List<DomContent> children) {
+  private void renderChildren(Scope scope, String path, List<DomContent> children, boolean rawText) {
     for (int i = 0; i < children.size(); i++) {
       DomContent child = children.get(i);
       if (child == null) {
@@ -97,17 +97,21 @@ final class Renderer {
       }
       Object key = keyOf(child);
       String segment = key != null ? "k" + key : String.valueOf(i);
-      renderNode(scope, path + "/" + segment, child);
+      renderNode(scope, path + "/" + segment, child, rawText);
     }
   }
 
-  private void renderNode(Scope scope, String path, DomContent node) {
+  private void renderNode(Scope scope, String path, DomContent node, boolean rawText) {
     if (node instanceof Text) {
-      Html.escape(((Text) node).text, out);
+      if (rawText) {
+        Html.rawText(((Text) node).text, out);
+      } else {
+        Html.escape(((Text) node).text, out);
+      }
     } else if (node instanceof UnsafeHtml) {
       out.append(((UnsafeHtml) node).html);
     } else if (node instanceof Fragment) {
-      renderChildren(scope, path, ((Fragment) node).children);
+      renderChildren(scope, path, ((Fragment) node).children, rawText);
     } else if (node instanceof Tag) {
       renderTag(scope, path, (Tag<?>) node, null);
     } else if (node instanceof ComponentTag) {

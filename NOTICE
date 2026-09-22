@@ -1,0 +1,36 @@
+j2act
+Copyright 2026 The j2act authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+------------------------------------------------------------------------------
+j2html (https://github.com/tipsy/j2html), Apache License 2.0
+
+j2act's tag API follows j2html: static TagCreator factories that take children
+only, typed per-element tag classes, with*/withCond*/is* attribute builders, and
+the each/iff/join helpers. The idea of generating that API from an HTML model and
+checking the model against the HTML specification comes from j2html's
+j2html-codegen module. j2act's generator is a new implementation of that design.
+
+------------------------------------------------------------------------------
+@vscode/web-custom-data (https://github.com/microsoft/vscode-custom-data)
+Copyright (c) Microsoft Corporation. MIT License.
+
+Element, attribute and description data used to generate the tag API and its
+Javadoc. A copy of the license ships next to the data in
+j2act-codegen/src/main/resources/data/.
+
+------------------------------------------------------------------------------
+@mdn/browser-compat-data (https://github.com/mdn/browser-compat-data), CC0 1.0
+
+Deprecation status and MDN reference links for elements and attributes.
+
+------------------------------------------------------------------------------
+@webref/elements (https://github.com/w3c/webref), MIT License
+
+The list of elements defined by the HTML specification, used to test coverage.
+
+------------------------------------------------------------------------------
+Idiomorph (https://github.com/bigskysoftware/idiomorph), 0BSD
+
+Bundled in j2act-core as the client-side DOM morphing library.

@@ -1,0 +1,45 @@
+{
+  "_about": "Corrections to @vscode/web-custom-data where it disagrees with the HTML standard. Each entry says why. valueSet v = boolean attribute; b = true/false enumerated; valueless = a value attribute that is also valid with no value; exclude = not generated.",
+  "globalAttributes": {
+    "autofocus": { "valueSet": "v", "_why": "boolean attribute per HTML 'The autofocus attribute is a boolean attribute'" },
+    "inert": { "valueSet": "v", "_why": "boolean attribute per HTML 'The inert attribute is a boolean attribute'" },
+    "contenteditable": { "valueSet": "b", "_why": "enumerated true/false/plaintext-only; is() sets true" }
+  },
+  "elements": {
+    "a": {
+      "attributes": {
+        "download": { "valueless": true, "_why": "an empty download attribute is valid: download with the server's file name" }
+      }
+    },
+    "area": {
+      "attributes": {
+        "download": { "valueless": true, "_why": "an empty download attribute is valid: download with the server's file name" }
+      }
+    },
+    "body": {
+      "attributes": {
+        "text": { "exclude": true, "_why": "non-conforming presentational color; would also shadow ContainerTag.withText (use CSS color)" }
+      }
+    },
+    "script": {
+      "attributes": {
+        "text": { "exclude": true, "_why": "a DOM property, not a content attribute; would shadow ContainerTag.withText, which sets the script body" }
+      }
+    },
+    "iframe": {
+      "attributes": {
+        "sandbox": { "valueless": true, "_why": "an empty sandbox attribute is valid and applies every restriction" }
+      }
+    },
+    "form": {
+      "attributes": {
+        "rel": {
+          "add": true,
+          "description": "Controls the annotations and what kinds of links the form creates.",
+          "mdn": "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/form#rel",
+          "_why": "the HTML standard defines rel on form; the data lacks it"
+        }
+      }
+    }
+  }
+}

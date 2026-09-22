@@ -6,7 +6,7 @@ import javax.inject.Inject;
 
 import com.example.counter.services.TickBus;
 import j2act.ComponentTag;
-import j2act.ContainerTag;
+import j2act.html.tags.PTag;
 import j2act.State;
 
 /**
@@ -25,7 +25,7 @@ public final class ClockFeed extends ComponentTag {
     return new ClockFeed();
   }
 
-  @Override protected ContainerTag render() {
+  @Override protected PTag render() {
     effect(() -> bus.subscribe(time -> {
       last.set(time);
       ticks.update(n -> n + 1);

@@ -11,32 +11,32 @@ final class T {
   private T() {
   }
 
-  static ContainerTag tag(String name, DomContent... children) {
-    return new ContainerTag(name, children);
+  static CustomTag tag(String name, DomContent... children) {
+    return new CustomTag(name, children);
   }
 
-  static ContainerTag tag(String name, String text) {
-    return new ContainerTag(name, new Text(text));
+  static CustomTag tag(String name, String text) {
+    return new CustomTag(name, new Text(text));
   }
 
-  static ContainerTag page(String title, DomContent... body) {
+  static CustomTag page(String title, DomContent... body) {
     return tag("html", tag("head", tag("title", title)), tag("body", body));
   }
 
-  static ContainerTag div(DomContent... children) {
+  static CustomTag div(DomContent... children) {
     return tag("div", children);
   }
 
-  static ContainerTag span(String text) {
+  static CustomTag span(String text) {
     return tag("span", text);
   }
 
-  static ContainerTag button(String text) {
+  static CustomTag button(String text) {
     return tag("button", text);
   }
 
-  static EmptyTag input() {
-    return new EmptyTag("input");
+  static CustomEmptyTag input() {
+    return new CustomEmptyTag("input");
   }
 
   static <X> Fragment each(Collection<X> items, Function<X, DomContent> row) {

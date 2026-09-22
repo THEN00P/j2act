@@ -6,7 +6,7 @@ import javax.inject.Inject;
 
 import com.example.counter.services.Directory;
 import j2act.ComponentTag;
-import j2act.ContainerTag;
+import j2act.html.tags.DivTag;
 import j2act.Prop;
 import j2act.Query;
 
@@ -27,7 +27,7 @@ public final class ProfileCard extends ComponentTag {
     return this;
   }
 
-  @Override protected ContainerTag render() {
+  @Override protected DivTag render() {
     return div(
       profile.isPending()
         ? p("Loading profile…")

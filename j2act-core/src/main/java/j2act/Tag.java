@@ -1,5 +1,7 @@
 package j2act;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -7,10 +9,12 @@ import java.util.Objects;
 
 /**
  * An HTML element. Params are children only; everything else is a with* builder
- * (ADR 0005). Event handlers, debounce and pending are declared here and shipped to
- * the client as attributes when the element renders (ADR 0013).
+ * (ADR 0005). Global attributes come from the generated {@link GlobalAttributes};
+ * element-specific ones live on the generated tag classes in j2act-html. Event
+ * handlers, debounce and pending are declared here and shipped to the client as
+ * attributes when the element renders (ADR 0013).
  */
-public abstract class Tag<T extends Tag<T>> implements DomContent {
+public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttributes<T> {
 
   final String name;
   final Map<String, String> attributes = new LinkedHashMap<>();
@@ -25,13 +29,18 @@ public abstract class Tag<T extends Tag<T>> implements DomContent {
 
   abstract boolean isVoid();
 
+  @Override
   @SuppressWarnings("unchecked")
-  protected final T self() {
+  public final T self() {
     return (T) this;
   }
 
+  public String getTagName() {
+    return name;
+  }
+
   /** Sets an attribute; a null value removes it. */
-  public T attr(String name, Object value) {
+  @Override public T attr(String name, Object value) {
     if (value == null) {
       attributes.remove(name);
     } else {
@@ -41,73 +50,36 @@ public abstract class Tag<T extends Tag<T>> implements DomContent {
   }
 
   /** Sets a boolean attribute such as disabled or checked. */
-  public T attr(String name) {
+  @Override public T attr(String name) {
     attributes.put(name, "");
     return self();
   }
 
-  public T withId(String id) {
-    return attr("id", id);
+  public T condAttr(boolean condition, String name, Object value) {
+    return condition ? attr(name, value) : self();
   }
 
-  public T withClass(String cls) {
-    return attr("class", cls);
+  /** Space-joins the given classes, skipping nulls so iff(...) can drop one. */
+  public T withClasses(String... classes) {
+    StringBuilder joined = new StringBuilder();
+    for (String cls : classes) {
+      if (cls != null && !cls.isEmpty()) {
+        if (joined.length() > 0) {
+          joined.append(' ');
+        }
+        joined.append(cls);
+      }
+    }
+    return joined.length() == 0 ? self() : attr("class", joined.toString());
   }
 
-  public T withHref(String href) {
-    return attr("href", href);
+  /** Sets data-{key}. */
+  public T withData(String key, String value) {
+    return attr("data-" + key, value);
   }
 
-  public T withSrc(String src) {
-    return attr("src", src);
-  }
-
-  public T withRel(String rel) {
-    return attr("rel", rel);
-  }
-
-  public T withType(String type) {
-    return attr("type", type);
-  }
-
-  public T withName(String name) {
-    return attr("name", name);
-  }
-
-  public T withContent(String content) {
-    return attr("content", content);
-  }
-
-  public T withValue(Object value) {
-    return attr("value", value);
-  }
-
-  public T withPlaceholder(String placeholder) {
-    return attr("placeholder", placeholder);
-  }
-
-  public T withStyle(String style) {
-    return attr("style", style);
-  }
-
-  public T withTitle(String title) {
-    return attr("title", title);
-  }
-
-  public T withFor(String id) {
-    return attr("for", id);
-  }
-
-  public T withLang(String lang) {
-    return attr("lang", lang);
-  }
-
-  public T withCharset(String charset) {
-    return attr("charset", charset);
-  }
-
-  public T withDisabled(boolean disabled) {
-    return disabled ? attr("disabled") : attr("disabled", null);
+  public T withCondData(boolean condition, String key, String value) {
+    return condition ? withData(key, value) : self();
   }
 
   /** Morph and slot identity for repeated rows; never rendered as HTML (ADR 0019). */
@@ -141,5 +113,35 @@ public abstract class Tag<T extends Tag<T>> implements DomContent {
   public T withPending(DomContent content) {
     this.pending = content;
     return self();
+  }
+
+  /** Renders to HTML outside any session: no handlers, components render with initial state. */
+  public String render() {
+    StringBuilder out = new StringBuilder();
+    render(out);
+    return out.toString();
+  }
+
+  public void render(Appendable out) {
+    try {
+      StaticRenderer.render(this, out, false);
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
+  /** Like render(), with one element per line and four-space indentation. */
+  public String renderFormatted() {
+    StringBuilder out = new StringBuilder();
+    try {
+      StaticRenderer.render(this, out, true);
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+    return out.toString();
+  }
+
+  @Override public String toString() {
+    return render();
   }
 }

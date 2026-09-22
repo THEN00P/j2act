@@ -12,12 +12,24 @@
 
   <artifactId>j2act-html</artifactId>
   <name>j2act-html</name>
-  <description>Static tag factories with the j2html shape (stand-in for the j2html fork, ADR 0002).</description>
+  <description>Generated typed tag API with the j2html shape (see j2act-codegen and NOTICE).</description>
 
   <dependencies>
     <dependency>
       <groupId>dev.j2act</groupId>
       <artifactId>j2act-core</artifactId>
+    </dependency>
+    <!-- Test only: the API compatibility check against j2html. Never a runtime dependency. -->
+    <dependency>
+      <groupId>com.j2html</groupId>
+      <artifactId>j2html</artifactId>
+      <version>1.6.0</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 </project>

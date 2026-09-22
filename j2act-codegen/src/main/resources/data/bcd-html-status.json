@@ -1,0 +1,3713 @@
+{
+  "source" : "@mdn/browser-compat-data@8.1.2",
+  "elements" : {
+    "a" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/a",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "attributionsourceid" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "attributionsrc" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "charset" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "coords" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "download" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "href" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "hreflang" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "hreftranslate" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : false
+        },
+        "implicit_noopener" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "interestfor" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : false
+        },
+        "name" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "ping" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "referrerpolicy" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "rel" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/rel",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "rev" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "shape" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "target" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "text_fragments" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "abbr" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/abbr",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "acronym" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/acronym",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "address" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/address",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "area" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/area",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "alt" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "attributionsrc" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "coords" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "download" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "href" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "hreflang" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "implicit_noopener" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "interestfor" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : false
+        },
+        "nohref" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "ping" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "referrerpolicy" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "rel" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/rel",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "shape" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "target" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        }
+      }
+    },
+    "article" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/article",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "aside" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/aside",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "audio" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/audio",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "autoplay" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "controls" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "controlslist" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "crossorigin" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/crossorigin",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "disableremoteplayback" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "loading" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "loop" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "muted" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "preload" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "src" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "b" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/b",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "base" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/base",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "href" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "target" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "bdi" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/bdi",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "bdo" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/bdo",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "big" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/big",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "blockquote" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/blockquote",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "cite" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "body" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/body",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "alink" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "background" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "bgcolor" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "bottommargin" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "leftmargin" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "link" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "rightmargin" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "text" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "topmargin" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "vlink" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "br" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/br",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "clear" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "button" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/button",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "command" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "commandfor" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "disabled" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/disabled",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "form" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/form",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "formaction" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "formenctype" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "formmethod" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "formnovalidate" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "formtarget" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "interestfor" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : false
+        },
+        "name" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "popovertarget" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/button#popovertarget",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "popovertargetaction" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/button#popovertargetaction",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "value" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "camera" : {
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "canvas" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/canvas",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "height" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "moz-opaque" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "width" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "caption" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/caption",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "center" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/center",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "cite" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/cite",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "code" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/code",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "col" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/col",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "char" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "charoff" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "span" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "valign" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "colgroup" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/colgroup",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "char" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "charoff" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "span" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "valign" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "data" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/data",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "value" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "datalist" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/datalist",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "input_type_color" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "input_type_date" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "input_type_email" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "input_type_number" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "input_type_range" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "input_type_search" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "input_type_tel" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "input_type_text" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "input_type_time" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "input_type_url" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "dd" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/dd",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "del" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/del",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "cite" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "datetime" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "details" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/details",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "name" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "open" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "search_match_opens" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "dfn" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/dfn",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "dialog" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/dialog",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "closedby" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "open" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "dir" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/dir",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "compact" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        }
+      }
+    },
+    "div" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/div",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        }
+      }
+    },
+    "dl" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/dl",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "dt" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/dt",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "em" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/em",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "embed" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/embed",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "height" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "name" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "src" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "fencedframe" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/fencedframe",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "allow" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "height" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "fieldset" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/fieldset",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "disabled" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/disabled",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "form" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/form",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "name" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "figcaption" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/figcaption",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "figure" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/figure",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "font" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/font",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "color" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "face" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "size" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        }
+      }
+    },
+    "footer" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/footer",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "form" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/form",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "accept-charset" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "action" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "autocomplete" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/autocomplete",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "enctype" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "method" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "name" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "novalidate" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "rel" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/rel",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "target" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "frame" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/frame",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "frameborder" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "marginheight" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "marginwidth" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "name" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "noresize" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "scrolling" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "src" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        }
+      }
+    },
+    "frameset" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/frameset",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "cols" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "rows" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        }
+      }
+    },
+    "geolocation" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/geolocation",
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : true,
+      "attributes" : {
+        "autolocate" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "watch" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        }
+      }
+    },
+    "h1" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/Heading_Elements",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "no_ua_styles_in_article_aside_nav_section" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/Heading_Elements#specifying_a_uniform_font_size_for_h1",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "h2" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/Heading_Elements",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "h3" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/Heading_Elements",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "h4" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/Heading_Elements",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "h5" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/Heading_Elements",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "h6" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/Heading_Elements",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "head" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/head",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "header" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/header",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "hgroup" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/hgroup",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "implicit_group_role" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "hr" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/hr",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "color" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "hr_in_select" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "noshade" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "size" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "width" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        }
+      }
+    },
+    "html" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/html",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "version" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "xmlns" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : false
+        }
+      }
+    },
+    "i" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/i",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "iframe" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/iframe",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "allow" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "allowfullscreen" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "allowpaymentrequest" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "browsingtopics" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "credentialless" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTTP/Guides/IFrame_credentialless",
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "cross-origin-top-navigation-by-user-activation" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : false
+        },
+        "csp" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "frameborder" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "height" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "loading" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "longdesc" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "marginheight" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "marginwidth" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "name" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "privateToken" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "referrerpolicy" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "sandbox" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "scrolling" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "src" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "srcdoc" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "img" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/img",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "alt" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "aspect_ratio_computed_from_attributes" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "attributionsrc" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "border" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "crossorigin" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/crossorigin",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "decoding" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/img#decoding",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "fetchpriority" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/fetchpriority",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "height" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "hspace" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "ismap" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "loading" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "longdesc" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "name" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "referrerpolicy" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "sizes" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "src" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "srcset" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "usemap" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "vspace" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "input" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "accept" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/accept",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "alpha" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "alt" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#alt",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "autocomplete" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/autocomplete",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "capture" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/capture",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "checked" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#checked",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "colorspace" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/color",
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "dirname" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#dirname",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "disabled" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/disabled",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "form" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#form",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "formaction" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#formaction",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "formenctype" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#formenctype",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "formmethod" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#formmethod",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "formnovalidate" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#formnovalidate",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "formtarget" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#formtarget",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "max" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/max",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "maxlength" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/maxlength",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "min" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/min",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "minlength" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/minlength",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "multiple" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/multiple",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "name" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#name",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "pattern" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/pattern",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "placeholder" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#placeholder",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "popovertarget" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#popovertarget",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "popovertargetaction" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#popovertargetaction",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "readonly" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/readonly",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "required" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#required",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "size" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/size",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "src" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input#src",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "step" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/step",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "switch" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/checkbox#switch",
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : false
+        },
+        "type_button" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/button",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_checkbox" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/checkbox",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_color" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/color",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_date" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/date",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_datetime-local" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/datetime-local",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_email" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/email",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_file" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/file",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_hidden" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/hidden",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_image" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/image",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_month" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/month",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_number" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/number",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_password" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/password",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_radio" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/radio",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_range" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/range",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_reset" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/reset",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_search" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/search",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_submit" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/submit",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_tel" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/tel",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_text" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/text",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_time" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/time",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_url" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/url",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type_week" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/input/week",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "usemap" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "webkitdirectory" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "ins" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/ins",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "cite" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "datetime" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "install" : {
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : false,
+      "attributes" : {
+        "manifest" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : false
+        },
+        "manifestId" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : false
+        }
+      }
+    },
+    "kbd" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/kbd",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "label" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/label",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "for" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/for",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "legend" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/legend",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "li" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/li",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "type" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "value" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "link" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/link",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "as" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "blocking" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "charset" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "crossorigin" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/crossorigin",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "disabled" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "fetchpriority" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/fetchpriority",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "href" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "hreflang" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "imagesizes" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "imagesrcset" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "integrity" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/integrity",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "media" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "referrerpolicy" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "rel" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/rel",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "rev" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "sizes" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "target" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "main" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/main",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "map" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/map",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "name" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "mark" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/mark",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "marquee" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/marquee",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "behavior" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "bgcolor" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "direction" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "height" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "hspace" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "loop" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "scrollamount" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "scrolldelay" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "truespeed" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "vspace" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "width" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        }
+      }
+    },
+    "menu" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/menu",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "meta" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/meta",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "charset" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "content" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/content",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "http-equiv" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/meta/http-equiv",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "name" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/meta/name",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "scheme" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "meter" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/meter",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "high" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "low" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "max" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/max",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "min" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/min",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "optimum" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "value" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "microphone" : {
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "model" : {
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : true,
+      "attributes" : {
+        "autoplay" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "height" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "loop" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "src" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "stagemode" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        }
+      }
+    },
+    "nav" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/nav",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "nobr" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/nobr",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "noembed" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/noembed",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "noframes" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/noframes",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "noscript" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/noscript",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "object" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/object",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "archive" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "border" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "classid" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "codebase" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "codetype" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "data" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "declare" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "form" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/form",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "height" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "name" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "standby" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "usemap" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "ol" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/ol",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "compact" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "reversed" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "start" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "optgroup" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/optgroup",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "disabled" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/disabled",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "label" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "option" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/option",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "disabled" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/disabled",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "label" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "selected" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "value" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "output" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/output",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "for" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/for",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "form" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/form",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "name" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "p" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/p",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "param" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/param",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "name" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "type" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "value" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "valuetype" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        }
+      }
+    },
+    "picture" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/picture",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "plaintext" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/plaintext",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "pre" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/pre",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "width" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        }
+      }
+    },
+    "progress" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/progress",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "max" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/max",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "value" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "q" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/q",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "cite" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "rb" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/rb",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "rp" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/rp",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "rt" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/rt",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "rtc" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/rtc",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "ruby" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/ruby",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "s" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/s",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "samp" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/samp",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "script" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/script",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "async" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "attributionsrc" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "blocking" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "crossorigin" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/crossorigin",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "defer" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "fetchpriority" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/fetchpriority",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "integrity" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/integrity",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "nomodule" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "referrerpolicy" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "src" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/script/type",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "search" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/search",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "section" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/section",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "select" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/select",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "autocomplete" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/select#autocomplete",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "disabled" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/disabled",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "form" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/form",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "hr_in_select" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "multiple" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/multiple",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "name" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "required" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/required",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "size" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/size",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "selectedcontent" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/selectedcontent",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "slot" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/slot",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "name" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "small" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/small",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "source" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/source",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "height" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "media" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "sizes" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "src" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "srcset" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "span" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/span",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "strike" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/strike",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "strong" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/strong",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "style" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/style",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "blocking" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "media" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "sub" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/sub",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "summary" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/summary",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "display_list_item" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "sup" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/sup",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "table" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/table",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "bgcolor" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "border" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "cellpadding" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "cellspacing" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "frame" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "rules" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "summary" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "tbody" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/tbody",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "bgcolor" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "char" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "charoff" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "valign" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "td" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/td",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "abbr" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "axis" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "bgcolor" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "char" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "charoff" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "colspan" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "headers" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "rowspan" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "scope" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "valign" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "template" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/template",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "for" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/template#for",
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "shadowrootclonable" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/template#shadowrootclonable",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "shadowrootcustomelementregistry" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/template#shadowrootcustomelementregistry",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "shadowrootdelegatesfocus" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/template#shadowrootdelegatesfocus",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "shadowrootmode" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/template#shadowrootmode",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "shadowrootreferencetarget" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/template#shadowrootreferencetarget",
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : false
+        },
+        "shadowrootserializable" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/template#shadowrootserializable",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "shadowrootslotassignment" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        }
+      }
+    },
+    "textarea" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/textarea",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "autocomplete" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/autocomplete",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "cols" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "dirname" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/dirname",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "disabled" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/disabled",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "form" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/form",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "maxlength" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/maxlength",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "minlength" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/minlength",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "name" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "placeholder" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/placeholder",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "readonly" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/readonly",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "required" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/required",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "rows" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "wrap" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "tfoot" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/tfoot",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "bgcolor" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "char" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "charoff" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "valign" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "th" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/th",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "abbr" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "axis" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "bgcolor" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "char" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "charoff" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "colspan" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "headers" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "rowspan" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "scope" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "valign" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "thead" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/thead",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "bgcolor" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : false
+        },
+        "char" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "charoff" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "valign" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "time" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/time",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "datetime" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "title" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/title",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "tr" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/tr",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "align" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "bgcolor" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "char" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "charoff" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "valign" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "track" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/track",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "default" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "kind" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "label" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "src" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "srclang" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "tt" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/tt",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "u" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/u",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "ul" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/ul",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "compact" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        },
+        "type" : {
+          "deprecated" : true,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "usermedia" : {
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "var" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/var",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "video" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/video",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : {
+        "aspect_ratio_computed_from_attributes" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "autoplay" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "controls" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "controlslist" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "crossorigin" : {
+          "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Attributes/crossorigin",
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "disablepictureinpicture" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "disableremoteplayback" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "height" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "loading" : {
+          "deprecated" : false,
+          "experimental" : true,
+          "standard" : true
+        },
+        "loop" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "muted" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "playsinline" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "poster" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "preload" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "src" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        },
+        "width" : {
+          "deprecated" : false,
+          "experimental" : false,
+          "standard" : true
+        }
+      }
+    },
+    "wbr" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/wbr",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    },
+    "xmp" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/xmp",
+      "deprecated" : true,
+      "experimental" : false,
+      "standard" : true,
+      "attributes" : { }
+    }
+  },
+  "globalAttributes" : {
+    "accesskey" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/accesskey",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "anchor" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/anchor",
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : false
+    },
+    "autocapitalize" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/autocapitalize",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "autocorrect" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/autocorrect",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "autofocus" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/autofocus",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "class" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/class",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "containertiming" : {
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : true
+    },
+    "containertimingignore" : {
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : true
+    },
+    "contenteditable" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/contenteditable",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "data_attributes" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/data-*",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "dir" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/dir",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "draggable" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/draggable",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "elementtiming" : {
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : true
+    },
+    "enterkeyhint" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/enterkeyhint",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "exportparts" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/exportparts",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "headingoffset" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/headingoffset",
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : true
+    },
+    "headingreset" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/headingreset",
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : true
+    },
+    "hidden" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/hidden",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "id" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/id",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "inert" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/inert",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "inputmode" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/inputmode",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "is" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/is",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "lang" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/lang",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "nonce" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/nonce",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "part" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/part",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "popover" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/popover",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "slot" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/slot",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "spellcheck" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/spellcheck",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "style" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/style",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "tabindex" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/tabindex",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "title" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/title",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "translate" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/translate",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    },
+    "virtualkeyboardpolicy" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/virtualkeyboardpolicy",
+      "deprecated" : false,
+      "experimental" : true,
+      "standard" : true
+    },
+    "writingsuggestions" : {
+      "mdn" : "https://developer.mozilla.org/docs/Web/HTML/Reference/Global_attributes/writingsuggestions",
+      "deprecated" : false,
+      "experimental" : false,
+      "standard" : true
+    }
+  }
+}

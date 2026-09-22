@@ -15,7 +15,7 @@ class RenderingTest {
           T.span("<b>x</b>"),
           null,
           T.tag("p", "after").withKey("secret-key"),
-          T.input().withValue("\"q\"").attr("disabled")));
+          T.input().attr("value", "\"q\"").attr("disabled")));
     }
   }
 

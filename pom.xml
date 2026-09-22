@@ -11,6 +11,7 @@
   <name>j2act</name>
 
   <modules>
+    <module>j2act-codegen</module>
     <module>j2act-core</module>
     <module>j2act-html</module>
     <module>j2act-router</module>

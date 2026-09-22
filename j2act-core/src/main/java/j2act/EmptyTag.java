@@ -1,9 +1,9 @@
 package j2act;
 
 /** A void element such as input, meta or img. */
-public class EmptyTag extends Tag<EmptyTag> {
+public abstract class EmptyTag<T extends EmptyTag<T>> extends Tag<T> {
 
-  public EmptyTag(String name) {
+  protected EmptyTag(String name) {
     super(name);
   }
 
