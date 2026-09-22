@@ -1,0 +1,9 @@
+# Event binding: debounce, pending, rate limits, handler validity
+
+Latency control must run on the client, so it is declared on the tag at bind time and shipped as attributes with the render. Precedent is LiveView's element-level phx-debounce, expressed in our with* shape: withDebounce(ofMillis(300)) and withThrottle(...) apply to the element's events. Default is none.
+
+Pending is also declared on the tag, not in a lifecycle loop. While an element's event is in flight (click until the server's morph for that event lands), the client sets data-pending and aria-busy on it and drops repeat events from it, so double submits die client-side and Tailwind's data-[pending]: variants work with zero API. withPending(content) goes further: the pending markup ships hidden with the render and the client swaps it in instantly, reverting on ack or failure. This has to be client-side: a server-rendered spinner only arrives after the round trip it is meant to cover. Long async work past the ack stays on Mutation.isPending (ADR 0006).
+
+The framework owns the socket, so it owns socket abuse limits. Per-session token buckets for events and upload chunks, a max frame size, and a bounded per-session queue are configured on the mount as a function of AuthCtx, e.g. withRateLimit(auth -> auth.isAnonymous() ? perSecond(10) : perSecond(50)), so logged-in users get looser limits without us knowing roles. Overflow drops the event and logs; sustained overflow closes the socket. Business rate limits (logins, API quotas) stay the user's.
+
+Only handlers present in the session's latest render are invokable. Handler ids are unguessable per session and rotate when a scope re-renders, so a removed or never-rendered button cannot be driven by a crafted frame. This is the enforcement behind ADR 0008's render-captured auth re-checks.

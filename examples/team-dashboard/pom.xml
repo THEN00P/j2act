@@ -1,0 +1,20 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>team-dashboard</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <properties>
+    <!-- Java 11 baseline: Spring Boot 2.7 line (javax.servlet). -->
+    <java.version>11</java.version>
+    <j2act.version>0.1.0-SNAPSHOT</j2act.version>
+    <spring-boot.version>2.7.18</spring-boot.version>
+  </properties>
+  <dependencies>
+    <dependency><groupId>dev.j2act</groupId><artifactId>j2act-core</artifactId><version>${j2act.version}</version></dependency>
+    <dependency><groupId>dev.j2act</groupId><artifactId>j2act-html</artifactId><version>${j2act.version}</version></dependency>
+    <dependency><groupId>dev.j2act</groupId><artifactId>j2act-router</artifactId><version>${j2act.version}</version></dependency>
+    <dependency><groupId>dev.j2act</groupId><artifactId>j2act-spring</artifactId><version>${j2act.version}</version></dependency>
+    <dependency><groupId>dev.j2act</groupId><artifactId>j2act-jakarta</artifactId><version>${j2act.version}</version></dependency>
+    <dependency><groupId>org.hibernate</groupId><artifactId>hibernate-core</artifactId></dependency>
+  </dependencies>
+</project>

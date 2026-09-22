@@ -1,0 +1,9 @@
+# Soft navigation and preload
+
+Navigation feels like server navigation without the reload, TanStack Router style. The client intercepts same-origin clicks on plain a() tags whose href matches the route tree; modifier clicks, target, download attributes and external hrefs pass through to the browser. No link() factory: a() stays HTML. redirect(), navigate() from handlers, and popstate take the same path.
+
+A navigation sends the target URL over the socket. The server matches it, keeps every layout the old and new routes share (and their State), unmounts the diverging subtree running Effect cleanups, mounts the new one, and morphs only the innermost changed layout's child plus a head merge (ADR 0007). The client pushes a real history entry and restores scroll per entry on back/forward. Guards run on every navigation, and a denial redirects before anything mounts.
+
+Pending follows TanStack's pendingMs: the old page stays up while the new route's owned queries settle; past a threshold (default 1s) loading() shows, held for a minimum (default 500ms) so it never flashes.
+
+Preload is in core because only the router and the live session can do it: a third-party jar sees neither the route tree nor the session. withPreload(INTENT) on an a() (or a router-wide default) makes hover/touchstart ask the server to pre-mount the target subtree and start its queries, held briefly for the click to commit. Preloaded subtrees run guards and queries but not Effects until the navigation commits. Queries are cached reads, so a preload the user never clicks costs a discarded cache entry. Effects are side effects: a Debezium subscription (ADR 0014), a timer, "mark as read", an audit log entry. Run on hover, they would fire for pages the user never opened and need cleanup for a mount that never happened. TanStack Router makes the same split: preload runs loaders, and component effects mount only on navigation. Default off: hover triggers real DB work, so users opt in.

@@ -1,0 +1,5 @@
+# SSR awaits owned queries by default
+
+A full-page serve blocks until the page's owned queries settle and ships complete HTML: no skeleton flash, correct status codes (notFound() inside a loader still 404s), and crawlers see content. Precedent: Remix/React Router and TanStack Router await loaders by default and stream only on opt-in. Next.js streams whenever loading.tsx exists, which is why its pages flash skeletons.
+
+Two escapes. withDefer() on a query opts it out, so SSR renders loading() or the inline pending branch and the socket fills it after connect. And a server-wide SSR await budget (default 3s, withSsrAwaitBudget(...)) caps how long a full-page serve waits for queries. It is not a request timeout: past it, the HTML ships at once with loading() or the pending branch for queries still running, and they finish over the socket. The budget exists because each waiting request holds a servlet thread on Java 11 (ADR 0017), and a user staring at a blank tab for longer than a few seconds is worse off than one seeing a skeleton. Soft navigations use the pendingMs rules from ADR 0011 instead.
