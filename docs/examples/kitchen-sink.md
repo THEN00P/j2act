@@ -36,9 +36,7 @@ public class UsersPage extends LiveComponent implements Page {
 
   @Override public ContainerTag render() {
     State<String> filter = state("");
-    Query<List<User>> users = query(
-      () -> "users:" + filter.get(),
-      () -> repo.search("%" + filter.get() + "%"));
+    Query<List<User>> users = query(() -> repo.search("%" + filter.get() + "%")); // keyless, ADR 0020
 
     return html(
       head(
@@ -98,22 +96,37 @@ div(
   up.error().get() == null ? null : p(up.error().get()))
 ```
 
+## Shared query (opt-in key, any number of parts, ADR 0020)
+
+```java
+query(() -> repo.search(filter.get(), page.get()))
+  .withKey("users", filter.get(), page.get());   // shared + dedup across components
+mutation(...).withInvalidates("users");          // prefix: hits every "users" entry
+```
+
+## Tracked props (ADR 0020)
+
+```java
+private final Prop<User> user = prop();
+public UserRowTag withUser(User u) { user.set(u); return this; }
+```
+
 ## Download (upload's twin, ADR 0012)
 
 ```java
-Mutation<Void> export = download(out -> repo.writeCsv(filter.get(), out))
+Mutation<String> export = download((String like, OutputStream out) -> repo.writeCsv(like, out))
   .withFileName("users.csv").withContentType("text/csv");
 
-UI.button("Export CSV").withPending(spinner()).onClick(e -> export.mutate())
+UI.button("Export CSV").withPending(spinner()).onClick(e -> export.mutate(filter.get()))
 // export.isPending() stays true until the last byte is streamed
 ```
 
 ## notFound and redirect (ADR 0015)
 
 ```java
-Query<User> user = query(
-  () -> "user:" + id,
-  () -> repo.find(id).orElseThrow(() -> notFound())); // 404 on full serve, soft nav over WS
+Query<User> user = query(() -> repo
+  .find(Long.parseLong(pathParam("id")))
+  .orElseThrow(() -> notFound())); // 404 on full serve, soft nav over WS
 ```
 
 ## Push from outside the session (ADR 0014)

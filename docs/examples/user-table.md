@@ -10,10 +10,7 @@ public class UserTablePage extends LiveComponent implements Page {
   @Inject private Users users;
 
   private final State<String> nameFilter = state("");
-  private final Query<List<User>> list = query(
-    () -> "users:" + nameFilter.get(),
-    () -> users.search("%" + nameFilter.get() + "%")
-  );
+  private final Query<List<User>> list = query(() -> users.search("%" + nameFilter.get() + "%"));
 
   @Override public ContainerTag render() {
     return div(

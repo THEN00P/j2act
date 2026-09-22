@@ -9,6 +9,7 @@ import javax.inject.Inject;
 import com.example.team.db.Users;
 import j2act.ComponentTag;
 import j2act.ContainerTag;
+import j2act.Prop;
 import j2act.State;
 import j2act.Variant;
 
@@ -28,22 +29,22 @@ public final class UserRow {
   public static final class UserRowTag extends ComponentTag {
     @Inject private Users users;
 
-    private Users.User user;
+    private final Prop<Users.User> user = prop();
     private final State<Boolean> confirming = state(false);
 
-    public UserRowTag withUser(Users.User user) {
-      this.user = user;
+    public UserRowTag withUser(Users.User u) {
+      user.set(u);
       return this;
     }
 
     @Override protected ContainerTag render() {
       return tr(
         td(
-          a(user.getName())
-            .withHref("/admin/users/" + user.getId())
+          a(user.get().getName())
+            .withHref("/admin/users/" + user.get().getId())
             .withPreload(INTENT)
         ),
-        td(user.getEmail()),
+        td(user.get().getEmail()),
         td(
           auth().hasRole("superadmin")
             ? deleteCell()
@@ -58,7 +59,7 @@ public final class UserRow {
             UI.button("Confirm delete")
               .withVariant(Variant.DESTRUCTIVE)
               .withPending(spinner())
-              .onClick(e -> users.delete(user.getId())),
+              .onClick(e -> users.delete(user.get().getId())),
             UI.button("Cancel")
               .onClick(e -> confirming.set(false))
           )

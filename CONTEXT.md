@@ -20,6 +20,10 @@ _Avoid_: Controller, BackingBean, ViewModel
 A LiveComponent subtree mounted inside an existing non-J2ACT app, receiving outer auth/cookies/props at mount.
 _Avoid_: Portlet, Fragment, Widget
 
+**Prop**:
+Tracked component input. A with* builder writes it, render(), computed(), effect() and query loaders read it, and reads are tracked like State.
+_Avoid_: Input, Attribute, Param
+
 **Computed**:
 Pure derived value recomputed when tracked State changes. No side-effects.
 _Avoid_: Derived, Memo
@@ -29,7 +33,7 @@ Side-effect runner that auto-tracks State reads inside it and re-runs on change,
 _Avoid_: Watcher, Listener
 
 **Query**:
-Cached async loader with a key, per-session dedup and refetch when tracked State changes. TanStack-style status: isPending/isFetching/isError/isSuccess, error, refetch(). The loader is any Java code (EntityManager, REST, GraphQL) using injected fields; transactions are the user's own. Owned queries are awaited on SSR unless withDefer().
+Cached async loader written as one lambda: State read inside it is a dependency, no key needed. Runs on the executor and is validated on commit; the cache survives unmount by slot. withKey(parts...) opts into sharing across components (ADR 0020). TanStack-style status: isPending/isFetching/isError/isSuccess, error, refetch(). The loader is any Java code (EntityManager, REST, GraphQL) using injected fields; transactions are the user's own. Owned queries are awaited on SSR unless withDefer().
 _Avoid_: Deferred, Fetcher, TenStackQuery
 
 **Mutation**:
@@ -45,7 +49,7 @@ A LiveComponent with a code-based route, nested layouts/subroutes, plus optional
 _Avoid_: View, Screen, Controller
 
 **Component**:
-Reusable LiveComponent taking props (values/State) via with* builders, reading auth() and URL via pathParam()/queryParam() ambiently like Pages, so it works in Pages and Islands.
+Reusable LiveComponent taking props (values/State) via with* builders that write tracked Prop<T> fields, reading auth() and URL via pathParam()/queryParam() ambiently like Pages, so it works in Pages and Islands.
 _Avoid_: Widget, Partial
 
 **AuthCtx**:

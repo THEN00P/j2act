@@ -3,6 +3,7 @@ package com.example.team.pages;
 import static j2act.html.TagCreator.*;
 import static j2act.ui.Ui.*;
 
+import java.io.OutputStream;
 import java.time.Duration;
 import java.util.List;
 
@@ -19,8 +20,9 @@ import j2act.Query;
 import j2act.State;
 
 /**
- * Filterable directory. Eager filter via onInput plus a client-side debounce;
- * SSR awaits the users query, so the first paint already has rows. CSV export
+ * Filterable directory. Eager filter via onInput plus a client-side debounce.
+ * The query is keyless: filter is read inside the loader, so it is the
+ * dependency. SSR awaits the users query, so the first paint already has rows. CSV export
  * streams through download(), and the button spins until the last byte.
  */
 public class UsersPage extends LiveComponent implements Page {
@@ -29,10 +31,8 @@ public class UsersPage extends LiveComponent implements Page {
 
   @Override public ContainerTag render() {
     State<String> filter = state("");
-    Query<List<Users.User>> list = query(
-      () -> "users:" + filter.get(),
-      () -> users.search("%" + filter.get() + "%"));
-    Mutation<Void> export = download(out -> users.writeCsv("%" + filter.get() + "%", out))
+    Query<List<Users.User>> list = query(() -> users.search("%" + filter.get() + "%"));
+    Mutation<String> export = download((String like, OutputStream out) -> users.writeCsv(like, out))
       .withFileName("users.csv")
       .withContentType("text/csv");
 
@@ -53,7 +53,7 @@ public class UsersPage extends LiveComponent implements Page {
             .onInput(e -> filter.set(e.value())),
           UI.button("Export CSV")
             .withPending(spinner())
-            .onClick(e -> export.mutate()),
+            .onClick(e -> export.mutate("%" + filter.get() + "%")),
           export.error().get() == null
             ? null
             : p("Export failed: " + export.error().get()),

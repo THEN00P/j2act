@@ -16,17 +16,17 @@ import j2act.State;
 /**
  * /admin/users/{id}. A missing user throws notFound() from the loader: a real
  * 404 with the fallback page on a full serve, a soft navigation over the socket.
- * Same instance is kept across /users/1 -> /users/2; the query refetches by key.
+ * Same instance is kept across /users/1 -> /users/2; the loader read
+ * pathParam("id"), so it refetches.
  */
 public class UserPage extends LiveComponent implements Page {
 
   @Inject private Users users;
 
   @Override public ContainerTag render() {
-    long id = Long.parseLong(pathParam("id"));
-    Query<Users.User> user = query(
-      () -> "user:" + id,
-      () -> users.find(id).orElseThrow(() -> notFound()));
+    Query<Users.User> user = query(() -> users
+      .find(Long.parseLong(pathParam("id")))
+      .orElseThrow(() -> notFound()));
     State<String> name = state("");
 
     return html(
@@ -44,7 +44,7 @@ public class UserPage extends LiveComponent implements Page {
           UI.button("Save")
             .withPending(spinner())
             .onClick(e -> {
-              users.rename(id, name.get());
+              users.rename(user.get().getId(), name.get());
               user.refetch();
             }),
           a("Back to users")
