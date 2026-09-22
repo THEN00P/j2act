@@ -1,0 +1,341 @@
+package j2act;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.Base64;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * The runtime a transport adapter drives: serve() for full-page loads, onMessage()
+ * and onClose() for the socket. Holds sessions and evicts them on idle timeout or
+ * after the reconnect grace window (ADR 0010). Servlet-agnostic (ADR 0004).
+ */
+public final class J2Act implements AutoCloseable {
+
+  private static final System.Logger LOG = System.getLogger("j2act");
+
+  final PageResolver resolver;
+  final Executor executor;
+  final MembersInjector injector;
+  final String contextPath;
+  final Clock clock;
+  final long reconnectGraceMillis;
+  final long idleTimeoutMillis;
+  final long ssrAwaitMillis;
+  final long queryStaleMillis;
+  final long queryGcMillis;
+  final Stats stats = new Stats();
+
+  private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<Connection, Session> byConnection = new ConcurrentHashMap<>();
+  private final ScheduledExecutorService sweeper;
+  private final ExecutorService ownedExecutor;
+  private final SecureRandom random = new SecureRandom();
+
+  private J2Act(Builder b) {
+    this.resolver = b.resolver;
+    this.injector = b.injector;
+    this.contextPath = b.contextPath;
+    this.clock = b.clock;
+    this.reconnectGraceMillis = b.reconnectGrace.toMillis();
+    this.idleTimeoutMillis = b.idleTimeout.toMillis();
+    this.ssrAwaitMillis = b.ssrAwaitBudget.toMillis();
+    this.queryStaleMillis = b.queryStaleTime.toMillis();
+    this.queryGcMillis = b.queryGcTime.toMillis();
+    if (b.executor != null) {
+      this.executor = b.executor;
+      this.ownedExecutor = null;
+    } else {
+      this.ownedExecutor = Executors.newFixedThreadPool(32, daemon("j2act-worker"));
+      this.executor = ownedExecutor;
+    }
+    this.sweeper = Executors.newSingleThreadScheduledExecutor(daemon("j2act-sweeper"));
+    long every = b.sweepInterval.toMillis();
+    sweeper.scheduleWithFixedDelay(this::sweep, every, every, TimeUnit.MILLISECONDS);
+  }
+
+  public static Builder builder(PageResolver resolver) {
+    return new Builder(resolver);
+  }
+
+  // ---- HTTP
+
+  /** Full-page load: mounts a new session, awaits its queries within the SSR budget (ADR 0016). */
+  public ServeResult serve(String path) {
+    PageMatch match = resolver.resolve(path);
+    if (match == null) {
+      return new ServeResult(404, "<!DOCTYPE html><html><head><title>Not found</title></head>"
+        + "<body><h1>Not found</h1></body></html>");
+    }
+    Session session = new Session(this, newSecret(18), newSecret(18), match.params());
+    sessions.put(session.id, session);
+    try {
+      LiveComponent page = match.create();
+      // Render and the in-flight check run in one lane task, so a commit can never land
+      // between them and leave us shipping HTML rendered before it (ADR 0016).
+      SsrPass pass = await(session.call(() -> {
+        session.mount(page);
+        return SsrPass.of(session);
+      }));
+      long deadline = clock.millis() + ssrAwaitMillis;
+      while (pass.settleCount >= 0) {
+        long left = deadline - clock.millis();
+        if (left <= 0) {
+          break;
+        }
+        session.awaitSettleAfter(pass.settleCount, left);
+        pass = await(session.call(() -> SsrPass.of(session)));
+      }
+      return new ServeResult(200, pass.html);
+    } catch (Exception e) {
+      log(System.Logger.Level.ERROR, "render failed for " + path, e);
+      discard(session, false);
+      return new ServeResult(500, "<!DOCTYPE html><html><head><title>Error</title></head>"
+        + "<body><h1>Render failed</h1></body></html>");
+    }
+  }
+
+  // ---- socket
+
+  public void onMessage(Connection connection, String text) {
+    Map<String, String> message;
+    try {
+      message = Json.parseFlat(text);
+    } catch (IllegalArgumentException e) {
+      connection.close();
+      return;
+    }
+    String type = message.getOrDefault("t", "");
+    if ("hello".equals(type)) {
+      hello(connection, message.get("sid"), message.get("tok"));
+      return;
+    }
+    Session session = byConnection.get(connection);
+    if (session == null) {
+      connection.send(Json.object("t", "expired"));
+      connection.close();
+      return;
+    }
+    if ("ev".equals(type)) {
+      String handlerId = message.get("h");
+      String value = message.get("v");
+      String ack = message.get("a");
+      boolean[] ok = new boolean[1];
+      session.lane.execute(session.task(
+        () -> ok[0] = session.dispatch(handlerId, value),
+        () -> session.send(Json.object("t", "ack", "a", ack, "ok", ok[0] ? "1" : "0"))));
+    } else if ("bye".equals(type)) {
+      byConnection.remove(connection);
+      discard(session, false);
+    }
+  }
+
+  public void onClose(Connection connection) {
+    Session session = byConnection.remove(connection);
+    if (session != null) {
+      session.post(() -> session.detach(connection));
+    }
+  }
+
+  private void hello(Connection connection, String sid, String token) {
+    Session session = sid == null ? null : sessions.get(sid);
+    if (session == null || session.disposed || token == null
+      || !MessageDigest.isEqual(token.getBytes(StandardCharsets.UTF_8), session.token.getBytes(StandardCharsets.UTF_8))) {
+      connection.send(Json.object("t", "expired"));
+      connection.close();
+      return;
+    }
+    byConnection.put(connection, session);
+    session.post(() -> session.attach(connection));
+  }
+
+  // ---- lifecycle
+
+  void sweep() {
+    long now = clock.millis();
+    for (Session session : sessions.values()) {
+      if (session.disposed) {
+        sessions.remove(session.id);
+        continue;
+      }
+      boolean idle = now - session.lastActivity > idleTimeoutMillis;
+      boolean gone = session.connection == null && now - session.disconnectedAt > reconnectGraceMillis;
+      if (idle || gone) {
+        discard(session, true);
+      }
+    }
+  }
+
+  private void discard(Session session, boolean expired) {
+    sessions.remove(session.id);
+    byConnection.values().removeIf(s -> s == session);
+    session.lane.execute(() -> session.dispose(expired));
+  }
+
+  public int sessionCount() {
+    return sessions.size();
+  }
+
+  public Stats stats() {
+    return stats;
+  }
+
+  @Override public void close() {
+    sweeper.shutdownNow();
+    for (Session session : sessions.values()) {
+      discard(session, false);
+    }
+    if (ownedExecutor != null) {
+      ownedExecutor.shutdown();
+    }
+  }
+
+  // ---- internals
+
+  String newSecret(int bytes) {
+    byte[] b = new byte[bytes];
+    random.nextBytes(b);
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
+  }
+
+  void log(System.Logger.Level level, String message, Throwable error) {
+    if (error == null) {
+      LOG.log(level, message);
+    } else {
+      LOG.log(level, message, error);
+    }
+  }
+
+  private static <T> T await(CompletableFuture<T> future) throws Exception {
+    try {
+      return future.get();
+    } catch (ExecutionException e) {
+      Throwable cause = e.getCause();
+      throw cause instanceof Exception ? (Exception) cause : new RuntimeException(cause);
+    }
+  }
+
+  private static ThreadFactory daemon(String name) {
+    AtomicInteger n = new AtomicInteger();
+    return r -> {
+      Thread t = new Thread(r, name + "-" + n.incrementAndGet());
+      t.setDaemon(true);
+      return t;
+    };
+  }
+
+  /** One full render plus whether queries are still running (-1 when none are). */
+  private static final class SsrPass {
+    final String html;
+    final long settleCount;
+
+    private SsrPass(String html, long settleCount) {
+      this.html = html;
+      this.settleCount = settleCount;
+    }
+
+    static SsrPass of(Session session) {
+      String html = session.renderFull();
+      return new SsrPass(html, session.inFlight.isEmpty() ? -1L : session.settleCount());
+    }
+  }
+
+  /** Counters for tests and diagnostics. */
+  public static final class Stats {
+    public final AtomicLong committedRuns = new AtomicLong();
+    public final AtomicLong supersededRuns = new AtomicLong();
+    public final AtomicLong patches = new AtomicLong();
+    public final AtomicLong rejectedEvents = new AtomicLong();
+    public final AtomicLong failedTasks = new AtomicLong();
+  }
+
+  public static final class Builder {
+    private final PageResolver resolver;
+    private Executor executor;
+    private MembersInjector injector = MembersInjector.NONE;
+    private String contextPath = "";
+    private Clock clock = Clock.systemUTC();
+    private Duration reconnectGrace = Duration.ofMinutes(3);
+    private Duration idleTimeout = Duration.ofHours(12);
+    private Duration ssrAwaitBudget = Duration.ofSeconds(3);
+    private Duration queryStaleTime = Duration.ofSeconds(30);
+    private Duration queryGcTime = Duration.ofMinutes(5);
+    private Duration sweepInterval = Duration.ofSeconds(10);
+
+    private Builder(PageResolver resolver) {
+      this.resolver = resolver;
+    }
+
+    /** Pool for lanes and query runs; defaults to an owned pool of 32 daemon threads (ADR 0017). */
+    public Builder withExecutor(Executor executor) {
+      this.executor = executor;
+      return this;
+    }
+
+    public Builder withMembersInjector(MembersInjector injector) {
+      this.injector = injector;
+      return this;
+    }
+
+    public Builder withContextPath(String contextPath) {
+      this.contextPath = contextPath == null ? "" : contextPath;
+      return this;
+    }
+
+    public Builder withClock(Clock clock) {
+      this.clock = clock;
+      return this;
+    }
+
+    public Builder withReconnectGrace(Duration grace) {
+      this.reconnectGrace = grace;
+      return this;
+    }
+
+    public Builder withIdleTimeout(Duration idleTimeout) {
+      if (idleTimeout.compareTo(Duration.ofHours(24)) > 0) {
+        throw new IllegalArgumentException("idle timeout is capped at 24h (ADR 0010)");
+      }
+      this.idleTimeout = idleTimeout;
+      return this;
+    }
+
+    public Builder withSsrAwaitBudget(Duration budget) {
+      this.ssrAwaitBudget = budget;
+      return this;
+    }
+
+    public Builder withQueryStaleTime(Duration staleTime) {
+      this.queryStaleTime = staleTime;
+      return this;
+    }
+
+    public Builder withQueryGcTime(Duration gcTime) {
+      this.queryGcTime = gcTime;
+      return this;
+    }
+
+    public Builder withSweepInterval(Duration interval) {
+      this.sweepInterval = interval;
+      return this;
+    }
+
+    public J2Act build() {
+      return new J2Act(this);
+    }
+  }
+}
