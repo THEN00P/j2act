@@ -58,6 +58,7 @@ final class Renderer {
       scope.rendering = false;
       Tracking.swap(previous);
     }
+    scope.activatePending();
     for (Cell cell : scope.cells) {
       if (cell instanceof QueryCell) {
         if (!loadingOwners.isEmpty()) {

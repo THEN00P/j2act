@@ -70,7 +70,7 @@ final class EffectCell extends Cell implements Observer {
 
   private void unsubscribe() {
     for (Cell cell : deps) {
-      cell.observers.remove(this);
+      cell.unsubscribe(this);
     }
     deps.clear();
   }

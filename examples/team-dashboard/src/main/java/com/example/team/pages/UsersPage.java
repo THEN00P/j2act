@@ -34,7 +34,7 @@ public class UsersPage extends LiveComponent implements Page {
   private final Query<List<Users.User>> list = query(() -> users.search("%" + filter.get() + "%"));
 
   @Override public HtmlTag render() {
-    Mutation<String> export = download((String like, OutputStream out) -> users.writeCsv(like, out))
+    Mutation<String, Void> export = download((String like, OutputStream out) -> users.writeCsv(like, out))
       .withFileName("users.csv")
       .withContentType("text/csv");
 
@@ -57,9 +57,9 @@ public class UsersPage extends LiveComponent implements Page {
           UI.button("Export CSV")
             .withPending(spinner())
             .onClick(e -> export.mutate("%" + filter.get() + "%")),
-          export.error().get() == null
-            ? null
-            : p("Export failed: " + export.error().get()),
+          export.isError()
+            ? p("Export failed: " + export.error().getMessage())
+            : null,
           table(
             thead(
               tr(

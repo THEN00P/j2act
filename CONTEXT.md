@@ -25,7 +25,7 @@ Tracked component input. A with* builder writes it, render(), computed(), effect
 _Avoid_: Input, Attribute, Param
 
 **Computed**:
-Pure derived value recomputed when tracked State changes. No side-effects.
+Pure derived value recomputed when tracked State changes. No side-effects. Readers re-render only when the derived value itself changes.
 _Avoid_: Derived, Memo
 
 **Effect**:
@@ -37,7 +37,7 @@ Cached async loader written as one lambda: State read inside it is a dependency,
 _Avoid_: Deferred, Fetcher, TenStackQuery
 
 **Mutation**:
-Generic headless async write with a key, exposing status, progress, error, data and variables as State, with retry/backoff, reset, scope serialization and withInvalidates query wiring. upload() is the file flavor: chunked resumable transport, server-enforced restrictions, UploadCtx naming, temp cleanup owned by the framework.
+Generic headless async write, Mutation<V, R>: mutate(variables) runs the body on the executor, and status(), isPending(), data(), error() and variables() are tracked reads. Retry with backoff, reset(), per-key serialization via withKey, withInvalidates query wiring, onSuccess/onError on the lane. upload() is the file flavor: chunked resumable transport, server-enforced restrictions, UploadCtx naming, temp cleanup owned by the framework.
 _Avoid_: Action, Command, Uploader
 
 **Download**:

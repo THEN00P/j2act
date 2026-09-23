@@ -15,6 +15,11 @@ public final class State<T> extends Primitive implements Supplier<T> {
     this.initial = initial;
   }
 
+  /** Declares shared state with a per-session copy; see {@link Store}. Usually a static field. */
+  public static <T> Store<T> createStore(T initial) {
+    return new Store<>(initial);
+  }
+
   @Override
   @SuppressWarnings("unchecked")
   public T get() {

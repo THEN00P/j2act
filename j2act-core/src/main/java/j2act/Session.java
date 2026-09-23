@@ -33,7 +33,8 @@ final class Session {
   final Lane lane;
   final Exchange exchange;
 
-  final Map<String, Cell> cells = new HashMap<>();
+  /** Concurrent: store cells may be created from query loader threads. */
+  final Map<String, Cell> cells = new java.util.concurrent.ConcurrentHashMap<>();
   final Set<Scope> dirty = new LinkedHashSet<>();
   final Deque<EffectCell> pendingEffects = new ArrayDeque<>();
   final Set<QueryCell> inFlight = new HashSet<>();
@@ -164,6 +165,64 @@ final class Session {
       }
     });
     return result;
+  }
+
+  // ---- keyed queries and mutation queues
+
+  private final Map<List<Object>, QueryCell> queryLeaders = new HashMap<>();
+  private final Map<List<Object>, java.util.Deque<Runnable>> mutationQueues = new HashMap<>();
+
+  QueryCell queryLeader(List<Object> key) {
+    return queryLeaders.get(key);
+  }
+
+  void putQueryLeader(List<Object> key, QueryCell cell) {
+    queryLeaders.put(key, cell);
+  }
+
+  void removeQueryLeader(List<Object> key) {
+    queryLeaders.remove(key);
+  }
+
+  /** Lane-only. Refetches keyed queries whose key starts with the prefix. */
+  void invalidate(List<Object> prefix) {
+    for (Map.Entry<List<Object>, QueryCell> entry : new ArrayList<>(queryLeaders.entrySet())) {
+      List<Object> key = entry.getKey();
+      if (key.size() >= prefix.size() && key.subList(0, prefix.size()).equals(prefix)) {
+        entry.getValue().start(true);
+      }
+    }
+  }
+
+  /** Lane-only. Runs a keyed mutation now, or after the ones already queued for its key. */
+  void enqueueMutation(List<Object> key, Runnable run) {
+    java.util.Deque<Runnable> queue = mutationQueues.get(key);
+    if (queue == null) {
+      mutationQueues.put(key, new ArrayDeque<>());
+      run.run();
+    } else {
+      queue.add(run);
+    }
+  }
+
+  void mutationDone(List<Object> key) {
+    java.util.Deque<Runnable> queue = mutationQueues.get(key);
+    if (queue == null) {
+      return;
+    }
+    Runnable next = queue.poll();
+    if (next == null) {
+      mutationQueues.remove(key);
+    } else {
+      next.run();
+    }
+  }
+
+  // ---- stores
+
+  /** This session's cell for a store, created on first use with the store's initial value. */
+  ValueCell storeCell(Store<?> store) {
+    return (ValueCell) cells.computeIfAbsent(store.address, address -> new ValueCell(this, address, store.initial));
   }
 
   // ---- identity (ADR 0004, 0008)

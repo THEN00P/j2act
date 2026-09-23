@@ -51,6 +51,18 @@ final class Scope implements Observer {
     for (int i = 0; i < primitives.size(); i++) {
       bindPrimitive(primitives.get(i), i);
     }
+    // Field queries are fully configured by now: hydrate them before the first render reads them.
+    activatePending();
+  }
+
+  /** Lane-only. Activates queries created since the last call, once their withKey/withDefer chain ran. */
+  void activatePending() {
+    for (Cell cell : cells) {
+      if (cell instanceof QueryCell && ((QueryCell) cell).needsActivation) {
+        ((QueryCell) cell).needsActivation = false;
+        ((QueryCell) cell).activate();
+      }
+    }
   }
 
   void bindPrimitive(Primitive primitive, int index) {
@@ -83,7 +95,7 @@ final class Scope implements Observer {
 
   void unsubscribeAll() {
     for (Cell cell : deps) {
-      cell.observers.remove(this);
+      cell.unsubscribe(this);
     }
     deps.clear();
   }

@@ -173,6 +173,20 @@ async function main() {
     && location.pathname === '/items/404' && document.title === 'Not found · j2act'`));
   await js(`${navLink("About")}.click(); true`);
   await until(`${h1} === 'About'`);
+
+  // 10. computed and mutation (ADR 0006)
+  for (let i = 0; i < 3; i++) {
+    await js(`document.getElementById('draft-add').click(); true`);
+    await until(`document.body.textContent.includes('draft: ${i + 1} paragraphs')`);
+  }
+  check("computed flips once its threshold is reached", await js(`document.body.textContent.includes('3 paragraphs, long')`));
+  await js(`document.getElementById('publish').click(); true`);
+  check("mutation stays pending past the ack", await until(`document.getElementById('publish').disabled
+    && document.getElementById('publish-status').textContent.includes('PENDING')`));
+  check("mutation succeeds with its variables and runs onSuccess", await until(`!document.getElementById('publish').disabled
+    && document.getElementById('publish-status').textContent === 'publish status: SUCCESS · published: 3 paragraphs'`, 4000),
+    await js(`document.getElementById('publish-status').textContent`));
+
   await js(`[...document.querySelectorAll('a')].find(a => a.textContent.startsWith('Jump to the form')).click(); true`);
   // #forms is near the bottom, so "scrolled to it" means at the top or the page scrolled to its end.
   const atForms = `(() => { const top = document.getElementById('forms')?.getBoundingClientRect().top;

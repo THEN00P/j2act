@@ -55,6 +55,25 @@ public abstract class ComponentTag implements DomContent {
     return register(new Query<>(loader));
   }
 
+  /** A pure derived value, recomputed when what it read changes (CONTEXT: Computed). */
+  protected final <T> Computed<T> computed(java.util.function.Supplier<T> body) {
+    return register(new Computed<>(body));
+  }
+
+  /** An async write: status, data, error and variables are tracked (ADR 0006). */
+  protected final <V, R> Mutation<V, R> mutation(Mutation.Body<V, R> body) {
+    return register(new Mutation<>(body));
+  }
+
+  /** Refetches every keyed query whose key starts with these parts, in this session (ADR 0020). */
+  protected final void invalidate(Object... keyPrefix) {
+    Session session = scope != null ? scope.session : Session.current();
+    if (session == null) {
+      throw new IllegalStateException("invalidate() needs a mounted component");
+    }
+    session.invalidate(java.util.Arrays.asList(keyPrefix));
+  }
+
   /** Runs after mount and whenever a State it read changes; returns its cleanup or null. */
   protected final void effect(Supplier<Runnable> body) {
     register(new Effect(body));

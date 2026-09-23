@@ -8,6 +8,7 @@ public final class Query<T> extends Primitive {
 
   private final Loader<T> loader;
   private boolean deferred;
+  private java.util.List<Object> key;
 
   Query(Loader<T> loader) {
     this.loader = loader;
@@ -49,6 +50,19 @@ public final class Query<T> extends Primitive {
     return this;
   }
 
+  /**
+   * Shares this query across components in the session: same key parts, one run and one
+   * result, with prefix invalidation via withInvalidates/invalidate (ADR 0020). Reads in
+   * the loader still trigger refetches.
+   */
+  public Query<T> withKey(Object... parts) {
+    key = java.util.Arrays.asList(parts);
+    if (cell != null) {
+      ((QueryCell) cell).rekey(key);
+    }
+    return this;
+  }
+
   public void refetch() {
     ((QueryCell) requireCell()).refetch();
   }
@@ -71,7 +85,9 @@ public final class Query<T> extends Primitive {
     ((QueryCell) cell).loader = loader;
     ((QueryCell) cell).deferred |= deferred;
     if (created) {
-      ((QueryCell) cell).activate();
+      // Activation waits for the render to finish, so chained withKey/withDefer apply first.
+      ((QueryCell) cell).key = key;
+      ((QueryCell) cell).needsActivation = true;
     }
   }
 }

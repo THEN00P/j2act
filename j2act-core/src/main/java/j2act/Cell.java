@@ -42,6 +42,17 @@ abstract class Cell {
     session.warnForeignRead(address);
   }
 
+  /** Lane-only. Removes a reader; a cell nobody reads any more may let go of what it observes. */
+  final void unsubscribe(Observer observer) {
+    if (observers.remove(observer) && observers.isEmpty()) {
+      onUnobserved();
+    }
+  }
+
+  /** Lane-only hook for derived cells that exist only while read. */
+  void onUnobserved() {
+  }
+
   /** Lane-only. */
   final void notifyObservers() {
     for (Observer observer : new ArrayList<>(observers)) {
