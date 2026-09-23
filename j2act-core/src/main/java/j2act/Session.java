@@ -870,6 +870,45 @@ final class Session {
     }
   }
 
+  // ---- socket abuse limits (ADR 0013)
+
+  private static final long OVERFLOW_WINDOW_MILLIS = 10_000;
+  private final Object limitLock = new Object();
+  private AuthCtx limitedAs;
+  private RateLimit.Bucket eventBucket;
+  private RateLimit.Bucket chunkBucket;
+  private long overflowWindowStart;
+  private int overflowCount;
+
+  /** Any thread. Takes a token for an event or upload chunk; the limit follows identity changes. */
+  boolean admit(boolean chunk) {
+    AuthCtx auth = currentAuth();
+    long now = engine.clock.millis();
+    synchronized (limitLock) {
+      if (eventBucket == null || !auth.equals(limitedAs)) {
+        RateLimit limit = engine.rateLimit.apply(auth);
+        limitedAs = auth;
+        eventBucket = new RateLimit.Bucket(limit, now);
+        chunkBucket = new RateLimit.Bucket(limit, now);
+      }
+      return (chunk ? chunkBucket : eventBucket).tryTake(now);
+    }
+  }
+
+  /** Any thread. Records a dropped message; true once drops are sustained enough to close the socket. */
+  boolean overflowed() {
+    long now = engine.clock.millis();
+    synchronized (limitLock) {
+      if (now - overflowWindowStart > OVERFLOW_WINDOW_MILLIS) {
+        overflowWindowStart = now;
+        overflowCount = 0;
+        engine.log(System.Logger.Level.WARNING, "session " + id + " is over its rate limit; dropping events", null);
+      }
+      overflowCount++;
+      return overflowCount > Math.max(50, eventBucket == null ? 0 : Math.min(eventBucket.limit.burst, 1000));
+    }
+  }
+
   // ---- framework-owned upload files (ADR 0006)
 
   private final List<java.nio.file.Path> ownedFiles = new ArrayList<>();

@@ -25,6 +25,7 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   final Map<String, Handler<?>> events = new LinkedHashMap<>();
   Object key;
   long debounceMillis = -1;
+  long throttleMillis = -1;
   String keyFilter;
   DomContent pending;
 
@@ -142,6 +143,16 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   /** Client-side debounce for this element's events. Default is none. */
   public T withDebounce(Duration debounce) {
     this.debounceMillis = debounce.toMillis();
+    return self();
+  }
+
+  /**
+   * Client-side throttle for this element's events: the first goes out at once, then at
+   * most one per interval. Input and change send the latest value at the end of the
+   * interval; clicks inside it are dropped. Default is none.
+   */
+  public T withThrottle(Duration throttle) {
+    this.throttleMillis = throttle.toMillis();
     return self();
   }
 

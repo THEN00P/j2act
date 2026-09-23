@@ -62,6 +62,9 @@ public final class J2Act implements AutoCloseable {
   private final Path configuredUploadDir;
   private volatile Path uploadDir;
   final long uploadIdleMillis;
+  final Function<AuthCtx, RateLimit> rateLimit;
+  private final int maxFrameSize;
+  final int maxQueuedEvents;
 
   private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Connection, Session> byConnection = new ConcurrentHashMap<>();
@@ -85,6 +88,9 @@ public final class J2Act implements AutoCloseable {
     this.downloadTtlMillis = b.downloadTtl.toMillis();
     this.configuredUploadDir = b.uploadDir;
     this.uploadIdleMillis = b.uploadIdleTimeout.toMillis();
+    this.rateLimit = b.rateLimit;
+    this.maxFrameSize = b.maxFrameSize;
+    this.maxQueuedEvents = b.maxQueuedEvents;
     if (b.executor != null) {
       this.executor = b.executor;
       this.ownedExecutor = null;
@@ -209,6 +215,10 @@ public final class J2Act implements AutoCloseable {
       sink.fail(new SecurityException("upload sent with a different identity"));
       return ChunkResult.error(403, "forbidden");
     }
+    if (!sink.session.admit(true)) {
+      stats.rateLimited.incrementAndGet();
+      return ChunkResult.error(429, "slow down");
+    }
     return sink.accept(offset, body);
   }
 
@@ -260,6 +270,12 @@ public final class J2Act implements AutoCloseable {
   // ---- socket
 
   public void onMessage(Connection connection, String text) {
+    if (text.length() > maxFrameSize) {
+      log(System.Logger.Level.WARNING, "socket frame of " + text.length() + " chars over the limit; closing", null);
+      onClose(connection);
+      connection.close();
+      return;
+    }
     Map<String, String> message;
     try {
       message = Json.parseFlat(text);
@@ -278,6 +294,13 @@ public final class J2Act implements AutoCloseable {
       connection.close();
       return;
     }
+    if (("ev".equals(type) || "nav".equals(type)) && !admit(session, connection)) {
+      if ("ev".equals(type)) {
+        // The client's pending UI reverts; the event is gone (ADR 0013).
+        connection.send(Json.object("t", "ack", "a", message.get("a"), "ok", "0"));
+      }
+      return;
+    }
     if ("ev".equals(type)) {
       String ack = message.get("a");
       boolean[] ok = new boolean[1];
@@ -294,6 +317,25 @@ public final class J2Act implements AutoCloseable {
       byConnection.remove(connection);
       discard(session, false);
     }
+  }
+
+  /** Rate limit and queue bound for one socket message; sustained overflow closes the socket. */
+  private boolean admit(Session session, Connection connection) {
+    if (session.admit(false) && session.lane.backlog() < maxQueuedEvents) {
+      return true;
+    }
+    stats.rateLimited.incrementAndGet();
+    if (session.overflowed()) {
+      log(System.Logger.Level.WARNING, "session " + session.id + " kept exceeding its rate limit; closing its socket", null);
+      onClose(connection);
+      connection.close();
+    }
+    return false;
+  }
+
+  /** Largest socket message accepted, in chars; adapters raise their container's buffer to match. */
+  public int maxFrameSize() {
+    return maxFrameSize;
   }
 
   public void onClose(Connection connection) {
@@ -454,6 +496,7 @@ public final class J2Act implements AutoCloseable {
     public final AtomicLong patches = new AtomicLong();
     public final AtomicLong rejectedEvents = new AtomicLong();
     public final AtomicLong failedTasks = new AtomicLong();
+    public final AtomicLong rateLimited = new AtomicLong();
   }
 
   public static final class Builder {
@@ -474,6 +517,9 @@ public final class J2Act implements AutoCloseable {
     private Duration downloadTtl = Duration.ofSeconds(60);
     private Path uploadDir;
     private Duration uploadIdleTimeout = Duration.ofMinutes(2);
+    private Function<AuthCtx, RateLimit> rateLimit = auth -> RateLimit.perSecond(30).withBurst(60);
+    private int maxFrameSize = 256 * 1024;
+    private int maxQueuedEvents = 100;
 
     private Builder(PageResolver resolver) {
       this.resolver = resolver;
@@ -562,6 +608,28 @@ public final class J2Act implements AutoCloseable {
     /** How long an upload may go without a chunk before it fails and its part is deleted. */
     public Builder withUploadIdleTimeout(Duration timeout) {
       this.uploadIdleTimeout = timeout;
+      return this;
+    }
+
+    /**
+     * Socket abuse limits per session, chosen from its identity (ADR 0013). Applies to
+     * events, navigations and upload chunks, each with its own bucket. Default 30 per
+     * second with a burst of 60. Business limits (logins, API quotas) stay yours.
+     */
+    public Builder withRateLimit(Function<AuthCtx, RateLimit> rateLimit) {
+      this.rateLimit = rateLimit;
+      return this;
+    }
+
+    /** Largest socket message, in chars; bigger ones close the socket. Default 256 KiB. */
+    public Builder withMaxFrameSize(int chars) {
+      this.maxFrameSize = chars;
+      return this;
+    }
+
+    /** Events a session may have waiting on its lane before new ones are dropped. Default 100. */
+    public Builder withMaxQueuedEvents(int events) {
+      this.maxQueuedEvents = events;
       return this;
     }
 

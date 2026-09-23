@@ -16,7 +16,6 @@ public final class J2ActEndpoint extends Endpoint {
 
   private static final System.Logger LOG = System.getLogger("j2act.jakarta");
   private static final String CONNECTION = J2ActEndpoint.class.getName() + ".connection";
-  private static final int MAX_MESSAGE = 256 * 1024;
 
   private final J2Act j2Act;
 
@@ -29,7 +28,7 @@ public final class J2ActEndpoint extends Endpoint {
       close(session, "cross-origin socket refused");
       return;
     }
-    session.setMaxTextMessageBufferSize(MAX_MESSAGE);
+    session.setMaxTextMessageBufferSize(j2Act.maxFrameSize());
     JakartaConnection connection = new JakartaConnection(session);
     session.getUserProperties().put(CONNECTION, connection);
     session.addMessageHandler(String.class, (MessageHandler.Whole<String>) text -> j2Act.onMessage(connection, text));

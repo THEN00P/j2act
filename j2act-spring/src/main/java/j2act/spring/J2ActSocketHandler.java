@@ -24,6 +24,8 @@ public class J2ActSocketHandler extends TextWebSocketHandler {
   }
 
   @Override public void afterConnectionEstablished(WebSocketSession session) {
+    // Tomcat's default is 8 KiB; j2act enforces its own frame limit (ADR 0013).
+    session.setTextMessageSizeLimit(j2Act.maxFrameSize());
     session.getAttributes().put(CONNECTION, new SpringConnection(session));
   }
 

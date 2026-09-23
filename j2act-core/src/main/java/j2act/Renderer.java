@@ -209,6 +209,9 @@ final class Renderer {
     if (tag.debounceMillis >= 0) {
       attribute("data-j2-debounce", String.valueOf(tag.debounceMillis));
     }
+    if (tag.throttleMillis >= 0) {
+      attribute("data-j2-throttle", String.valueOf(tag.throttleMillis));
+    }
     if (tag.keyFilter != null) {
       attribute("data-j2-keys", tag.keyFilter);
     }

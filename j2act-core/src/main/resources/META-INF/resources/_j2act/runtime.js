@@ -29,6 +29,7 @@
   var inFlight = new Map();        // ack id -> { el, swap }
   var pendingEls = new Set();      // elements with a click or submit in flight
   var timers = new WeakMap();      // element -> debounce timer
+  var throttles = new WeakMap();   // element -> { trailing } while its throttle interval runs
 
   var morphConfig = {
     morphStyle: "outerHTML",
@@ -131,6 +132,13 @@
     }
     var offset = 0;
     var failures = 0;
+    var retry = function () {
+      if (++failures > 8) {
+        files.delete(id);
+        return;
+      }
+      setTimeout(next, Math.min(5000, 250 * Math.pow(2, failures)));
+    };
     var next = function () {
       fetch(url + "?o=" + offset, {
         method: "POST",
@@ -148,16 +156,12 @@
           } else {
             next();
           }
+        } else if (res.status === 429) {
+          retry(); // over the session's rate limit: back off, the bytes are still wanted
         } else {
           files.delete(id); // refused: the server already failed the run
         }
-      }, function () {
-        if (++failures > 8) {
-          files.delete(id);
-          return;
-        }
-        setTimeout(next, Math.min(5000, 250 * Math.pow(2, failures)));
-      });
+      }, retry);
     };
     next();
   }
@@ -280,7 +284,38 @@
     send(message);
   }
 
+  // Leading event at once, then at most one per interval: input and change send the latest
+  // value when the interval ends, clicks inside it are dropped (ADR 0013).
+  function throttle(el, type, ms) {
+    var state = throttles.get(el);
+    if (state) {
+      if (type !== "click") {
+        state.trailing = type;
+      }
+      return;
+    }
+    state = { trailing: null };
+    throttles.set(el, state);
+    dispatch(el, type, type === "click" ? null : el.value);
+    var tick = function () {
+      if (!state.trailing) {
+        throttles.delete(el);
+        return;
+      }
+      var next = state.trailing;
+      state.trailing = null;
+      dispatch(el, next, el.value);
+      setTimeout(tick, ms);
+    };
+    setTimeout(tick, ms);
+  }
+
   function schedule(el, type) {
+    var throttleMs = parseInt(el.getAttribute("data-j2-throttle") || "-1", 10);
+    if (throttleMs >= 0) {
+      throttle(el, type, throttleMs);
+      return;
+    }
     var ms = parseInt(el.getAttribute("data-j2-debounce") || "-1", 10);
     var read = function () { return type === "click" ? null : el.value; };
     if (ms < 0) {

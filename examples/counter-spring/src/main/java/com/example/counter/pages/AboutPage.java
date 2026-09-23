@@ -2,6 +2,7 @@ package com.example.counter.pages;
 
 import static com.example.counter.components.Attachment.attachment;
 import static com.example.counter.components.Publisher.publisher;
+import static com.example.counter.components.Volume.volume;
 import static j2act.html.TagCreator.*;
 
 import j2act.LiveComponent;
@@ -24,7 +25,9 @@ public class AboutPage extends LiveComponent implements Page {
         h2("Computed and mutation"),
         publisher(),
         h2("Upload"),
-        attachment()
+        attachment(),
+        h2("Throttle"),
+        volume()
       )
     );
   }

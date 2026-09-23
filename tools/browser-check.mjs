@@ -214,6 +214,16 @@ async function main() {
   check("upload limits are enforced on the server", await until(`document.getElementById('attach-status').textContent
     .startsWith('refused: big.txt is larger than')`), await js(`document.getElementById('attach-status').textContent`));
 
+  // 12. throttle: 20 input events in ~200 ms reach the server as a few, ending on the last value
+  await js(`(async () => {
+    const v = document.getElementById('volume');
+    for (let i = 1; i <= 20; i++) { v.value = String(i * 5); v.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 10)); }
+    return true; })()`);
+  const throttled = await until(`/volume 100 after [1-3] events/.test(document.getElementById('volume-status').textContent)`, 3000);
+  check("throttle sends the first value, then at most one per interval, ending on the last", throttled,
+    await js(`document.getElementById('volume-status').textContent`));
+
   await js(`[...document.querySelectorAll('a')].find(a => a.textContent.startsWith('Jump to the form')).click(); true`);
   // #forms is near the bottom, so "scrolled to it" means at the top or the page scrolled to its end.
   const atForms = `(() => { const top = document.getElementById('forms')?.getBoundingClientRect().top;
@@ -223,6 +233,11 @@ async function main() {
     && ${atForms}`), await js(`JSON.stringify({ y: window.scrollY, top: document.getElementById('forms')?.getBoundingClientRect().top,
     h: document.documentElement.scrollHeight, vh: window.innerHeight })`));
   check("still no full page load", await js(`window.__marker === 42`));
+
+  // 13. frames above the container's 8 KiB default still travel (ADR 0013 frame limit is ours)
+  await js(`document.getElementById('greet-name').value = 'Z'.repeat(20000);
+    [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Greet').click(); true`);
+  check("a 20 KB submit goes over the socket", await until(`document.body.textContent.includes('Hello, ZZZZZZZZ')`, 4000));
 
   check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
   ws.close();
