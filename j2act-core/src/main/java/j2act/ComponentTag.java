@@ -65,6 +65,14 @@ public abstract class ComponentTag implements DomContent {
     return register(new Mutation<>(body));
   }
 
+  /**
+   * A Mutation whose body streams a file to the browser (ADR 0012), e.g.
+   * download((String like, OutputStream out) -> csv.write(like, out)).withFileName("users.csv").
+   */
+  protected final <V> Download<V> download(Download.Writer<V> writer) {
+    return register(new Download<>(writer));
+  }
+
   /** Refetches every keyed query whose key starts with these parts, in this session (ADR 0020). */
   protected final void invalidate(Object... keyPrefix) {
     Session session = scope != null ? scope.session : Session.current();

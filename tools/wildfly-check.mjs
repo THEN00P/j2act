@@ -1,5 +1,8 @@
 // Checks examples/counter-jakarta deployed on WildFly, e.g.
 //   node tools/wildfly-check.mjs http://localhost:8080/counter-jakarta/
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openBrowser, sleep } from "./cdp.mjs";
 
 const URL = process.argv[2] || "http://localhost:8080/counter-jakarta/";
@@ -34,4 +37,14 @@ b.run(async () => {
     return b.hasAttribute('data-pending') && b.textContent.includes('Greeting…');
   })()`);
   check("submit shows pending on the submitter instantly", pending);
+
+  const downloads = mkdtempSync(join(tmpdir(), "j2act-dl-"));
+  await cdp("Page.setDownloadBehavior", { behavior: "allow", downloadPath: downloads });
+  await js(`document.getElementById('people-export').click(); true`);
+  const exported = await until(`document.getElementById('export-status').textContent === 'export: SUCCESS'`, 5000);
+  const file = join(downloads, "people.csv");
+  for (let i = 0; i < 40 && !existsSync(file); i++) await sleep(50);
+  const csv = existsSync(file) ? readFileSync(file, "utf8") : "";
+  check("download streams JPA rows through the filter under the context path", exported
+    && csv.startsWith("name\nAda Lovelace\n") && csv.split("\n").length === 11, JSON.stringify(csv.slice(0, 40)));
 });

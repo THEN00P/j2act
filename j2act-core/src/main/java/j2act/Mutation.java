@@ -18,7 +18,7 @@ import java.util.function.Consumer;
  * button("Delete").withDisabled(delete.isPending()).onClick(e -> delete.mutate(user.getId()));
  * }</pre>
  */
-public final class Mutation<V, R> extends Primitive {
+public class Mutation<V, R> extends Primitive {
 
   /** The write itself. Runs on the executor; inputs arrive as variables. */
   @FunctionalInterface

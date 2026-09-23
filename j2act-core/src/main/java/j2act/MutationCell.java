@@ -81,6 +81,10 @@ final class MutationCell extends Cell {
   }
 
   private void attempt(Mutation<?, ?> run, Object variables, long mySeq, int attempt) {
+    if (run instanceof Download) {
+      offer((Download<?>) run, variables, mySeq);
+      return;
+    }
     try {
       session.engine.executor.execute(() -> {
         Object result = null;
@@ -104,6 +108,22 @@ final class MutationCell extends Cell {
     }
   }
 
+  /**
+   * Lane-only. A download's body runs when the browser fetches it: mint a single-use
+   * token, tell the client to fetch it, and fail the run if nobody does in time (ADR 0012).
+   */
+  private void offer(Download<?> run, Object variables, long mySeq) {
+    J2Act engine = session.engine;
+    String token = engine.newSecret(24);
+    engine.downloads.put(token, new DownloadStream(session, this, run, variables, mySeq));
+    session.send(Json.object("t", "dl", "u", engine.contextPath + J2Act.DOWNLOAD_PATH + token));
+    engine.later(session, engine.downloadTtlMillis, () -> {
+      if (engine.downloads.remove(token) != null) {
+        finish(run, variables, mySeq, null, new IllegalStateException("download was not fetched in time"));
+      }
+    });
+  }
+
   @SuppressWarnings({"unchecked", "rawtypes"})
   private static Object invoke(Mutation run, Object variables) throws Exception {
     return run.body.run(variables);
@@ -111,7 +131,7 @@ final class MutationCell extends Cell {
 
   /** Lane-only. */
   @SuppressWarnings({"unchecked", "rawtypes"})
-  private void finish(Mutation<?, ?> run, Object variables, long mySeq, Object result, Throwable error) {
+  void finish(Mutation<?, ?> run, Object variables, long mySeq, Object result, Throwable error) {
     if (run.key != null) {
       session.mutationDone(run.key);
     }

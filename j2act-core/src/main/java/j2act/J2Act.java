@@ -29,6 +29,9 @@ public final class J2Act implements AutoCloseable {
 
   private static final System.Logger LOG = System.getLogger("j2act");
 
+  /** Where adapters serve download tokens, next to the socket mount (ADR 0012). */
+  public static final String DOWNLOAD_PATH = "/_j2act/dl/";
+
   final PageResolver resolver;
   final Executor executor;
   final MembersInjector injector;
@@ -42,7 +45,10 @@ public final class J2Act implements AutoCloseable {
   final long queryGcMillis;
   final long pendingMillis;
   final long pendingMinMillis;
+  final long downloadTtlMillis;
   final Stats stats = new Stats();
+  /** Unclaimed download tokens; each is removed by its one fetch or by its TTL. */
+  final ConcurrentHashMap<String, DownloadStream> downloads = new ConcurrentHashMap<>();
 
   private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Connection, Session> byConnection = new ConcurrentHashMap<>();
@@ -63,6 +69,7 @@ public final class J2Act implements AutoCloseable {
     this.queryGcMillis = b.queryGcTime.toMillis();
     this.pendingMillis = b.pendingTime.toMillis();
     this.pendingMinMillis = b.pendingMinTime.toMillis();
+    this.downloadTtlMillis = b.downloadTtl.toMillis();
     if (b.executor != null) {
       this.executor = b.executor;
       this.ownedExecutor = null;
@@ -147,6 +154,24 @@ public final class J2Act implements AutoCloseable {
       return new ServeResult(500, "<!DOCTYPE html><html><head><title>Error</title></head>"
         + "<body><h1>Render failed</h1></body></html>");
     }
+  }
+
+  /**
+   * Claims a download token for a GET to DOWNLOAD_PATH + token. Returns null (answer 404)
+   * when the token is unknown, already used or expired, its session is gone, or the
+   * request's identity is not the session's. The adapter sets the headers from the result
+   * and calls writeTo with the response stream, on the request thread (ADR 0012).
+   */
+  public DownloadStream claimDownload(String token, Exchange exchange) {
+    DownloadStream download = token == null ? null : downloads.remove(token);
+    if (download == null || download.session.disposed) {
+      return null;
+    }
+    if (hasIdentity() && !resolveIdentity(exchange).equals(download.session.currentAuth())) {
+      download.fail(new SecurityException("download fetched with a different identity"));
+      return null;
+    }
+    return download;
   }
 
   /** Whether a page-load request should be served by j2act at all: some route or redirect matches. */
@@ -363,6 +388,7 @@ public final class J2Act implements AutoCloseable {
     private Duration sweepInterval = Duration.ofSeconds(10);
     private Duration pendingTime = Duration.ofSeconds(1);
     private Duration pendingMinTime = Duration.ofMillis(500);
+    private Duration downloadTtl = Duration.ofSeconds(60);
 
     private Builder(PageResolver resolver) {
       this.resolver = resolver;
@@ -433,6 +459,12 @@ public final class J2Act implements AutoCloseable {
     public Builder withPendingTimes(Duration pending, Duration minimum) {
       this.pendingTime = pending;
       this.pendingMinTime = minimum;
+      return this;
+    }
+
+    /** How long a download token waits for the browser's fetch before the run fails. */
+    public Builder withDownloadTtl(Duration ttl) {
+      this.downloadTtl = ttl;
       return this;
     }
 

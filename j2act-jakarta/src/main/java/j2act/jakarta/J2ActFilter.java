@@ -16,12 +16,13 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import j2act.DownloadStream;
 import j2act.Exchange;
 import j2act.J2Act;
 import j2act.PageResolver;
 import j2act.ServeResult;
 
-/** Serves GET requests for routed pages; everything else passes down the chain untouched. */
+/** Serves GET requests for routed pages and download tokens; everything else passes down the chain untouched. */
 final class J2ActFilter implements Filter {
 
   private final J2Act j2Act;
@@ -36,6 +37,10 @@ final class J2ActFilter implements Filter {
     throws IOException, ServletException {
     HttpServletRequest request = (HttpServletRequest) req;
     String path = request.getRequestURI().substring(request.getContextPath().length());
+    if ("GET".equals(request.getMethod()) && path.startsWith(J2Act.DOWNLOAD_PATH)) {
+      download(j2Act, path.substring(J2Act.DOWNLOAD_PATH.length()), request, (HttpServletResponse) res);
+      return;
+    }
     if (!"GET".equals(request.getMethod()) || resolver.resolve(path) == null) {
       chain.doFilter(req, res);
       return;
@@ -51,6 +56,21 @@ final class J2ActFilter implements Filter {
     }
     response.setContentType("text/html;charset=UTF-8");
     response.getOutputStream().write(result.html().getBytes(StandardCharsets.UTF_8));
+  }
+
+  /** Streams a claimed download straight into the response (ADR 0012); 404 for a bad token. */
+  static void download(J2Act j2Act, String token, HttpServletRequest request, HttpServletResponse response)
+    throws IOException {
+    DownloadStream download = j2Act.claimDownload(token, exchange(request));
+    response.setHeader("Cache-Control", "no-store");
+    if (download == null) {
+      response.sendError(HttpServletResponse.SC_NOT_FOUND);
+      return;
+    }
+    response.setContentType(download.contentType());
+    response.setHeader("Content-Disposition", download.contentDisposition());
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    download.writeTo(response.getOutputStream());
   }
 
   /** The request as the identity function sees it; replayed before each event (ADR 0004). */

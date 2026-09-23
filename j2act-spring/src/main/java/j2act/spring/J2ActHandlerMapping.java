@@ -8,18 +8,20 @@ import java.util.Map;
 
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 import org.springframework.web.HttpRequestHandler;
 import org.springframework.web.servlet.handler.AbstractHandlerMapping;
 
+import j2act.DownloadStream;
 import j2act.Exchange;
 import j2act.J2Act;
 import j2act.PageResolver;
 import j2act.ServeResult;
 
 /**
- * Serves GET requests for routed pages. Ordered after @Controller mappings, so the
- * host's own endpoints win, and before static resources.
+ * Serves GET requests for routed pages and download tokens (ADR 0012). Ordered after
+ * @Controller mappings, so the host's own endpoints win, and before static resources.
  */
 public class J2ActHandlerMapping extends AbstractHandlerMapping {
 
@@ -52,6 +54,21 @@ public class J2ActHandlerMapping extends AbstractHandlerMapping {
       return null;
     }
     String path = initLookupPath(request);
+    if (path.startsWith(J2Act.DOWNLOAD_PATH)) {
+      String token = path.substring(J2Act.DOWNLOAD_PATH.length());
+      return (HttpRequestHandler) (req, res) -> {
+        DownloadStream download = j2Act.claimDownload(token, exchange(req));
+        res.setHeader("Cache-Control", "no-store");
+        if (download == null) {
+          res.sendError(HttpServletResponse.SC_NOT_FOUND);
+          return;
+        }
+        res.setContentType(download.contentType());
+        res.setHeader("Content-Disposition", download.contentDisposition());
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        download.writeTo(res.getOutputStream());
+      };
+    }
     if (resolver.resolve(path) == null) {
       return null;
     }

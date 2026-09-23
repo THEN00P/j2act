@@ -1,6 +1,6 @@
 // Drives headless Chrome over CDP against the running demo and checks the client runtime.
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -186,6 +186,16 @@ async function main() {
   check("mutation succeeds with its variables and runs onSuccess", await until(`!document.getElementById('publish').disabled
     && document.getElementById('publish-status').textContent === 'publish status: SUCCESS · published: 3 paragraphs'`, 4000),
     await js(`document.getElementById('publish-status').textContent`));
+  const downloads = mkdtempSync(join(tmpdir(), "j2act-dl-"));
+  await cdp("Page.setDownloadBehavior", { behavior: "allow", downloadPath: downloads });
+  await js(`document.getElementById('draft-download').click(); true`);
+  const downloaded = await until(`document.getElementById('download-status').textContent === 'download status: SUCCESS'`, 4000);
+  const file = join(downloads, "draft.txt");
+  for (let i = 0; i < 40 && !existsSync(file); i++) await sleep(50);
+  check("download streams the file and turns SUCCESS", downloaded && existsSync(file)
+    && readFileSync(file, "utf8") === "Paragraph 1\nParagraph 2\nParagraph 3\n",
+    existsSync(file) ? JSON.stringify(readFileSync(file, "utf8")) : "no file");
+  check("the page stayed through the download", await js(`window.__marker === 42 && ${h1} === 'About'`));
 
   await js(`[...document.querySelectorAll('a')].find(a => a.textContent.startsWith('Jump to the form')).click(); true`);
   // #forms is near the bottom, so "scrolled to it" means at the top or the page scrolled to its end.

@@ -95,11 +95,24 @@
       landed(m.u, m.m);
     } else if (m.t === "go") {
       location.assign(m.u);
+    } else if (m.t === "dl") {
+      download(m.u);
     } else if (m.t === "ack") {
       ack(m.a);
     } else if (m.t === "expired") {
       remount();
     }
+  }
+
+  // A download link: the browser saves the response and the page stays (ADR 0012).
+  function download(url) {
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   // ---- patches

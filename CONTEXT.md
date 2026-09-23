@@ -41,7 +41,7 @@ Generic headless async write, Mutation<V, R>: mutate(variables) runs the body on
 _Avoid_: Action, Command, Uploader
 
 **Download**:
-Mutation flavor mirroring upload(): its body streams to an OutputStream through a single-use token URL served by the transport adapter, pending until the last byte is written.
+Download<V>, the Mutation flavor mirroring upload(): download((V v, OutputStream out) -> ...) streams on the servlet thread that fetches a single-use token URL served by the transport adapter, pending until the last byte is written.
 _Avoid_: Export, FileResponse
 
 **Page**:
