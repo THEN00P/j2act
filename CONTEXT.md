@@ -44,6 +44,14 @@ _Avoid_: Action, Command, Uploader
 Download<V>, the Mutation flavor mirroring upload(): download((V v, OutputStream out) -> ...) streams on the servlet thread that fetches a single-use token URL served by the transport adapter, pending until the last byte is written.
 _Avoid_: Export, FileResponse
 
+**Client module**:
+The client half of a component: a Java interface (mount props plus actions) implemented by a plain exported object in a sibling *.client.ts/.js file, typed through processor-generated declarations (ADR 0022).
+_Avoid_: Hook, Controller, JS bridge
+
+**window()**:
+Generated Java facade mirroring the browser's Web APIs one to one, executed remotely; every call returns a CompletionStage (ADR 0022).
+_Avoid_: Browser, JsRuntime
+
 **Page**:
 A LiveComponent with a code-based route, nested layouts/subroutes, plus optional loading() and error() boundary methods with nearest-defined-wins nesting. render() returns html(head(...), body(...)) for pages, bare content for island fragments. URL is read ambiently via pathParam()/queryParam(), never passed as props.
 _Avoid_: View, Screen, Controller
