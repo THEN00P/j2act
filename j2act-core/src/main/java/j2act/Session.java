@@ -53,6 +53,18 @@ final class Session {
   /** Head children each frame rendered last, keyed for the merge (ADR 0007). */
   private final Map<Scope, Map<String, String>> heads = new IdentityHashMap<>();
   private String lastHead;
+  /**
+   * Soft-navigation hold (ADR 0011): patches are rendered but not sent while the new page's
+   * queries load, until pendingMs; then loading() shows for at least pendingMinMs.
+   */
+  private enum Hold { NONE, AWAITING_DATA, SHOWING_LOADING }
+  private Hold hold = Hold.NONE;
+  private int holdSeq;
+  private String heldUrl;
+  private Scope heldScope;
+  /** Scopes rendered but not sent during a hold; all re-render when it ends. */
+  private final Set<Scope> heldRenders = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+
   /** A notFound()/redirect() raised before the socket attached, for the SSR loop to act on. */
   volatile RouteException pendingRoute;
 
@@ -291,8 +303,10 @@ final class Session {
       root = new Scope(this, null, "frame:" + frameIds.get(0));
       root.bind(frames.get(0));
       markDirty(root);
+      heldScope = root;
     } else if (frames.get(common - 1).scope != null) {
       markDirty(frames.get(common - 1).scope);
+      heldScope = frames.get(common - 1).scope;
     }
   }
 
@@ -306,8 +320,56 @@ final class Session {
     }
     applyRoute(resolution);
     String finalMode = resolution.url.equals(url) ? mode : "pop".equals(mode) ? "replace" : mode;
+    heldUrl = Json.object("t", "url", "u", engine.contextPath + resolution.url, "m", finalMode);
+    hold = Hold.AWAITING_DATA;
+    int seq = ++holdSeq;
+    engine.later(this, engine.pendingMillis, () -> {
+      if (hold == Hold.AWAITING_DATA && holdSeq == seq) {
+        showHeldPage(seq);
+      }
+    });
     flush();
-    send(Json.object("t", "url", "u", engine.contextPath + resolution.url, "m", finalMode));
+  }
+
+  /** New page data arrived, or pendingMs passed: re-render it fresh and send it with its URL. */
+  private void showHeldPage(int seq) {
+    boolean stillLoading = awaitingData();
+    hold = Hold.NONE;
+    if (heldScope != null && !heldScope.disposed) {
+      markDirty(heldScope);
+    }
+    for (Scope scope : heldRenders) {
+      if (!scope.disposed) {
+        markDirty(scope);
+      }
+    }
+    heldRenders.clear();
+    flush();
+    if (heldUrl != null) {
+      send(heldUrl);
+      heldUrl = null;
+    }
+    if (stillLoading && engine.pendingMinMillis > 0) {
+      hold = Hold.SHOWING_LOADING;
+      engine.later(this, engine.pendingMinMillis, () -> {
+        if (hold == Hold.SHOWING_LOADING && holdSeq == seq) {
+          hold = Hold.NONE;
+          if (heldScope != null && !heldScope.disposed) {
+            markDirty(heldScope);
+          }
+        }
+      });
+    }
+  }
+
+  /** A query without data yet that the page is waiting on; withDefer() ones do not count. */
+  private boolean awaitingData() {
+    for (QueryCell query : inFlight) {
+      if (!query.deferred && query.initiallyPending()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Renders the fallback (or a plain message) in place, keeping the URL. */
@@ -370,6 +432,21 @@ final class Session {
     if (connection == null) {
       return;
     }
+    if (hold == Hold.SHOWING_LOADING) {
+      return; // loading() stays up until its minimum time; the timer re-renders
+    }
+    if (hold == Hold.AWAITING_DATA) {
+      // Render so the new page's queries start, but keep the old page on screen.
+      renderDirty(false);
+      if (!awaitingData()) {
+        showHeldPage(holdSeq);
+      }
+      return;
+    }
+    renderDirty(true);
+  }
+
+  private void renderDirty(boolean sending) {
     for (int pass = 0; pass < 8 && !dirty.isEmpty(); pass++) {
       List<Scope> roots = new ArrayList<>();
       for (Scope scope : dirty) {
@@ -390,10 +467,17 @@ final class Session {
           onRouteException(e);
           return;
         }
-        send(Json.object("t", "patch", "s", scope.anchor, "r", scope == root ? "1" : null, "h", renderer.out.toString()));
-        engine.stats.patches.incrementAndGet();
+        if (!sending) {
+          heldRenders.add(scope);
+        } else {
+          send(Json.object("t", "patch", "s", scope.anchor, "r", scope == root ? "1" : null, "h", renderer.out.toString()));
+          engine.stats.patches.incrementAndGet();
+        }
       }
       runEffects();
+    }
+    if (!sending) {
+      return;
     }
     String head = mergedHead();
     if (!head.equals(lastHead)) {

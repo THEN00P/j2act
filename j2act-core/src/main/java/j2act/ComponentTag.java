@@ -20,6 +20,19 @@ public abstract class ComponentTag implements DomContent {
 
   protected abstract Tag<?> render();
 
+  /**
+   * Override to make this component a loading boundary (ADR 0007): shown instead of
+   * render() while a query created in its subtree has no data yet. Nearest boundary wins.
+   */
+  protected Tag<?> loading() {
+    return null;
+  }
+
+  /** Override to make this component an error boundary: shown when a query in its subtree failed with no data. */
+  protected Tag<?> error(PageError error) {
+    return null;
+  }
+
   /** Slot identity among repeated siblings; never rendered (ADR 0019). */
   public ComponentTag withKey(Object key) {
     this.key = key;

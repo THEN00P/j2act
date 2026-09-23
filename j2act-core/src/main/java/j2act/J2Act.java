@@ -40,6 +40,8 @@ public final class J2Act implements AutoCloseable {
   final long ssrAwaitMillis;
   final long queryStaleMillis;
   final long queryGcMillis;
+  final long pendingMillis;
+  final long pendingMinMillis;
   final Stats stats = new Stats();
 
   private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
@@ -59,6 +61,8 @@ public final class J2Act implements AutoCloseable {
     this.ssrAwaitMillis = b.ssrAwaitBudget.toMillis();
     this.queryStaleMillis = b.queryStaleTime.toMillis();
     this.queryGcMillis = b.queryGcTime.toMillis();
+    this.pendingMillis = b.pendingTime.toMillis();
+    this.pendingMinMillis = b.pendingMinTime.toMillis();
     if (b.executor != null) {
       this.executor = b.executor;
       this.ownedExecutor = null;
@@ -277,6 +281,11 @@ public final class J2Act implements AutoCloseable {
     return auth == null ? AuthCtx.anonymous() : auth;
   }
 
+  /** Runs a lane task for the session after a delay, on the sweeper thread's clock. */
+  void later(Session session, long millis, Runnable task) {
+    sweeper.schedule(() -> session.post(task), millis, TimeUnit.MILLISECONDS);
+  }
+
   String newSecret(int bytes) {
     byte[] b = new byte[bytes];
     random.nextBytes(b);
@@ -324,7 +333,9 @@ public final class J2Act implements AutoCloseable {
       if (html == null) {
         return new SsrPass(null, 0);
       }
-      return new SsrPass(html, session.inFlight.isEmpty() ? -1L : session.settleCount());
+      // withDefer() queries finish over the socket; SSR waits only for the rest (ADR 0016).
+      boolean waiting = session.inFlight.stream().anyMatch(q -> !q.deferred);
+      return new SsrPass(html, waiting ? session.settleCount() : -1L);
     }
   }
 
@@ -350,6 +361,8 @@ public final class J2Act implements AutoCloseable {
     private Duration queryStaleTime = Duration.ofSeconds(30);
     private Duration queryGcTime = Duration.ofMinutes(5);
     private Duration sweepInterval = Duration.ofSeconds(10);
+    private Duration pendingTime = Duration.ofSeconds(1);
+    private Duration pendingMinTime = Duration.ofMillis(500);
 
     private Builder(PageResolver resolver) {
       this.resolver = resolver;
@@ -410,6 +423,16 @@ public final class J2Act implements AutoCloseable {
 
     public Builder withQueryGcTime(Duration gcTime) {
       this.queryGcTime = gcTime;
+      return this;
+    }
+
+    /**
+     * How long a soft navigation keeps the old page while the new one's queries load,
+     * and how long loading() then stays up at least, so it never flashes (ADR 0011).
+     */
+    public Builder withPendingTimes(Duration pending, Duration minimum) {
+      this.pendingTime = pending;
+      this.pendingMinTime = minimum;
       return this;
     }
 

@@ -7,6 +7,7 @@ package j2act;
 public final class Query<T> extends Primitive {
 
   private final Loader<T> loader;
+  private boolean deferred;
 
   Query(Loader<T> loader) {
     this.loader = loader;
@@ -39,6 +40,15 @@ public final class Query<T> extends Primitive {
     return snapshot().error;
   }
 
+  /** SSR does not wait for this query: the page ships with loading() or the pending branch (ADR 0016). */
+  public Query<T> withDefer() {
+    deferred = true;
+    if (cell != null) {
+      ((QueryCell) cell).deferred = true;
+    }
+    return this;
+  }
+
   public void refetch() {
     ((QueryCell) requireCell()).refetch();
   }
@@ -59,6 +69,7 @@ public final class Query<T> extends Primitive {
     this.cell = cell;
     // The latest render's lambda sees the latest instance; it replaces the loader without re-running it.
     ((QueryCell) cell).loader = loader;
+    ((QueryCell) cell).deferred |= deferred;
     if (created) {
       ((QueryCell) cell).activate();
     }

@@ -38,6 +38,7 @@ final class QueryCell extends Cell implements Observer {
   }
 
   Loader<?> loader;
+  volatile boolean deferred;
   private volatile Snapshot snapshot = Snapshot.INITIAL;
   private long seq;
   private final Set<Cell> deps = new HashSet<>();
@@ -58,6 +59,22 @@ final class QueryCell extends Cell implements Observer {
 
   @Override Object peek() {
     return snapshot;
+  }
+
+  /** No data yet and a run in flight: what a loading() boundary waits on. */
+  boolean initiallyPending() {
+    Snapshot s = snapshot;
+    return s.data == null && (s.status == Status.PENDING || s.fetching);
+  }
+
+  /** Failed with no data to fall back to: what an error() boundary shows. */
+  boolean initiallyFailed() {
+    Snapshot s = snapshot;
+    return s.status == Status.ERROR && s.data == null && !s.fetching;
+  }
+
+  Throwable failure() {
+    return snapshot.error;
   }
 
   /** Lane-only. First activation: hydrate from the remount cache or start a run. */

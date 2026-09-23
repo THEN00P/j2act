@@ -1,5 +1,8 @@
 package j2act;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +17,9 @@ final class Renderer {
   private final Session session;
   private final long epoch;
   StringBuilder out = new StringBuilder(1024);
+  /** Queries created under each open loading and error boundary, nearest on top (ADR 0007). */
+  private final Deque<List<QueryCell>> loadingOwners = new ArrayDeque<>();
+  private final Deque<List<QueryCell>> errorOwners = new ArrayDeque<>();
 
   Renderer(Session session, long epoch) {
     this.session = session;
@@ -33,6 +39,16 @@ final class Renderer {
     scope.previousChildren = scope.children;
     scope.children = new java.util.LinkedHashMap<>();
 
+    boolean loadingBoundary = Boundaries.isLoading(scope.instance.getClass());
+    boolean errorBoundary = Boundaries.isError(scope.instance.getClass());
+    if (loadingBoundary) {
+      loadingOwners.push(new ArrayList<>());
+    }
+    if (errorBoundary) {
+      errorOwners.push(new ArrayList<>());
+    }
+    int start = out.length();
+
     Tag<?> root;
     Observer previous = Tracking.swap(scope);
     scope.rendering = true;
@@ -42,14 +58,47 @@ final class Renderer {
       scope.rendering = false;
       Tracking.swap(previous);
     }
-    if ("html".equals(root.name) && root instanceof ContainerTag) {
-      if (scope == session.root) {
-        renderDocument(scope, (ContainerTag<?>) root);
-      } else {
-        renderOutlet(scope, (ContainerTag<?>) root);
+    for (Cell cell : scope.cells) {
+      if (cell instanceof QueryCell) {
+        if (!loadingOwners.isEmpty()) {
+          loadingOwners.peek().add((QueryCell) cell);
+        }
+        if (!errorOwners.isEmpty()) {
+          errorOwners.peek().add((QueryCell) cell);
+        }
       }
-    } else {
-      renderTag(scope, "", root, scope.anchor);
+    }
+    emit(scope, root);
+
+    List<QueryCell> loadingOwned = loadingBoundary ? loadingOwners.pop() : null;
+    List<QueryCell> errorOwned = errorBoundary ? errorOwners.pop() : null;
+    Tag<?> replacement = null;
+    List<QueryCell> watched = null;
+    if (loadingOwned != null && loadingOwned.stream().anyMatch(QueryCell::initiallyPending)) {
+      replacement = withTracking(scope, () -> scope.instance.loading());
+      watched = loadingOwned;
+    }
+    if (replacement == null && errorOwned != null) {
+      List<QueryCell> failed = new ArrayList<>();
+      for (QueryCell query : errorOwned) {
+        if (query.initiallyFailed()) {
+          failed.add(query);
+        }
+      }
+      if (!failed.isEmpty()) {
+        PageError error = new PageError(failed, failed.get(0).failure());
+        replacement = withTracking(scope, () -> scope.instance.error(error));
+        watched = errorOwned;
+      }
+    }
+    if (replacement != null) {
+      // The subtree stays mounted so its queries keep running; only its markup is swapped.
+      out.setLength(start);
+      emit(scope, replacement);
+      for (QueryCell query : watched) {
+        query.observers.add(scope);
+        scope.dependsOn(query);
+      }
     }
     session.endHandlers(scope);
 
@@ -63,6 +112,27 @@ final class Renderer {
       }
     }
     scope.previousChildren = new java.util.LinkedHashMap<>();
+  }
+
+  private void emit(Scope scope, Tag<?> root) {
+    if ("html".equals(root.name) && root instanceof ContainerTag) {
+      if (scope == session.root) {
+        renderDocument(scope, (ContainerTag<?>) root);
+      } else {
+        renderOutlet(scope, (ContainerTag<?>) root);
+      }
+    } else {
+      renderTag(scope, "", root, scope.anchor);
+    }
+  }
+
+  private static Tag<?> withTracking(Scope scope, java.util.function.Supplier<Tag<?>> body) {
+    Observer previous = Tracking.swap(scope);
+    try {
+      return body.get();
+    } finally {
+      Tracking.swap(previous);
+    }
   }
 
   /**

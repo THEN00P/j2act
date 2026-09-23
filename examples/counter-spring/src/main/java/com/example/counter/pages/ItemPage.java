@@ -12,6 +12,7 @@ import j2act.html.tags.HtmlTag;
 /**
  * /items/{id}: the loader reads pathParam("id"), so navigating between items keeps this
  * instance (and its State) and refetches. Item 404 throws notFound() (ADR 0015).
+ * loading() is a boundary (ADR 0007).
  */
 public class ItemPage extends LiveComponent implements Page {
 
@@ -37,6 +38,19 @@ public class ItemPage extends LiveComponent implements Page {
         button("likes " + likes.get())
           .withId("likes")
           .onClick(e -> likes.set(likes.get() + 1))
+      )
+    );
+  }
+
+  /** Shown only if an item takes longer than the navigation hold (1s); fast loads never flash it. */
+  @Override public HtmlTag loading() {
+    return html(
+      head(
+        title("Loading item… · j2act")
+      ),
+      body(
+        p("Loading item…")
+          .withClass("muted")
       )
     );
   }
