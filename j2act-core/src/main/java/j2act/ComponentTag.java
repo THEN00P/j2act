@@ -47,13 +47,37 @@ public abstract class ComponentTag implements DomContent {
     register(new Effect(body));
   }
 
-  /** Path parameter of the current route, e.g. "id" for /users/{id}. */
+  /** Path parameter of the current route, e.g. "id" for /users/{id}. Tracked: a change re-renders or refetches. */
   protected final String pathParam(String name) {
+    return route().params.get(name);
+  }
+
+  /** Query parameter of the current URL, or null. Tracked like pathParam. */
+  protected final String queryParam(String name) {
+    return route().queryParams.get(name);
+  }
+
+  /** The session's identity (ADR 0004). Tracked: render branches re-run when it changes. */
+  protected final AuthCtx auth() {
+    return session("auth()").readAuth();
+  }
+
+  /** Soft-navigates to an app path after the current event, like a link click (ADR 0011). */
+  protected final void navigate(String path) {
+    Session session = session("navigate()");
+    session.post(() -> session.navigate(path, "push"));
+  }
+
+  private RouteInfo route() {
+    return (RouteInfo) session("pathParam()").routeCell.read();
+  }
+
+  private Session session(String what) {
     Session session = scope != null ? scope.session : Session.current();
     if (session == null) {
-      throw new IllegalStateException("pathParam() needs a mounted component");
+      throw new IllegalStateException(what + " needs a mounted component");
     }
-    return session.pathParams.get(name);
+    return session;
   }
 
   private <P extends Primitive> P register(P primitive) {

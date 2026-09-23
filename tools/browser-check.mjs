@@ -141,6 +141,48 @@ async function main() {
   check("submit swaps in the submitter's pending markup instantly", submitPending);
   check("submit carries the checkbox field", await until(`document.body.textContent.includes('HELLO, ADA!')`));
 
+  // 9. soft navigation (ADR 0011): links, history, scroll, params, notFound, hash links
+  const navLink = (label) => `[...document.querySelectorAll('nav a')].find(a => a.textContent === ${JSON.stringify(label)})`;
+  const h1 = `document.querySelector('h1')?.textContent`;
+  await js(`window.__marker = 42; document.getElementById('layout-clicks').click(); true`);
+  await until(`document.getElementById('layout-clicks').textContent === 'layout clicks 1'`);
+  await js(`window.scrollTo(0, 600); true`);
+  await sleep(50);
+  const homeY = await js(`window.scrollY`);
+  await js(`${navLink("About")}.click(); true`);
+  check("link click soft-navigates with the page's title", await until(`location.pathname === '/about'
+    && document.title === 'About · j2act' && ${h1} === 'About'`));
+  check("no full page load, layout State kept", await js(`window.__marker === 42
+    && document.getElementById('layout-clicks').textContent === 'layout clicks 1'`));
+  check("the new page starts at the top", await js(`window.scrollY === 0`));
+  await js(`history.back(); true`);
+  check("back returns to home over the socket", await until(`location.pathname === '/'
+    && !!document.getElementById('search') && window.__marker === 42`));
+  check("back restores the scroll position", await until(`Math.abs(window.scrollY - ${homeY}) < 5`),
+    `saved ${homeY}, now ${await js('window.scrollY')}`);
+  await js(`${navLink("Item 7")}.click(); true`);
+  check("path and query params render", await until(`${h1} === 'Item 7'
+    && document.body.textContent.includes('tab: specs') && document.title === 'Item 7 · j2act'`));
+  await js(`document.getElementById('likes').click(); true`);
+  await until(`document.getElementById('likes').textContent === 'likes 1'`);
+  await js(`${navLink("Item 8")}.click(); true`);
+  check("param change keeps the page's State and refetches", await until(`${h1} === 'Item 8'
+    && document.getElementById('likes').textContent === 'likes 1' && document.body.textContent.includes('tab: overview')`));
+  await js(`${navLink("Missing")}.click(); true`);
+  check("notFound() shows the fallback at the same URL", await until(`${h1} === 'Nothing here'
+    && location.pathname === '/items/404' && document.title === 'Not found · j2act'`));
+  await js(`${navLink("About")}.click(); true`);
+  await until(`${h1} === 'About'`);
+  await js(`[...document.querySelectorAll('a')].find(a => a.textContent.startsWith('Jump to the form')).click(); true`);
+  // #forms is near the bottom, so "scrolled to it" means at the top or the page scrolled to its end.
+  const atForms = `(() => { const top = document.getElementById('forms')?.getBoundingClientRect().top;
+    const end = Math.ceil(window.scrollY + window.innerHeight) >= document.documentElement.scrollHeight - 2;
+    return top !== undefined && window.scrollY > 0 && (Math.abs(top) < 5 || (end && top >= 0 && top < window.innerHeight)); })()`;
+  check("hash link lands on the section of the other page", await until(`location.pathname === '/' && location.hash === '#forms'
+    && ${atForms}`), await js(`JSON.stringify({ y: window.scrollY, top: document.getElementById('forms')?.getBoundingClientRect().top,
+    h: document.documentElement.scrollHeight, vh: window.innerHeight })`));
+  check("still no full page load", await js(`window.__marker === 42`));
+
   check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
   ws.close();
 }

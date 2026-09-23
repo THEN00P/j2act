@@ -13,13 +13,11 @@ final class Renderer {
 
   private final Session session;
   private final long epoch;
-  private final String bootstrap;
-  final StringBuilder out = new StringBuilder(1024);
+  StringBuilder out = new StringBuilder(1024);
 
-  Renderer(Session session, long epoch, String bootstrap) {
+  Renderer(Session session, long epoch) {
     this.session = session;
     this.epoch = epoch;
-    this.bootstrap = bootstrap;
   }
 
   void renderScope(Scope scope) {
@@ -44,7 +42,15 @@ final class Renderer {
       scope.rendering = false;
       Tracking.swap(previous);
     }
-    renderTag(scope, "", root, scope.anchor);
+    if ("html".equals(root.name) && root instanceof ContainerTag) {
+      if (scope == session.root) {
+        renderDocument(scope, (ContainerTag<?>) root);
+      } else {
+        renderOutlet(scope, (ContainerTag<?>) root);
+      }
+    } else {
+      renderTag(scope, "", root, scope.anchor);
+    }
     session.endHandlers(scope);
 
     Map<Scope, Boolean> kept = new IdentityHashMap<>();
@@ -57,6 +63,60 @@ final class Renderer {
       }
     }
     scope.previousChildren = new java.util.LinkedHashMap<>();
+  }
+
+  /**
+   * The session root's html: the body renders first so nested frames record their heads,
+   * then the merged head is written in front of it (ADR 0007).
+   */
+  private void renderDocument(Scope scope, ContainerTag<?> html) {
+    StringBuilder document = out;
+    out = new StringBuilder(1024);
+    ContainerTag<?> head = null;
+    List<DomContent> children = html.children;
+    for (int i = 0; i < children.size(); i++) {
+      DomContent child = children.get(i);
+      if (child instanceof ContainerTag && "head".equals(((ContainerTag<?>) child).name)) {
+        head = (ContainerTag<?>) child;
+      } else if (child != null) {
+        renderNode(scope, "/" + i, child, false);
+      }
+    }
+    String body = out.toString();
+    out = document;
+    session.recordHead(scope, head);
+    out.append("<html");
+    attribute("data-j2s", scope.anchor);
+    for (Map.Entry<String, String> attr : html.attributes.entrySet()) {
+      attribute(attr.getKey(), attr.getValue());
+    }
+    out.append("><head>").append(session.mergedHead()).append("</head>").append(body).append("</html>");
+  }
+
+  /**
+   * A nested frame's html inside a layout: its body children render in a display:contents
+   * wrapper that carries the anchor, and its head joins the document head.
+   */
+  private void renderOutlet(Scope scope, ContainerTag<?> html) {
+    out.append("<div");
+    attribute("data-j2s", scope.anchor);
+    attribute("data-j2-outlet", "");
+    attribute("style", "display:contents");
+    out.append('>');
+    ContainerTag<?> head = null;
+    List<DomContent> children = html.children;
+    for (int i = 0; i < children.size(); i++) {
+      DomContent child = children.get(i);
+      if (child instanceof ContainerTag && "head".equals(((ContainerTag<?>) child).name)) {
+        head = (ContainerTag<?>) child;
+      } else if (child instanceof ContainerTag && "body".equals(((ContainerTag<?>) child).name)) {
+        renderChildren(scope, "/" + i, ((ContainerTag<?>) child).children, false);
+      } else if (child != null) {
+        renderNode(scope, "/" + i, child, false);
+      }
+    }
+    session.recordHead(scope, head);
+    out.append("</div>");
   }
 
   private void renderTag(Scope scope, String path, Tag<?> tag, String anchor) {
@@ -91,9 +151,6 @@ final class Renderer {
       out.append("</template>");
     }
     renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(tag.name));
-    if (bootstrap != null && tag.name.equals("head")) {
-      out.append(bootstrap);
-    }
     out.append("</").append(tag.name).append('>');
   }
 

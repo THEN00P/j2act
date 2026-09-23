@@ -46,7 +46,10 @@ public abstract class J2ActListener implements ServletContextListener {
   /** The app's routes, e.g. {@code routes(page("/", HomePage.class))}. */
   protected abstract PageResolver router();
 
-  /** Tune the mount: grace window, idle timeout, SSR budget, or a different executor. */
+  /**
+   * Tune the mount: identity via builder.withIdentity(exchange -> AuthCtx), grace window,
+   * idle timeout, SSR budget, or a different executor.
+   */
   protected void customize(J2Act.Builder builder) {
   }
 

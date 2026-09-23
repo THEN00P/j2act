@@ -17,13 +17,6 @@ import j2act.State;
 /** One page exercising every claim the first slice has to prove. */
 public class HomePage extends LiveComponent implements Page {
 
-  private static final String CSS = ""
-    + "body{font:15px/1.5 system-ui,sans-serif;max-width:720px;margin:2rem auto;padding:0 1rem;color:#222}"
-    + "section{border-top:1px solid #ddd;padding:.75rem 0}h2{font-size:1rem;margin:.25rem 0}"
-    + "button{font:inherit;padding:.25rem .75rem;margin:.15rem;cursor:pointer}"
-    + "button[data-pending]{opacity:.6;cursor:progress}.muted{color:#888}"
-    + ".card{background:#f6f6f6;padding:.5rem .75rem;border-radius:6px}ul{padding-left:1.25rem}";
-
   private final Counter pinned = counter().withLabel("Held instance");
   private final State<Integer> pageRenders = state(0);
   private final State<Boolean> showProfile = state(true);
@@ -32,8 +25,7 @@ public class HomePage extends LiveComponent implements Page {
   @Override public HtmlTag render() {
     return html(
       head(
-        title("j2act · first slice"),
-        style(CSS)
+        title("j2act · first slice")
       ),
       body(
         h1("j2act first slice"),
@@ -66,7 +58,7 @@ public class HomePage extends LiveComponent implements Page {
             : null
         ),
         section(
-          h2("Forms, keys and focus"),
+          h2("Forms, keys and focus").withId("forms"),
           greetingForm()
         ),
         section(

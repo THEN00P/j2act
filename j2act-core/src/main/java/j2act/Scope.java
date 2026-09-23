@@ -99,6 +99,7 @@ final class Scope implements Observer {
     children.clear();
     unsubscribeAll();
     session.removeHandlers(this);
+    session.forgetHead(this);
     for (Cell cell : cells) {
       cell.dispose();
       session.cells.remove(cell.address);

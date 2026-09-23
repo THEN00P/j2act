@@ -14,6 +14,7 @@
   var sid = meta("j2-session");
   var tok = meta("j2-token");
   var wsPath = meta("j2-ws");
+  var base = meta("j2-base") || "";
   if (!sid || !wsPath) {
     return;
   }
@@ -87,7 +88,13 @@
         ws.send(queue.shift());
       }
     } else if (m.t === "patch") {
-      patch(m.s, m.h);
+      patch(m.s, m.h, m.r === "1");
+    } else if (m.t === "head") {
+      Idiomorph.morph(document.head, m.h, { morphStyle: "innerHTML" });
+    } else if (m.t === "url") {
+      landed(m.u, m.m);
+    } else if (m.t === "go") {
+      location.assign(m.u);
     } else if (m.t === "ack") {
       ack(m.a);
     } else if (m.t === "expired") {
@@ -97,19 +104,86 @@
 
   // ---- patches
 
-  function patch(anchor, html) {
-    var el = document.querySelector('[data-j2s="' + anchor + '"]');
-    if (!el) {
-      return;
-    }
-    if (el === document.documentElement) {
+  function patch(anchor, html, isRoot) {
+    if (isRoot) {
+      // The session root may be a new component after a navigation, with a new anchor.
       var doc = new DOMParser().parseFromString(html, "text/html");
-      document.title = doc.title;
+      document.documentElement.setAttribute("data-j2s", anchor);
+      Idiomorph.morph(document.head, doc.head.innerHTML, { morphStyle: "innerHTML" });
       Idiomorph.morph(document.body, doc.body, morphConfig);
       return;
     }
-    Idiomorph.morph(el, html, morphConfig);
+    var el = document.querySelector('[data-j2s="' + anchor + '"]');
+    if (el) {
+      Idiomorph.morph(el, html, morphConfig);
+    }
   }
+
+  // ---- soft navigation (ADR 0011): links and back/forward go over the socket
+
+  var pendingHash = "";
+  if ("scrollRestoration" in history) {
+    history.scrollRestoration = "manual";
+  }
+  history.replaceState({ j2: 1, y: window.scrollY }, "");
+
+  function inApp(url) {
+    return url.origin === location.origin
+      && (base === "" || url.pathname === base || url.pathname.indexOf(base + "/") === 0);
+  }
+
+  function go(url, mode) {
+    history.replaceState({ j2: 1, y: window.scrollY }, "");
+    pendingHash = url.hash;
+    send({ t: "nav", u: url.pathname + url.search, m: mode });
+  }
+
+  // The server answers a navigation with patches, then the final URL (after redirects).
+  function landed(u, mode) {
+    var target = u + pendingHash;
+    if (mode === "push") {
+      history.pushState({ j2: 1, y: 0 }, "", target);
+    } else if (mode === "replace") {
+      history.replaceState({ j2: 1, y: 0 }, "", target);
+    }
+    if (mode === "pop") {
+      var y = history.state && typeof history.state.y === "number" ? history.state.y : 0;
+      window.scrollTo(0, y);
+    } else if (pendingHash) {
+      var anchor = document.getElementById(decodeURIComponent(pendingHash.slice(1)));
+      if (anchor) {
+        anchor.scrollIntoView();
+      }
+    } else {
+      window.scrollTo(0, 0);
+    }
+    pendingHash = "";
+  }
+
+  document.addEventListener("click", function (e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+      return;
+    }
+    var a = e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a || a.hasAttribute("data-j2-click") || a.hasAttribute("download") || a.hasAttribute("data-j2-reload")
+      || (a.target && a.target !== "_self")) {
+      return;
+    }
+    var url = new URL(a.href, location.href);
+    if (!inApp(url)) {
+      return;
+    }
+    if (url.pathname === location.pathname && url.search === location.search && url.hash) {
+      return; // same-page anchor: the browser scrolls
+    }
+    e.preventDefault();
+    go(url, "push");
+  });
+
+  window.addEventListener("popstate", function () {
+    pendingHash = location.hash;
+    send({ t: "nav", u: location.pathname + location.search, m: "pop" });
+  });
 
   // ---- events
 

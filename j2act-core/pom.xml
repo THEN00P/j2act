@@ -14,6 +14,24 @@
   <name>j2act-core</name>
   <description>Reactive primitives, sessions, rendering and the client runtime. No dependencies.</description>
 
+  <build>
+    <plugins>
+      <!-- The headless session harness is shared with other modules' tests. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.2</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>test-jar</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
   <dependencies>
     <dependency>
       <groupId>org.junit.jupiter</groupId>

@@ -18,6 +18,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
 /**
  * The runtime a transport adapter drives: serve() for full-page loads, onMessage()
@@ -31,6 +32,7 @@ public final class J2Act implements AutoCloseable {
   final PageResolver resolver;
   final Executor executor;
   final MembersInjector injector;
+  private final Function<Exchange, AuthCtx> identity;
   final String contextPath;
   final Clock clock;
   final long reconnectGraceMillis;
@@ -49,6 +51,7 @@ public final class J2Act implements AutoCloseable {
   private J2Act(Builder b) {
     this.resolver = b.resolver;
     this.injector = b.injector;
+    this.identity = b.identity;
     this.contextPath = b.contextPath;
     this.clock = b.clock;
     this.reconnectGraceMillis = b.reconnectGrace.toMillis();
@@ -74,39 +77,77 @@ public final class J2Act implements AutoCloseable {
 
   // ---- HTTP
 
-  /** Full-page load: mounts a new session, awaits its queries within the SSR budget (ADR 0016). */
-  public ServeResult serve(String path) {
-    PageMatch match = resolver.resolve(path);
-    if (match == null) {
-      return new ServeResult(404, "<!DOCTYPE html><html><head><title>Not found</title></head>"
-        + "<body><h1>Not found</h1></body></html>");
-    }
-    Session session = new Session(this, newSecret(18), newSecret(18), match.params());
+  /** Full-page load of an app URL (path plus optional query) with no request data. */
+  public ServeResult serve(String url) {
+    return serve(url, Exchange.empty());
+  }
+
+  /**
+   * Full-page load: mounts a new session for the app URL, following redirect() routes
+   * and guards (a 303 when the URL changed), and awaits queries within the SSR budget
+   * (ADR 0016). notFound()/redirect() raised while rendering become a 404 or a 303.
+   */
+  public ServeResult serve(String url, Exchange exchange) {
+    Session session = new Session(this, newSecret(18), newSecret(18), exchange, url);
     sessions.put(session.id, session);
     try {
-      LiveComponent page = match.create();
+      Session.Resolution resolution = await(session.call(() -> session.resolve(url)));
+      if (!resolution.url.equals(url)) {
+        discard(session, false);
+        return new ServeResult(303, "", contextPath + resolution.url);
+      }
+      if (resolution.match == null && resolver.fallback() == null) {
+        // No route and no fallback page: a static 404, no session for a stray URL to hold.
+        discard(session, false);
+        return new ServeResult(404, "<!DOCTYPE html><html><head><title>Not found</title></head>"
+          + "<body><h1>Not found</h1></body></html>");
+      }
+      int status = resolution.status;
       // Render and the in-flight check run in one lane task, so a commit can never land
       // between them and leave us shipping HTML rendered before it (ADR 0016).
       SsrPass pass = await(session.call(() -> {
-        session.mount(page);
+        if (resolution.match == null) {
+          session.showNotFound();
+        } else {
+          session.applyRoute(resolution);
+        }
         return SsrPass.of(session);
       }));
       long deadline = clock.millis() + ssrAwaitMillis;
-      while (pass.settleCount >= 0) {
+      while (true) {
+        RouteException route = session.pendingRoute;
+        if (route != null) {
+          if (!route.isNotFound()) {
+            discard(session, false);
+            return new ServeResult(303, "", contextPath + route.redirect);
+          }
+          status = 404;
+          pass = await(session.call(() -> {
+            session.pendingRoute = null;
+            session.showNotFound();
+            return SsrPass.of(session);
+          }));
+          continue;
+        }
         long left = deadline - clock.millis();
-        if (left <= 0) {
+        if (pass.settleCount < 0 || left <= 0) {
           break;
         }
         session.awaitSettleAfter(pass.settleCount, left);
         pass = await(session.call(() -> SsrPass.of(session)));
       }
-      return new ServeResult(200, pass.html);
+      return new ServeResult(status, pass.html);
     } catch (Exception e) {
-      log(System.Logger.Level.ERROR, "render failed for " + path, e);
+      log(System.Logger.Level.ERROR, "render failed for " + url, e);
       discard(session, false);
       return new ServeResult(500, "<!DOCTYPE html><html><head><title>Error</title></head>"
         + "<body><h1>Render failed</h1></body></html>");
     }
+  }
+
+  /** Whether a page-load request should be served by j2act at all: some route or redirect matches. */
+  public boolean handles(String path) {
+    return resolver.resolve(path) != null;
   }
 
   // ---- socket
@@ -136,6 +177,12 @@ public final class J2Act implements AutoCloseable {
       session.lane.execute(session.task(
         () -> ok[0] = session.dispatch(message),
         () -> session.send(Json.object("t", "ack", "a", ack, "ok", ok[0] ? "1" : "0"))));
+    } else if ("nav".equals(type)) {
+      String target = appUrl(message.get("u"));
+      if (target != null) {
+        String mode = "pop".equals(message.get("m")) ? "pop" : "push";
+        session.post(() -> session.onNavigate(target, mode));
+      }
     } else if ("bye".equals(type)) {
       byConnection.remove(connection);
       discard(session, false);
@@ -204,6 +251,32 @@ public final class J2Act implements AutoCloseable {
 
   // ---- internals
 
+  /** A client-sent URL made app-relative; null if it is not a path inside this app. */
+  String appUrl(String url) {
+    if (url == null || !url.startsWith("/") || url.startsWith("//")) {
+      return null;
+    }
+    if (!contextPath.isEmpty()) {
+      if (!url.equals(contextPath) && !url.startsWith(contextPath + "/") && !url.startsWith(contextPath + "?")) {
+        return null;
+      }
+      url = url.substring(contextPath.length());
+    }
+    return url.isEmpty() || url.startsWith("?") ? "/" + url : url;
+  }
+
+  boolean hasIdentity() {
+    return identity != null;
+  }
+
+  AuthCtx resolveIdentity(Exchange exchange) {
+    if (identity == null) {
+      return AuthCtx.anonymous();
+    }
+    AuthCtx auth = identity.apply(exchange);
+    return auth == null ? AuthCtx.anonymous() : auth;
+  }
+
   String newSecret(int bytes) {
     byte[] b = new byte[bytes];
     random.nextBytes(b);
@@ -248,6 +321,9 @@ public final class J2Act implements AutoCloseable {
 
     static SsrPass of(Session session) {
       String html = session.renderFull();
+      if (html == null) {
+        return new SsrPass(null, 0);
+      }
       return new SsrPass(html, session.inFlight.isEmpty() ? -1L : session.settleCount());
     }
   }
@@ -265,6 +341,7 @@ public final class J2Act implements AutoCloseable {
     private final PageResolver resolver;
     private Executor executor;
     private MembersInjector injector = MembersInjector.NONE;
+    private Function<Exchange, AuthCtx> identity;
     private String contextPath = "";
     private Clock clock = Clock.systemUTC();
     private Duration reconnectGrace = Duration.ofMinutes(3);
@@ -286,6 +363,15 @@ public final class J2Act implements AutoCloseable {
 
     public Builder withMembersInjector(MembersInjector injector) {
       this.injector = injector;
+      return this;
+    }
+
+    /**
+     * The host's identity seam: turn the page-load request into an AuthCtx. Called lazily,
+     * only when a guard or render reads auth, and again before each event (ADR 0004, 0008).
+     */
+    public Builder withIdentity(Function<Exchange, AuthCtx> identity) {
+      this.identity = identity;
       return this;
     }
 

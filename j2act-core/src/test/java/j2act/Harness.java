@@ -34,8 +34,12 @@ final class Harness implements AutoCloseable {
   }
 
   Harness(Supplier<? extends LiveComponent> page, Consumer<J2Act.Builder> config) {
+    this((PageResolver) path -> "/".equals(path) ? new PageMatch(page, Collections.emptyMap()) : null, config);
+  }
+
+  Harness(PageResolver resolver, Consumer<J2Act.Builder> config) {
     J2Act.Builder builder = J2Act
-      .builder(path -> "/".equals(path) ? new PageMatch(page, Collections.emptyMap()) : null)
+      .builder(resolver)
       .withExecutor(pool)
       .withSweepInterval(Duration.ofMillis(50));
     config.accept(builder);
@@ -43,11 +47,41 @@ final class Harness implements AutoCloseable {
   }
 
   String load() {
-    ServeResult result = engine.serve("/");
+    return load("/", Exchange.empty());
+  }
+
+  /** Full-page load of an app URL; fails unless it rendered (use engine.serve for redirects). */
+  String load(String url, Exchange exchange) {
+    ServeResult result = engine.serve(url, exchange);
+    if (result.html() == null || result.location() != null) {
+      fail("expected a page for " + url + " but got " + result.status() + " " + result.location());
+    }
     html = result.html();
     sid = find(html, "name=\"j2-session\" content=\"([^\"]+)\"");
     token = find(html, "name=\"j2-token\" content=\"([^\"]+)\"");
     return html;
+  }
+
+  /** Soft navigation as a link click sends it; returns everything up to the url or go answer. */
+  List<Map<String, String>> nav(String url) {
+    return nav(url, "push");
+  }
+
+  List<Map<String, String>> nav(String url, String mode) {
+    int from = conn.size();
+    engine.onMessage(conn, Json.object("t", "nav", "u", url, "m", mode));
+    conn.await(from, m -> "url".equals(m.get("t")) || "go".equals(m.get("t")));
+    return conn.since(from, m -> true);
+  }
+
+  static String last(List<Map<String, String>> messages, String type) {
+    String found = null;
+    for (Map<String, String> m : messages) {
+      if (type.equals(m.get("t"))) {
+        found = "patch".equals(type) || "head".equals(type) ? m.get("h") : m.get("u");
+      }
+    }
+    return found;
   }
 
   Harness connect() {

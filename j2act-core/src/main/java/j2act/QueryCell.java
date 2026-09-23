@@ -135,6 +135,12 @@ final class QueryCell extends Cell implements Observer {
     snapshot = error == null
       ? new Snapshot(Status.SUCCESS, result, null, false)
       : new Snapshot(Status.ERROR, snapshot.data, error, false);
+    if (error instanceof RouteException) {
+      // notFound()/redirect() from a loader ends the route, not the query (ADR 0015).
+      session.inFlight.remove(this);
+      session.onRouteException((RouteException) error);
+      return;
+    }
     if (error != null) {
       session.engine.log(System.Logger.Level.WARNING, "query failed at " + address, error);
     }

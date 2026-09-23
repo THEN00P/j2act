@@ -20,6 +20,18 @@
       <artifactId>j2act-core</artifactId>
     </dependency>
     <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-core</artifactId>
+      <version>${project.version}</version>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-html</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
       <scope>test</scope>

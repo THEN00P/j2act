@@ -37,7 +37,8 @@ public class J2ActAutoConfiguration {
     AutowireCapableBeanFactory beans,
     ObjectProvider<ServletContext> servletContext,
     @Qualifier("applicationTaskExecutor") ObjectProvider<Executor> taskExecutor,
-    ObjectProvider<J2ActCustomizer> customizers
+    ObjectProvider<J2ActCustomizer> customizers,
+    ObjectProvider<J2ActIdentity> identity
   ) {
     ServletContext context = servletContext.getIfAvailable();
     J2Act.Builder builder = J2Act.builder(resolver)
@@ -47,6 +48,7 @@ public class J2ActAutoConfiguration {
     if (executor != null) {
       builder.withExecutor(executor);
     }
+    identity.ifAvailable(builder::withIdentity);
     customizers.orderedStream().forEach(c -> c.customize(builder));
     return builder.build();
   }

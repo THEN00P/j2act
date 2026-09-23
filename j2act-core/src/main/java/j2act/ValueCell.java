@@ -40,6 +40,11 @@ final class ValueCell extends Cell {
     }
   }
 
+  /** Sets the first value without notifying anyone; for lazily resolved cells such as identity. */
+  void initialize(Object first) {
+    value = first;
+  }
+
   /** Lane-only. Equal values are not a change. */
   void setOnLane(Object next) {
     if (disposed || Objects.equals(value, next)) {
