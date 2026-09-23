@@ -37,6 +37,9 @@ final class Session {
   final Map<String, Cell> cells = new java.util.concurrent.ConcurrentHashMap<>();
   final Set<Scope> dirty = new LinkedHashSet<>();
   final Deque<EffectCell> pendingEffects = new ArrayDeque<>();
+  /** Effects of preloaded subtrees, waiting for the navigation that adopts them (ADR 0011). */
+  final List<EffectCell> parkedEffects = new ArrayList<>();
+  private PreloadedRoute preload;
   final Set<QueryCell> inFlight = new HashSet<>();
   private final Map<String, InactiveQuery> inactive = new LinkedHashMap<>();
   private final Map<String, HandlerEntry> handlers = new HashMap<>();
@@ -335,10 +338,16 @@ final class Session {
       frames.remove(i);
       frameIds.remove(i);
     }
+    PreloadedRoute adopted = takePreload(resolution, common);
     for (int i = common; i < next.size(); i++) {
-      ComponentTag instance = next.get(i).factory.get();
-      if (i > 0) {
-        instance.withKey(next.get(i).id);
+      ComponentTag instance;
+      if (adopted != null) {
+        instance = adopted.instances.get(i - common);
+      } else {
+        instance = next.get(i).factory.get();
+        if (i > 0) {
+          instance.withKey(next.get(i).id);
+        }
       }
       frames.add(instance);
       frameIds.add(next.get(i).id);
@@ -355,6 +364,9 @@ final class Session {
     }
     guards = new ArrayList<>(match.guards);
     routeCell.setOnLane(new RouteInfo(resolution.url, match.params));
+    if (adopted != null) {
+      adopt(adopted);
+    }
     if (common == 0) {
       if (root != null) {
         root.dispose();
@@ -479,6 +491,11 @@ final class Session {
   }
 
   void markDirty(Scope scope) {
+    if (preload != null && scope.preloading()) {
+      // Re-rendered offscreen by flush(), never patched to the client.
+      preload.dirty = true;
+      return;
+    }
     if (!scope.disposed && !scope.dirty) {
       scope.dirty = true;
       dirty.add(scope);
@@ -488,6 +505,9 @@ final class Session {
   /** Re-renders the topmost dirty scopes and sends one patch each. No-op until a socket is attached. */
   void flush() {
     runEffects();
+    if (preload != null && preload.dirty) {
+      renderPreload(preload);
+    }
     if (connection == null) {
       return;
     }
@@ -649,6 +669,9 @@ final class Session {
     StringBuilder b = new StringBuilder();
     b.append("<meta name=\"j2-session\" content=\"").append(id).append("\">");
     b.append("<meta name=\"j2-token\" content=\"").append(token).append("\">");
+    if (engine.defaultPreload == Preload.INTENT) {
+      b.append("<meta name=\"j2-preload\" content=\"intent\">");
+    }
     b.append("<meta name=\"j2-base\" content=\"");
     Html.escape(engine.contextPath, b);
     b.append("\"><meta name=\"j2-ws\" content=\"");
@@ -856,6 +879,8 @@ final class Session {
     dirty.clear();
     pendingEffects.clear();
     heads.clear();
+    discardPreload();
+    parkedEffects.clear();
     engine.discardUploads(this);
     deleteOwnedFiles();
     Connection c = connection;
@@ -868,6 +893,162 @@ final class Session {
       }
       c.close();
     }
+  }
+
+  // ---- preload (ADR 0011)
+
+  /** Frames mounted ahead of a navigation under the layout scope they will render in. */
+  static final class PreloadedRoute {
+    final String url;
+    final int common;
+    final Scope parent;
+    final List<String> frameIds;
+    final List<ComponentTag> instances;
+    final Scope root;
+    final PreloadRouteCell route;
+    boolean dirty;
+
+    PreloadedRoute(String url, int common, Scope parent, List<String> frameIds, List<ComponentTag> instances,
+      Scope root, PreloadRouteCell route) {
+      this.url = url;
+      this.common = common;
+      this.parent = parent;
+      this.frameIds = frameIds;
+      this.instances = instances;
+      this.root = root;
+      this.route = route;
+    }
+  }
+
+  /**
+   * Lane-only. Mounts the frames a navigation to url would add, offscreen: guards run
+   * now, queries start, Effects wait. Only a target below a shared layout is preloaded;
+   * a param change on the current page has nothing new to mount.
+   */
+  void preload(String url) {
+    if (disposed || connection == null) {
+      return;
+    }
+    lastActivity = engine.clock.millis();
+    Resolution resolution = resolve(url);
+    if (resolution.match == null || resolution.status != 200) {
+      return;
+    }
+    if (preload != null && preload.url.equals(resolution.url)) {
+      return;
+    }
+    discardPreload();
+    List<PageMatch.Frame> next = resolution.match.frames;
+    int common = 0;
+    while (common < frameIds.size() && common < next.size() && frameIds.get(common).equals(next.get(common).id)) {
+      common++;
+    }
+    if (common == 0 || common >= next.size() || frames.get(common - 1).scope == null) {
+      return;
+    }
+    List<ComponentTag> instances = new ArrayList<>();
+    List<String> ids = new ArrayList<>();
+    for (int i = common; i < next.size(); i++) {
+      ComponentTag instance = next.get(i).factory.get();
+      instance.withKey(next.get(i).id);
+      instances.add(instance);
+      ids.add(next.get(i).id);
+    }
+    for (int i = 0; i < instances.size() - 1; i++) {
+      if (!(instances.get(i) instanceof Layout)) {
+        return;
+      }
+      ((Layout) instances.get(i)).content = instances.get(i + 1);
+    }
+    if (instances.get(instances.size() - 1) instanceof Layout) {
+      ((Layout) instances.get(instances.size() - 1)).content = null;
+    }
+    Scope parent = frames.get(common - 1).scope;
+    PreloadRouteCell route = new PreloadRouteCell(this, new RouteInfo(resolution.url, resolution.match.params));
+    Scope root = new Scope(this, parent, parent.address + "/preload:" + ids.get(0));
+    PreloadedRoute p = new PreloadedRoute(resolution.url, common, parent, ids, instances, root, route);
+    root.preload = p;
+    root.routeOverride = route;
+    preload = p;
+    root.bind(instances.get(0));
+    renderPreload(p);
+    engine.later(this, engine.preloadHoldMillis, () -> {
+      if (preload == p) {
+        discardPreload();
+      }
+    });
+  }
+
+  /** Lane-only. Renders the preloaded subtree so its queries start; the HTML, handlers and head are dropped. */
+  private void renderPreload(PreloadedRoute p) {
+    p.dirty = false;
+    Renderer renderer = new Renderer(this, ++epoch);
+    try {
+      renderer.renderScope(p.root);
+    } catch (RouteException e) {
+      // notFound() or redirect() ahead of time: the click will run into it for real.
+      forget(p.root);
+      discardPreload();
+      return;
+    }
+    forget(p.root);
+    runEffects();
+  }
+
+  private void forget(Scope scope) {
+    removeHandlers(scope);
+    forgetHead(scope);
+    for (Scope child : scope.children.values()) {
+      forget(child);
+    }
+  }
+
+  /** Lane-only. The preload if it is exactly what this route change mounts; otherwise it is dropped. */
+  private PreloadedRoute takePreload(Resolution resolution, int common) {
+    PreloadedRoute p = preload;
+    if (p == null) {
+      return null;
+    }
+    List<String> ids = new ArrayList<>();
+    for (int i = common; i < resolution.match.frames.size(); i++) {
+      ids.add(resolution.match.frames.get(i).id);
+    }
+    boolean fits = p.url.equals(resolution.url) && p.common == common && common > 0
+      && frames.get(common - 1).scope == p.parent && !p.root.disposed && p.frameIds.equals(ids);
+    if (!fits) {
+      discardPreload();
+      return null;
+    }
+    preload = null;
+    return p;
+  }
+
+  /** Lane-only. The navigation committed: the subtree becomes live and its Effects run. */
+  private void adopt(PreloadedRoute p) {
+    p.root.preload = null;
+    p.route.follow();
+    List<EffectCell> parked = new ArrayList<>(parkedEffects);
+    parkedEffects.clear();
+    for (EffectCell effect : parked) {
+      if (effect.disposed) {
+        continue;
+      }
+      if (effect.owner != null && effect.owner.preloading()) {
+        parkedEffects.add(effect);
+      } else {
+        effect.unpark();
+      }
+    }
+  }
+
+  private void discardPreload() {
+    PreloadedRoute p = preload;
+    if (p == null) {
+      return;
+    }
+    preload = null;
+    p.root.dispose();
+    parkedEffects.removeIf(effect -> effect.disposed);
   }
 
   // ---- socket abuse limits (ADR 0013)

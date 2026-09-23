@@ -27,6 +27,10 @@ final class Scope implements Observer {
   Map<String, String> previousHandlerIds = new LinkedHashMap<>();
   /** Primitive count after the first render; later renders must create exactly as many (ADR 0019). */
   int settledCount = -1;
+  /** Set on the root of a subtree mounted ahead of a navigation, until the click adopts it (ADR 0011). */
+  Session.PreloadedRoute preload;
+  /** The route this subtree reads instead of the session's; see PreloadRouteCell. */
+  PreloadRouteCell routeOverride;
   boolean dirty;
   boolean rendering;
   boolean disposed;
@@ -80,6 +84,7 @@ final class Scope implements Observer {
         + " that earlier renders did not; primitives must not be created conditionally (ADR 0019)");
     }
     Cell cell = primitive.createCell(session, address + "#" + index);
+    cell.owner = this;
     cells.add(cell);
     session.cells.put(cell.address, cell);
     primitive.attach(cell, true);
@@ -87,6 +92,26 @@ final class Scope implements Observer {
 
   @Override public void invalidate() {
     session.markDirty(this);
+  }
+
+  /** Inside a preloaded subtree that has not been navigated to yet. */
+  boolean preloading() {
+    for (Scope s = this; s != null; s = s.parent) {
+      if (s.preload != null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** The route cell pathParam()/queryParam() read here: a preloaded subtree's own, else the session's. */
+  ValueCell routeCell() {
+    for (Scope s = this; s != null; s = s.parent) {
+      if (s.routeOverride != null) {
+        return s.routeOverride;
+      }
+    }
+    return session.routeCell;
   }
 
   @Override public void dependsOn(Cell cell) {
@@ -117,6 +142,9 @@ final class Scope implements Observer {
       session.cells.remove(cell.address);
     }
     session.dirty.remove(this);
+    if (routeOverride != null) {
+      routeOverride.unfollow();
+    }
     if (instance != null && instance.scope == this) {
       instance.scope = null;
     }

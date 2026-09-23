@@ -26,6 +26,7 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   Object key;
   long debounceMillis = -1;
   long throttleMillis = -1;
+  Preload preload;
   String keyFilter;
   DomContent pending;
 
@@ -153,6 +154,16 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
    */
   public T withThrottle(Duration throttle) {
     this.throttleMillis = throttle.toMillis();
+    return self();
+  }
+
+  /**
+   * For a link: pre-mount its target on hover, focus or touch so the click lands on loaded
+   * data (ADR 0011). Guards and queries run ahead; Effects wait for the click. Overrides the
+   * mount's default; Preload.NONE opts a link out.
+   */
+  public T withPreload(Preload mode) {
+    this.preload = mode;
     return self();
   }
 

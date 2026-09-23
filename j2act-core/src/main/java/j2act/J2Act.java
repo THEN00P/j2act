@@ -65,6 +65,8 @@ public final class J2Act implements AutoCloseable {
   final Function<AuthCtx, RateLimit> rateLimit;
   private final int maxFrameSize;
   final int maxQueuedEvents;
+  final Preload defaultPreload;
+  final long preloadHoldMillis;
 
   private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Connection, Session> byConnection = new ConcurrentHashMap<>();
@@ -91,6 +93,8 @@ public final class J2Act implements AutoCloseable {
     this.rateLimit = b.rateLimit;
     this.maxFrameSize = b.maxFrameSize;
     this.maxQueuedEvents = b.maxQueuedEvents;
+    this.defaultPreload = b.defaultPreload;
+    this.preloadHoldMillis = b.preloadHold.toMillis();
     if (b.executor != null) {
       this.executor = b.executor;
       this.ownedExecutor = null;
@@ -307,6 +311,11 @@ public final class J2Act implements AutoCloseable {
       session.lane.execute(session.task(
         () -> ok[0] = session.dispatch(message),
         () -> session.send(Json.object("t", "ack", "a", ack, "ok", ok[0] ? "1" : "0"))));
+    } else if ("pre".equals(type)) {
+      String target = appUrl(message.get("u"));
+      if (target != null && admit(session, connection)) {
+        session.post(() -> session.preload(target));
+      }
     } else if ("nav".equals(type)) {
       String target = appUrl(message.get("u"));
       if (target != null) {
@@ -520,6 +529,8 @@ public final class J2Act implements AutoCloseable {
     private Function<AuthCtx, RateLimit> rateLimit = auth -> RateLimit.perSecond(30).withBurst(60);
     private int maxFrameSize = 256 * 1024;
     private int maxQueuedEvents = 100;
+    private Preload defaultPreload = Preload.NONE;
+    private Duration preloadHold = Duration.ofSeconds(10);
 
     private Builder(PageResolver resolver) {
       this.resolver = resolver;
@@ -630,6 +641,18 @@ public final class J2Act implements AutoCloseable {
     /** Events a session may have waiting on its lane before new ones are dropped. Default 100. */
     public Builder withMaxQueuedEvents(int events) {
       this.maxQueuedEvents = events;
+      return this;
+    }
+
+    /** Preload for links without their own withPreload (ADR 0011). Default NONE: hover then costs no DB work. */
+    public Builder withDefaultPreload(Preload preload) {
+      this.defaultPreload = preload;
+      return this;
+    }
+
+    /** How long a preloaded page waits for its click before it is dropped. Default 10 seconds. */
+    public Builder withPreloadHold(Duration hold) {
+      this.preloadHold = hold;
       return this;
     }
 

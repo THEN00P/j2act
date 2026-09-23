@@ -114,7 +114,7 @@ public abstract class ComponentTag implements DomContent {
   }
 
   private RouteInfo route() {
-    return (RouteInfo) session("pathParam()").routeCell.read();
+    return (RouteInfo) (scope != null ? scope.routeCell() : session("pathParam()").routeCell).read();
   }
 
   private Session session(String what) {

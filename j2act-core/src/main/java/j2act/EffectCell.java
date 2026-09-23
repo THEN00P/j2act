@@ -32,10 +32,16 @@ final class EffectCell extends Cell implements Observer {
   }
 
   void run() {
-    queued = false;
     if (disposed) {
+      queued = false;
       return;
     }
+    if (owner != null && owner.preloading()) {
+      // Effects wait for the navigation to commit (ADR 0011); still queued, so no duplicates.
+      session.parkedEffects.add(this);
+      return;
+    }
+    queued = false;
     runCleanup();
     unsubscribe();
     Observer previous = Tracking.swap(this);
@@ -46,6 +52,12 @@ final class EffectCell extends Cell implements Observer {
     } finally {
       Tracking.swap(previous);
     }
+  }
+
+  /** Lane-only. Its subtree was navigated to: run as if just mounted. */
+  void unpark() {
+    queued = false;
+    schedule();
   }
 
   @Override public void invalidate() {

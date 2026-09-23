@@ -209,6 +209,9 @@ final class Renderer {
     if (tag.debounceMillis >= 0) {
       attribute("data-j2-debounce", String.valueOf(tag.debounceMillis));
     }
+    if (tag.preload != null) {
+      attribute("data-j2-preload", tag.preload == Preload.INTENT ? "intent" : "none");
+    }
     if (tag.throttleMillis >= 0) {
       attribute("data-j2-throttle", String.valueOf(tag.throttleMillis));
     }

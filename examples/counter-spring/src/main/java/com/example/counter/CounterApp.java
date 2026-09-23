@@ -12,6 +12,7 @@ import com.example.counter.pages.AppLayout;
 import com.example.counter.pages.HomePage;
 import com.example.counter.pages.ItemPage;
 import com.example.counter.pages.NotFoundPage;
+import com.example.counter.pages.ReportPage;
 import j2act.PageResolver;
 
 /** Declaring the route bean is all the mount needs; j2act-spring auto-configures the rest. */
@@ -30,6 +31,7 @@ public class CounterApp {
         page("/", HomePage.class),
         page("/about", AboutPage.class),
         page("/items/{id}", ItemPage.class),
+        page("/report", ReportPage.class),
         fallback(NotFoundPage.class))
     );
   }

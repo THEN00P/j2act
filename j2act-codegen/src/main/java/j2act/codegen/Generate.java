@@ -173,7 +173,7 @@ public final class Generate {
   /** Handwritten Tag/ContainerTag methods a generated attribute must never shadow. */
   private static final Set<String> RESERVED = Set.of(
     "withText(String)", "withKey(Object)", "withClasses(String...)", "withPending(DomContent)",
-    "withDebounce(Duration)", "withThrottle(Duration)", "withKeyFilter(String...)", "withData(String,String)",
+    "withDebounce(Duration)", "withThrottle(Duration)", "withPreload(Preload)", "withKeyFilter(String...)", "withData(String,String)",
     "withCondData(boolean,String,String)");
 
   private static void method(StringBuilder b, Set<String> seen, String signature, String source) {

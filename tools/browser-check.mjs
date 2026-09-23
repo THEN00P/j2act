@@ -239,6 +239,18 @@ async function main() {
     [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Greet').click(); true`);
   check("a 20 KB submit goes over the socket", await until(`document.body.textContent.includes('Hello, ZZZZZZZZ')`, 4000));
 
+  // 14. preload (ADR 0011): hovering starts the 800 ms report, so the click lands on it at once
+  await js(`window.scrollTo(0, 0); true`);
+  const rect = await js(`(() => { const r = ${navLink("Report")}.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  await cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: rect.x, y: rect.y });
+  await sleep(1100);
+  await js(`window.__t0 = performance.now(); ${navLink("Report")}.click(); true`);
+  await until(`${h1} === 'Report ready'`, 3000);
+  const took = await js(`Math.round(performance.now() - window.__t0)`);
+  check("a preloaded page shows its data right after the click", took < 400, `${took} ms for an 800 ms query`);
+  check("the page's Effect ran once it was opened", await until(`!document.getElementById('report-opened').textContent.includes('not yet')`));
+
   check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
   ws.close();
 }

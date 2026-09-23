@@ -207,6 +207,53 @@
       && (base === "" || url.pathname === base || url.pathname.indexOf(base + "/") === 0);
   }
 
+  // ---- preload (ADR 0011): intent on a link asks the server to mount its target early
+
+  var preloadByDefault = meta("j2-preload") === "intent";
+  var preloadedAt = new Map();     // app URL -> when its preload was asked for
+  var hoverTimer = null;
+
+  function preloadUrl(target) {
+    var a = target && target.closest ? target.closest("a[href]") : null;
+    if (!a || a.hasAttribute("download") || a.hasAttribute("data-j2-reload") || (a.target && a.target !== "_self")) {
+      return null;
+    }
+    var mode = a.getAttribute("data-j2-preload");
+    if (mode === "none" || (mode !== "intent" && !preloadByDefault)) {
+      return null;
+    }
+    var url = new URL(a.href, location.href);
+    if (!inApp(url) || (url.pathname === location.pathname && url.search === location.search)) {
+      return null;
+    }
+    return url.pathname + url.search;
+  }
+
+  function preload(u) {
+    var at = preloadedAt.get(u);
+    if (at && Date.now() - at < 5000) {
+      return;
+    }
+    preloadedAt.set(u, Date.now());
+    send({ t: "pre", u: u });
+  }
+
+  document.addEventListener("mouseover", function (e) {
+    var u = preloadUrl(e.target);
+    clearTimeout(hoverTimer);
+    if (u) {
+      hoverTimer = setTimeout(function () { preload(u); }, 50); // a pass-over is not intent
+    }
+  });
+  ["focusin", "touchstart"].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      var u = preloadUrl(e.target);
+      if (u) {
+        preload(u);
+      }
+    }, { passive: true });
+  });
+
   function go(url, mode) {
     history.replaceState({ j2: 1, y: window.scrollY }, "");
     pendingHash = url.hash;

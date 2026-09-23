@@ -4,7 +4,7 @@ import java.util.Objects;
 import java.util.function.UnaryOperator;
 
 /** Backs State and Prop. Writes from foreign threads are queued onto the lane (ADR 0014). */
-final class ValueCell extends Cell {
+class ValueCell extends Cell {
 
   private volatile Object value;
 

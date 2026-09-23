@@ -15,6 +15,8 @@ abstract class Cell {
   final String address;
   final Set<Observer> observers = new LinkedHashSet<>();
   volatile boolean disposed;
+  /** The scope whose slot created this cell, or null for session-level cells. */
+  Scope owner;
 
   Cell(Session session, String address) {
     this.session = session;
