@@ -1,6 +1,6 @@
 // Drives headless Chrome over CDP against the running demo and checks the client runtime.
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -196,6 +196,23 @@ async function main() {
     && readFileSync(file, "utf8") === "Paragraph 1\nParagraph 2\nParagraph 3\n",
     existsSync(file) ? JSON.stringify(readFileSync(file, "utf8")) : "no file");
   check("the page stayed through the download", await js(`window.__marker === 42 && ${h1} === 'About'`));
+
+  // 11. upload (ADR 0006): real chunks through the adapter
+  const pickFile = async (path) => {
+    const { result: { root } } = await cdp("DOM.getDocument");
+    const { result: { nodeId } } = await cdp("DOM.querySelector", { nodeId: root.nodeId, selector: "#attach" });
+    await cdp("DOM.setFileInputFiles", { nodeId, files: [path] });
+  };
+  const notes = join(downloads, "notes.txt");
+  writeFileSync(notes, "x".repeat(1300 * 1024)); // three chunks
+  await pickFile(notes);
+  check("upload sends every chunk and stores the file", await until(`document.getElementById('attach-status').textContent
+    === 'stored notes.txt (${1300 * 1024} bytes)'`, 8000), await js(`document.getElementById('attach-status').textContent`));
+  const tooBig = join(downloads, "big.txt");
+  writeFileSync(tooBig, "x".repeat(5 * 1024 * 1024));
+  await pickFile(tooBig);
+  check("upload limits are enforced on the server", await until(`document.getElementById('attach-status').textContent
+    .startsWith('refused: big.txt is larger than')`), await js(`document.getElementById('attach-status').textContent`));
 
   await js(`[...document.querySelectorAll('a')].find(a => a.textContent.startsWith('Jump to the form')).click(); true`);
   // #forms is near the bottom, so "scrolled to it" means at the top or the page scrolled to its end.

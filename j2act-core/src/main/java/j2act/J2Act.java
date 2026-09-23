@@ -1,6 +1,12 @@
 package j2act;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -31,6 +37,8 @@ public final class J2Act implements AutoCloseable {
 
   /** Where adapters serve download tokens, next to the socket mount (ADR 0012). */
   public static final String DOWNLOAD_PATH = "/_j2act/dl/";
+  /** Where adapters accept upload chunks: POST UPLOAD_PATH + token + "?o=" + offset (ADR 0006). */
+  public static final String UPLOAD_PATH = "/_j2act/up/";
 
   final PageResolver resolver;
   final Executor executor;
@@ -49,6 +57,11 @@ public final class J2Act implements AutoCloseable {
   final Stats stats = new Stats();
   /** Unclaimed download tokens; each is removed by its one fetch or by its TTL. */
   final ConcurrentHashMap<String, DownloadStream> downloads = new ConcurrentHashMap<>();
+  /** Uploads in flight by token. */
+  final ConcurrentHashMap<String, UploadSink> uploads = new ConcurrentHashMap<>();
+  private final Path configuredUploadDir;
+  private volatile Path uploadDir;
+  final long uploadIdleMillis;
 
   private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Connection, Session> byConnection = new ConcurrentHashMap<>();
@@ -70,6 +83,8 @@ public final class J2Act implements AutoCloseable {
     this.pendingMillis = b.pendingTime.toMillis();
     this.pendingMinMillis = b.pendingMinTime.toMillis();
     this.downloadTtlMillis = b.downloadTtl.toMillis();
+    this.configuredUploadDir = b.uploadDir;
+    this.uploadIdleMillis = b.uploadIdleTimeout.toMillis();
     if (b.executor != null) {
       this.executor = b.executor;
       this.ownedExecutor = null;
@@ -174,6 +189,69 @@ public final class J2Act implements AutoCloseable {
     return download;
   }
 
+  /**
+   * Accepts one upload chunk, POSTed to UPLOAD_PATH + token with the byte offset it starts
+   * at. The request must carry the session's CSRF token in X-J2-Token and, when it has an
+   * Origin, come from the page's own host (ADR 0008). The adapter writes the result's
+   * status and JSON; the client resumes from the offset in it.
+   */
+  public ChunkResult acceptChunk(String token, long offset, InputStream body, Exchange exchange) {
+    UploadSink sink = token == null ? null : uploads.get(token);
+    if (sink == null || sink.session.disposed) {
+      return ChunkResult.error(404, "unknown upload");
+    }
+    String csrf = exchange.header("X-J2-Token").orElse("");
+    if (!MessageDigest.isEqual(csrf.getBytes(StandardCharsets.UTF_8), sink.session.token.getBytes(StandardCharsets.UTF_8))
+      || !sameOrigin(exchange)) {
+      return ChunkResult.error(403, "forbidden");
+    }
+    if (offset == 0 && hasIdentity() && !resolveIdentity(exchange).equals(sink.session.currentAuth())) {
+      sink.fail(new SecurityException("upload sent with a different identity"));
+      return ChunkResult.error(403, "forbidden");
+    }
+    return sink.accept(offset, body);
+  }
+
+  /** An Origin header, when present, must name the Host the request went to. */
+  private static boolean sameOrigin(Exchange exchange) {
+    String origin = exchange.header("Origin").orElse(null);
+    String host = exchange.header("Host").orElse(null);
+    if (origin == null || host == null) {
+      return true;
+    }
+    try {
+      URI uri = new URI(origin);
+      String authority = uri.getPort() < 0 ? uri.getHost() : uri.getHost() + ":" + uri.getPort();
+      return host.equalsIgnoreCase(authority);
+    } catch (URISyntaxException e) {
+      return false;
+    }
+  }
+
+  /** The framework's upload directory: temp parts and uploads stored without a target. */
+  Path uploadDir() throws IOException {
+    Path dir = uploadDir;
+    if (dir == null) {
+      synchronized (this) {
+        dir = uploadDir;
+        if (dir == null) {
+          dir = configuredUploadDir != null ? Files.createDirectories(configuredUploadDir)
+            : Files.createTempDirectory("j2act-uploads-");
+          uploadDir = dir;
+        }
+      }
+    }
+    return dir;
+  }
+
+  void discardUploads(Session session) {
+    for (UploadSink sink : uploads.values()) {
+      if (sink.session == session) {
+        sink.discard();
+      }
+    }
+  }
+
   /** Whether a page-load request should be served by j2act at all: some route or redirect matches. */
   public boolean handles(String path) {
     return resolver.resolve(path) != null;
@@ -241,6 +319,11 @@ public final class J2Act implements AutoCloseable {
 
   void sweep() {
     long now = clock.millis();
+    for (UploadSink sink : uploads.values()) {
+      if (now - sink.lastChunkAt > uploadIdleMillis) {
+        sink.fail(new IllegalStateException("upload stalled: no bytes for " + uploadIdleMillis + " ms"));
+      }
+    }
     for (Session session : sessions.values()) {
       if (session.disposed) {
         sessions.remove(session.id);
@@ -389,6 +472,8 @@ public final class J2Act implements AutoCloseable {
     private Duration pendingTime = Duration.ofSeconds(1);
     private Duration pendingMinTime = Duration.ofMillis(500);
     private Duration downloadTtl = Duration.ofSeconds(60);
+    private Path uploadDir;
+    private Duration uploadIdleTimeout = Duration.ofMinutes(2);
 
     private Builder(PageResolver resolver) {
       this.resolver = resolver;
@@ -465,6 +550,18 @@ public final class J2Act implements AutoCloseable {
     /** How long a download token waits for the browser's fetch before the run fails. */
     public Builder withDownloadTtl(Duration ttl) {
       this.downloadTtl = ttl;
+      return this;
+    }
+
+    /** Where upload parts, and uploads stored without a target, live; defaults to a new temp directory. */
+    public Builder withUploadDir(Path dir) {
+      this.uploadDir = dir;
+      return this;
+    }
+
+    /** How long an upload may go without a chunk before it fails and its part is deleted. */
+    public Builder withUploadIdleTimeout(Duration timeout) {
+      this.uploadIdleTimeout = timeout;
       return this;
     }
 

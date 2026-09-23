@@ -725,7 +725,8 @@ final class Session {
           ((Handler<KeyEvent>) entry.handler).handle(new KeyEvent(message.get("k"), value, message.get("m")));
           break;
         default:
-          ((Handler<ValueEvent>) entry.handler).handle(new ValueEvent(value));
+          ((Handler<ValueEvent>) entry.handler).handle(new ValueEvent(value,
+            UploadFile.fromWire(message.get("fi"), message.get("fn"), message.get("fs"), message.get("ft"))));
       }
       return true;
     } catch (RouteException e) {
@@ -855,6 +856,8 @@ final class Session {
     dirty.clear();
     pendingEffects.clear();
     heads.clear();
+    engine.discardUploads(this);
+    deleteOwnedFiles();
     Connection c = connection;
     connection = null;
     if (c != null && expired) {
@@ -864,6 +867,40 @@ final class Session {
         // closing anyway
       }
       c.close();
+    }
+  }
+
+  // ---- framework-owned upload files (ADR 0006)
+
+  private final List<java.nio.file.Path> ownedFiles = new ArrayList<>();
+
+  /** An upload stored without a target: deleted when the session ends. */
+  void ownFile(java.nio.file.Path file) {
+    synchronized (ownedFiles) {
+      if (!disposed) {
+        ownedFiles.add(file);
+        return;
+      }
+    }
+    deleteQuietly(file);
+  }
+
+  private void deleteOwnedFiles() {
+    List<java.nio.file.Path> files;
+    synchronized (ownedFiles) {
+      files = new ArrayList<>(ownedFiles);
+      ownedFiles.clear();
+    }
+    for (java.nio.file.Path file : files) {
+      deleteQuietly(file);
+    }
+  }
+
+  private void deleteQuietly(java.nio.file.Path file) {
+    try {
+      java.nio.file.Files.deleteIfExists(file);
+    } catch (java.io.IOException e) {
+      engine.log(System.Logger.Level.WARNING, "could not delete upload " + file, e);
     }
   }
 

@@ -73,6 +73,11 @@ public abstract class ComponentTag implements DomContent {
     return register(new Download<>(writer));
   }
 
+  /** A Mutation that receives a file in resumable chunks, with server-enforced restrictions (ADR 0006). */
+  protected final Upload upload() {
+    return register(new Upload());
+  }
+
   /** Refetches every keyed query whose key starts with these parts, in this session (ADR 0020). */
   protected final void invalidate(Object... keyPrefix) {
     Session session = scope != null ? scope.session : Session.current();

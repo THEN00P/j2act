@@ -1,5 +1,6 @@
 package com.example.counter.pages;
 
+import static com.example.counter.components.Attachment.attachment;
 import static com.example.counter.components.Publisher.publisher;
 import static j2act.html.TagCreator.*;
 
@@ -21,7 +22,9 @@ public class AboutPage extends LiveComponent implements Page {
         p("Reached by soft navigation: no full page load, the layout above kept its State."),
         p(a("Jump to the form section on home").withHref("/#forms")),
         h2("Computed and mutation"),
-        publisher()
+        publisher(),
+        h2("Upload"),
+        attachment()
       )
     );
   }

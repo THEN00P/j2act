@@ -11,8 +11,8 @@ import java.util.List;
 import jakarta.inject.Inject;
 
 import com.example.team.db.Users;
+import j2act.Download;
 import j2act.LiveComponent;
-import j2act.Mutation;
 import j2act.Page;
 import j2act.PageError;
 import j2act.Query;
@@ -34,7 +34,7 @@ public class UsersPage extends LiveComponent implements Page {
   private final Query<List<Users.User>> list = query(() -> users.search("%" + filter.get() + "%"));
 
   @Override public HtmlTag render() {
-    Mutation<String, Void> export = download((String like, OutputStream out) -> users.writeCsv(like, out))
+    Download<String> export = download((String like, OutputStream out) -> users.writeCsv(like, out))
       .withFileName("users.csv")
       .withContentType("text/csv");
 

@@ -13,6 +13,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.HttpRequestHandler;
 import org.springframework.web.servlet.handler.AbstractHandlerMapping;
 
+import j2act.ChunkResult;
 import j2act.DownloadStream;
 import j2act.Exchange;
 import j2act.J2Act;
@@ -20,8 +21,9 @@ import j2act.PageResolver;
 import j2act.ServeResult;
 
 /**
- * Serves GET requests for routed pages and download tokens (ADR 0012). Ordered after
- * @Controller mappings, so the host's own endpoints win, and before static resources.
+ * Serves GET requests for routed pages and download tokens (ADR 0012), and upload chunk
+ * POSTs (ADR 0006). Ordered after @Controller mappings, so the host's own endpoints win,
+ * and before static resources.
  */
 public class J2ActHandlerMapping extends AbstractHandlerMapping {
 
@@ -50,6 +52,23 @@ public class J2ActHandlerMapping extends AbstractHandlerMapping {
   }
 
   @Override protected Object getHandlerInternal(HttpServletRequest request) {
+    if ("POST".equals(request.getMethod()) && initLookupPath(request).startsWith(J2Act.UPLOAD_PATH)) {
+      String token = initLookupPath(request).substring(J2Act.UPLOAD_PATH.length());
+      return (HttpRequestHandler) (req, res) -> {
+        long offset;
+        try {
+          offset = Long.parseLong(req.getParameter("o"));
+        } catch (NumberFormatException e) {
+          res.sendError(HttpServletResponse.SC_BAD_REQUEST);
+          return;
+        }
+        ChunkResult result = j2Act.acceptChunk(token, offset, req.getInputStream(), exchange(req));
+        res.setHeader("Cache-Control", "no-store");
+        res.setStatus(result.status());
+        res.setContentType("application/json");
+        res.getOutputStream().write(result.json().getBytes(StandardCharsets.UTF_8));
+      };
+    }
     if (!"GET".equals(request.getMethod())) {
       return null;
     }

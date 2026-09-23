@@ -1,5 +1,6 @@
 package com.example.jakarta.pages;
 
+import static com.example.jakarta.components.Attachment.attachment;
 import static com.example.jakarta.components.ClockFeed.clockFeed;
 import static com.example.jakarta.components.Counter.counter;
 import static com.example.jakarta.components.GreetingForm.greetingForm;
@@ -32,7 +33,8 @@ public class HomePage extends LiveComponent implements Page {
         ),
         section(
           h2("@PersistenceContext in a component"),
-          peopleCount()
+          peopleCount(),
+          attachment()
         ),
         section(
           h2("Push from a ManagedScheduledExecutorService"),

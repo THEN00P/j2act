@@ -1,6 +1,6 @@
 // Checks examples/counter-jakarta deployed on WildFly, e.g.
 //   node tools/wildfly-check.mjs http://localhost:8080/counter-jakarta/
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openBrowser, sleep } from "./cdp.mjs";
@@ -47,4 +47,12 @@ b.run(async () => {
   const csv = existsSync(file) ? readFileSync(file, "utf8") : "";
   check("download streams JPA rows through the filter under the context path", exported
     && csv.startsWith("name\nAda Lovelace\n") && csv.split("\n").length === 11, JSON.stringify(csv.slice(0, 40)));
+
+  const notes = join(downloads, "notes.txt");
+  writeFileSync(notes, "x".repeat(1300 * 1024));
+  const { result: { root } } = await cdp("DOM.getDocument");
+  const { result: { nodeId } } = await cdp("DOM.querySelector", { nodeId: root.nodeId, selector: "#attach" });
+  await cdp("DOM.setFileInputFiles", { nodeId, files: [notes] });
+  check("upload chunks POST through the filter under the context path", await until(`document.getElementById('attach-status')
+    .textContent === 'stored notes.txt (${1300 * 1024} bytes)'`, 8000), await js(`document.getElementById('attach-status').textContent`));
 });

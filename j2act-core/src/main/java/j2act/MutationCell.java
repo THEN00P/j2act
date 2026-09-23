@@ -16,12 +16,19 @@ final class MutationCell extends Cell {
     final Object data;
     final Throwable error;
     final Object variables;
+    /** Upload progress in percent; 100 once done. */
+    final int progress;
 
     Snapshot(MutationStatus status, Object data, Throwable error, Object variables) {
+      this(status, data, error, variables, status == MutationStatus.SUCCESS ? 100 : 0);
+    }
+
+    Snapshot(MutationStatus status, Object data, Throwable error, Object variables, int progress) {
       this.status = status;
       this.data = data;
       this.error = error;
       this.variables = variables;
+      this.progress = progress;
     }
   }
 
@@ -85,6 +92,10 @@ final class MutationCell extends Cell {
       offer((Download<?>) run, variables, mySeq);
       return;
     }
+    if (run instanceof Upload) {
+      offerUpload((Upload) run, (UploadFile) variables, mySeq);
+      return;
+    }
     try {
       session.engine.executor.execute(() -> {
         Object result = null;
@@ -122,6 +133,41 @@ final class MutationCell extends Cell {
         finish(run, variables, mySeq, null, new IllegalStateException("download was not fetched in time"));
       }
     });
+  }
+
+  /**
+   * Lane-only. Checks the browser's claims against the restrictions, then opens a temp
+   * file and asks the client to send the bytes (ADR 0006). The byte limit is enforced
+   * again on every chunk.
+   */
+  private void offerUpload(Upload run, UploadFile file, long mySeq) {
+    J2Act engine = session.engine;
+    Throwable refused = file == null ? new IllegalArgumentException("no file: pass the UploadFile from a file input's change event")
+      : file.size() > run.maxFileSize ? new IllegalArgumentException(file.name() + " is larger than " + run.maxFileSize + " bytes")
+      : !Uploads.accepts(run.accept, file) ? new IllegalArgumentException(file.name() + " is not an accepted type " + run.accept)
+      : null;
+    if (refused != null) {
+      finish(run, file, mySeq, null, refused);
+      return;
+    }
+    java.nio.file.Path temp;
+    try {
+      temp = java.nio.file.Files.createTempFile(engine.uploadDir(), "up-", ".part");
+    } catch (java.io.IOException e) {
+      finish(run, file, mySeq, null, e);
+      return;
+    }
+    String token = engine.newSecret(24);
+    engine.uploads.put(token, new UploadSink(token, session, this, run, file, mySeq, temp));
+    session.send(Json.object("t", "up", "f", file.id, "u", engine.contextPath + J2Act.UPLOAD_PATH + token));
+  }
+
+  /** Lane-only. Progress of the latest run, while it is still pending. */
+  void progress(long runSeq, int percent) {
+    Snapshot s = snapshot;
+    if (runSeq == seq && s.status == MutationStatus.PENDING && !disposed) {
+      set(new Snapshot(MutationStatus.PENDING, null, null, s.variables, percent));
+    }
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})

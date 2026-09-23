@@ -97,11 +97,69 @@
       location.assign(m.u);
     } else if (m.t === "dl") {
       download(m.u);
+    } else if (m.t === "up") {
+      upload(m.f, m.u);
     } else if (m.t === "ack") {
       ack(m.a);
     } else if (m.t === "expired") {
       remount();
     }
+  }
+
+  // ---- uploads (ADR 0006): the event names the file, the server answers with where to send it
+
+  var files = new Map();           // file id -> File, until its upload ends
+  var fileSeq = 0;
+  var CHUNK = 512 * 1024;
+
+  function pickedFile(input) {
+    var file = input.files && input.files[0];
+    if (!file) {
+      return {};
+    }
+    var id = String(++fileSeq);
+    files.set(id, file);
+    return { fi: id, fn: file.name, fs: String(file.size), ft: file.type || "" };
+  }
+
+  // Sends the file in order; the server's offset decides where each chunk starts, so a
+  // failed or repeated chunk resumes where the bytes really stopped.
+  function upload(id, url) {
+    var file = files.get(id);
+    if (!file) {
+      return; // gone after a reload: the server fails the run as stalled
+    }
+    var offset = 0;
+    var failures = 0;
+    var next = function () {
+      fetch(url + "?o=" + offset, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "X-J2-Token": tok, "Content-Type": "application/octet-stream" },
+        body: file.slice(offset, offset + CHUNK)
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) { return { status: r.status, body: j }; });
+      }).then(function (res) {
+        if ((res.status === 200 || res.status === 409) && typeof res.body.o === "number") {
+          failures = 0;
+          offset = res.body.o;
+          if (res.body.done) {
+            files.delete(id);
+          } else {
+            next();
+          }
+        } else {
+          files.delete(id); // refused: the server already failed the run
+        }
+      }, function () {
+        if (++failures > 8) {
+          files.delete(id);
+          return;
+        }
+        setTimeout(next, Math.min(5000, 250 * Math.pow(2, failures)));
+      });
+    };
+    next();
   }
 
   // A download link: the browser saves the response and the page stays (ADR 0012).
@@ -250,7 +308,12 @@
   ["input", "change"].forEach(function (type) {
     document.addEventListener(type, function (e) {
       var el = e.target;
-      if (el && el.hasAttribute && el.hasAttribute("data-j2-" + type)) {
+      if (!el || !el.hasAttribute || !el.hasAttribute("data-j2-" + type)) {
+        return;
+      }
+      if (el.type === "file") {
+        dispatch(el, type, "", pickedFile(el));
+      } else {
         schedule(el, type);
       }
     });

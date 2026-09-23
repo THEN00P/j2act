@@ -16,13 +16,17 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import j2act.ChunkResult;
 import j2act.DownloadStream;
 import j2act.Exchange;
 import j2act.J2Act;
 import j2act.PageResolver;
 import j2act.ServeResult;
 
-/** Serves GET requests for routed pages and download tokens; everything else passes down the chain untouched. */
+/**
+ * Serves GET requests for routed pages and download tokens, and upload chunk POSTs;
+ * everything else passes down the chain untouched.
+ */
 final class J2ActFilter implements Filter {
 
   private final J2Act j2Act;
@@ -37,6 +41,10 @@ final class J2ActFilter implements Filter {
     throws IOException, ServletException {
     HttpServletRequest request = (HttpServletRequest) req;
     String path = request.getRequestURI().substring(request.getContextPath().length());
+    if ("POST".equals(request.getMethod()) && path.startsWith(J2Act.UPLOAD_PATH)) {
+      chunk(j2Act, path.substring(J2Act.UPLOAD_PATH.length()), request, (HttpServletResponse) res);
+      return;
+    }
     if ("GET".equals(request.getMethod()) && path.startsWith(J2Act.DOWNLOAD_PATH)) {
       download(j2Act, path.substring(J2Act.DOWNLOAD_PATH.length()), request, (HttpServletResponse) res);
       return;
@@ -56,6 +64,23 @@ final class J2ActFilter implements Filter {
     }
     response.setContentType("text/html;charset=UTF-8");
     response.getOutputStream().write(result.html().getBytes(StandardCharsets.UTF_8));
+  }
+
+  /** Appends one upload chunk from the request body (ADR 0006); the answer tells the client where to resume. */
+  static void chunk(J2Act j2Act, String token, HttpServletRequest request, HttpServletResponse response)
+    throws IOException {
+    long offset;
+    try {
+      offset = Long.parseLong(request.getParameter("o"));
+    } catch (NumberFormatException e) {
+      response.sendError(HttpServletResponse.SC_BAD_REQUEST);
+      return;
+    }
+    ChunkResult result = j2Act.acceptChunk(token, offset, request.getInputStream(), exchange(request));
+    response.setHeader("Cache-Control", "no-store");
+    response.setStatus(result.status());
+    response.setContentType("application/json");
+    response.getOutputStream().write(result.json().getBytes(StandardCharsets.UTF_8));
   }
 
   /** Streams a claimed download straight into the response (ADR 0012); 404 for a bad token. */
