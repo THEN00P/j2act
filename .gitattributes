@@ -1,0 +1,4 @@
+# Stored and checked out as LF everywhere, so core.autocrlf has nothing to convert.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.jar binary

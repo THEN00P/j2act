@@ -15,6 +15,7 @@
     <module>j2act-core</module>
     <module>j2act-html</module>
     <module>j2act-router</module>
+    <module>j2act-processor</module>
     <module>j2act-spring</module>
     <module>j2act-jakarta</module>
     <module>examples/counter-spring</module>
@@ -52,6 +53,11 @@
       <dependency>
         <groupId>dev.j2act</groupId>
         <artifactId>j2act-router</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.j2act</groupId>
+        <artifactId>j2act-processor</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
