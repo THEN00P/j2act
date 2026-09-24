@@ -1,0 +1,38 @@
+{
+  "_comment": [
+    "The curated window() facade of ADR 0022. Hand-edited; UpdateData vendors the specs listed here",
+    "from @webref/idl and trims BCD to these interfaces. Widen v1 by listing more.",
+    "facades: interfaces reached by path, with their members, or * for all that map.",
+    "statics: interface objects on window whose static members and constructor are exposed.",
+    "snapshots: interfaces that only arrive as results; their attributes are copied into a value class.",
+    "mixins: extra mixins whose members join a facade (ADR 0022 puts focus on Element).",
+    "exclude: members left out on purpose; argTypes: IDL object parameters given a dictionary type."
+  ],
+  "specs": ["html", "dom", "fullscreen", "cssom-view", "clipboard-apis", "geolocation", "notifications", "permissions", "web-share", "hr-time"],
+  "facades": {
+    "Window": ["navigator", "localStorage", "sessionStorage", "document", "history", "location", "alert", "confirm", "prompt",
+      "print", "innerWidth", "innerHeight", "scrollX", "scrollY", "scrollTo", "isSecureContext", "origin"],
+    "Navigator": "*",
+    "Storage": "*",
+    "Clipboard": "*",
+    "Geolocation": "*",
+    "Permissions": "*",
+    "History": "*",
+    "Location": "*",
+    "Document": ["title", "URL", "referrer", "hidden", "visibilityState", "hasFocus", "fullscreenEnabled", "fullscreenElement",
+      "exitFullscreen", "activeElement", "getElementById", "querySelector"],
+    "Element": ["id", "getAttribute", "setAttribute", "removeAttribute", "querySelector", "scrollIntoView", "requestFullscreen",
+      "focus", "blur"]
+  },
+  "statics": {
+    "Notification": ["permission", "maxActions", "requestPermission", "constructor"]
+  },
+  "snapshots": ["PermissionStatus", "GeolocationPosition", "GeolocationCoordinates"],
+  "mixins": {
+    "Element": ["HTMLOrSVGOrMathMLElement"]
+  },
+  "exclude": ["Geolocation.watchPosition", "Geolocation.clearWatch"],
+  "argTypes": {
+    "Permissions.query.permissionDesc": "PermissionDescriptor"
+  }
+}

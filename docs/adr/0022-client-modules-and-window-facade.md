@@ -67,6 +67,19 @@ Failures (NotAllowedError, QuotaExceededError, TypeError, missing APIs such as d
 
 APIs that return live objects that cannot be serialized (getUserMedia's MediaStream, AudioContext) stay in client modules; remote object handles as in Blazor's IJSObjectReference are out. addEventListener waits for a later version, because listeners need lifetimes.
 
+Built in M6: j2act-codegen reads @webref/idl 3.84.0 with a small WebIDL reader and writes j2act.web into j2act-core. data/window-api.json curates the interfaces and members, and BCD adds MDN links and @Deprecated. The mapping rules the generator settled on:
+- An interface reached through a getter or an operation (getElementById, querySelector) is a facade that only extends the path.
+- An interface that only arrives as a result (PermissionStatus, GeolocationPosition and GeolocationCoordinates) is a value snapshot. The call names the attributes to copy, so no toJSON is needed.
+- Dictionaries have every inherited member flattened in.
+- Enums are Strings, with their values in the Javadoc.
+- Parameters are primitive unless nullable. Optional arguments and union arguments become overloads.
+- A callback-style operation (getCurrentPosition) completes its stage from the first callback and fails it from the second. A legacy optional callback beside a promise (requestPermission) is dropped.
+- A constructor becomes construct(...) on the interface object, window().Notification(), and returns Void, since the new object stays in the browser.
+- Values cross as plain JSON, so window() does not use the host's JSON binding.
+- Calls share one queue with client actions, and the one-argument onClick(() -> ...) and the other gesture overloads bind them to an event.
+- Left out rather than guessed: event handlers, Blob and File (ClipboardItem, ShareData.files), members that take other interfaces as arguments, and watchPosition, which needs a lifetime like addEventListener.
+- focus and blur sit on Element as this ADR lists them. They come from the HTMLOrSVGOrMathMLElement mixin.
+
 Rejected along the way:
 - JS command DSLs (LiveView's JS.toggle), which are jQuery-shaped and largely replaced by popover, dialog and details
 - JS in Java strings or @Js annotations: unsafe, untyped, and painful without text blocks on Java 11

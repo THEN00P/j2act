@@ -1,5 +1,6 @@
 package com.example.counter.pages;
 
+import static com.example.counter.components.BrowserApis.browserApis;
 import static com.example.counter.components.ClockFeed.clockFeed;
 import static com.example.counter.components.Countdown.countdown;
 import static com.example.counter.components.Counter.counter;
@@ -65,6 +66,10 @@ public class HomePage extends LiveComponent implements Page {
         section(
           h2("Client module: ticks in the browser, caption from the server"),
           countdown()
+        ),
+        section(
+          h2("window(): browser APIs from Java"),
+          browserApis()
         ),
         section(
           h2("Pending UI"),

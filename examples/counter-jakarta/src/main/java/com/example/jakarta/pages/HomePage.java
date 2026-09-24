@@ -1,6 +1,7 @@
 package com.example.jakarta.pages;
 
 import static com.example.jakarta.components.Attachment.attachment;
+import static com.example.jakarta.components.BrowserApis.browserApis;
 import static com.example.jakarta.components.ClockFeed.clockFeed;
 import static com.example.jakarta.components.Countdown.countdown;
 import static com.example.jakarta.components.Counter.counter;
@@ -44,6 +45,10 @@ public class HomePage extends LiveComponent implements Page {
         section(
           h2("Client module"),
           countdown()
+        ),
+        section(
+          h2("window(): browser APIs from Java"),
+          browserApis()
         ),
         section(
           h2("Form"),

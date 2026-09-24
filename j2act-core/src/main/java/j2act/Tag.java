@@ -130,6 +130,35 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
     return bind("click", action, then);
   }
 
+  /**
+   * Runs one call inside the click and drops its result, e.g.
+   * onClick(() -> window().navigator().share(data)); a failure goes to the server log and
+   * the browser console (ADR 0022).
+   */
+  public T onClick(Supplier<? extends CompletionStage<?>> action) {
+    return bindIgnoringResult("click", action);
+  }
+
+  /** Like onClick(action), inside the submit. */
+  public T onSubmit(Supplier<? extends CompletionStage<?>> action) {
+    return bindIgnoringResult("submit", action);
+  }
+
+  /** Like onClick(action), inside the keydown. */
+  public T onKeyDown(Supplier<? extends CompletionStage<?>> action) {
+    return bindIgnoringResult("keydown", action);
+  }
+
+  /** Like onClick(action), inside the pointerdown. */
+  public T onPointerDown(Supplier<? extends CompletionStage<?>> action) {
+    return bindIgnoringResult("pointerdown", action);
+  }
+
+  /** Like onClick(action), inside the pointerup. */
+  public T onPointerUp(Supplier<? extends CompletionStage<?>> action) {
+    return bindIgnoringResult("pointerup", action);
+  }
+
   /** Like onClick(action, then), inside the submit; the form's fields are not sent. */
   public <V> T onSubmit(Supplier<? extends CompletionStage<V>> action, Consumer<? super V> then) {
     return bind("submit", action, then);
@@ -161,6 +190,12 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   private T on(String event, Handler<?> handler) {
     events.put(event, handler);
     actions.remove(event);
+    return self();
+  }
+
+  private T bindIgnoringResult(String event, Supplier<? extends CompletionStage<?>> action) {
+    events.remove(event);
+    actions.put(event, new ActionBinding(action, ignored -> { }));
     return self();
   }
 

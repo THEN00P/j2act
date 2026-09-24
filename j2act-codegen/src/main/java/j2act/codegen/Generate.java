@@ -13,7 +13,8 @@ import java.util.stream.Stream;
 
 /**
  * Generates the tag API: GlobalAttributes in j2act-core, one final class per element
- * and TagCreator in j2act-html, plus the processor's tag-to-DOM-interface table. Output is checked in and verified by
+ * and TagCreator in j2act-html, the processor's tag-to-DOM-interface table, and the
+ * window() facade in j2act-core's j2act.web (WindowApi). Output is checked in and verified by
  * GeneratedSourcesUpToDateTest. The shape follows j2html (see NOTICE).
  */
 public final class Generate {
@@ -37,10 +38,12 @@ public final class Generate {
   public static void main(String[] args) throws IOException {
     Path root = Paths.get(args.length > 0 ? args[0] : "..").toAbsolutePath().normalize();
     Map<String, String> files = generate(Model.load());
-    try (Stream<Path> old = Files.exists(root.resolve(TAGS)) ? Files.list(root.resolve(TAGS)) : Stream.empty()) {
-      for (Path stale : (Iterable<Path>) old::iterator) {
-        if (!files.containsKey(TAGS + stale.getFileName())) {
-          Files.delete(stale);
+    for (String dir : new String[] {TAGS, WindowApi.WEB}) {
+      try (Stream<Path> old = Files.exists(root.resolve(dir)) ? Files.list(root.resolve(dir)) : Stream.empty()) {
+        for (Path stale : (Iterable<Path>) old::iterator) {
+          if (!files.containsKey(dir + stale.getFileName())) {
+            Files.delete(stale);
+          }
         }
       }
     }
@@ -61,6 +64,7 @@ public final class Generate {
     }
     files.put(HTML + "TagCreator.java", tagCreator(model));
     files.put(PROCESSOR + "dom-interfaces.properties", domInterfaces(model));
+    files.putAll(WindowApi.generate());
     return files;
   }
 

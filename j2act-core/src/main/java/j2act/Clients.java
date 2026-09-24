@@ -114,21 +114,22 @@ final class Clients {
    * handler that takes the result, and the call the browser makes inside the event.
    */
   String[] bindAction(Scope scope, String path, String event, Tag.ActionBinding binding) {
-    ClientCall call = ClientCall.record(binding.action);
+    Object recorded = ClientCall.record(binding.action);
+    Consumer<Object> then = binding.then;
+    if (recorded instanceof WebPath.WebCall) {
+      WebPath.WebCall web = (WebPath.WebCall) recorded;
+      String handlerId = session.registerHandler(scope, path, event, (Session.RawHandler) message ->
+        onBoundResult(message, "window call " + web.name, event, scope, then,
+          json -> web.decoder.decode(Json.parse(json))));
+      return new String[] {handlerId, "{\"w\":" + web.json + "}"};
+    }
+    ClientCall call = (ClientCall) recorded;
     ClientCell cell = call.handle.clientCell();
     String name = call.handle.type.getSimpleName() + "." + call.method.getName();
     Type valueType = ClientCall.valueType(call.method);
-    Consumer<Object> then = binding.then;
-    String handlerId = session.registerHandler(scope, path, event, (Session.RawHandler) message -> {
-      String error = message.get("x");
-      if (error != null) {
-        warn("client action " + name + " failed in its " + event + " in " + scope.instance.getClass().getName()
-          + ": " + error);
-        return;
-      }
-      String json = message.get("v");
-      then.accept(session.engine.json.read(json == null || json.isEmpty() ? "null" : json, valueType));
-    });
+    String handlerId = session.registerHandler(scope, path, event, (Session.RawHandler) message ->
+      onBoundResult(message, "client action " + name, event, scope, then,
+        json -> session.engine.json.read(json, valueType)));
     StringBuilder json = new StringBuilder("{\"c\":");
     Json.string(cell.id, json);
     json.append(",\"n\":");
@@ -142,6 +143,17 @@ final class Clients {
         handler -> session.registerHandler(scope, path + "/" + event + ":" + index, "callback", handler), null, name));
     }
     return new String[] {handlerId, json.append("]}").toString()};
+  }
+
+  private void onBoundResult(Map<String, String> message, String what, String event, Scope scope,
+                             Consumer<Object> then, Function<String, Object> decode) {
+    String error = message.get("x");
+    if (error != null) {
+      warn(what + " failed in its " + event + " in " + scope.instance.getClass().getName() + ": " + error);
+      return;
+    }
+    String json = message.get("v");
+    then.accept(decode.apply(json == null || json.isEmpty() ? "null" : json));
   }
 
   // ---- direct calls
@@ -160,10 +172,52 @@ final class Clients {
     }
     outbox.add(Json.object("t", "ca", "i", id, "c", cell.id, "n", method.getName(), "a", json.append(']').toString()));
     CompletableFuture<Object> future = new CompletableFuture<>();
-    calls.put(id, new PendingCall(cell, method, future));
+    Function<String, Object> decode = method.getReturnType() == void.class ? result -> null
+      : result -> session.engine.json.read(result, ClientCall.valueType(method));
+    calls.put(id, new PendingCall(cell, cell.owner, "client action " + name, decode, false, future));
     session.engine.later(session, TIMEOUT_MILLIS, () -> settle(id, null,
       new ClientException("TimeoutError", name + " did not settle within 30 seconds")));
     return method.getReturnType() == void.class ? null : future;
+  }
+
+  /**
+   * A window() call from a handler or an effect (ADR 0022): sent after this update's patch,
+   * in the same queue as client actions, so calls start in the order Java made them.
+   */
+  static CompletableFuture<Object> callWindow(ComponentTag owner, String name, String json,
+                                              WebPath.Decoder<Object> decoder) {
+    Scope scope = owner.scope;
+    Session session = scope != null ? scope.session : Session.current();
+    if (session == null) {
+      throw new IllegalStateException(name + " needs a mounted component (ADR 0022)");
+    }
+    if (scope != null && scope.rendering) {
+      throw new IllegalStateException(name + " runs in the browser; call it from a handler or effect, or bind it"
+        + " with onClick, not in render() (ADR 0022)");
+    }
+    if (session.lane.isCurrent()) {
+      return session.clients.window(scope, name, json, decoder);
+    }
+    CompletableFuture<Object> relay = new CompletableFuture<>();
+    session.post(() -> session.clients.window(scope, name, json, decoder).whenComplete((value, error) -> {
+      if (error != null) {
+        relay.completeExceptionally(error);
+      } else {
+        relay.complete(value);
+      }
+    }));
+    return relay;
+  }
+
+  private CompletableFuture<Object> window(Scope scope, String name, String json, WebPath.Decoder<Object> decoder) {
+    String id = String.valueOf(++callSeq);
+    outbox.add(Json.object("t", "wa", "i", id, "w", json));
+    CompletableFuture<Object> future = new CompletableFuture<>();
+    calls.put(id, new PendingCall(null, scope, "window call " + name, text -> decoder.decode(Json.parse(text)), true,
+      future));
+    session.engine.later(session, TIMEOUT_MILLIS, () -> settle(id, null,
+      new BrowserException("TimeoutError", name + " did not settle within 30 seconds")));
+    return future;
   }
 
   /**
@@ -218,16 +272,15 @@ final class Clients {
       return;
     }
     if (!"1".equals(message.get("ok"))) {
-      settle(id, null, error(message.get("e")));
+      settle(id, null, error(message.get("e"), call.browser));
       return;
     }
     Object value;
     try {
       String json = message.get("v");
-      value = call.method.getReturnType() == void.class ? null
-        : session.engine.json.read(json == null || json.isEmpty() ? "null" : json, ClientCall.valueType(call.method));
+      value = call.decode.apply(json == null || json.isEmpty() ? "null" : json);
     } catch (RuntimeException e) {
-      settle(id, null, new ClientException("TypeError", "the result of " + call.name() + " does not bind: " + e.getMessage()));
+      settle(id, null, error("TypeError: the result of " + call.name + " does not bind: " + e.getMessage(), call.browser));
       return;
     }
     settle(id, value, null);
@@ -253,9 +306,9 @@ final class Clients {
     boolean handled = call.future.getNumberOfDependents() > 0;
     call.future.completeExceptionally(error);
     if (!handled && !"AbortError".equals(error.name())) {
-      String component = call.cell.owner == null || call.cell.owner.instance == null ? ""
-        : " in " + call.cell.owner.instance.getClass().getName();
-      warn("client action " + call.name() + " failed" + component + ": " + error.getMessage());
+      String component = call.owner == null || call.owner.instance == null ? ""
+        : " in " + call.owner.instance.getClass().getName();
+      warn(call.name + " failed" + component + ": " + error.getMessage());
     }
   }
 
@@ -352,13 +405,16 @@ final class Clients {
     }
   }
 
-  private static ClientException error(String text) {
-    if (text == null || text.isEmpty()) {
-      return new ClientException("Error", "no details");
+  /** "NotAllowedError: denied" as the exception it names; window() failures are BrowserExceptions. */
+  private static ClientException error(String text, boolean browser) {
+    String name = "Error";
+    String message = text == null || text.isEmpty() ? "no details" : text;
+    int colon = message.indexOf(": ");
+    if (colon > 0 && message.substring(0, colon).matches("\\w+")) {
+      name = message.substring(0, colon);
+      message = message.substring(colon + 2);
     }
-    int colon = text.indexOf(": ");
-    String name = colon > 0 && text.substring(0, colon).matches("\\w+") ? text.substring(0, colon) : "Error";
-    return new ClientException(name, colon > 0 && !name.equals("Error") ? text.substring(colon + 2) : text);
+    return browser ? new BrowserException(name, message) : new ClientException(name, message);
   }
 
   private static String quote(String s) {
@@ -372,18 +428,22 @@ final class Clients {
   }
 
   private static final class PendingCall {
+    /** The client handle called, or null for a window() call. */
     final ClientCell cell;
-    final Method method;
+    final Scope owner;
+    final String name;
+    final Function<String, Object> decode;
+    final boolean browser;
     final CompletableFuture<Object> future;
 
-    PendingCall(ClientCell cell, Method method, CompletableFuture<Object> future) {
+    PendingCall(ClientCell cell, Scope owner, String name, Function<String, Object> decode, boolean browser,
+                CompletableFuture<Object> future) {
       this.cell = cell;
-      this.method = method;
+      this.owner = owner;
+      this.name = name;
+      this.decode = decode;
+      this.browser = browser;
       this.future = future;
-    }
-
-    String name() {
-      return cell.type.getSimpleName() + "." + method.getName();
     }
   }
 }

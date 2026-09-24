@@ -21,13 +21,15 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 /**
  * Refreshes the vendored inputs in src/main/resources/data. VS Code's HTML data is
  * kept whole with its license; MDN's compat data is trimmed to the HTML status
- * fields we use; webref is trimmed to element names and their DOM interfaces. Pinned versions live here.
+ * fields we use; webref is trimmed to element names and their DOM interfaces. The window()
+ * facade's IDL is kept whole for the specs window-api.json lists. Pinned versions live here.
  */
 public final class UpdateData {
 
   static final String VSCODE = "@vscode/web-custom-data@0.6.3";
   static final String BCD = "@mdn/browser-compat-data@8.1.2";
   static final String WEBREF = "@webref/elements@2.9.0";
+  static final String WEBREF_IDL = "@webref/idl@3.84.0";
 
   private static final ObjectMapper JSON = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
   private static final HttpClient HTTP = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
@@ -42,7 +44,8 @@ public final class UpdateData {
     write(out.resolve("html-data.json"), fetch(VSCODE, "data/browsers.html-data.json"));
     write(out.resolve("LICENSE-vscode-web-custom-data.md"), fetch(VSCODE, "LICENSE.md"));
 
-    JsonNode bcd = JSON.readTree(fetch(BCD, "data.json")).path("html");
+    JsonNode bcdRoot = JSON.readTree(fetch(BCD, "data.json"));
+    JsonNode bcd = bcdRoot.path("html");
     ObjectNode status = JSON.createObjectNode();
     status.put("source", BCD);
     ObjectNode elements = status.putObject("elements");
@@ -60,6 +63,32 @@ public final class UpdateData {
     ObjectNode globals = status.putObject("globalAttributes");
     bcd.path("global_attributes").fields().forEachRemaining(g -> globals.set(g.getKey(), trim(g.getValue())));
     write(out.resolve("bcd-html-status.json"), JSON.writeValueAsString(status));
+
+    // The window() facade (ADR 0022): curated specs' IDL whole, BCD status for their interfaces.
+    JsonNode curated = JSON.readTree(Files.readAllBytes(out.resolve("window-api.json")));
+    Files.createDirectories(out.resolve("idl"));
+    for (JsonNode spec : curated.path("specs")) {
+      write(out.resolve("idl/" + spec.asText() + ".idl"), fetch(WEBREF_IDL, spec.asText() + ".idl"));
+    }
+    ObjectNode api = JSON.createObjectNode();
+    api.put("source", BCD);
+    ObjectNode apiInterfaces = api.putObject("interfaces");
+    java.util.Set<String> apiNames = new java.util.TreeSet<>();
+    curated.path("facades").fieldNames().forEachRemaining(apiNames::add);
+    curated.path("statics").fieldNames().forEachRemaining(apiNames::add);
+    curated.path("snapshots").forEach(n -> apiNames.add(n.asText()));
+    for (String name : apiNames) {
+      JsonNode bcdInterface = bcdRoot.path("api").path(name);
+      ObjectNode entry = trim(bcdInterface);
+      ObjectNode members = entry.putObject("members");
+      bcdInterface.fields().forEachRemaining(member -> {
+        if (!member.getKey().equals("__compat") && member.getValue().has("__compat")) {
+          members.set(member.getKey(), trim(member.getValue()));
+        }
+      });
+      apiInterfaces.set(name, entry);
+    }
+    write(out.resolve("bcd-api-status.json"), JSON.writeValueAsString(api));
 
     JsonNode webref = JSON.readTree(fetch(WEBREF, "html.json"));
     ObjectNode spec = JSON.createObjectNode();

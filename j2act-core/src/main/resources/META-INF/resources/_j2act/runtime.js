@@ -115,6 +115,16 @@
       // Refused before the first chunk: drop the file, reject an UploadTarget.send.
       files.delete(m.f);
       settleUpload(m.f, named("NotAllowedError", m.e));
+    } else if (m.t === "wa") {
+      // A window() call from Java, after the patch it came with.
+      let result;
+      try {
+        result = runWeb(JSON.parse(m.w));
+      } catch (e) {
+        reply(m.i, false, e);
+        return;
+      }
+      result.then((v) => reply(m.i, true, v), (e) => reply(m.i, false, e));
     } else if (m.t === "ca") {
       callAction(m);
     } else if (m.t === "ack") {
@@ -504,13 +514,17 @@
       return;
     }
     const call = JSON.parse(el.getAttribute("data-j2-call-" + type));
-    const c = clients.get(call.c);
     let result;
     try {
-      if (!c || !c.ready) {
-        throw c && c.failed ? c.failed : named("InvalidStateError", "the client has not mounted yet");
+      if (call.w) {
+        result = runWeb(call.w);
+      } else {
+        const c = clients.get(call.c);
+        if (!c || !c.ready) {
+          throw c && c.failed ? c.failed : named("InvalidStateError", "the client has not mounted yet");
+        }
+        result = invoke(c, call.n, revive(JSON.stringify(call.a)));
       }
-      result = invoke(c, call.n, revive(JSON.stringify(call.a)));
     } catch (e) {
       console.warn("j2act: client action failed", e);
       dispatch(el, type, "", withError(extra, e));
@@ -522,6 +536,62 @@
       console.warn("j2act: client action failed", e);
       dispatch(el, type, "", withError(extra, e));
     });
+  }
+
+  // ---- window() (ADR 0022): one generic executor that never grows with the facade
+
+  // Follow the path (get a property or call a method at each step), then get, set, call or
+  // construct. The first steps run synchronously, so a call bound to a gesture keeps it.
+  function runWeb(w) {
+    let target = window;
+    for (const [kind, name, args] of w.p) {
+      target = kind === "g" ? target[name] : target[name](...args);
+      if (target == null) {
+        throw named("TypeError", name + " is " + target);
+      }
+    }
+    let value;
+    if (w.k === "get") {
+      value = target[w.n];
+    } else if (w.k === "set") {
+      target[w.n] = w.a[0];
+    } else if (w.k === "new") {
+      new target(...w.a);
+    } else if (w.cb) {
+      // Callback style (getCurrentPosition): resolve and reject go where the callbacks were.
+      value = new Promise((resolve, reject) => {
+        const args = w.a.slice();
+        args[w.cb[0]] = resolve;
+        if (w.cb.length > 1) {
+          args[w.cb[1]] = (error) => reject(error instanceof Error ? error : named(errorName(error), error && error.message));
+        }
+        target[w.n](...args);
+      });
+    } else {
+      value = target[w.n](...w.a);
+    }
+    return Promise.resolve(value).then((v) => (w.r ? project(v, w.r) : v));
+  }
+
+  // Copies what the snapshot's shape names; live objects never cross.
+  function project(value, shape) {
+    if (value == null) {
+      return null;
+    }
+    if (shape === 1) {
+      return value;
+    }
+    const out = {};
+    for (const key of Object.keys(shape)) {
+      out[key] = project(value[key], shape[key]);
+    }
+    return out;
+  }
+
+  // GeolocationPositionError is not a DOMException: name it from its code.
+  function errorName(error) {
+    const codes = { 1: "NotAllowedError", 2: "NotFoundError", 3: "TimeoutError" };
+    return (error && codes[error.code]) || "Error";
   }
 
   function withError(extra, e) {

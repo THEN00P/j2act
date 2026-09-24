@@ -13,7 +13,7 @@ import java.util.function.Supplier;
  */
 final class ClientCall {
 
-  private static final ThreadLocal<List<ClientCall>> RECORDING = new ThreadLocal<>();
+  private static final ThreadLocal<List<Object>> RECORDING = new ThreadLocal<>();
 
   final ClientHandle handle;
   final Method method;
@@ -25,14 +25,18 @@ final class ClientCall {
     this.args = args;
   }
 
-  static List<ClientCall> recording() {
+  /** Recorded client action calls and window() calls, while a gesture binding renders. */
+  static List<Object> recording() {
     return RECORDING.get();
   }
 
-  /** Runs the binding's supplier in recording mode; it must make exactly one client action call. */
-  static ClientCall record(Supplier<?> action) {
-    List<ClientCall> calls = new ArrayList<>();
-    List<ClientCall> outer = RECORDING.get();
+  /**
+   * Runs the binding's supplier in recording mode; it must make exactly one call, on a
+   * client handle or through window(). Returns the ClientCall or WebPath.WebCall.
+   */
+  static Object record(Supplier<?> action) {
+    List<Object> calls = new ArrayList<>();
+    List<Object> outer = RECORDING.get();
     RECORDING.set(calls);
     try {
       action.get();
@@ -44,8 +48,8 @@ final class ClientCall {
       }
     }
     if (calls.size() != 1) {
-      throw new IllegalStateException("onClick(action, then) takes one client action call, like camera::snapshot;"
-        + " this one made " + calls.size() + " (ADR 0022)");
+      throw new IllegalStateException("a gesture binding takes one call, like camera::snapshot or"
+        + " () -> window().navigator().share(data); this one made " + calls.size() + " (ADR 0022)");
     }
     return calls.get(0);
   }

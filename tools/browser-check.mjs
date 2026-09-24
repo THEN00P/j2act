@@ -293,6 +293,34 @@ async function main() {
   await key("Enter", "Enter", 13, { text: "\r" });
   check("onKeyDown(action, then) runs the action inside the keydown",
     await until(`/^paused by key at [0-9]$/.test(document.getElementById('timer-status').textContent)`));
+  // 16. window() (ADR 0022): Web APIs from Java through one generic executor
+  const origin = new globalThis.URL(URL).origin;
+  await cdp("Browser.grantPermissions", { origin, permissions: ["geolocation", "clipboardReadWrite", "clipboardSanitizedWrite"] });
+  await cdp("Emulation.setGeolocationOverride", { latitude: 47.5, longitude: 8.5, accuracy: 10 });
+  await js(`document.getElementById('api-store').click(); true`);
+  check("window() calls run in order: getItem reads what setItem just wrote",
+    await until(`document.getElementById('api-stored').textContent === 'stored: kept in localStorage'`)
+    && await js(`localStorage.getItem('j2act-demo') === 'kept in localStorage'`));
+  await js(`document.getElementById('api-title').click(); true`);
+  check("an attribute read comes back to Java", await until(`document.getElementById('api-title-out').textContent
+    === 'title: ' + document.title`));
+  await js(`document.getElementById('api-focus').click(); true`);
+  check("a path through getElementById reaches focus()", await until(`document.activeElement?.id === 'api-input'`));
+  await js(`document.getElementById('api-where').click(); true`);
+  check("a callback-style API completes a CompletionStage with its snapshot",
+    await until(`document.getElementById('api-place').textContent === 'place: 47.5, 8.5'`));
+  const copy = await js(`(() => { const b = document.getElementById('api-copy'); b.scrollIntoView({ block: 'center' });
+    const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: copy.x, y: copy.y, button: "left", clickCount: 1 });
+  await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: copy.x, y: copy.y, button: "left", clickCount: 1 });
+  check("onClick(() -> clipboard.writeText(...)) runs inside the click",
+    await until(`document.getElementById('api-copied').textContent === 'clipboard: copied'`)
+    && await js(`navigator.clipboard.readText()`) === "copied by j2act",
+    await js(`document.getElementById('api-copied').textContent`));
+  await js(`document.getElementById('api-missing').click(); true`);
+  check("a failing call completes exceptionally with a BrowserException",
+    await until(`document.getElementById('api-failure').textContent === 'failure: TypeError'`));
+
   const moduleUrl = await js(`${timer}.getAttribute('data-j2-module')`);
   const headers = await js(`fetch(${JSON.stringify(moduleUrl)})
     .then(r => r.status + ' ' + r.headers.get('cache-control') + ' ' + r.headers.get('content-type'))`);

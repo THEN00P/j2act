@@ -92,6 +92,21 @@ public abstract class ComponentTag implements DomContent {
     return type.cast(register(new ClientHandle(type)).proxy);
   }
 
+  /**
+   * The browser's window, mirrored from WebIDL and run remotely (ADR 0022). Getters of
+   * interfaces only build a path; every other call returns a CompletionStage. Called from
+   * a handler or effect, it runs after the update's patch; bound with onClick(() -> ...),
+   * it runs inside the click, so gesture-gated APIs work.
+   *
+   * <pre>{@code
+   * window().localStorage().setItem("sidebar", "collapsed");
+   * button("Share").onClick(() -> window().navigator().share(new ShareData().title(t).url(u)))
+   * }</pre>
+   */
+  protected final j2act.web.Window window() {
+    return new j2act.web.Window(WebPath.root(this));
+  }
+
   /** Refetches every keyed query whose key starts with these parts, in this session (ADR 0020). */
   protected final void invalidate(Object... keyPrefix) {
     Session session = scope != null ? scope.session : Session.current();

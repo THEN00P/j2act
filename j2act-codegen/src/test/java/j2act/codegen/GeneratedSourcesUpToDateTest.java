@@ -31,12 +31,14 @@ class GeneratedSourcesUpToDateTest {
         stale.add(file.getKey());
       }
     }
-    try (Stream<Path> tags = Files.list(ROOT.resolve(Generate.TAGS))) {
-      List<String> extra = tags
-        .map(p -> Generate.TAGS + p.getFileName())
-        .filter(p -> !expected.containsKey(p))
-        .collect(Collectors.toList());
-      stale.addAll(extra);
+    for (String dir : new String[] {Generate.TAGS, WindowApi.WEB}) {
+      try (Stream<Path> files = Files.list(ROOT.resolve(dir))) {
+        List<String> extra = files
+          .map(p -> dir + p.getFileName())
+          .filter(p -> !expected.containsKey(p))
+          .collect(Collectors.toList());
+        stale.addAll(extra);
+      }
     }
     assertTrue(stale.isEmpty(), "stale generated sources " + stale
       + "; run ./mvnw -pl j2act-codegen compile exec:java");
@@ -45,7 +47,7 @@ class GeneratedSourcesUpToDateTest {
   @Test
   void generatesOneClassPerElementPlusGlobalsFactoriesAndDomInterfaces() {
     Model model = Model.load();
-    assertEquals(model.elements.size() + 3, Generate.generate(model).size());
+    assertEquals(model.elements.size() + 3 + WindowApi.generate().size(), Generate.generate(model).size());
   }
 
   private static String normalize(String s) {

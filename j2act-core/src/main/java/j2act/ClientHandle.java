@@ -76,7 +76,7 @@ final class ClientHandle extends Primitive implements InvocationHandler {
     if (method.getReturnType() == Mount.class) {
       return new Mount(this, method, values);
     }
-    List<ClientCall> recording = ClientCall.recording();
+    List<Object> recording = ClientCall.recording();
     if (recording != null) {
       recording.add(new ClientCall(this, method, values));
       return method.getReturnType() == void.class ? null : new CompletableFuture<>();

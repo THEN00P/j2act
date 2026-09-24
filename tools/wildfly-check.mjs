@@ -89,4 +89,19 @@ b.run(async () => {
   await key("Enter", "Enter", 13, { text: "\r" });
   check("onKeyDown(action, then) runs the action inside the keydown",
     await until(`/^paused by key at [0-9]$/.test(document.getElementById('timer-status').textContent)`));
+
+  // window() (ADR 0022) on WildFly: the same executor, under the context path.
+  await cdp("Browser.grantPermissions", { origin: new globalThis.URL(URL).origin, permissions: ["geolocation"] });
+  await cdp("Emulation.setGeolocationOverride", { latitude: 47.5, longitude: 8.5, accuracy: 10 });
+  await js(`document.getElementById('api-store').click(); true`);
+  check("window() calls run in order on WildFly",
+    await until(`document.getElementById('api-stored').textContent === 'stored: kept in localStorage'`));
+  await js(`document.getElementById('api-focus').click(); true`);
+  check("a path through getElementById reaches focus()", await until(`document.activeElement?.id === 'api-input'`));
+  await js(`document.getElementById('api-where').click(); true`);
+  check("geolocation completes with its snapshot", await until(`document.getElementById('api-place').textContent
+    === 'place: 47.5, 8.5'`));
+  await js(`document.getElementById('api-missing').click(); true`);
+  check("a failing call is a BrowserException", await until(`document.getElementById('api-failure').textContent
+    === 'failure: TypeError'`));
 });
