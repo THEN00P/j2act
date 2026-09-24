@@ -43,9 +43,9 @@ class GeneratedSourcesUpToDateTest {
   }
 
   @Test
-  void generatesOneClassPerElementPlusGlobalsAndFactories() {
+  void generatesOneClassPerElementPlusGlobalsFactoriesAndDomInterfaces() {
     Model model = Model.load();
-    assertEquals(model.elements.size() + 2, Generate.generate(model).size());
+    assertEquals(model.elements.size() + 3, Generate.generate(model).size());
   }
 
   private static String normalize(String s) {

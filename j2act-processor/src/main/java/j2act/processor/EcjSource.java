@@ -142,6 +142,28 @@ final class EcjSource implements Source {
     }
   }
 
+  @Override public void report(Diagnostic.Kind kind, String message, Element at) {
+    if (!(at instanceof TypeElement)) {
+      messager.printMessage(kind, message, at);
+      return;
+    }
+    // ECJ points at a type's name, javac at its keyword (class, interface, enum, record).
+    TypeElement type = (TypeElement) at;
+    begin(unit(type));
+    int end = (int) get(declaration(type), "sourceStart") - 1;
+    while (end >= 0 && Character.isWhitespace(source[end])) {
+      end--;
+    }
+    int start = end;
+    while (start > 0 && Character.isJavaIdentifierPart(source[start - 1])) {
+      start--;
+    }
+    Node keyword = new Node(Node.Kind.OTHER, null);
+    keyword.start = start;
+    keyword.end = end;
+    report(kind, message, keyword, type);
+  }
+
   private static boolean isPositionedByDeclaration(ElementKind kind) {
     return kind == ElementKind.CLASS || kind == ElementKind.INTERFACE || kind == ElementKind.ENUM
       || kind == ElementKind.ANNOTATION_TYPE;

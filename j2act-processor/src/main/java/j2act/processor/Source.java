@@ -21,6 +21,9 @@ interface Source {
   /** Reports at the node, which came from a member of this type. */
   void report(Diagnostic.Kind kind, String message, Node at, TypeElement type);
 
+  /** Reports at an element where javac does: a method or variable at its name, a type at its keyword. */
+  void report(Diagnostic.Kind kind, String message, Element at);
+
   final class Import {
     final boolean isStatic;
     /** Dotted name without the trailing .* */

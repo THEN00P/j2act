@@ -21,7 +21,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 /**
  * Refreshes the vendored inputs in src/main/resources/data. VS Code's HTML data is
  * kept whole with its license; MDN's compat data is trimmed to the HTML status
- * fields we use; webref is trimmed to element names. Pinned versions live here.
+ * fields we use; webref is trimmed to element names and their DOM interfaces. Pinned versions live here.
  */
 public final class UpdateData {
 
@@ -65,7 +65,11 @@ public final class UpdateData {
     ObjectNode spec = JSON.createObjectNode();
     spec.put("source", WEBREF);
     ArrayNode names = spec.putArray("elements");
-    webref.path("elements").forEach(e -> names.add(e.path("name").asText()));
+    ObjectNode interfaces = spec.putObject("interfaces");
+    webref.path("elements").forEach(e -> {
+      names.add(e.path("name").asText());
+      interfaces.put(e.path("name").asText(), e.path("interface").asText());
+    });
     write(out.resolve("webref-html-elements.json"), JSON.writeValueAsString(spec));
     // The npm package ships no LICENSE file; package.json says MIT and the text lives in the repo.
     write(out.resolve("LICENSE-webref.md"), fetchUrl("https://raw.githubusercontent.com/w3c/webref/main/LICENSE"));

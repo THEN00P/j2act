@@ -5,6 +5,7 @@ import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
 
+import javax.annotation.processing.Messager;
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
@@ -43,16 +44,19 @@ import com.sun.source.util.Trees;
 final class JavacSource implements Source {
 
   private final Trees trees;
+  private final Messager messager;
 
-  private JavacSource(Trees trees) {
+  private JavacSource(Trees trees, Messager messager) {
     this.trees = trees;
+    this.messager = messager;
   }
 
   /** Null when this is not javac. Unwraps the environments Gradle and IntelliJ wrap around javac's. */
   static JavacSource of(ProcessingEnvironment env) {
+    Messager messager = env.getMessager();
     for (int depth = 0; env != null && depth < 4; depth++) {
       try {
-        return new JavacSource(Trees.instance(env));
+        return new JavacSource(Trees.instance(env), messager);
       } catch (IllegalArgumentException | LinkageError e) {
         env = delegate(env);
       }
@@ -119,6 +123,10 @@ final class JavacSource implements Source {
 
   @Override public void report(Diagnostic.Kind kind, String message, Node at, TypeElement type) {
     trees.printMessage(kind, message, (Tree) at.origin, unit(type));
+  }
+
+  @Override public void report(Diagnostic.Kind kind, String message, Element at) {
+    messager.printMessage(kind, message, at);
   }
 
   private CompilationUnitTree unit(TypeElement type) {

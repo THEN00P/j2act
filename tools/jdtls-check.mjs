@@ -3,7 +3,8 @@
 // unpack a JDTLS build, then e.g.
 //   JDTLS=/path/to/jdt-language-server JAVA=/path/to/java21+/bin/java node tools/jdtls-check.mjs
 // It imports a throwaway Maven project holding the processor's fixtures, through m2e-apt
-// like VS Code does, and compares the published diagnostics with their expect comments.
+// like VS Code does, and compares the published diagnostics with their expect comments
+// and the generated client types with javac's.
 import { spawn } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,9 +24,14 @@ const version = readFileSync(join(repo, "pom.xml"), "utf8").match(/<version>([^<
 
 const root = mkdtempSync(join(tmpdir(), "j2act-jdtls-"));
 const project = join(root, "project");
-const sources = join(project, "src/main/java/fixtures");
-mkdirSync(sources, { recursive: true });
-cpSync(join(repo, "j2act-processor/src/test/fixtures/fixtures"), sources, { recursive: true });
+const fixtures = join(repo, "j2act-processor/src/test/fixtures");
+const packages = ["fixtures", "clients"];
+for (const pkg of packages) {
+  mkdirSync(join(project, "src/main/java", pkg), { recursive: true });
+  for (const file of readdirSync(join(fixtures, pkg)).filter(f => f.endsWith(".java"))) {
+    cpSync(join(fixtures, pkg, file), join(project, "src/main/java", pkg, file));
+  }
+}
 writeFileSync(join(project, "pom.xml"), `<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">
   <modelVersion>4.0.0</modelVersion>
@@ -65,11 +71,13 @@ writeFileSync(join(project, "pom.xml"), `<?xml version="1.0" encoding="UTF-8"?>
 `);
 
 const expected = [];
-for (const file of readdirSync(sources)) {
-  readFileSync(join(sources, file), "utf8").split("\n").forEach((line, i) => {
-    const m = line.match(/\/\/ expect( next line)?: (.*)$/);
-    if (m) expected.push({ file, line: m[1] ? i + 2 : i + 1, text: m[2].trim() });
-  });
+for (const pkg of packages) {
+  for (const file of readdirSync(join(project, "src/main/java", pkg))) {
+    readFileSync(join(project, "src/main/java", pkg, file), "utf8").split("\n").forEach((line, i) => {
+      const m = line.match(/\/\/ expect( next line)?: (.*)$/);
+      if (m) expected.push({ file, line: m[1] ? i + 2 : i + 1, text: m[2].trim() });
+    });
+  }
 }
 
 // ---- the language server
@@ -164,6 +172,21 @@ for (const d of reported) {
   failures++;
   console.log(`UNEXPECTED ${d.file}:${d.line}:${d.column} ${d.message}`);
 }
-console.log(failures === 0 ? `PASS ${expected.length}/${expected.length} diagnostics in JDTLS` : `FAIL ${failures}`);
+// The client types m2e-apt wrote must be the ones javac writes (the checked-in example).
+const types = join(project, "target/generated-sources/annotations/clients/Webcam.types.d.ts");
+const golden = readFileSync(join(fixtures, "clients/Webcam.types.d.ts"), "utf8").replace(/\r\n/g, "\n");
+let written = null;
+try {
+  written = readFileSync(types, "utf8").replace(/\r\n/g, "\n");
+} catch {
+  // reported below
+}
+if (written !== golden) {
+  failures++;
+  console.log(written === null ? `MISSING ${types}` : `DIFFERENT ${types}`);
+} else {
+  console.log("Webcam.types.d.ts matches javac's");
+}
+console.log(failures === 0 ? `PASS ${expected.length} diagnostics and the client types in JDTLS` : `FAIL ${failures}`);
 server.kill();
 process.exit(failures === 0 ? 0 : 1);

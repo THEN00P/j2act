@@ -5,8 +5,10 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -93,6 +95,8 @@ final class Model {
   final List<Attribute> globals = new ArrayList<>();
   final List<Element> elements = new ArrayList<>();
   final List<String> specElements = new ArrayList<>();
+  /** Element name to its DOM interface, e.g. video to HTMLVideoElement. */
+  final Map<String, String> domInterfaces = new LinkedHashMap<>();
   final Set<String> bcdElements = new LinkedHashSet<>();
   final Set<String> bcdDeprecatedElements = new LinkedHashSet<>();
 
@@ -167,6 +171,7 @@ final class Model {
     }
     model.elements.sort(Comparator.comparing(e -> e.name));
     webref.path("elements").forEach(e -> model.specElements.add(e.asText()));
+    webref.path("interfaces").fields().forEachRemaining(e -> model.domInterfaces.put(e.getKey(), e.getValue().asText()));
     return model;
   }
 
