@@ -4,39 +4,39 @@
  * time: debounce, pending UI and reconnect (ADR 0003, 0010, 0013). It also runs client
  * modules: their lifecycle, actions, callbacks and slots (ADR 0022).
  */
-(function () {
+(() => {
   "use strict";
 
   function meta(name) {
-    var m = document.querySelector('meta[name="' + name + '"]');
+    const m = document.querySelector('meta[name="' + name + '"]');
     return m ? m.content : null;
   }
 
-  var sid = meta("j2-session");
-  var tok = meta("j2-token");
-  var wsPath = meta("j2-ws");
-  var base = meta("j2-base") || "";
+  let sid = meta("j2-session");
+  let tok = meta("j2-token");
+  const wsPath = meta("j2-ws");
+  const base = meta("j2-base") || "";
   if (!sid || !wsPath) {
     return;
   }
 
-  var ws = null;
-  var ready = false;
-  var queue = [];
-  var ackSeq = 0;
-  var retry = 0;
-  var leaving = false;
-  var remounting = false;
-  var inFlight = new Map();        // ack id -> { el, swap }
-  var pendingEls = new Set();      // elements with a click or submit in flight
-  var timers = new WeakMap();      // element -> debounce timer
-  var throttles = new WeakMap();   // element -> { trailing } while its throttle interval runs
+  let ws = null;
+  let ready = false;
+  let queue = [];
+  let ackSeq = 0;
+  let retry = 0;
+  let leaving = false;
+  let remounting = false;
+  const inFlight = new Map();        // ack id -> { el, swap }
+  const pendingEls = new Set();      // elements with a click or submit in flight
+  const timers = new WeakMap();      // element -> debounce timer
+  const throttles = new WeakMap();   // element -> { trailing } while its throttle interval runs
 
-  var morphConfig = {
+  const morphConfig = {
     morphStyle: "outerHTML",
     ignoreActiveValue: true,
     callbacks: {
-      beforeAttributeUpdated: function (name, el) {
+      beforeAttributeUpdated: (name, el) => {
         if (pendingEls.has(el) && (name === "data-pending" || name === "aria-busy")) {
           return false;
         }
@@ -47,7 +47,7 @@
         return true;
       },
       // A client element keeps its node; its children are the client's (ADR 0022).
-      beforeNodeMorphed: function (oldNode, newNode) {
+      beforeNodeMorphed: (oldNode, newNode) => {
         if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.hasAttribute("data-j2-client")
           && oldNode.getAttribute("data-j2-client") === newNode.getAttribute("data-j2-client")) {
           syncClient(oldNode, newNode);
@@ -57,7 +57,7 @@
       }
     }
   };
-  var slotConfig = { morphStyle: "innerHTML", ignoreActiveValue: true, callbacks: morphConfig.callbacks };
+  const slotConfig = { morphStyle: "innerHTML", ignoreActiveValue: true, callbacks: morphConfig.callbacks };
 
   // ---- socket
 
@@ -67,24 +67,24 @@
 
   function connect() {
     ws = new WebSocket(socketUrl());
-    ws.onopen = function () {
+    ws.onopen = () => {
       ws.send(JSON.stringify({ t: "hello", sid: sid, tok: tok }));
     };
-    ws.onmessage = function (e) {
+    ws.onmessage = (e) => {
       onMessage(JSON.parse(e.data));
     };
-    ws.onclose = function () {
+    ws.onclose = () => {
       ready = false;
       if (leaving || remounting) {
         return;
       }
-      var delay = Math.min(5000, 250 * Math.pow(2, retry++));
+      const delay = Math.min(5000, 250 * Math.pow(2, retry++));
       setTimeout(connect, delay);
     };
   }
 
   function send(message) {
-    var text = JSON.stringify(message);
+    const text = JSON.stringify(message);
     if (ready) {
       ws.send(text);
     } else {
@@ -126,16 +126,16 @@
 
   // ---- uploads (ADR 0006): the event names the file, the server answers with where to send it
 
-  var files = new Map();           // file id -> File, until its upload ends
-  var fileSeq = 0;
-  var CHUNK = 512 * 1024;
+  const files = new Map();           // file id -> File, until its upload ends
+  let fileSeq = 0;
+  const CHUNK = 512 * 1024;
 
   function pickedFile(input) {
-    var file = input.files && input.files[0];
+    const file = input.files && input.files[0];
     if (!file) {
       return {};
     }
-    var id = String(++fileSeq);
+    const id = String(++fileSeq);
     files.set(id, file);
     return { fi: id, fn: file.name, fs: String(file.size), ft: file.type || "" };
   }
@@ -143,13 +143,13 @@
   // Sends the file in order; the server's offset decides where each chunk starts, so a
   // failed or repeated chunk resumes where the bytes really stopped.
   function upload(id, url) {
-    var file = files.get(id);
+    const file = files.get(id);
     if (!file) {
       return; // gone after a reload: the server fails the run as stalled
     }
-    var offset = 0;
-    var failures = 0;
-    var retry = function () {
+    let offset = 0;
+    let failures = 0;
+    const retry = () => {
       if (++failures > 8) {
         files.delete(id);
         settleUpload(id, named("NetworkError", "the upload kept failing"));
@@ -157,15 +157,15 @@
       }
       setTimeout(next, Math.min(5000, 250 * Math.pow(2, failures)));
     };
-    var next = function () {
+    const next = () => {
       fetch(url + "?o=" + offset, {
         method: "POST",
         credentials: "same-origin",
         headers: { "X-J2-Token": tok, "Content-Type": "application/octet-stream" },
         body: file.slice(offset, offset + CHUNK)
-      }).then(function (r) {
-        return r.json().catch(function () { return {}; }).then(function (j) { return { status: r.status, body: j }; });
-      }).then(function (res) {
+      }).then((r) => {
+        return r.json().catch(() => ({})).then((j) => ({ status: r.status, body: j }));
+      }).then((res) => {
         if ((res.status === 200 || res.status === 409) && typeof res.body.o === "number") {
           failures = 0;
           offset = res.body.o;
@@ -188,7 +188,7 @@
 
   // A download link: the browser saves the response and the page stays (ADR 0012).
   function download(url) {
-    var a = document.createElement("a");
+    const a = document.createElement("a");
     a.href = url;
     a.download = "";
     a.style.display = "none";
@@ -202,12 +202,12 @@
   function patch(anchor, html, isRoot) {
     if (isRoot) {
       // The session root may be a new component after a navigation, with a new anchor.
-      var doc = new DOMParser().parseFromString(html, "text/html");
+      const doc = new DOMParser().parseFromString(html, "text/html");
       document.documentElement.setAttribute("data-j2s", anchor);
       Idiomorph.morph(document.head, doc.head.innerHTML, { morphStyle: "innerHTML" });
       Idiomorph.morph(document.body, doc.body, morphConfig);
     } else {
-      var el = document.querySelector('[data-j2s="' + anchor + '"]');
+      const el = document.querySelector('[data-j2s="' + anchor + '"]');
       if (el) {
         Idiomorph.morph(el, html, morphConfig);
       } else if (liveAnchors.has(anchor)) {
@@ -222,13 +222,13 @@
 
   // ---- client modules (ADR 0022)
 
-  var clients = new Map();         // client id -> { id, el, props, api, decoded, cleanup, ready, failed, waiting }
-  var uploadWaiters = new Map();   // file id -> { resolve, reject } for an UploadTarget.send
-  var liveAnchors = new Set();     // anchors of live components handed to actions
-  var lostSlots = new Set();       // slot ids already reported as gone
+  const clients = new Map();         // client id -> { id, el, props, api, decoded, cleanup, ready, failed, waiting }
+  const uploadWaiters = new Map();   // file id -> { resolve, reject } for an UploadTarget.send
+  const liveAnchors = new Set();     // anchors of live components handed to actions
+  const lostSlots = new Set();       // slot ids already reported as gone
 
   function named(name, message) {
-    var e = new Error(message);
+    const e = new Error(message);
     e.name = name;
     return e;
   }
@@ -244,12 +244,12 @@
   }
 
   function attributeNames(el) {
-    return Array.prototype.map.call(el.attributes, function (a) { return a.name; });
+    return Array.from(el.attributes, (a) => a.name);
   }
 
   // Values from Java: callbacks become functions, slots elements, Upload targets objects with send().
   function revive(json) {
-    return JSON.parse(json, function (key, value) {
+    return JSON.parse(json, (key, value) => {
       if (value && typeof value === "object" && !Array.isArray(value)) {
         if (typeof value.$fn === "string") {
           return callback(value.$fn);
@@ -262,16 +262,16 @@
         }
         if (typeof value.$html === "string") {
           // A snapshot: rendered once, the client's from now on.
-          var snapshot = document.createElement("div");
+          const snapshot = document.createElement("div");
           snapshot.style.display = "contents";
           snapshot.innerHTML = value.$html;
           return snapshot;
         }
         if (typeof value.$live === "string") {
           // A live component: its root carries its anchor, so later patches find it wherever it goes.
-          var template = document.createElement("template");
+          const template = document.createElement("template");
           template.innerHTML = value.$live;
-          var root = template.content.firstElementChild;
+          const root = template.content.firstElementChild;
           liveAnchors.add(root.getAttribute("data-j2s"));
           return root;
         }
@@ -281,17 +281,17 @@
   }
 
   function callback(id) {
-    return function () {
-      send({ t: "cb", h: id, v: JSON.stringify(Array.prototype.slice.call(arguments)) });
+    return (...args) => {
+      send({ t: "cb", h: id, v: JSON.stringify(args) });
     };
   }
 
   // The declarative Upload of ADR 0006: resumable chunks and the server's limits, from JS.
   function uploadTarget(id) {
     return {
-      send: function (blob, name) {
-        return new Promise(function (resolve, reject) {
-          var fileId = String(++fileSeq);
+      send: (blob, name) => {
+        return new Promise((resolve, reject) => {
+          const fileId = String(++fileSeq);
           files.set(fileId, blob);
           uploadWaiters.set(fileId, { resolve: resolve, reject: reject });
           send({ t: "cb", h: id, v: "[]", fi: fileId, fn: name || blob.name || "blob", fs: String(blob.size),
@@ -302,7 +302,7 @@
   }
 
   function settleUpload(fileId, error) {
-    var waiter = uploadWaiters.get(fileId);
+    const waiter = uploadWaiters.get(fileId);
     uploadWaiters.delete(fileId);
     if (waiter && error) {
       waiter.reject(error);
@@ -314,7 +314,7 @@
   // After every patch: new client elements mount, changed props update, removed ones clean up.
   function scanClients() {
     document.querySelectorAll("[data-j2-client]").forEach(mountClient);
-    clients.forEach(function (c) {
+    clients.forEach((c) => {
       if (!c.el.isConnected || c.el.getAttribute("data-j2-client") !== c.id) {
         unmount(c);
       }
@@ -322,8 +322,8 @@
   }
 
   function mountClient(el) {
-    var id = el.getAttribute("data-j2-client");
-    var c = clients.get(id);
+    const id = el.getAttribute("data-j2-client");
+    let c = clients.get(id);
     if (c && c.el === el) {
       propsChanged(c);
       return;
@@ -337,9 +337,9 @@
     if (!el.__j2attrs) {
       el.__j2attrs = attributeNames(el);
     }
-    var url = el.getAttribute("data-j2-module");
-    var name = el.getAttribute("data-j2-export");
-    import(url).then(function (module) {
+    const url = el.getAttribute("data-j2-module");
+    const name = el.getAttribute("data-j2-export");
+    import(url).then((module) => {
       if (clients.get(id) !== c) {
         return;
       }
@@ -348,7 +348,7 @@
       }
       c.api = module[name];
       start(c);
-    }).catch(function (e) {
+    }).catch((e) => {
       c.failed = e;
       clientError(c, "import", e);
       failWaiting(c, e);
@@ -359,7 +359,7 @@
     try {
       c.decoded = c.props == null ? null : revive(c.props);
       if (typeof c.api.mount === "function") {
-        var cleanup = c.props == null ? c.api.mount(c.el) : c.api.mount(c.el, c.decoded);
+        const cleanup = c.props == null ? c.api.mount(c.el) : c.api.mount(c.el, c.decoded);
         c.cleanup = typeof cleanup === "function" ? cleanup : null;
       }
     } catch (e) {
@@ -369,14 +369,14 @@
       return;
     }
     c.ready = true;
-    var waiting = c.waiting;
+    const waiting = c.waiting;
     c.waiting = [];
-    waiting.forEach(function (m) { runAction(c, m); });
+    waiting.forEach((m) => { runAction(c, m); });
   }
 
   // update runs only when props really changed; without it the client mounts again.
   function propsChanged(c) {
-    var props = c.el.getAttribute("data-j2-props");
+    const props = c.el.getAttribute("data-j2-props");
     if (props === c.props) {
       return;
     }
@@ -385,7 +385,7 @@
       return; // mount reads the latest props when its import lands
     }
     if (typeof c.api.update === "function") {
-      var previous = c.decoded;
+      const previous = c.decoded;
       try {
         c.decoded = revive(props);
         c.api.update(c.el, c.decoded, previous);
@@ -417,29 +417,29 @@
   }
 
   function failWaiting(c, e) {
-    var waiting = c.waiting;
+    const waiting = c.waiting;
     c.waiting = [];
-    waiting.forEach(function (m) { reply(m.i, false, e); });
+    waiting.forEach((m) => { reply(m.i, false, e); });
   }
 
   // Server attributes follow the render; attributes the client added stay; slots morph where they live.
   function syncClient(el, fresh) {
-    var names = attributeNames(fresh);
-    (el.__j2attrs || []).forEach(function (name) {
+    const names = attributeNames(fresh);
+    (el.__j2attrs || []).forEach((name) => {
       if (names.indexOf(name) < 0) {
         el.removeAttribute(name);
       }
     });
-    names.forEach(function (name) {
-      var value = fresh.getAttribute(name);
+    names.forEach((name) => {
+      const value = fresh.getAttribute(name);
       if (el.getAttribute(name) !== value) {
         el.setAttribute(name, value);
       }
     });
     el.__j2attrs = names;
-    fresh.querySelectorAll(":scope > [data-j2-slot]").forEach(function (slot) {
-      var id = slot.getAttribute("data-j2-slot");
-      var live = document.querySelector('[data-j2-slot="' + CSS.escape(id) + '"]');
+    fresh.querySelectorAll(":scope > [data-j2-slot]").forEach((slot) => {
+      const id = slot.getAttribute("data-j2-slot");
+      const live = document.querySelector('[data-j2-slot="' + CSS.escape(id) + '"]');
       if (live) {
         Idiomorph.morph(live, slot.innerHTML, slotConfig);
       } else if (!lostSlots.has(id)) {
@@ -451,7 +451,7 @@
   }
 
   function invoke(c, name, args) {
-    var fn = c.api[name];
+    const fn = c.api[name];
     if (typeof fn !== "function") {
       throw named("TypeError", c.el.getAttribute("data-j2-export") + " has no action " + name);
     }
@@ -460,7 +460,7 @@
 
   // A call from Java, sent after the patch: queued until its client has mounted.
   function callAction(m) {
-    var c = clients.get(m.c);
+    const c = clients.get(m.c);
     if (!c) {
       reply(m.i, false, named("AbortError", "the client is not mounted"));
     } else if (c.failed) {
@@ -473,14 +473,14 @@
   }
 
   function runAction(c, m) {
-    var result;
+    let result;
     try {
       result = invoke(c, m.n, revive(m.a));
     } catch (e) {
       reply(m.i, false, e);
       return;
     }
-    Promise.resolve(result).then(function (v) { reply(m.i, true, v); }, function (e) { reply(m.i, false, e); });
+    Promise.resolve(result).then((v) => reply(m.i, true, v), (e) => reply(m.i, false, e));
   }
 
   function reply(i, ok, value) {
@@ -503,9 +503,9 @@
     if (pendingEls.has(el)) {
       return;
     }
-    var call = JSON.parse(el.getAttribute("data-j2-call-" + type));
-    var c = clients.get(call.c);
-    var result;
+    const call = JSON.parse(el.getAttribute("data-j2-call-" + type));
+    const c = clients.get(call.c);
+    let result;
     try {
       if (!c || !c.ready) {
         throw c && c.failed ? c.failed : named("InvalidStateError", "the client has not mounted yet");
@@ -516,17 +516,17 @@
       dispatch(el, type, "", withError(extra, e));
       return;
     }
-    Promise.resolve(result).then(function (v) {
+    Promise.resolve(result).then((v) => {
       dispatch(el, type, JSON.stringify(v === undefined ? null : v), extra);
-    }, function (e) {
+    }, (e) => {
       console.warn("j2act: client action failed", e);
       dispatch(el, type, "", withError(extra, e));
     });
   }
 
   function withError(extra, e) {
-    var out = { x: errorText(e) };
-    for (var name in extra || {}) {
+    const out = { x: errorText(e) };
+    for (const name in extra || {}) {
       out[name] = extra[name];
     }
     return out;
@@ -534,7 +534,7 @@
 
   // ---- soft navigation (ADR 0011): links and back/forward go over the socket
 
-  var pendingHash = "";
+  let pendingHash = "";
   if ("scrollRestoration" in history) {
     history.scrollRestoration = "manual";
   }
@@ -547,20 +547,20 @@
 
   // ---- preload (ADR 0011): intent on a link asks the server to mount its target early
 
-  var preloadByDefault = meta("j2-preload") === "intent";
-  var preloadedAt = new Map();     // app URL -> when its preload was asked for
-  var hoverTimer = null;
+  const preloadByDefault = meta("j2-preload") === "intent";
+  const preloadedAt = new Map();     // app URL -> when its preload was asked for
+  let hoverTimer = null;
 
   function preloadUrl(target) {
-    var a = target && target.closest ? target.closest("a[href]") : null;
+    const a = target && target.closest ? target.closest("a[href]") : null;
     if (!a || a.hasAttribute("download") || a.hasAttribute("data-j2-reload") || (a.target && a.target !== "_self")) {
       return null;
     }
-    var mode = a.getAttribute("data-j2-preload");
+    const mode = a.getAttribute("data-j2-preload");
     if (mode === "none" || (mode !== "intent" && !preloadByDefault)) {
       return null;
     }
-    var url = new URL(a.href, location.href);
+    const url = new URL(a.href, location.href);
     if (!inApp(url) || (url.pathname === location.pathname && url.search === location.search)) {
       return null;
     }
@@ -568,7 +568,7 @@
   }
 
   function preload(u) {
-    var at = preloadedAt.get(u);
+    const at = preloadedAt.get(u);
     if (at && Date.now() - at < 5000) {
       return;
     }
@@ -576,16 +576,16 @@
     send({ t: "pre", u: u });
   }
 
-  document.addEventListener("mouseover", function (e) {
-    var u = preloadUrl(e.target);
+  document.addEventListener("mouseover", (e) => {
+    const u = preloadUrl(e.target);
     clearTimeout(hoverTimer);
     if (u) {
-      hoverTimer = setTimeout(function () { preload(u); }, 50); // a pass-over is not intent
+      hoverTimer = setTimeout(() => preload(u), 50); // a pass-over is not intent
     }
   });
-  ["focusin", "touchstart"].forEach(function (type) {
-    document.addEventListener(type, function (e) {
-      var u = preloadUrl(e.target);
+  ["focusin", "touchstart"].forEach((type) => {
+    document.addEventListener(type, (e) => {
+      const u = preloadUrl(e.target);
       if (u) {
         preload(u);
       }
@@ -600,17 +600,17 @@
 
   // The server answers a navigation with patches, then the final URL (after redirects).
   function landed(u, mode) {
-    var target = u + pendingHash;
+    const target = u + pendingHash;
     if (mode === "push") {
       history.pushState({ j2: 1, y: 0 }, "", target);
     } else if (mode === "replace") {
       history.replaceState({ j2: 1, y: 0 }, "", target);
     }
     if (mode === "pop") {
-      var y = history.state && typeof history.state.y === "number" ? history.state.y : 0;
+      const y = history.state && typeof history.state.y === "number" ? history.state.y : 0;
       window.scrollTo(0, y);
     } else if (pendingHash) {
-      var anchor = document.getElementById(decodeURIComponent(pendingHash.slice(1)));
+      const anchor = document.getElementById(decodeURIComponent(pendingHash.slice(1)));
       if (anchor) {
         anchor.scrollIntoView();
       }
@@ -620,16 +620,16 @@
     pendingHash = "";
   }
 
-  document.addEventListener("click", function (e) {
+  document.addEventListener("click", (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
       return;
     }
-    var a = e.target.closest ? e.target.closest("a[href]") : null;
+    const a = e.target.closest ? e.target.closest("a[href]") : null;
     if (!a || a.hasAttribute("data-j2-click") || a.hasAttribute("download") || a.hasAttribute("data-j2-reload")
       || (a.target && a.target !== "_self")) {
       return;
     }
-    var url = new URL(a.href, location.href);
+    const url = new URL(a.href, location.href);
     if (!inApp(url)) {
       return;
     }
@@ -640,7 +640,7 @@
     go(url, "push");
   });
 
-  window.addEventListener("popstate", function () {
+  window.addEventListener("popstate", () => {
     pendingHash = location.hash;
     send({ t: "nav", u: location.pathname + location.search, m: "pop" });
   });
@@ -650,20 +650,20 @@
   // extra carries event-specific fields (k, m for keys); pendingOn is the element whose
   // withPending markup swaps in, which for a submit is the submitter button.
   function dispatch(el, type, value, extra, pendingOn) {
-    var blocking = type === "click" || type === "submit";
+    const blocking = type === "click" || type === "submit";
     if (blocking && pendingEls.has(el)) {
       return;
     }
-    var handlerId = el.getAttribute("data-j2-" + type);
+    const handlerId = el.getAttribute("data-j2-" + type);
     if (!handlerId) {
       return;
     }
-    var a = String(++ackSeq);
+    const a = String(++ackSeq);
     if (blocking) {
       startPending(el, a, pendingOn || el);
     }
-    var message = { t: "ev", h: handlerId, v: value == null ? "" : value, a: a };
-    for (var name in extra || {}) {
+    const message = { t: "ev", h: handlerId, v: value == null ? "" : value, a: a };
+    for (const name in extra || {}) {
       message[name] = extra[name];
     }
     send(message);
@@ -672,7 +672,7 @@
   // Leading event at once, then at most one per interval: input and change send the latest
   // value when the interval ends, clicks inside it are dropped (ADR 0013).
   function throttle(el, type, ms) {
-    var state = throttles.get(el);
+    let state = throttles.get(el);
     if (state) {
       if (type !== "click") {
         state.trailing = type;
@@ -682,12 +682,12 @@
     state = { trailing: null };
     throttles.set(el, state);
     dispatch(el, type, type === "click" ? null : el.value);
-    var tick = function () {
+    const tick = () => {
       if (!state.trailing) {
         throttles.delete(el);
         return;
       }
-      var next = state.trailing;
+      const next = state.trailing;
       state.trailing = null;
       dispatch(el, next, el.value);
       setTimeout(tick, ms);
@@ -696,26 +696,26 @@
   }
 
   function schedule(el, type) {
-    var throttleMs = parseInt(el.getAttribute("data-j2-throttle") || "-1", 10);
+    const throttleMs = parseInt(el.getAttribute("data-j2-throttle") || "-1", 10);
     if (throttleMs >= 0) {
       throttle(el, type, throttleMs);
       return;
     }
-    var ms = parseInt(el.getAttribute("data-j2-debounce") || "-1", 10);
-    var read = function () { return type === "click" ? null : el.value; };
+    const ms = parseInt(el.getAttribute("data-j2-debounce") || "-1", 10);
+    const read = () => type === "click" ? null : el.value;
     if (ms < 0) {
       dispatch(el, type, read());
       return;
     }
     clearTimeout(timers.get(el));
-    timers.set(el, setTimeout(function () {
+    timers.set(el, setTimeout(() => {
       timers.delete(el);
       dispatch(el, type, read());
     }, ms));
   }
 
-  document.addEventListener("click", function (e) {
-    var el = e.target.closest ? e.target.closest("[data-j2-click]") : null;
+  document.addEventListener("click", (e) => {
+    const el = e.target.closest ? e.target.closest("[data-j2-click]") : null;
     if (!el) {
       return;
     }
@@ -730,13 +730,13 @@
   });
 
   // Pointer events: pointerdown grants user activation to a mouse, pointerup to touch and pen.
-  ["pointerdown", "pointerup"].forEach(function (type) {
-    document.addEventListener(type, function (e) {
-      var el = e.target.closest ? e.target.closest("[data-j2-" + type + "]") : null;
+  ["pointerdown", "pointerup"].forEach((type) => {
+    document.addEventListener(type, (e) => {
+      const el = e.target.closest ? e.target.closest("[data-j2-" + type + "]") : null;
       if (!el) {
         return;
       }
-      var extra = { pt: e.pointerType, px: String(e.clientX), py: String(e.clientY) };
+      const extra = { pt: e.pointerType, px: String(e.clientX), py: String(e.clientY) };
       if (el.hasAttribute("data-j2-call-" + type)) {
         boundAction(el, type, extra);
       } else {
@@ -745,9 +745,9 @@
     });
   });
 
-  ["input", "change"].forEach(function (type) {
-    document.addEventListener(type, function (e) {
-      var el = e.target;
+  ["input", "change"].forEach((type) => {
+    document.addEventListener(type, (e) => {
+      const el = e.target;
       if (!el || !el.hasAttribute || !el.hasAttribute("data-j2-" + type)) {
         return;
       }
@@ -760,9 +760,9 @@
   });
 
   // focus and blur do not bubble; focusin and focusout do.
-  [["focusin", "focus"], ["focusout", "blur"]].forEach(function (pair) {
-    document.addEventListener(pair[0], function (e) {
-      var el = e.target;
+  [["focusin", "focus"], ["focusout", "blur"]].forEach((pair) => {
+    document.addEventListener(pair[0], (e) => {
+      const el = e.target;
       if (el && el.hasAttribute && el.hasAttribute("data-j2-" + pair[1])) {
         dispatch(el, pair[1], el.value);
       }
@@ -770,16 +770,16 @@
   });
 
   // Keys are filtered here, never debounced, so only the keys the server asked for travel.
-  document.addEventListener("keydown", function (e) {
-    var el = e.target;
+  document.addEventListener("keydown", (e) => {
+    const el = e.target;
     if (!el || !el.hasAttribute || !el.hasAttribute("data-j2-keydown")) {
       return;
     }
-    var filter = el.getAttribute("data-j2-keys");
+    const filter = el.getAttribute("data-j2-keys");
     if (filter && filter.split(" ").indexOf(e.key) < 0) {
       return;
     }
-    var mods = (e.ctrlKey ? "c" : "") + (e.shiftKey ? "s" : "") + (e.altKey ? "a" : "") + (e.metaKey ? "m" : "");
+    const mods = (e.ctrlKey ? "c" : "") + (e.shiftKey ? "s" : "") + (e.altKey ? "a" : "") + (e.metaKey ? "m" : "");
     if (el.hasAttribute("data-j2-call-keydown")) {
       boundAction(el, "keydown", { k: e.key, m: mods });
       return;
@@ -788,8 +788,8 @@
   });
 
   // The browser's own submit never happens; fields travel URL-encoded, file inputs excluded.
-  document.addEventListener("submit", function (e) {
-    var form = e.target;
+  document.addEventListener("submit", (e) => {
+    const form = e.target;
     if (!form || !form.hasAttribute || !form.hasAttribute("data-j2-submit")) {
       return;
     }
@@ -798,12 +798,12 @@
       boundAction(form, "submit");
       return;
     }
-    var fields = new FormData(form);
+    const fields = new FormData(form);
     if (e.submitter && e.submitter.name) {
       fields.append(e.submitter.name, e.submitter.value);
     }
-    var encoded = [];
-    fields.forEach(function (value, name) {
+    const encoded = [];
+    fields.forEach((value, name) => {
       if (typeof value === "string") {
         encoded.push(encodeURIComponent(name) + "=" + encodeURIComponent(value));
       }
@@ -816,11 +816,11 @@
   function startPending(el, a, swap) {
     pendingEls.add(el);
     inFlight.set(a, { el: el, swap: swap });
-    [el, swap].forEach(function (target) {
+    [el, swap].forEach((target) => {
       target.setAttribute("data-pending", "");
       target.setAttribute("aria-busy", "true");
     });
-    var tpl = swap.querySelector(":scope > template[data-j2-pending]");
+    const tpl = swap.querySelector(":scope > template[data-j2-pending]");
     if (tpl) {
       swap.__j2saved = swap.innerHTML;
       swap.innerHTML = tpl.outerHTML + "<span data-j2-pending-live>" + tpl.innerHTML + "</span>";
@@ -828,17 +828,17 @@
   }
 
   function ack(a) {
-    var entry = inFlight.get(a);
+    const entry = inFlight.get(a);
     inFlight.delete(a);
     if (!entry) {
       return;
     }
     pendingEls.delete(entry.el);
-    [entry.el, entry.swap].forEach(function (target) {
+    [entry.el, entry.swap].forEach((target) => {
       target.removeAttribute("data-pending");
       target.removeAttribute("aria-busy");
     });
-    var swap = entry.swap;
+    const swap = entry.swap;
     if (swap.__j2saved != null && swap.querySelector(":scope > [data-j2-pending-live]")) {
       swap.innerHTML = swap.__j2saved;
     }
@@ -861,11 +861,11 @@
       // already closed
     }
     fetch(location.href, { credentials: "same-origin" })
-      .then(function (r) { return r.text(); })
-      .then(function (html) {
-        var doc = new DOMParser().parseFromString(html, "text/html");
-        var read = function (name) {
-          var m = doc.querySelector('meta[name="' + name + '"]');
+      .then((r) => r.text())
+      .then((html) => {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const read = (name) => {
+          const m = doc.querySelector('meta[name="' + name + '"]');
           return m ? m.content : null;
         };
         sid = read("j2-session");
@@ -883,20 +883,20 @@
         queue = [];
         connect();
       })
-      .catch(function () {
+      .catch(() => {
         remounting = false;
         setTimeout(remount, 2000);
       });
   }
 
-  window.addEventListener("pagehide", function () {
+  window.addEventListener("pagehide", () => {
     if (ready) {
       leaving = true;
       ws.send(JSON.stringify({ t: "bye" }));
     }
   });
 
-  window.addEventListener("pageshow", function (e) {
+  window.addEventListener("pageshow", (e) => {
     if (e.persisted) {
       leaving = false;
       remount();
