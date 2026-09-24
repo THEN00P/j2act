@@ -147,19 +147,30 @@ final class MutationCell extends Cell {
       : !Uploads.accepts(run.accept, file) ? new IllegalArgumentException(file.name() + " is not an accepted type " + run.accept)
       : null;
     if (refused != null) {
-      finish(run, file, mySeq, null, refused);
+      refuse(run, file, mySeq, refused);
       return;
     }
     java.nio.file.Path temp;
     try {
       temp = java.nio.file.Files.createTempFile(engine.uploadDir(), "up-", ".part");
     } catch (java.io.IOException e) {
-      finish(run, file, mySeq, null, e);
+      refuse(run, file, mySeq, e);
       return;
     }
     String token = engine.newSecret(24);
     engine.uploads.put(token, new UploadSink(token, session, this, run, file, mySeq, temp));
     session.send(Json.object("t", "up", "f", file.id, "u", engine.contextPath + J2Act.UPLOAD_PATH + token));
+  }
+
+  /**
+   * Refused before the first chunk: the browser drops the file, and an UploadTarget.send
+   * rejects with the reason, so no promise is left pending (ADR 0022).
+   */
+  private void refuse(Upload run, UploadFile file, long mySeq, Throwable reason) {
+    if (file != null) {
+      session.send(Json.object("t", "upx", "f", file.id, "e", String.valueOf(reason.getMessage())));
+    }
+    finish(run, file, mySeq, null, reason);
   }
 
   /** Lane-only. Progress of the latest run, while it is still pending. */

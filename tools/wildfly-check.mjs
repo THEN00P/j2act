@@ -71,4 +71,22 @@ b.run(async () => {
     .textContent === 'exported 14 bytes'`));
   await js(`document.getElementById('timer-restart').click(); true`);
   check("a direct action runs after the patch", await until(`${timer}.querySelector('.face')?.textContent === '2'`));
+  check("the module's import graph is served under the context path", await js(`${timer}.dataset.graph === 'graph ok'`));
+  const moduleUrl = await js(`${timer}.getAttribute('data-j2-module')`);
+  const statuses = await js(`Promise.all([
+    ${JSON.stringify(moduleUrl.replace("Countdown.client.js", "countdown-face.js"))},
+    ${JSON.stringify(moduleUrl.replace("components/Countdown.client.js", "shared/marks.js"))},
+    ${JSON.stringify(moduleUrl.replace("Countdown.client.js", "Countdown.class"))},
+  ].map(u => fetch(u).then(r => r.status))).then(s => s.join(' '))`);
+  check("only the graph is reachable through the filter", statuses === "200 200 404", statuses);
+  await js(`document.getElementById('timer-note').click(); true`);
+  await until(`${timer}.querySelector('.note-badge')?.textContent === 'notes 0'`);
+  await js(`window.__note = ${timer}.querySelector('.note-badge'); window.__note.click(); true`);
+  check("a live component passed to an action keeps patching inside the client's DOM",
+    await until(`${timer}.querySelector('.note-badge')?.textContent === 'notes 1'`)
+    && await js(`${timer}.querySelector('.note-badge') === window.__note`));
+  await js(`document.getElementById('timer-key').focus(); true`);
+  await key("Enter", "Enter", 13, { text: "\r" });
+  check("onKeyDown(action, then) runs the action inside the keydown",
+    await until(`/^paused by key at [0-9]$/.test(document.getElementById('timer-status').textContent)`));
 });

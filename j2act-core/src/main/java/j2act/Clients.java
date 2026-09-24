@@ -27,6 +27,8 @@ final class Clients {
   private final Map<String, ClientCell> byId = new HashMap<>();
   private final Map<String, PendingCall> calls = new HashMap<>();
   private final List<String> outbox = new ArrayList<>();
+  /** Live components given to actions, by anchor. */
+  private final Map<String, Scope> live = new HashMap<>();
   private long callSeq;
 
   Clients(Session session) {
@@ -99,7 +101,7 @@ final class Clients {
         props.append('}');
       } else {
         props.append(encode(value, classes[i], types[i],
-          handler -> session.registerHandler(scope, path + "/client:" + name, "callback", handler),
+          handler -> session.registerHandler(scope, path + "/client:" + name, "callback", handler), null,
           handle.type.getSimpleName() + ".mount " + name));
       }
     }
@@ -107,17 +109,21 @@ final class Clients {
     return binding;
   }
 
-  /** An onClick(action, then) binding: the click handler that takes the result, and the call the browser makes. */
-  String[] bindClick(Scope scope, String path, Tag<?> tag) {
-    ClientCall call = ClientCall.record(tag.clickAction);
+  /**
+   * An action bound to an event's gesture, e.g. onClick(camera::snapshot, photo::set): the
+   * handler that takes the result, and the call the browser makes inside the event.
+   */
+  String[] bindAction(Scope scope, String path, String event, Tag.ActionBinding binding) {
+    ClientCall call = ClientCall.record(binding.action);
     ClientCell cell = call.handle.clientCell();
     String name = call.handle.type.getSimpleName() + "." + call.method.getName();
     Type valueType = ClientCall.valueType(call.method);
-    Consumer<Object> then = tag.clickThen;
-    String handlerId = session.registerHandler(scope, path, "click", (Session.RawHandler) message -> {
+    Consumer<Object> then = binding.then;
+    String handlerId = session.registerHandler(scope, path, event, (Session.RawHandler) message -> {
       String error = message.get("x");
       if (error != null) {
-        warn("client action " + name + " failed in its click in " + scope.instance.getClass().getName() + ": " + error);
+        warn("client action " + name + " failed in its " + event + " in " + scope.instance.getClass().getName()
+          + ": " + error);
         return;
       }
       String json = message.get("v");
@@ -133,7 +139,7 @@ final class Clients {
     for (int i = 0; i < call.args.length; i++) {
       int index = i;
       json.append(i == 0 ? "" : ",").append(encode(call.args[i], classes[i], types[i],
-        handler -> session.registerHandler(scope, path + "/call:" + index, "callback", handler), name));
+        handler -> session.registerHandler(scope, path + "/" + event + ":" + index, "callback", handler), null, name));
     }
     return new String[] {handlerId, json.append("]}").toString()};
   }
@@ -149,7 +155,8 @@ final class Clients {
     for (int i = 0; i < args.length; i++) {
       String key = cell.id + "." + method.getName() + "#" + i;
       json.append(i == 0 ? "" : ",").append(encode(args[i], classes[i], types[i],
-        handler -> session.registerActionHandler(cell.owner, key, handler), name));
+        handler -> session.registerActionHandler(cell.owner, key, handler),
+        component -> live(cell, key, component), name));
     }
     outbox.add(Json.object("t", "ca", "i", id, "c", cell.id, "n", method.getName(), "a", json.append(']').toString()));
     CompletableFuture<Object> future = new CompletableFuture<>();
@@ -157,6 +164,42 @@ final class Clients {
     session.engine.later(session, TIMEOUT_MILLIS, () -> settle(id, null,
       new ClientException("TimeoutError", name + " did not settle within 30 seconds")));
     return method.getReturnType() == void.class ? null : future;
+  }
+
+  /**
+   * A component passed to an action stays live, like React's createPortal: it renders on
+   * its own State under the calling component, which owns it until it unmounts or the
+   * next call of the same action replaces it (ADR 0022).
+   */
+  private String live(ClientCell cell, String key, ComponentTag component) {
+    Scope owner = cell.owner;
+    if (component.scope != null) {
+      throw new IllegalArgumentException(component.getClass().getSimpleName()
+        + " is already mounted; pass a new instance to " + cell.type.getSimpleName() + " (ADR 0022)");
+    }
+    Scope previous = owner.actionScopes.remove(key);
+    if (previous != null) {
+      previous.dispose();
+    }
+    live.values().removeIf(scope -> scope.disposed);
+    Scope scope = new Scope(session, owner, owner.address + "/action:" + key);
+    scope.detached = true;
+    owner.actionScopes.put(key, scope);
+    live.put(scope.anchor, scope);
+    scope.bind(component);
+    return session.renderDetached(scope);
+  }
+
+  /** The browser lost live content an action was given: stop patching that anchor, and say so. */
+  void onLiveGone(String anchor) {
+    Scope scope = anchor == null ? null : live.remove(anchor);
+    if (scope == null || scope.disposed) {
+      return;
+    }
+    scope.parent.actionScopes.values().remove(scope);
+    String component = scope.instance == null ? "live content" : scope.instance.getClass().getName();
+    scope.dispose();
+    warn(component + " passed to a client action left the document, so it stopped updating");
   }
 
   /** Sends the calls made during this update, after its patches. */
@@ -238,7 +281,7 @@ final class Clients {
 
   /** Callbacks and upload targets become ids the browser calls back with; the rest is the host's JSON. */
   private String encode(Object value, Class<?> declared, Type generic, Function<Session.RawHandler, String> register,
-                        String where) {
+                        Function<ComponentTag, String> live, String where) {
     if (value == null) {
       return "null";
     }
@@ -259,7 +302,21 @@ final class Clients {
       return "{\"$fn\":" + quote(id) + "}";
     }
     if (value instanceof DomContent) {
-      throw new IllegalArgumentException(where + ": DomContent slots are mount props, not action arguments (ADR 0022)");
+      if (value instanceof ComponentTag) {
+        if (live == null) {
+          throw new IllegalArgumentException(where + ": a live component argument needs a direct call; a gesture-bound"
+            + " action takes plain tags (ADR 0022)");
+        }
+        return "{\"$live\":" + quote(live.apply((ComponentTag) value)) + "}";
+      }
+      // Plain tags are a snapshot: rendered once, the client's from then on.
+      StringBuilder html = new StringBuilder();
+      try {
+        StaticRenderer.render((DomContent) value, html, false);
+      } catch (java.io.IOException e) {
+        throw new java.io.UncheckedIOException(e);
+      }
+      return "{\"$html\":" + quote(html.toString()) + "}";
     }
     return session.engine.json.write(value);
   }

@@ -218,10 +218,10 @@ final class Renderer {
     if (tag.keyFilter != null) {
       attribute("data-j2-keys", tag.keyFilter);
     }
-    if (tag.clickAction != null) {
-      String[] click = session.clients.bindClick(scope, path, tag);
-      attribute("data-j2-click", click[0]);
-      attribute("data-j2-call", click[1]);
+    for (Map.Entry<String, Tag.ActionBinding> action : tag.actions.entrySet()) {
+      String[] bound = session.clients.bindAction(scope, path, action.getKey(), action.getValue());
+      attribute("data-j2-" + action.getKey(), bound[0]);
+      attribute("data-j2-call-" + action.getKey(), bound[1]);
     }
     Clients.Binding client = tag.client == null ? null : session.clients.bind(scope, path, tag.client, epoch);
     if (client != null) {

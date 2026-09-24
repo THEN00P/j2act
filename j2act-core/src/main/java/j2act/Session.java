@@ -568,13 +568,22 @@ final class Session {
     }
   }
 
+  /** A detached scope (an action's live argument) is its own root: its owner's render never includes it. */
   private static boolean hasDirtyAncestor(Scope scope) {
-    for (Scope p = scope.parent; p != null; p = p.parent) {
-      if (p.dirty && !p.disposed) {
+    for (Scope s = scope; !s.detached && s.parent != null; s = s.parent) {
+      if (s.parent.dirty && !s.parent.disposed) {
         return true;
       }
     }
     return false;
+  }
+
+  /** Lane-only. Renders a component given to a client action, with its own anchor (ADR 0022). */
+  String renderDetached(Scope scope) {
+    Renderer renderer = new Renderer(this, ++epoch);
+    renderer.renderScope(scope);
+    runEffects();
+    return renderer.out.toString();
   }
 
   private void runEffects() {
@@ -778,6 +787,11 @@ final class Session {
         case "keydown":
           ((Handler<KeyEvent>) entry.handler).handle(new KeyEvent(message.get("k"), value, message.get("m")));
           break;
+        case "pointerdown":
+        case "pointerup":
+          ((Handler<PointerEvent>) entry.handler).handle(new PointerEvent(message.get("pt"),
+            number(message.get("px")), number(message.get("py"))));
+          break;
         default:
           ((Handler<ValueEvent>) entry.handler).handle(new ValueEvent(value,
             UploadFile.fromWire(message.get("fi"), message.get("fn"), message.get("fs"), message.get("ft"))));
@@ -790,6 +804,14 @@ final class Session {
       engine.log(System.Logger.Level.WARNING, "event handler failed in "
         + entry.scope.instance.getClass().getName(), t);
       return false;
+    }
+  }
+
+  private static double number(String value) {
+    try {
+      return value == null ? 0 : Double.parseDouble(value);
+    } catch (NumberFormatException e) {
+      return 0;
     }
   }
 

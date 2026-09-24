@@ -1,6 +1,8 @@
 // The browser half of Countdown.Timer (ADR 0022). Types: Countdown.types.d.ts.
 // @ts-check
 
+import { faceText, graphMark } from "./countdown-face.js";
+
 /** Per element: the running countdown, kept in module state, never on this. */
 const running = new WeakMap();
 
@@ -13,10 +15,10 @@ const running = new WeakMap();
 function start(el, seconds, onTick, onDone) {
   const face = /** @type {HTMLElement} */ (el.querySelector(".face"));
   let left = seconds;
-  face.textContent = String(left);
+  face.textContent = faceText(left);
   const id = setInterval(() => {
     left--;
-    face.textContent = String(left);
+    face.textContent = faceText(left);
     onTick(left);
     if (left <= 0) {
       clearInterval(id);
@@ -34,6 +36,7 @@ export const timer = {
     el.prepend(face);
     el.setAttribute("data-running", "");
     el.dataset.unit = labels.unit;
+    el.dataset.graph = graphMark;
     start(el, seconds, onTick, onDone);
     return () => {
       running.get(el)?.stop();
@@ -51,6 +54,11 @@ export const timer = {
     const state = running.get(el);
     state.stop();
     start(el, seconds, state.onTick, state.onDone);
+  },
+
+  /** Live server content, placed inside the client's own DOM. */
+  note(el, content) {
+    el.append(content);
   },
 
   export(el, into) {

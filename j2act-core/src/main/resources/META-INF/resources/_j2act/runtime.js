@@ -111,6 +111,10 @@
       download(m.u);
     } else if (m.t === "up") {
       upload(m.f, m.u);
+    } else if (m.t === "upx") {
+      // Refused before the first chunk: drop the file, reject an UploadTarget.send.
+      files.delete(m.f);
+      settleUpload(m.f, named("NotAllowedError", m.e));
     } else if (m.t === "ca") {
       callAction(m);
     } else if (m.t === "ack") {
@@ -206,6 +210,11 @@
       var el = document.querySelector('[data-j2s="' + anchor + '"]');
       if (el) {
         Idiomorph.morph(el, html, morphConfig);
+      } else if (liveAnchors.has(anchor)) {
+        // Live content given to an action, and the client dropped it: the server stops patching it.
+        liveAnchors.delete(anchor);
+        console.warn("j2act: live content " + anchor + " passed to a client action left the document (ADR 0022)");
+        send({ t: "lg", s: anchor });
       }
     }
     scanClients();
@@ -215,6 +224,8 @@
 
   var clients = new Map();         // client id -> { id, el, props, api, decoded, cleanup, ready, failed, waiting }
   var uploadWaiters = new Map();   // file id -> { resolve, reject } for an UploadTarget.send
+  var liveAnchors = new Set();     // anchors of live components handed to actions
+  var lostSlots = new Set();       // slot ids already reported as gone
 
   function named(name, message) {
     var e = new Error(message);
@@ -248,6 +259,21 @@
         }
         if (typeof value.$upload === "string") {
           return uploadTarget(value.$upload);
+        }
+        if (typeof value.$html === "string") {
+          // A snapshot: rendered once, the client's from now on.
+          var snapshot = document.createElement("div");
+          snapshot.style.display = "contents";
+          snapshot.innerHTML = value.$html;
+          return snapshot;
+        }
+        if (typeof value.$live === "string") {
+          // A live component: its root carries its anchor, so later patches find it wherever it goes.
+          var template = document.createElement("template");
+          template.innerHTML = value.$live;
+          var root = template.content.firstElementChild;
+          liveAnchors.add(root.getAttribute("data-j2s"));
+          return root;
         }
       }
       return value;
@@ -416,8 +442,10 @@
       var live = document.querySelector('[data-j2-slot="' + CSS.escape(id) + '"]');
       if (live) {
         Idiomorph.morph(live, slot.innerHTML, slotConfig);
-      } else {
+      } else if (!lostSlots.has(id)) {
+        lostSlots.add(id);
         console.warn("j2act: slot " + id + " left the document, so it stopped updating (ADR 0022)");
+        send({ t: "ce", c: el.getAttribute("data-j2-client"), e: "slot " + id + " left the document, so it stopped updating" });
       }
     });
   }
@@ -469,11 +497,13 @@
   }
 
   // onClick(action, then): the action runs inside the click, so gesture-gated APIs work.
-  function clickAction(el) {
+  // onClick/onSubmit/onKeyDown/onPointerDown/onPointerUp(action, then): the action runs
+  // synchronously inside the event, which grants user activation, so gesture-gated APIs work.
+  function boundAction(el, type, extra) {
     if (pendingEls.has(el)) {
       return;
     }
-    var call = JSON.parse(el.getAttribute("data-j2-call"));
+    var call = JSON.parse(el.getAttribute("data-j2-call-" + type));
     var c = clients.get(call.c);
     var result;
     try {
@@ -483,15 +513,23 @@
       result = invoke(c, call.n, revive(JSON.stringify(call.a)));
     } catch (e) {
       console.warn("j2act: client action failed", e);
-      dispatch(el, "click", "", { x: errorText(e) });
+      dispatch(el, type, "", withError(extra, e));
       return;
     }
     Promise.resolve(result).then(function (v) {
-      dispatch(el, "click", JSON.stringify(v === undefined ? null : v));
+      dispatch(el, type, JSON.stringify(v === undefined ? null : v), extra);
     }, function (e) {
       console.warn("j2act: client action failed", e);
-      dispatch(el, "click", "", { x: errorText(e) });
+      dispatch(el, type, "", withError(extra, e));
     });
+  }
+
+  function withError(extra, e) {
+    var out = { x: errorText(e) };
+    for (var name in extra || {}) {
+      out[name] = extra[name];
+    }
+    return out;
   }
 
   // ---- soft navigation (ADR 0011): links and back/forward go over the socket
@@ -684,11 +722,27 @@
     if (el.tagName === "A" || el.type === "submit") {
       e.preventDefault();
     }
-    if (el.hasAttribute("data-j2-call")) {
-      clickAction(el);
+    if (el.hasAttribute("data-j2-call-click")) {
+      boundAction(el, "click");
       return;
     }
     schedule(el, "click");
+  });
+
+  // Pointer events: pointerdown grants user activation to a mouse, pointerup to touch and pen.
+  ["pointerdown", "pointerup"].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      var el = e.target.closest ? e.target.closest("[data-j2-" + type + "]") : null;
+      if (!el) {
+        return;
+      }
+      var extra = { pt: e.pointerType, px: String(e.clientX), py: String(e.clientY) };
+      if (el.hasAttribute("data-j2-call-" + type)) {
+        boundAction(el, type, extra);
+      } else {
+        dispatch(el, type, "", extra);
+      }
+    });
   });
 
   ["input", "change"].forEach(function (type) {
@@ -726,6 +780,10 @@
       return;
     }
     var mods = (e.ctrlKey ? "c" : "") + (e.shiftKey ? "s" : "") + (e.altKey ? "a" : "") + (e.metaKey ? "m" : "");
+    if (el.hasAttribute("data-j2-call-keydown")) {
+      boundAction(el, "keydown", { k: e.key, m: mods });
+      return;
+    }
     dispatch(el, "keydown", el.value, { k: e.key, m: mods });
   });
 
@@ -736,6 +794,10 @@
       return;
     }
     e.preventDefault();
+    if (form.hasAttribute("data-j2-call-submit")) {
+      boundAction(form, "submit");
+      return;
+    }
     var fields = new FormData(form);
     if (e.submitter && e.submitter.name) {
       fields.append(e.submitter.name, e.submitter.value);

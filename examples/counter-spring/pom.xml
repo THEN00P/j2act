@@ -58,7 +58,8 @@
   </dependencies>
 
   <build>
-    <!-- Client modules sit next to their Java class (ADR 0022). -->
+    <!-- Client modules and the files they import sit next to their Java class (ADR 0022).
+         Overriding <resources> drops the default, so src/main/resources is listed again. -->
     <resources>
       <resource>
         <directory>src/main/resources</directory>
@@ -66,7 +67,7 @@
       <resource>
         <directory>src/main/java</directory>
         <includes>
-          <include>**/*.client.js</include>
+          <include>**/*.js</include>
         </includes>
       </resource>
     </resources>

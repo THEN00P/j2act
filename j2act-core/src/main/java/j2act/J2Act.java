@@ -312,7 +312,7 @@ public final class J2Act implements AutoCloseable {
       connection.close();
       return;
     }
-    boolean client = "cb".equals(type) || "cr".equals(type) || "ce".equals(type);
+    boolean client = "cb".equals(type) || "cr".equals(type) || "ce".equals(type) || "lg".equals(type);
     if (("ev".equals(type) || "nav".equals(type) || client) && !admit(session, connection)) {
       if ("ev".equals(type)) {
         // The client's pending UI reverts; the event is gone (ADR 0013).
@@ -333,6 +333,8 @@ public final class J2Act implements AutoCloseable {
       session.post(() -> session.clients.onResult(message));
     } else if ("ce".equals(type)) {
       session.post(() -> session.clients.onError(message));
+    } else if ("lg".equals(type)) {
+      session.post(() -> session.clients.onLiveGone(message.get("s")));
     } else if ("pre".equals(type)) {
       String target = appUrl(message.get("u"));
       if (target != null && admit(session, connection)) {

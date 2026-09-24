@@ -34,8 +34,19 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   DomContent pending;
   /** A Mount, or a client handle without props (ADR 0022). */
   Object client;
-  Supplier<? extends CompletionStage<?>> clickAction;
-  Consumer<Object> clickThen;
+  /** Client actions bound to an event's gesture, by event name (ADR 0022). */
+  final Map<String, ActionBinding> actions = new LinkedHashMap<>();
+
+  /** One action bound to an event: the recorded client call, and what takes its result. */
+  static final class ActionBinding {
+    final Supplier<? extends CompletionStage<?>> action;
+    final Consumer<Object> then;
+
+    ActionBinding(Supplier<? extends CompletionStage<?>> action, Consumer<Object> then) {
+      this.action = Objects.requireNonNull(action);
+      this.then = Objects.requireNonNull(then);
+    }
+  }
 
   protected Tag(String name) {
     this.name = Objects.requireNonNull(name);
@@ -106,10 +117,7 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   }
 
   public T onClick(Handler<ClickEvent> handler) {
-    events.put("click", handler);
-    clickAction = null;
-    clickThen = null;
-    return self();
+    return on("click", handler);
   }
 
   /**
@@ -118,12 +126,48 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
    * (ADR 0022). The action is one call on a client handle, e.g.
    * onClick(camera::snapshot, photo::set); its arguments are taken when this renders.
    */
+  public <V> T onClick(Supplier<? extends CompletionStage<V>> action, Consumer<? super V> then) {
+    return bind("click", action, then);
+  }
+
+  /** Like onClick(action, then), inside the submit; the form's fields are not sent. */
+  public <V> T onSubmit(Supplier<? extends CompletionStage<V>> action, Consumer<? super V> then) {
+    return bind("submit", action, then);
+  }
+
+  /** Like onClick(action, then), inside the keydown; withKeyFilter still applies first. */
+  public <V> T onKeyDown(Supplier<? extends CompletionStage<V>> action, Consumer<? super V> then) {
+    return bind("keydown", action, then);
+  }
+
+  /** Like onClick(action, then), inside the pointerdown. */
+  public <V> T onPointerDown(Supplier<? extends CompletionStage<V>> action, Consumer<? super V> then) {
+    return bind("pointerdown", action, then);
+  }
+
+  /** Like onClick(action, then), inside the pointerup, which grants activation to touch and pen. */
+  public <V> T onPointerUp(Supplier<? extends CompletionStage<V>> action, Consumer<? super V> then) {
+    return bind("pointerup", action, then);
+  }
+
+  public T onPointerDown(Handler<PointerEvent> handler) {
+    return on("pointerdown", handler);
+  }
+
+  public T onPointerUp(Handler<PointerEvent> handler) {
+    return on("pointerup", handler);
+  }
+
+  private T on(String event, Handler<?> handler) {
+    events.put(event, handler);
+    actions.remove(event);
+    return self();
+  }
+
   @SuppressWarnings("unchecked")
-  public <V> T onClick(Supplier<? extends CompletionStage<V>> action,
-                       Consumer<? super V> then) {
-    events.remove("click");
-    clickAction = Objects.requireNonNull(action);
-    clickThen = (Consumer<Object>) Objects.requireNonNull(then);
+  private <V> T bind(String event, Supplier<? extends CompletionStage<V>> action, Consumer<? super V> then) {
+    events.remove(event);
+    actions.put(event, new ActionBinding(action, (Consumer<Object>) then));
     return self();
   }
 
@@ -156,14 +200,12 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
 
   /** A form submit; the browser's own submit is prevented and the fields arrive decoded. */
   public T onSubmit(Handler<SubmitEvent> handler) {
-    events.put("submit", handler);
-    return self();
+    return on("submit", handler);
   }
 
   /** Every keydown, unless narrowed with withKeyFilter so typing does not become traffic. */
   public T onKeyDown(Handler<KeyEvent> handler) {
-    events.put("keydown", handler);
-    return self();
+    return on("keydown", handler);
   }
 
   /** Only these DOM key names reach onKeyDown, filtered on the client, e.g. "Enter", "Escape". */

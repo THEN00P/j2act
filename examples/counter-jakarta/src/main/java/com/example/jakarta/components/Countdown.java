@@ -11,6 +11,7 @@ import j2act.DomContent;
 import j2act.Mount;
 import j2act.State;
 import j2act.Upload;
+import j2act.html.tags.ButtonTag;
 import j2act.html.tags.DivTag;
 
 /**
@@ -36,6 +37,9 @@ public final class Countdown extends ComponentTag {
 
     void restart(int seconds);
 
+    /** Places server content inside the countdown; a component stays live (ADR 0022). */
+    void note(DomContent content);
+
     /** Sends the ticks so far as a text file through the Upload. */
     void export(Upload into);
   }
@@ -46,6 +50,17 @@ public final class Countdown extends ComponentTag {
   private final Upload log = upload()
     .withAccept(".txt")
     .withMaxFileSize("1KB");
+
+  /** Handed to note(): it keeps re-rendering on its own State inside the client's DOM. */
+  static final class NoteBadge extends ComponentTag {
+    private final State<Integer> clicks = state(0);
+
+    @Override protected ButtonTag render() {
+      return button("notes " + clicks.get())
+        .withClass("note-badge")
+        .onClick(e -> clicks.set(clicks.get() + 1));
+    }
+  }
 
   public static Countdown countdown() {
     return new Countdown();
@@ -65,6 +80,17 @@ public final class Countdown extends ComponentTag {
           status.set("running");
           timer.restart(2);
         }),
+      button("Note")
+        .withId("timer-note")
+        .onClick(e -> timer.note(new NoteBadge())),
+      button("Hold")
+        .withId("timer-hold")
+        .onPointerDown(timer::pause, left -> status.set("held at " + left)),
+      input()
+        .withId("timer-key")
+        .withPlaceholder("Enter pauses")
+        .withKeyFilter("Enter")
+        .onKeyDown(timer::pause, left -> status.set("paused by key at " + left)),
       button("Export")
         .withId("timer-export")
         .onClick(e -> timer.export(log)),

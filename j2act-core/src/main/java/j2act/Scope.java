@@ -27,6 +27,10 @@ final class Scope implements Observer {
   Map<String, String> previousHandlerIds = new LinkedHashMap<>();
   /** Callbacks passed to client actions called outside render, by action and argument (ADR 0022). */
   final Map<String, String> actionHandlerIds = new LinkedHashMap<>();
+  /** Live components passed to client actions, by action and argument; this scope owns them. */
+  final Map<String, Scope> actionScopes = new LinkedHashMap<>();
+  /** Rendered outside its parent's render, as an action argument: it patches as its own root. */
+  boolean detached;
   /** Primitive count after the first render; later renders must create exactly as many (ADR 0019). */
   int settledCount = -1;
   /** Set on the root of a subtree mounted ahead of a navigation, until the click adopts it (ADR 0011). */
@@ -136,6 +140,10 @@ final class Scope implements Observer {
       child.dispose();
     }
     children.clear();
+    for (Scope live : new ArrayList<>(actionScopes.values())) {
+      live.dispose();
+    }
+    actionScopes.clear();
     unsubscribeAll();
     session.removeHandlers(this);
     session.forgetHead(this);

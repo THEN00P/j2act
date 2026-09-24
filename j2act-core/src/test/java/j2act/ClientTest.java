@@ -21,11 +21,22 @@ class ClientTest {
     CompletionStage<String> read();
 
     void reset(Runnable onDone);
+
+    void annotate(DomContent content);
+  }
+
+  /** Live content for annotate(): re-renders on its own State. */
+  static final class Badge extends ComponentTag {
+    private final State<Integer> clicks = state(0);
+
+    @Override protected Tag<?> render() {
+      return T.button("badge " + clicks.get()).onClick(e -> clicks.set(clicks.get() + 1));
+    }
   }
 
   static final class Gauge extends LiveComponent {
     private final Meter meter = client(Meter.class);
-    private final Upload export = upload();
+    private final Upload export = upload().withMaxFileSize(100);
     private final State<String> reading = state("none");
     private final State<Integer> value = state(0);
     private final State<String> label = state("volts");
@@ -41,6 +52,12 @@ class ClientTest {
         T.button("snap").onClick(meter::read, reading::set),
         T.button("reset").onClick(e -> meter.reset(() -> resets.set(resets.get() + 1))),
         T.button("relabel").onClick(e -> label.set("amps")),
+        T.button("note plain").onClick(e -> meter.annotate(T.span("plain " + value.get()))),
+        T.button("note live").onClick(e -> meter.annotate(new Badge())),
+        T.input().withId("key").onKeyDown(meter::read, reading::set),
+        T.tag("form").withId("form").onSubmit(meter::read, reading::set),
+        T.button("press").onPointerDown(meter::read, reading::set),
+        T.button("point").onPointerUp(e -> reading.set("pointer " + e.pointerType() + " at " + (int) e.x())),
         T.span("reading " + reading.get()),
         T.span("value " + value.get()),
         T.span("resets " + resets.get()));
@@ -58,6 +75,11 @@ class ClientTest {
       String served = new String(h.engine.module(module), StandardCharsets.UTF_8);
       assertTrue(served.contains("export const meter"), served);
       assertEquals(null, h.engine.module("0000/j2act/ClientTest.class"));
+      // The graph of relative imports is served under the same hash; nothing else is.
+      String hash = module.substring(0, module.indexOf('/'));
+      String helper = new String(h.engine.module(hash + "/j2act/client-test/units.js"), StandardCharsets.UTF_8);
+      assertTrue(helper.contains("volts"), helper);
+      assertEquals(null, h.engine.module(hash + "/j2act/client-test/unimported.js"));
 
       Map<String, Object> props = props(html);
       assertEquals("volts", props.get("label"));
@@ -133,7 +155,7 @@ class ClientTest {
     try (Harness h = new Harness(Gauge::new)) {
       h.load();
       h.connect();
-      String call = Harness.find(h.html, "data-j2-click=\"[^\"]+\" data-j2-call=\"([^\"]+)\"[^>]*>snap");
+      String call = Harness.find(h.html, "data-j2-click=\"[^\"]+\" data-j2-call-click=\"([^\"]+)\"[^>]*>snap");
       assertTrue(call.contains("&quot;n&quot;:&quot;read&quot;"), call);
       String handler = Harness.clickOn(h.html, "snap");
       List<Map<String, String>> patches = h.fire(handler, "\"9 V\"");
@@ -202,5 +224,90 @@ class ClientTest {
     String json = escaped.replace("&quot;", "\"").replace("&#39;", "'").replace("&lt;", "<").replace("&gt;", ">")
       .replace("&amp;", "&");
     return (Map<String, Object>) Json.parse(json);
+  }
+
+  @Test
+  void aPlainTagArgumentIsASnapshot() {
+    try (Harness h = new Harness(Gauge::new)) {
+      h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(h.html, "note plain"));
+      Map<String, String> call = h.conn.await(from, m -> "ca".equals(m.get("t")));
+      assertEquals("annotate", call.get("n"));
+      assertEquals("[{\"$html\":\"<span>plain 0</span>\"}]", call.get("a"));
+    }
+  }
+
+  @Test
+  void aComponentArgumentStaysLiveUntilTheNextCallReplacesIt() {
+    try (Harness h = new Harness(Gauge::new)) {
+      h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(h.html, "note live"));
+      Map<String, String> call = h.conn.await(from, m -> "ca".equals(m.get("t")));
+      String html = (String) ((Map<?, ?>) ((List<?>) Json.parse(call.get("a"))).get(0)).get("$live");
+      String anchor = Harness.find(html, "data-j2s=\"([^\"]+)\"");
+      assertTrue(html.contains("badge 0"), html);
+
+      // Its own State re-renders it, patched by its own anchor.
+      List<Map<String, String>> patches = h.click(Harness.clickOn(html, "badge 0"));
+      assertTrue(patches.stream().anyMatch(p -> anchor.equals(p.get("s")) && p.get("h").contains("badge 1")),
+        patches.toString());
+
+      // The next call of the same action replaces it: the old one's handlers are gone.
+      int again = h.conn.size();
+      h.click(Harness.clickOn(h.html, "note live"));
+      Map<String, String> next = h.conn.await(again, m -> "ca".equals(m.get("t")));
+      String nextHtml = (String) ((Map<?, ?>) ((List<?>) Json.parse(next.get("a"))).get(0)).get("$live");
+      long rejected = h.engine.stats().rejectedEvents.get();
+      h.click(Harness.clickOn(html, "badge 0"));
+      assertEquals(rejected + 1, h.engine.stats().rejectedEvents.get());
+
+      // When the browser reports it gone, the server stops patching it.
+      String nextAnchor = Harness.find(nextHtml, "data-j2s=\"([^\"]+)\"");
+      h.send("t", "lg", "s", nextAnchor);
+      Harness.eventually(() -> {
+        long before = h.engine.stats().rejectedEvents.get();
+        h.click(Harness.clickOn(nextHtml, "badge 0"));
+        return h.engine.stats().rejectedEvents.get() == before + 1;
+      }, "the dropped live content's handlers are gone");
+    }
+  }
+
+  @Test
+  void keydownSubmitAndPointerEventsBindActionsToTheirGesture() {
+    try (Harness h = new Harness(Gauge::new)) {
+      h.load();
+      h.connect();
+      assertTrue(h.html.contains("data-j2-call-keydown="), h.html);
+      assertTrue(h.html.contains("data-j2-call-submit="), h.html);
+      assertTrue(h.html.contains("data-j2-call-pointerdown="), h.html);
+      String key = Harness.find(h.html, "id=\"key\" data-j2-keydown=\"([^\"]+)\"");
+      assertTrue(h.fire(key, "\"7 V\"", "k", "Enter", "m", "").stream()
+        .anyMatch(p -> p.get("h").contains("reading 7 V")));
+      String submit = Harness.find(h.html, "id=\"form\" data-j2-submit=\"([^\"]+)\"");
+      assertTrue(h.fire(submit, "\"8 V\"").stream().anyMatch(p -> p.get("h").contains("reading 8 V")));
+      String press = Harness.find(h.html, "data-j2-pointerdown=\"([^\"]+)\"[^>]*>press");
+      assertTrue(h.fire(press, "\"9 V\"", "pt", "mouse", "px", "40", "py", "8").stream().anyMatch(p -> p.get("h").contains("reading 9 V")));
+      String point = Harness.find(h.html, "data-j2-pointerup=\"([^\"]+)\"[^>]*>point");
+      assertTrue(h.fire(point, "", "pt", "touch", "px", "12.5", "py", "3").stream()
+        .anyMatch(p -> p.get("h").contains("reading pointer touch at 12")));
+    }
+  }
+
+  @Test
+  void anUploadRefusedBeforeItsFirstChunkTellsTheBrowser() {
+    try (Harness h = new Harness(Gauge::new)) {
+      h.load();
+      h.connect();
+      String target = (String) ((Map<?, ?>) props(h.html).get("export")).get("$upload");
+      int from = h.conn.size();
+      h.send("t", "cb", "h", target, "v", "[]", "fi", "9", "fn", "big.csv", "fs", "5000", "ft", "text/csv");
+      Map<String, String> refused = h.conn.await(from, m -> "upx".equals(m.get("t")));
+      assertEquals("9", refused.get("f"));
+      assertTrue(refused.get("e").contains("larger than 100 bytes"), refused.toString());
+    }
   }
 }

@@ -271,11 +271,39 @@ async function main() {
   await js(`document.getElementById('timer-restart').click(); true`);
   check("a direct action runs after the patch", await until(`${timer}.querySelector('.face')?.textContent === '2'`));
   check("the done callback runs when it reaches zero", await until(`document.getElementById('timer-status').textContent === 'done'`, 4000));
+  check("the module's relative imports are served with it", await js(`${timer}.dataset.graph === 'graph ok'`));
+
+  await js(`document.getElementById('timer-note').click(); true`);
+  check("a component passed to an action lands in the client's DOM",
+    await until(`${timer}.querySelector('.note-badge')?.textContent === 'notes 0'`));
+  await js(`window.__note = ${timer}.querySelector('.note-badge'); window.__note.click(); true`);
+  check("it stays live: its own State patches it where the client put it",
+    await until(`${timer}.querySelector('.note-badge')?.textContent === 'notes 1'`)
+    && await js(`${timer}.querySelector('.note-badge') === window.__note`));
+
+  const hold = await js(`(() => { const b = document.getElementById('timer-hold'); b.scrollIntoView({ block: 'center' });
+    const r = b.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: hold.x, y: hold.y, button: "left", clickCount: 1 });
+  await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: hold.x, y: hold.y, button: "left", clickCount: 1 });
+  check("onPointerDown(action, then) runs the action inside the pointerdown",
+    await until(`/^held at [0-9]$/.test(document.getElementById('timer-status').textContent)`),
+    await js(`document.getElementById('timer-status').textContent`));
+  await js(`document.getElementById('timer-key').focus(); true`);
+  await key("Enter", "Enter", 13, { text: "\r" });
+  check("onKeyDown(action, then) runs the action inside the keydown",
+    await until(`/^paused by key at [0-9]$/.test(document.getElementById('timer-status').textContent)`));
   const moduleUrl = await js(`${timer}.getAttribute('data-j2-module')`);
   const headers = await js(`fetch(${JSON.stringify(moduleUrl)})
     .then(r => r.status + ' ' + r.headers.get('cache-control') + ' ' + r.headers.get('content-type'))`);
   check("the module is served with a content hash, cached for good",
     /^200 .*immutable.* text\/javascript/.test(headers), moduleUrl + " " + headers);
+  const statuses = await js(`Promise.all([
+    ${JSON.stringify(moduleUrl.replace("Countdown.client.js", "countdown-face.js"))},
+    ${JSON.stringify(moduleUrl.replace("components/Countdown.client.js", "shared/marks.js"))},
+    ${JSON.stringify(moduleUrl.replace("Countdown.client.js", "Countdown.class"))},
+  ].map(u => fetch(u).then(r => r.status))).then(s => s.join(' '))`);
+  check("its import graph shares the hash, and nothing outside the graph is reachable", statuses === "200 200 404", statuses);
 
   check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
   ws.close();
