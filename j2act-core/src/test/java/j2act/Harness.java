@@ -108,6 +108,11 @@ final class Harness implements AutoCloseable {
     return fire(handlerId, null);
   }
 
+  /** Sends a message as runtime.js would, e.g. a client callback or action result (ADR 0022). */
+  void send(String... fields) {
+    engine.onMessage(conn, Json.object(fields));
+  }
+
   /** Waits until a patch whose HTML matches arrives after message index {@code from}. */
   Map<String, String> awaitPatch(int from, Predicate<String> htmlMatches) {
     return conn.await(from, m -> "patch".equals(m.get("t")) && htmlMatches.test(m.get("h")));

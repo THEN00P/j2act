@@ -57,6 +57,13 @@
       <version>${jakarta.cdi.version}</version>
       <scope>provided</scope>
     </dependency>
+    <!-- JSON-B for client module values (ADR 0022); Jakarta EE 10 ships 3.0. -->
+    <dependency>
+      <groupId>jakarta.json.bind</groupId>
+      <artifactId>jakarta.json.bind-api</artifactId>
+      <version>3.0.0</version>
+      <scope>provided</scope>
+    </dependency>
 
     <!-- Test: a plain servlet container without CDI or managed executors. -->
     <dependency>

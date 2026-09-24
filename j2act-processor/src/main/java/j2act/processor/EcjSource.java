@@ -164,6 +164,29 @@ final class EcjSource implements Source {
     report(kind, message, keyword, type);
   }
 
+  /**
+   * The batch compiler gives the file's path. The IDE gives a workspace path,
+   * /project/src/..., which resolves against the project's location on disk.
+   */
+  @Override public java.nio.file.Path sourceFile(TypeElement type) {
+    try {
+      String name = new String((char[]) call(get(unit(type), "compilationResult"), "getFileName"));
+      java.nio.file.Path path = java.nio.file.Paths.get(name);
+      if (java.nio.file.Files.isRegularFile(path)) {
+        return path;
+      }
+      int slash = name.indexOf('/', 1);
+      if (!name.startsWith("/") || slash < 0) {
+        return null;
+      }
+      Object project = call(call(env, "getJavaProject"), "getProject");
+      java.nio.file.Path inProject = java.nio.file.Paths.get(call(project, "getLocation").toString(), name.substring(slash + 1));
+      return java.nio.file.Files.isRegularFile(inProject) ? inProject : null;
+    } catch (RuntimeException | LinkageError e) {
+      return null;
+    }
+  }
+
   private static boolean isPositionedByDeclaration(ElementKind kind) {
     return kind == ElementKind.CLASS || kind == ElementKind.INTERFACE || kind == ElementKind.ENUM
       || kind == ElementKind.ANNOTATION_TYPE;

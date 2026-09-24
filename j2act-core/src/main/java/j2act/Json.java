@@ -1,9 +1,14 @@
 package j2act;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
-/** Just enough JSON for the wire protocol: flat objects of string values. Keeps core dependency-free. */
+/**
+ * Just enough JSON for the wire protocol, flat objects of string values, and for the
+ * basic client binding, plain JSON values. Keeps core dependency-free.
+ */
 final class Json {
 
   private Json() {
@@ -49,6 +54,74 @@ final class Json {
       }
     }
     b.append('"');
+  }
+
+  /** Any JSON value as String, Long, Double, Boolean, null, List or Map, for the basic client binding. */
+  static Object parse(String json) {
+    Parser p = new Parser(json);
+    p.skipWs();
+    Object value = p.any(0);
+    p.skipWs();
+    if (p.pos != json.length()) {
+      throw new IllegalArgumentException("trailing characters at " + p.pos);
+    }
+    return value;
+  }
+
+  /** Writes what parse() returns, plus numbers, enums, arrays, collections and string-keyed maps. */
+  static void write(Object value, StringBuilder b) {
+    if (value == null) {
+      b.append("null");
+    } else if (value instanceof String || value instanceof Character) {
+      string(value.toString(), b);
+    } else if (value instanceof Boolean) {
+      b.append(value);
+    } else if (value instanceof Double || value instanceof Float) {
+      double d = ((Number) value).doubleValue();
+      if (Double.isNaN(d) || Double.isInfinite(d)) {
+        b.append("null");
+      } else if (d == Math.rint(d) && Math.abs(d) < 1e15) {
+        b.append((long) d);
+      } else {
+        b.append(d);
+      }
+    } else if (value instanceof Number) {
+      b.append(value);
+    } else if (value instanceof Enum) {
+      string(((Enum<?>) value).name(), b);
+    } else if (value instanceof Map) {
+      b.append('{');
+      boolean first = true;
+      for (Map.Entry<?, ?> e : ((Map<?, ?>) value).entrySet()) {
+        b.append(first ? "" : ",");
+        first = false;
+        string(String.valueOf(e.getKey()), b);
+        b.append(':');
+        write(e.getValue(), b);
+      }
+      b.append('}');
+    } else if (value instanceof Iterable || value.getClass().isArray()) {
+      b.append('[');
+      boolean first = true;
+      Iterable<?> items = value instanceof Iterable ? (Iterable<?>) value : arrayItems(value);
+      for (Object item : items) {
+        b.append(first ? "" : ",");
+        first = false;
+        write(item, b);
+      }
+      b.append(']');
+    } else {
+      throw new IllegalArgumentException("the basic JSON binding cannot write " + value.getClass().getName()
+        + "; set J2Act.Builder.withJson to the host's Jackson or JSON-B binding (ADR 0022)");
+    }
+  }
+
+  private static List<Object> arrayItems(Object array) {
+    List<Object> items = new ArrayList<>();
+    for (int i = 0; i < java.lang.reflect.Array.getLength(array); i++) {
+      items.add(java.lang.reflect.Array.get(array, i));
+    }
+    return items;
   }
 
   /** Parses a flat object whose values are strings, numbers, booleans or null; values come back as strings. */
@@ -113,6 +186,81 @@ final class Json {
     void skipWs() {
       while (pos < s.length() && Character.isWhitespace(s.charAt(pos))) {
         pos++;
+      }
+    }
+
+    Object any(int depth) {
+      if (depth > 64) {
+        throw new IllegalArgumentException("nested too deep");
+      }
+      char c = peek();
+      if (c == '"') {
+        return string();
+      }
+      if (c == '{') {
+        pos++;
+        Map<String, Object> map = new LinkedHashMap<>();
+        skipWs();
+        if (peek() == '}') {
+          pos++;
+          return map;
+        }
+        while (true) {
+          skipWs();
+          String key = string();
+          skipWs();
+          expect(':');
+          skipWs();
+          map.put(key, any(depth + 1));
+          skipWs();
+          char next = next();
+          if (next == '}') {
+            return map;
+          }
+          if (next != ',') {
+            throw new IllegalArgumentException("expected , or } at " + (pos - 1));
+          }
+        }
+      }
+      if (c == '[') {
+        pos++;
+        List<Object> list = new ArrayList<>();
+        skipWs();
+        if (peek() == ']') {
+          pos++;
+          return list;
+        }
+        while (true) {
+          skipWs();
+          list.add(any(depth + 1));
+          skipWs();
+          char next = next();
+          if (next == ']') {
+            return list;
+          }
+          if (next != ',') {
+            throw new IllegalArgumentException("expected , or ] at " + (pos - 1));
+          }
+        }
+      }
+      int start = pos;
+      while (pos < s.length() && ",}]".indexOf(s.charAt(pos)) < 0 && !Character.isWhitespace(s.charAt(pos))) {
+        pos++;
+      }
+      String raw = s.substring(start, pos);
+      switch (raw) {
+        case "null":
+          return null;
+        case "true":
+          return Boolean.TRUE;
+        case "false":
+          return Boolean.FALSE;
+        default:
+          try {
+            return raw.matches("-?\\d{1,18}") ? (Object) Long.valueOf(raw) : (Object) Double.valueOf(raw);
+          } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("bad value " + raw);
+          }
       }
     }
 

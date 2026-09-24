@@ -87,7 +87,7 @@ public class Webcam extends ComponentTag {
     void pause(Runnable onPaused, DomContent overlay, byte[] thumbnail, List<Size[]> sizes);
   }
 
-  interface Beeper extends Client {
+  interface Beeper extends Client { // expect: Webcam.client.ts does not export beeper
     CompletionStage<Void> beep(long millis);
   }
 

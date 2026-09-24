@@ -1,6 +1,7 @@
 package com.example.counter.pages;
 
 import static com.example.counter.components.ClockFeed.clockFeed;
+import static com.example.counter.components.Countdown.countdown;
 import static com.example.counter.components.Counter.counter;
 import static com.example.counter.components.GreetingForm.greetingForm;
 import static com.example.counter.components.NameRows.nameRows;
@@ -60,6 +61,10 @@ public class HomePage extends LiveComponent implements Page {
         section(
           h2("Forms, keys and focus").withId("forms"),
           greetingForm()
+        ),
+        section(
+          h2("Client module: ticks in the browser, caption from the server"),
+          countdown()
         ),
         section(
           h2("Pending UI"),

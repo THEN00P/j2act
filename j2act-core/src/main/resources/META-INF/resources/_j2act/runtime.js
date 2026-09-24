@@ -1,7 +1,8 @@
 /*
  * j2act client runtime. Fixed and small: it forwards events, applies morph patches
  * with Idiomorph, and owns the purely client-side concerns the server cannot do in
- * time: debounce, pending UI and reconnect (ADR 0003, 0010, 0013).
+ * time: debounce, pending UI and reconnect (ADR 0003, 0010, 0013). It also runs client
+ * modules: their lifecycle, actions, callbacks and slots (ADR 0022).
  */
 (function () {
   "use strict";
@@ -44,9 +45,19 @@
           return el.getAttribute("data-j2-ctl").split(" ").indexOf(name) >= 0;
         }
         return true;
+      },
+      // A client element keeps its node; its children are the client's (ADR 0022).
+      beforeNodeMorphed: function (oldNode, newNode) {
+        if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.hasAttribute("data-j2-client")
+          && oldNode.getAttribute("data-j2-client") === newNode.getAttribute("data-j2-client")) {
+          syncClient(oldNode, newNode);
+          return false;
+        }
+        return true;
       }
     }
   };
+  var slotConfig = { morphStyle: "innerHTML", ignoreActiveValue: true, callbacks: morphConfig.callbacks };
 
   // ---- socket
 
@@ -100,6 +111,8 @@
       download(m.u);
     } else if (m.t === "up") {
       upload(m.f, m.u);
+    } else if (m.t === "ca") {
+      callAction(m);
     } else if (m.t === "ack") {
       ack(m.a);
     } else if (m.t === "expired") {
@@ -135,6 +148,7 @@
     var retry = function () {
       if (++failures > 8) {
         files.delete(id);
+        settleUpload(id, named("NetworkError", "the upload kept failing"));
         return;
       }
       setTimeout(next, Math.min(5000, 250 * Math.pow(2, failures)));
@@ -153,6 +167,7 @@
           offset = res.body.o;
           if (res.body.done) {
             files.delete(id);
+            settleUpload(id, null);
           } else {
             next();
           }
@@ -160,6 +175,7 @@
           retry(); // over the session's rate limit: back off, the bytes are still wanted
         } else {
           files.delete(id); // refused: the server already failed the run
+          settleUpload(id, named("NotAllowedError", "the server refused the upload"));
         }
       }, retry);
     };
@@ -186,12 +202,296 @@
       document.documentElement.setAttribute("data-j2s", anchor);
       Idiomorph.morph(document.head, doc.head.innerHTML, { morphStyle: "innerHTML" });
       Idiomorph.morph(document.body, doc.body, morphConfig);
+    } else {
+      var el = document.querySelector('[data-j2s="' + anchor + '"]');
+      if (el) {
+        Idiomorph.morph(el, html, morphConfig);
+      }
+    }
+    scanClients();
+  }
+
+  // ---- client modules (ADR 0022)
+
+  var clients = new Map();         // client id -> { id, el, props, api, decoded, cleanup, ready, failed, waiting }
+  var uploadWaiters = new Map();   // file id -> { resolve, reject } for an UploadTarget.send
+
+  function named(name, message) {
+    var e = new Error(message);
+    e.name = name;
+    return e;
+  }
+
+  function errorText(e) {
+    return e && typeof e === "object" && e.message !== undefined ? (e.name || "Error") + ": " + e.message : "Error: " + e;
+  }
+
+  // Mount, update and cleanup failures and missing exports: the console here, the log on the server.
+  function clientError(c, what, e) {
+    console.error("j2act: client " + c.el.getAttribute("data-j2-export") + " failed in " + what, e);
+    send({ t: "ce", c: c.id, e: what + ": " + errorText(e) });
+  }
+
+  function attributeNames(el) {
+    return Array.prototype.map.call(el.attributes, function (a) { return a.name; });
+  }
+
+  // Values from Java: callbacks become functions, slots elements, Upload targets objects with send().
+  function revive(json) {
+    return JSON.parse(json, function (key, value) {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        if (typeof value.$fn === "string") {
+          return callback(value.$fn);
+        }
+        if (typeof value.$slot === "string") {
+          return document.querySelector('[data-j2-slot="' + CSS.escape(value.$slot) + '"]');
+        }
+        if (typeof value.$upload === "string") {
+          return uploadTarget(value.$upload);
+        }
+      }
+      return value;
+    });
+  }
+
+  function callback(id) {
+    return function () {
+      send({ t: "cb", h: id, v: JSON.stringify(Array.prototype.slice.call(arguments)) });
+    };
+  }
+
+  // The declarative Upload of ADR 0006: resumable chunks and the server's limits, from JS.
+  function uploadTarget(id) {
+    return {
+      send: function (blob, name) {
+        return new Promise(function (resolve, reject) {
+          var fileId = String(++fileSeq);
+          files.set(fileId, blob);
+          uploadWaiters.set(fileId, { resolve: resolve, reject: reject });
+          send({ t: "cb", h: id, v: "[]", fi: fileId, fn: name || blob.name || "blob", fs: String(blob.size),
+            ft: blob.type || "" });
+        });
+      }
+    };
+  }
+
+  function settleUpload(fileId, error) {
+    var waiter = uploadWaiters.get(fileId);
+    uploadWaiters.delete(fileId);
+    if (waiter && error) {
+      waiter.reject(error);
+    } else if (waiter) {
+      waiter.resolve();
+    }
+  }
+
+  // After every patch: new client elements mount, changed props update, removed ones clean up.
+  function scanClients() {
+    document.querySelectorAll("[data-j2-client]").forEach(mountClient);
+    clients.forEach(function (c) {
+      if (!c.el.isConnected || c.el.getAttribute("data-j2-client") !== c.id) {
+        unmount(c);
+      }
+    });
+  }
+
+  function mountClient(el) {
+    var id = el.getAttribute("data-j2-client");
+    var c = clients.get(id);
+    if (c && c.el === el) {
+      propsChanged(c);
       return;
     }
-    var el = document.querySelector('[data-j2s="' + anchor + '"]');
-    if (el) {
-      Idiomorph.morph(el, html, morphConfig);
+    if (c) {
+      unmount(c);
     }
+    c = { id: id, el: el, props: el.getAttribute("data-j2-props"), api: null, decoded: null, cleanup: null,
+      ready: false, failed: null, waiting: [] };
+    clients.set(id, c);
+    if (!el.__j2attrs) {
+      el.__j2attrs = attributeNames(el);
+    }
+    var url = el.getAttribute("data-j2-module");
+    var name = el.getAttribute("data-j2-export");
+    import(url).then(function (module) {
+      if (clients.get(id) !== c) {
+        return;
+      }
+      if (!module[name] || typeof module[name] !== "object") {
+        throw named("ReferenceError", url + " has no export " + name);
+      }
+      c.api = module[name];
+      start(c);
+    }).catch(function (e) {
+      c.failed = e;
+      clientError(c, "import", e);
+      failWaiting(c, e);
+    });
+  }
+
+  function start(c) {
+    try {
+      c.decoded = c.props == null ? null : revive(c.props);
+      if (typeof c.api.mount === "function") {
+        var cleanup = c.props == null ? c.api.mount(c.el) : c.api.mount(c.el, c.decoded);
+        c.cleanup = typeof cleanup === "function" ? cleanup : null;
+      }
+    } catch (e) {
+      c.failed = e;
+      clientError(c, "mount", e);
+      failWaiting(c, e);
+      return;
+    }
+    c.ready = true;
+    var waiting = c.waiting;
+    c.waiting = [];
+    waiting.forEach(function (m) { runAction(c, m); });
+  }
+
+  // update runs only when props really changed; without it the client mounts again.
+  function propsChanged(c) {
+    var props = c.el.getAttribute("data-j2-props");
+    if (props === c.props) {
+      return;
+    }
+    c.props = props;
+    if (!c.ready) {
+      return; // mount reads the latest props when its import lands
+    }
+    if (typeof c.api.update === "function") {
+      var previous = c.decoded;
+      try {
+        c.decoded = revive(props);
+        c.api.update(c.el, c.decoded, previous);
+      } catch (e) {
+        clientError(c, "update", e);
+      }
+    } else {
+      stop(c);
+      c.ready = false;
+      start(c);
+    }
+  }
+
+  function stop(c) {
+    if (c.cleanup) {
+      try {
+        c.cleanup();
+      } catch (e) {
+        clientError(c, "cleanup", e);
+      }
+      c.cleanup = null;
+    }
+  }
+
+  function unmount(c) {
+    clients.delete(c.id);
+    stop(c);
+    failWaiting(c, named("AbortError", "the client unmounted"));
+  }
+
+  function failWaiting(c, e) {
+    var waiting = c.waiting;
+    c.waiting = [];
+    waiting.forEach(function (m) { reply(m.i, false, e); });
+  }
+
+  // Server attributes follow the render; attributes the client added stay; slots morph where they live.
+  function syncClient(el, fresh) {
+    var names = attributeNames(fresh);
+    (el.__j2attrs || []).forEach(function (name) {
+      if (names.indexOf(name) < 0) {
+        el.removeAttribute(name);
+      }
+    });
+    names.forEach(function (name) {
+      var value = fresh.getAttribute(name);
+      if (el.getAttribute(name) !== value) {
+        el.setAttribute(name, value);
+      }
+    });
+    el.__j2attrs = names;
+    fresh.querySelectorAll(":scope > [data-j2-slot]").forEach(function (slot) {
+      var id = slot.getAttribute("data-j2-slot");
+      var live = document.querySelector('[data-j2-slot="' + CSS.escape(id) + '"]');
+      if (live) {
+        Idiomorph.morph(live, slot.innerHTML, slotConfig);
+      } else {
+        console.warn("j2act: slot " + id + " left the document, so it stopped updating (ADR 0022)");
+      }
+    });
+  }
+
+  function invoke(c, name, args) {
+    var fn = c.api[name];
+    if (typeof fn !== "function") {
+      throw named("TypeError", c.el.getAttribute("data-j2-export") + " has no action " + name);
+    }
+    return fn.apply(c.api, [c.el].concat(args));
+  }
+
+  // A call from Java, sent after the patch: queued until its client has mounted.
+  function callAction(m) {
+    var c = clients.get(m.c);
+    if (!c) {
+      reply(m.i, false, named("AbortError", "the client is not mounted"));
+    } else if (c.failed) {
+      reply(m.i, false, c.failed);
+    } else if (!c.ready) {
+      c.waiting.push(m);
+    } else {
+      runAction(c, m);
+    }
+  }
+
+  function runAction(c, m) {
+    var result;
+    try {
+      result = invoke(c, m.n, revive(m.a));
+    } catch (e) {
+      reply(m.i, false, e);
+      return;
+    }
+    Promise.resolve(result).then(function (v) { reply(m.i, true, v); }, function (e) { reply(m.i, false, e); });
+  }
+
+  function reply(i, ok, value) {
+    if (ok) {
+      try {
+        send({ t: "cr", i: i, ok: "1", v: JSON.stringify(value === undefined ? null : value) });
+        return;
+      } catch (e) {
+        value = e;
+      }
+    }
+    console.warn("j2act: client action failed", value);
+    send({ t: "cr", i: i, ok: "0", e: errorText(value) });
+  }
+
+  // onClick(action, then): the action runs inside the click, so gesture-gated APIs work.
+  function clickAction(el) {
+    if (pendingEls.has(el)) {
+      return;
+    }
+    var call = JSON.parse(el.getAttribute("data-j2-call"));
+    var c = clients.get(call.c);
+    var result;
+    try {
+      if (!c || !c.ready) {
+        throw c && c.failed ? c.failed : named("InvalidStateError", "the client has not mounted yet");
+      }
+      result = invoke(c, call.n, revive(JSON.stringify(call.a)));
+    } catch (e) {
+      console.warn("j2act: client action failed", e);
+      dispatch(el, "click", "", { x: errorText(e) });
+      return;
+    }
+    Promise.resolve(result).then(function (v) {
+      dispatch(el, "click", JSON.stringify(v === undefined ? null : v));
+    }, function (e) {
+      console.warn("j2act: client action failed", e);
+      dispatch(el, "click", "", { x: errorText(e) });
+    });
   }
 
   // ---- soft navigation (ADR 0011): links and back/forward go over the socket
@@ -384,6 +684,10 @@
     if (el.tagName === "A" || el.type === "submit") {
       e.preventDefault();
     }
+    if (el.hasAttribute("data-j2-call")) {
+      clickAction(el);
+      return;
+    }
     schedule(el, "click");
   });
 
@@ -511,6 +815,7 @@
         inFlight.clear();
         pendingEls.clear();
         Idiomorph.morph(document.body, doc.body, morphConfig);
+        scanClients();
         remounting = false;
         retry = 0;
         queue = [];
@@ -536,5 +841,7 @@
     }
   });
 
+  // Clients mount from the props in the HTML at once; their calls into Java queue until the socket is up.
+  scanClients();
   connect();
 })();

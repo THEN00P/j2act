@@ -1,12 +1,21 @@
 package j2act;
 
+import java.lang.reflect.Method;
+
 /**
  * What a client module's mount(...) returns: its props, for an element of type T
- * (ADR 0022). Mount&lt;VideoTag&gt; means the client attaches only to a video element, and
- * its TS side receives an HTMLVideoElement.
+ * (ADR 0022). Pass it to withClient on that element: Mount&lt;VideoTag&gt; only fits a
+ * video element, and the client's TS side receives an HTMLVideoElement.
  */
 public final class Mount<T extends Tag<T>> {
 
-  Mount() {
+  final ClientHandle handle;
+  final Method method;
+  final Object[] props;
+
+  Mount(ClientHandle handle, Method method, Object[] props) {
+    this.handle = handle;
+    this.method = method;
+    this.props = props;
   }
 }

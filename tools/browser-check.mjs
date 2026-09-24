@@ -251,6 +251,32 @@ async function main() {
   check("a preloaded page shows its data right after the click", took < 400, `${took} ms for an 800 ms query`);
   check("the page's Effect ran once it was opened", await until(`!document.getElementById('report-opened').textContent.includes('not yet')`));
 
+  // 15. client module (ADR 0022): mounts from the HTML, calls back, keeps its DOM through morphs
+  await cdp("Page.navigate", { url: URL });
+  await until("document.readyState === 'complete' && typeof Idiomorph !== 'undefined'");
+  const timer = `document.getElementById('timer')`;
+  check("the client module mounts from the page's props", await until(`${timer}?.querySelector('.face')?.textContent === '5'`));
+  check("bean props go through the app's Jackson mapper", await js(`${timer}.dataset.unit === 's'`));
+  await js(`window.__face = ${timer}.querySelector('.face'); window.__timer = ${timer}; true`);
+  check("its tick callbacks reach Java, which re-renders the slot inside the client's DOM",
+    await until(`${timer}.querySelector('[data-j2-slot]')?.textContent === 'server saw 3 left'`, 4000));
+  check("morphs keep the client element, its children and the attributes it added",
+    await js(`${timer} === window.__timer && ${timer}.querySelector('.face') === window.__face && ${timer}.hasAttribute('data-running')`));
+  await js(`document.getElementById('timer-pause').click(); true`);
+  check("onClick(timer::pause, ...) runs in the click and hands the result to Java",
+    await until(`/^paused at [0-9]$/.test(document.getElementById('timer-status').textContent)`));
+  await js(`document.getElementById('timer-export').click(); true`);
+  check("an action sends a Blob through its Upload target",
+    await until(`document.getElementById('timer-export-status').textContent === 'exported 14 bytes'`));
+  await js(`document.getElementById('timer-restart').click(); true`);
+  check("a direct action runs after the patch", await until(`${timer}.querySelector('.face')?.textContent === '2'`));
+  check("the done callback runs when it reaches zero", await until(`document.getElementById('timer-status').textContent === 'done'`, 4000));
+  const moduleUrl = await js(`${timer}.getAttribute('data-j2-module')`);
+  const headers = await js(`fetch(${JSON.stringify(moduleUrl)})
+    .then(r => r.status + ' ' + r.headers.get('cache-control') + ' ' + r.headers.get('content-type'))`);
+  check("the module is served with a content hash, cached for good",
+    /^200 .*immutable.* text\/javascript/.test(headers), moduleUrl + " " + headers);
+
   check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
   ws.close();
 }

@@ -4,6 +4,7 @@ import java.util.concurrent.Executor;
 
 import jakarta.servlet.ServletContext;
 
+import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
@@ -18,6 +19,7 @@ import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 
 import j2act.J2Act;
+import j2act.JsonBinding;
 import j2act.PageResolver;
 
 /**
@@ -38,7 +40,9 @@ public class J2ActAutoConfiguration {
     ObjectProvider<ServletContext> servletContext,
     @Qualifier("applicationTaskExecutor") ObjectProvider<Executor> taskExecutor,
     ObjectProvider<J2ActCustomizer> customizers,
-    ObjectProvider<J2ActIdentity> identity
+    ObjectProvider<J2ActIdentity> identity,
+    ObjectProvider<JsonBinding> json,
+    ListableBeanFactory beanFactory
   ) {
     ServletContext context = servletContext.getIfAvailable();
     J2Act.Builder builder = J2Act.builder(resolver)
@@ -49,6 +53,10 @@ public class J2ActAutoConfiguration {
       builder.withExecutor(executor);
     }
     identity.ifAvailable(builder::withIdentity);
+    JsonBinding binding = json.getIfAvailable(() -> JacksonBinding.find(beanFactory, getClass().getClassLoader()));
+    if (binding != null) {
+      builder.withJson(binding);
+    }
     customizers.orderedStream().forEach(c -> c.customize(builder));
     return builder.build();
   }

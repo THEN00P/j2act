@@ -55,4 +55,20 @@ b.run(async () => {
   await cdp("DOM.setFileInputFiles", { nodeId, files: [notes] });
   check("upload chunks POST through the filter under the context path", await until(`document.getElementById('attach-status')
     .textContent === 'stored notes.txt (${1300 * 1024} bytes)'`, 8000), await js(`document.getElementById('attach-status').textContent`));
+
+  // Client modules (ADR 0022): served by the filter under the context path, values through JSON-B.
+  const timer = `document.getElementById('timer')`;
+  check("a client module loads under the context path and mounts", await until(`${timer}?.querySelector('.face') != null
+    && ${timer}.getAttribute('data-j2-module').startsWith('/counter-jakarta/_j2act/m/')`));
+  check("bean props go through JSON-B (Yasson)", await js(`${timer}.dataset.unit === 's'`));
+  check("tick callbacks reach Java and re-render the slot", await until(`/^server saw [0-4] left$/.test(
+    ${timer}.querySelector('[data-j2-slot]').textContent)`, 4000));
+  await js(`document.getElementById('timer-pause').click(); true`);
+  check("onClick(timer::pause, ...) hands its result to Java", await until(`/^paused at [0-9]$/.test(
+    document.getElementById('timer-status').textContent)`));
+  await js(`document.getElementById('timer-export').click(); true`);
+  check("an Upload target posts its Blob through the filter", await until(`document.getElementById('timer-export-status')
+    .textContent === 'exported 14 bytes'`));
+  await js(`document.getElementById('timer-restart').click(); true`);
+  check("a direct action runs after the patch", await until(`${timer}.querySelector('.face')?.textContent === '2'`));
 });

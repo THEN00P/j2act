@@ -4,7 +4,7 @@ import j2act.Client;
 import j2act.Mount;
 import j2act.html.tags.DivTag;
 
-public class BadClients {
+public class BadClients { // expect: no BadClients.client.js or BadClients.client.ts next to BadClients.java
 
   interface Broken extends Client {
     String mount(String device); // expect: mount(...) must return Mount<SomeTag>

@@ -24,7 +24,7 @@ import j2act.PageResolver;
 import j2act.ServeResult;
 
 /**
- * Serves GET requests for routed pages and download tokens, and upload chunk POSTs;
+ * Serves GET requests for routed pages, download tokens and client modules, and upload chunk POSTs;
  * everything else passes down the chain untouched.
  */
 final class J2ActFilter implements Filter {
@@ -47,6 +47,10 @@ final class J2ActFilter implements Filter {
     }
     if ("GET".equals(request.getMethod()) && path.startsWith(J2Act.DOWNLOAD_PATH)) {
       download(j2Act, path.substring(J2Act.DOWNLOAD_PATH.length()), request, (HttpServletResponse) res);
+      return;
+    }
+    if ("GET".equals(request.getMethod()) && path.startsWith(J2Act.MODULE_PATH)) {
+      module(j2Act, path.substring(J2Act.MODULE_PATH.length()), (HttpServletResponse) res);
       return;
     }
     if (!"GET".equals(request.getMethod()) || resolver.resolve(path) == null) {
@@ -96,6 +100,19 @@ final class J2ActFilter implements Filter {
     response.setHeader("Content-Disposition", download.contentDisposition());
     response.setHeader("X-Content-Type-Options", "nosniff");
     download.writeTo(response.getOutputStream());
+  }
+
+  /** A client module (ADR 0022); its URL carries a content hash, so it is cached for good. */
+  static void module(J2Act j2Act, String path, HttpServletResponse response) throws IOException {
+    byte[] module = j2Act.module(path);
+    if (module == null) {
+      response.sendError(HttpServletResponse.SC_NOT_FOUND);
+      return;
+    }
+    response.setContentType("text/javascript;charset=UTF-8");
+    response.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.getOutputStream().write(module);
   }
 
   /** The request as the identity function sees it; replayed before each event (ADR 0004). */

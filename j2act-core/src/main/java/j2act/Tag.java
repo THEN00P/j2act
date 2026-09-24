@@ -8,6 +8,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletionStage;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * An HTML element. Params are children only; everything else is a with* builder
@@ -29,6 +32,10 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   Preload preload;
   String keyFilter;
   DomContent pending;
+  /** A Mount, or a client handle without props (ADR 0022). */
+  Object client;
+  Supplier<? extends CompletionStage<?>> clickAction;
+  Consumer<Object> clickThen;
 
   protected Tag(String name) {
     this.name = Objects.requireNonNull(name);
@@ -100,6 +107,40 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
 
   public T onClick(Handler<ClickEvent> handler) {
     events.put("click", handler);
+    clickAction = null;
+    clickThen = null;
+    return self();
+  }
+
+  /**
+   * Runs a client action inside the click itself, so gesture-gated browser APIs such as
+   * clipboard, share and fullscreen work, then hands its result to then on the lane
+   * (ADR 0022). The action is one call on a client handle, e.g.
+   * onClick(camera::snapshot, photo::set); its arguments are taken when this renders.
+   */
+  @SuppressWarnings("unchecked")
+  public <V> T onClick(Supplier<? extends CompletionStage<V>> action,
+                       Consumer<? super V> then) {
+    events.remove("click");
+    clickAction = Objects.requireNonNull(action);
+    clickThen = (Consumer<Object>) Objects.requireNonNull(then);
+    return self();
+  }
+
+  /**
+   * Attaches a client module to this element with its props (ADR 0022). The element type
+   * must match the Mount: a Mount&lt;VideoTag&gt; only fits video(). The element keeps its
+   * identity across morphs, and its children belong to the client; server attributes still
+   * update and attributes the client added stay.
+   */
+  public T withClient(Mount<T> mount) {
+    this.client = Objects.requireNonNull(mount);
+    return self();
+  }
+
+  /** Attaches a client module that has no mount(...) props. */
+  public T withClient(Client client) {
+    this.client = Objects.requireNonNull(client);
     return self();
   }
 

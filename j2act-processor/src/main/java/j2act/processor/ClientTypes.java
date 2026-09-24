@@ -3,6 +3,10 @@ package j2act.processor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.regex.Pattern;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -105,6 +109,65 @@ final class ClientTypes {
       report(Diagnostic.Kind.WARNING, "j2act: cannot write " + root.getSimpleName()
         + ".types.d.ts: " + e.getMessage(), root);
     }
+    for (Map.Entry<TypeElement, ExecutableElement> mount : file.mounts.entrySet()) {
+      writeMountParams(root, mount.getKey(), mount.getValue());
+    }
+    checkModule(root, clients);
+  }
+
+  /** The prop names of mount(...) for the runtime, so -parameters is not needed: Webcam$Camera.mount-params. */
+  private void writeMountParams(TypeElement root, TypeElement client, ExecutableElement mount) {
+    String pkg = elements.getPackageOf(client).getQualifiedName().toString();
+    String binary = elements.getBinaryName(client).toString();
+    StringBuilder names = new StringBuilder();
+    for (VariableElement parameter : mount.getParameters()) {
+      names.append(names.length() == 0 ? "" : ",").append(parameter.getSimpleName());
+    }
+    try {
+      FileObject out = filer.createResource(StandardLocation.CLASS_OUTPUT, pkg,
+        (pkg.isEmpty() ? binary : binary.substring(pkg.length() + 1)) + ".mount-params", root);
+      try (Writer writer = out.openWriter()) {
+        writer.write(names.toString());
+      }
+    } catch (IOException e) {
+      report(Diagnostic.Kind.WARNING, "j2act: cannot write the mount props of " + client.getSimpleName()
+        + ": " + e.getMessage(), client);
+    }
+  }
+
+  /**
+   * The sibling Webcam.client.js or .client.ts must exist and export each client by its
+   * lowerCamelCase name. Checked only when the compiler reports the source as a file.
+   */
+  private void checkModule(TypeElement root, List<TypeElement> clients) {
+    Path java = source == null ? null : source.sourceFile(root);
+    if (java == null) {
+      return;
+    }
+    String name = root.getSimpleName().toString();
+    Path js = java.resolveSibling(name + ".client.js");
+    Path ts = java.resolveSibling(name + ".client.ts");
+    Path module = Files.isRegularFile(js) ? js : Files.isRegularFile(ts) ? ts : null;
+    if (module == null) {
+      report(Diagnostic.Kind.WARNING, "j2act: no " + name + ".client.js or " + name + ".client.ts next to "
+        + name + ".java for its client modules (ADR 0022)", root);
+      return;
+    }
+    String text;
+    try {
+      text = new String(Files.readAllBytes(module), StandardCharsets.UTF_8);
+    } catch (IOException e) {
+      return;
+    }
+    for (TypeElement client : clients) {
+      String export = lowerCamel(client.getSimpleName().toString());
+      Pattern exported = Pattern.compile("export\\s+(?:const|let|var)\\s+" + export + "\\b"
+        + "|export\\s*\\{[^}]*\\b" + export + "\\b[^}]*}");
+      if (!exported.matcher(text).find()) {
+        report(Diagnostic.Kind.WARNING, "j2act: " + module.getFileName() + " does not export " + export
+          + ", the implementation of " + client.getSimpleName() + " (ADR 0022)", client);
+      }
+    }
   }
 
   private void collect(TypeElement type, TypeElement client, List<TypeElement> out) {
@@ -129,6 +192,8 @@ final class ClientTypes {
     private final Map<String, TypeElement> declared = new LinkedHashMap<>();
     private final Deque<TypeElement> pending = new ArrayDeque<>();
     private boolean usesUploadTarget;
+    /** Each client's mount(...), whose prop names the runtime needs. */
+    final Map<TypeElement, ExecutableElement> mounts = new LinkedHashMap<>();
 
     File(TypeElement root) {
       this.root = root;
@@ -162,6 +227,9 @@ final class ClientTypes {
         }
       }
 
+      if (mount != null) {
+        mounts.put(client, mount);
+      }
       String element = mount == null ? "HTMLElement" : mountedElement(mount);
       doc(clients, "", client, "Implement it in the sibling .client.ts or .client.js:\n"
         + "export const " + lowerCamel(name) + " = { ... } satisfies " + name + ";");

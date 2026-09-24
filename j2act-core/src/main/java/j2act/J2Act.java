@@ -39,6 +39,8 @@ public final class J2Act implements AutoCloseable {
   public static final String DOWNLOAD_PATH = "/_j2act/dl/";
   /** Where adapters accept upload chunks: POST UPLOAD_PATH + token + "?o=" + offset (ADR 0006). */
   public static final String UPLOAD_PATH = "/_j2act/up/";
+  /** Where adapters serve client modules: GET MODULE_PATH + hash/package/Name.client.js (ADR 0022). */
+  public static final String MODULE_PATH = "/_j2act/m/";
 
   final PageResolver resolver;
   final Executor executor;
@@ -67,6 +69,8 @@ public final class J2Act implements AutoCloseable {
   final int maxQueuedEvents;
   final Preload defaultPreload;
   final long preloadHoldMillis;
+  final JsonBinding json;
+  final Modules modules = new Modules(this);
 
   private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Connection, Session> byConnection = new ConcurrentHashMap<>();
@@ -95,6 +99,7 @@ public final class J2Act implements AutoCloseable {
     this.maxQueuedEvents = b.maxQueuedEvents;
     this.defaultPreload = b.defaultPreload;
     this.preloadHoldMillis = b.preloadHold.toMillis();
+    this.json = b.json;
     if (b.executor != null) {
       this.executor = b.executor;
       this.ownedExecutor = null;
@@ -242,6 +247,15 @@ public final class J2Act implements AutoCloseable {
     }
   }
 
+  /**
+   * A client module for a GET to MODULE_PATH + path, or null (answer 404). Only modules a
+   * rendered client registered are served. The URL carries a content hash, so the adapter
+   * may cache it forever; the content type is text/javascript (ADR 0022).
+   */
+  public byte[] module(String path) {
+    return modules.file(path);
+  }
+
   /** The framework's upload directory: temp parts and uploads stored without a target. */
   Path uploadDir() throws IOException {
     Path dir = uploadDir;
@@ -298,7 +312,8 @@ public final class J2Act implements AutoCloseable {
       connection.close();
       return;
     }
-    if (("ev".equals(type) || "nav".equals(type)) && !admit(session, connection)) {
+    boolean client = "cb".equals(type) || "cr".equals(type) || "ce".equals(type);
+    if (("ev".equals(type) || "nav".equals(type) || client) && !admit(session, connection)) {
       if ("ev".equals(type)) {
         // The client's pending UI reverts; the event is gone (ADR 0013).
         connection.send(Json.object("t", "ack", "a", message.get("a"), "ok", "0"));
@@ -311,6 +326,13 @@ public final class J2Act implements AutoCloseable {
       session.lane.execute(session.task(
         () -> ok[0] = session.dispatch(message),
         () -> session.send(Json.object("t", "ack", "a", ack, "ok", ok[0] ? "1" : "0"))));
+    } else if ("cb".equals(type)) {
+      // A client callback into Java: same identity re-check and stale-id rejection as events.
+      session.post(() -> session.dispatch(message));
+    } else if ("cr".equals(type)) {
+      session.post(() -> session.clients.onResult(message));
+    } else if ("ce".equals(type)) {
+      session.post(() -> session.clients.onError(message));
     } else if ("pre".equals(type)) {
       String target = appUrl(message.get("u"));
       if (target != null && admit(session, connection)) {
@@ -531,6 +553,7 @@ public final class J2Act implements AutoCloseable {
     private int maxQueuedEvents = 100;
     private Preload defaultPreload = Preload.NONE;
     private Duration preloadHold = Duration.ofSeconds(10);
+    private JsonBinding json = JsonBinding.basic();
 
     private Builder(PageResolver resolver) {
       this.resolver = resolver;
@@ -653,6 +676,16 @@ public final class J2Act implements AutoCloseable {
     /** How long a preloaded page waits for its click before it is dropped. Default 10 seconds. */
     public Builder withPreloadHold(Duration hold) {
       this.preloadHold = hold;
+      return this;
+    }
+
+    /**
+     * The host's JSON library for client module values (ADR 0022). The Spring adapter sets
+     * the application's Jackson mapper and the Jakarta adapter JSON-B; the default handles
+     * plain JSON values only.
+     */
+    public Builder withJson(JsonBinding json) {
+      this.json = java.util.Objects.requireNonNull(json);
       return this;
     }
 

@@ -43,6 +43,8 @@ final class Session {
   final Set<QueryCell> inFlight = new HashSet<>();
   private final Map<String, InactiveQuery> inactive = new LinkedHashMap<>();
   private final Map<String, HandlerEntry> handlers = new HashMap<>();
+  /** Client modules mounted in this session and their calls in flight (ADR 0022). */
+  final Clients clients = new Clients(this);
 
   /** Current URL; reads of pathParam/queryParam are tracked through it (ADR 0020). */
   final ValueCell routeCell;
@@ -523,6 +525,7 @@ final class Session {
       return;
     }
     renderDirty(true);
+    clients.sendOutbox();
   }
 
   private void renderDirty(boolean sending) {
@@ -691,7 +694,7 @@ final class Session {
    * element keeps rendering there, so an event sent against the previous render still
    * lands; it is dropped when the element stops rendering (ADR 0013).
    */
-  String registerHandler(Scope scope, String path, String event, Handler<?> handler) {
+  String registerHandler(Scope scope, String path, String event, Object handler) {
     String slot = path + "|" + event;
     String handlerId = scope.previousHandlerIds.remove(slot);
     if (handlerId == null) {
@@ -721,7 +724,31 @@ final class Session {
       handlers.remove(handlerId);
     }
     scope.handlerIds.clear();
+    for (String handlerId : scope.actionHandlerIds.values()) {
+      handlers.remove(handlerId);
+    }
+    scope.actionHandlerIds.clear();
     endHandlers(scope);
+  }
+
+  /**
+   * A callback passed to a client action called outside render (ADR 0022). It lives until
+   * the component unmounts or the next call of the same action replaces it.
+   */
+  String registerActionHandler(Scope scope, String key, Object handler) {
+    String handlerId = engine.newSecret(12);
+    String previous = scope.actionHandlerIds.put(key, handlerId);
+    if (previous != null) {
+      handlers.remove(previous);
+    }
+    handlers.put(handlerId, new HandlerEntry(scope, "callback", handler));
+    return handlerId;
+  }
+
+  /** A handler that reads the raw wire message: client callbacks and onClick(action, then) results. */
+  @FunctionalInterface
+  interface RawHandler {
+    void handle(Map<String, String> message) throws Exception;
   }
 
   /** Runs a handler from the latest render. Unknown or stale ids are rejected (ADR 0013). */
@@ -737,6 +764,10 @@ final class Session {
     }
     lastActivity = engine.clock.millis();
     try {
+      if (entry.handler instanceof RawHandler) {
+        ((RawHandler) entry.handler).handle(message);
+        return true;
+      }
       switch (entry.event) {
         case "click":
           ((Handler<ClickEvent>) entry.handler).handle(new ClickEvent());
@@ -872,6 +903,7 @@ final class Session {
       root.dispose();
     }
     disposed = true;
+    clients.dispose();
     handlers.clear();
     cells.clear();
     inactive.clear();
@@ -1127,9 +1159,10 @@ final class Session {
   static final class HandlerEntry {
     final Scope scope;
     final String event;
-    final Handler<?> handler;
+    /** A Handler, or a RawHandler for client callbacks and results. */
+    final Object handler;
 
-    HandlerEntry(Scope scope, String event, Handler<?> handler) {
+    HandlerEntry(Scope scope, String event, Object handler) {
       this.scope = scope;
       this.event = event;
       this.handler = handler;

@@ -218,9 +218,41 @@ final class Renderer {
     if (tag.keyFilter != null) {
       attribute("data-j2-keys", tag.keyFilter);
     }
+    if (tag.clickAction != null) {
+      String[] click = session.clients.bindClick(scope, path, tag);
+      attribute("data-j2-click", click[0]);
+      attribute("data-j2-call", click[1]);
+    }
+    Clients.Binding client = tag.client == null ? null : session.clients.bind(scope, path, tag.client, epoch);
+    if (client != null) {
+      // Like LiveView hooks, a client element has an id: morphs match it and never replace it.
+      if (!tag.attributes.containsKey("id")) {
+        attribute("id", "j2c-" + client.id);
+      }
+      attribute("data-j2-client", client.id);
+      attribute("data-j2-module", client.url);
+      attribute("data-j2-export", client.export);
+      if (client.props != null) {
+        attribute("data-j2-props", client.props);
+      }
+    }
     out.append('>');
     if (tag.isVoid()) {
+      if (client != null && !client.slots.isEmpty()) {
+        throw new IllegalStateException("<" + tag.name + "> is a void element, so it cannot carry the DomContent props of "
+          + client.export + " (ADR 0022)");
+      }
       return;
+    }
+    if (client != null) {
+      for (Clients.Slot slot : client.slots) {
+        out.append("<div");
+        attribute("data-j2-slot", slot.id);
+        attribute("style", "display:contents");
+        out.append('>');
+        renderNode(scope, path + "/slot:" + slot.name, slot.content, false);
+        out.append("</div>");
+      }
     }
     if (tag.pending != null) {
       out.append("<template data-j2-pending>");

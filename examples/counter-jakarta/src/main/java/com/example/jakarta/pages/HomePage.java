@@ -2,6 +2,7 @@ package com.example.jakarta.pages;
 
 import static com.example.jakarta.components.Attachment.attachment;
 import static com.example.jakarta.components.ClockFeed.clockFeed;
+import static com.example.jakarta.components.Countdown.countdown;
 import static com.example.jakarta.components.Counter.counter;
 import static com.example.jakarta.components.GreetingForm.greetingForm;
 import static com.example.jakarta.components.PeopleCount.peopleCount;
@@ -39,6 +40,10 @@ public class HomePage extends LiveComponent implements Page {
         section(
           h2("Push from a ManagedScheduledExecutorService"),
           clockFeed()
+        ),
+        section(
+          h2("Client module"),
+          countdown()
         ),
         section(
           h2("Form"),

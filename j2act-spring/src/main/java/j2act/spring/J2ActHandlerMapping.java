@@ -21,8 +21,8 @@ import j2act.PageResolver;
 import j2act.ServeResult;
 
 /**
- * Serves GET requests for routed pages and download tokens (ADR 0012), and upload chunk
- * POSTs (ADR 0006). Ordered after @Controller mappings, so the host's own endpoints win,
+ * Serves GET requests for routed pages, download tokens (ADR 0012) and client modules
+ * (ADR 0022), and upload chunk POSTs (ADR 0006). Ordered after @Controller mappings, so the host's own endpoints win,
  * and before static resources.
  */
 public class J2ActHandlerMapping extends AbstractHandlerMapping {
@@ -86,6 +86,20 @@ public class J2ActHandlerMapping extends AbstractHandlerMapping {
         res.setHeader("Content-Disposition", download.contentDisposition());
         res.setHeader("X-Content-Type-Options", "nosniff");
         download.writeTo(res.getOutputStream());
+      };
+    }
+    if (path.startsWith(J2Act.MODULE_PATH)) {
+      // A client module (ADR 0022): content-hashed URL, so cached for good.
+      byte[] module = j2Act.module(path.substring(J2Act.MODULE_PATH.length()));
+      return (HttpRequestHandler) (req, res) -> {
+        if (module == null) {
+          res.sendError(HttpServletResponse.SC_NOT_FOUND);
+          return;
+        }
+        res.setContentType("text/javascript;charset=UTF-8");
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.getOutputStream().write(module);
       };
     }
     if (resolver.resolve(path) == null) {

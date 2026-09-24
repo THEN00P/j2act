@@ -28,7 +28,7 @@ const fixtures = join(repo, "j2act-processor/src/test/fixtures");
 const packages = ["fixtures", "clients"];
 for (const pkg of packages) {
   mkdirSync(join(project, "src/main/java", pkg), { recursive: true });
-  for (const file of readdirSync(join(fixtures, pkg)).filter(f => f.endsWith(".java"))) {
+  for (const file of readdirSync(join(fixtures, pkg)).filter(f => f.endsWith(".java") || f.includes(".client."))) {
     cpSync(join(fixtures, pkg, file), join(project, "src/main/java", pkg, file));
   }
 }

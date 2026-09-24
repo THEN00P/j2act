@@ -25,6 +25,8 @@ final class Scope implements Observer {
   /** Handler id per element position and event ("path|event"), kept while that element keeps rendering. */
   Map<String, String> handlerIds = new LinkedHashMap<>();
   Map<String, String> previousHandlerIds = new LinkedHashMap<>();
+  /** Callbacks passed to client actions called outside render, by action and argument (ADR 0022). */
+  final Map<String, String> actionHandlerIds = new LinkedHashMap<>();
   /** Primitive count after the first render; later renders must create exactly as many (ADR 0019). */
   int settledCount = -1;
   /** Set on the root of a subtree mounted ahead of a navigation, until the click adopts it (ADR 0011). */

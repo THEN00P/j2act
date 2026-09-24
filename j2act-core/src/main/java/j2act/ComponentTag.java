@@ -78,6 +78,20 @@ public abstract class ComponentTag implements DomContent {
     return register(new Upload());
   }
 
+  /**
+   * A handle to a client module (ADR 0022): mount(...) gives props to withClient, and every
+   * other method is an action that runs in the browser.
+   *
+   * <pre>{@code
+   * private final Camera camera = client(Camera.class);
+   * video().withClient(camera.mount(deviceId.get(), size -> status.set("live " + size.width)))
+   * button("Snap").onClick(camera::snapshot, photo::set)
+   * }</pre>
+   */
+  protected final <C extends Client> C client(Class<C> type) {
+    return type.cast(register(new ClientHandle(type)).proxy);
+  }
+
   /** Refetches every keyed query whose key starts with these parts, in this session (ADR 0020). */
   protected final void invalidate(Object... keyPrefix) {
     Session session = scope != null ? scope.session : Session.current();

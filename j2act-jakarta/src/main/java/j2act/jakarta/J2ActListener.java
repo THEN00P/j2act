@@ -66,6 +66,11 @@ public abstract class J2ActListener implements ServletContextListener {
     } else {
       LOG.log(System.Logger.Level.INFO, "no ManagedExecutorService found; j2act uses its own pool");
     }
+    try {
+      builder.withJson(new JsonbBinding());
+    } catch (LinkageError | RuntimeException e) {
+      LOG.log(System.Logger.Level.INFO, "no JSON-B provider; client modules use the basic JSON binding");
+    }
     customize(builder);
     j2Act = builder.build();
     context.setAttribute(ATTRIBUTE, j2Act);
