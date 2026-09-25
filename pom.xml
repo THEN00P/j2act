@@ -20,6 +20,8 @@
     <module>j2act-jakarta</module>
     <module>examples/counter-spring</module>
     <module>examples/counter-jakarta</module>
+    <module>examples/ts-npm</module>
+    <module>examples/ts-pnpm</module>
   </modules>
 
   <properties>

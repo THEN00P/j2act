@@ -60,6 +60,24 @@ class ModulesTest {
   }
 
   @Test
+  void servesATsBuildsOutputChunksStylesheetAssetsAndSourceMaps() {
+    Map<String, byte[]> files = files(
+      "app/ui/Chart.client.js", "import {\n  total\n} from \"../../chunks/chunk-AB12.js\";\nexport { bars };\n"
+        + "//# sourceMappingURL=Chart.client.js.map",
+      "app/ui/Chart.client.js.map", "{}",
+      "chunks/chunk-AB12.js", "export { total };\n//# sourceMappingURL=chunk-AB12.js.map",
+      "chunks/chunk-AB12.js.map", "{}",
+      "app/ui/Chart.client.css", "@font-face { src: url(\"../../assets/icons-XY9.woff2\") format(\"woff2\"); }\n"
+        + ".Chart_legend { background: url(data:image/png;base64,AAAA); }\n/*# sourceMappingURL=Chart.client.css.map */",
+      "app/ui/Chart.client.css.map", "{}",
+      "assets/icons-XY9.woff2", "font",
+      "assets/unused.woff2", "font");
+    assertEquals(List.of("app/ui/Chart.client.css", "app/ui/Chart.client.css.map", "app/ui/Chart.client.js",
+      "app/ui/Chart.client.js.map", "assets/icons-XY9.woff2", "chunks/chunk-AB12.js", "chunks/chunk-AB12.js.map"),
+      List.copyOf(graph(files).files.keySet()));
+  }
+
+  @Test
   void theHashCoversEveryFileInTheGraph() {
     Map<String, byte[]> files = files(
       "app/ui/Chart.client.js", "import { axis } from './helpers.js';",

@@ -119,15 +119,15 @@ final class J2ActFilter implements Filter {
 
   /** A client module (ADR 0022); its URL carries a content hash, so it is cached for good. */
   static void module(J2Act j2Act, String path, HttpServletResponse response) throws IOException {
-    byte[] module = j2Act.module(path);
+    Asset module = j2Act.module(path);
     if (module == null) {
       response.sendError(HttpServletResponse.SC_NOT_FOUND);
       return;
     }
-    response.setContentType("text/javascript;charset=UTF-8");
+    response.setContentType(module.contentType());
     response.setHeader("Cache-Control", "public, max-age=31536000, immutable");
     response.setHeader("X-Content-Type-Options", "nosniff");
-    response.getOutputStream().write(module);
+    response.getOutputStream().write(module.bytes());
   }
 
   /** The request as the identity function sees it; replayed before each event (ADR 0004). */

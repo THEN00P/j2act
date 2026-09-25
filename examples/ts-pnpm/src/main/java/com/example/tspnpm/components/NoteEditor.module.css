@@ -1,0 +1,9 @@
+.editor {
+  max-width: 480px;
+  outline: 3px solid rgb(200, 120, 40);
+}
+
+.problems {
+  color: rgb(150, 30, 30);
+  padding: 4px 8px;
+}

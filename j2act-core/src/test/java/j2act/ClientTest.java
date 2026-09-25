@@ -72,12 +72,12 @@ class ClientTest {
       assertTrue(html.contains("<div id=\"meter\" data-j2-client=\"" + id + "\""), html);
       String module = Harness.find(html, "data-j2-module=\"/_j2act/m/([0-9a-f]{12}/j2act/ClientTest\\.client\\.js)\"");
       assertTrue(html.contains("data-j2-export=\"meter\""), html);
-      String served = new String(h.engine.module(module), StandardCharsets.UTF_8);
+      String served = new String(h.engine.module(module).bytes(), StandardCharsets.UTF_8);
       assertTrue(served.contains("export const meter"), served);
       assertEquals(null, h.engine.module("0000/j2act/ClientTest.class"));
       // The graph of relative imports is served under the same hash; nothing else is.
       String hash = module.substring(0, module.indexOf('/'));
-      String helper = new String(h.engine.module(hash + "/j2act/client-test/units.js"), StandardCharsets.UTF_8);
+      String helper = new String(h.engine.module(hash + "/j2act/client-test/units.js").bytes(), StandardCharsets.UTF_8);
       assertTrue(helper.contains("volts"), helper);
       assertEquals(null, h.engine.module(hash + "/j2act/client-test/unimported.js"));
 

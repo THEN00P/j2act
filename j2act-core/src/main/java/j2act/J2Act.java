@@ -259,11 +259,12 @@ public final class J2Act implements AutoCloseable {
   }
 
   /**
-   * A client module for a GET to MODULE_PATH + path, or null (answer 404). Only modules a
+   * A client module file for a GET to MODULE_PATH + path, or null (answer 404): a module,
+   * the files it imports, or a TS build's stylesheet, assets and source maps. Only files a
    * rendered client registered are served. The URL carries a content hash, so the adapter
-   * may cache it forever; the content type is text/javascript (ADR 0022).
+   * may cache it forever (ADR 0022).
    */
-  public byte[] module(String path) {
+  public Asset module(String path) {
     return modules.file(path);
   }
 

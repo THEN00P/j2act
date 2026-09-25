@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.j2act</groupId>
+    <artifactId>j2act-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>ts-pnpm</artifactId>
+  <name>ts-pnpm</name>
+  <description>TypeScript client modules with pnpm packages, CSS imports and CSS modules, bundled by esbuild (ADR 0022).</description>
+
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <node.version>v24.14.0</node.version>
+    <pnpm.version>10.32.1</pnpm.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-html</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-router</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-spring</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <!-- The build-time checks and the .types.d.ts the TypeScript imports (ADR 0008, 0022). -->
+          <annotationProcessorPaths>
+            <path>
+              <groupId>dev.j2act</groupId>
+              <artifactId>j2act-processor</artifactId>
+              <version>${project.version}</version>
+            </path>
+          </annotationProcessorPaths>
+        </configuration>
+      </plugin>
+      <!-- pnpm as usual: install, then type-check and bundle into target/classes once the types exist. -->
+      <plugin>
+        <groupId>com.github.eirslett</groupId>
+        <artifactId>frontend-maven-plugin</artifactId>
+        <version>2.0.2</version>
+        <configuration>
+          <nodeVersion>${node.version}</nodeVersion>
+          <pnpmVersion>${pnpm.version}</pnpmVersion>
+        </configuration>
+        <executions>
+          <execution>
+            <id>install-node-and-pnpm</id>
+            <phase>initialize</phase>
+            <goals>
+              <goal>install-node-and-pnpm</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>pnpm-install</id>
+            <phase>initialize</phase>
+            <goals>
+              <goal>pnpm</goal>
+            </goals>
+            <configuration>
+              <arguments>install --frozen-lockfile</arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <id>pnpm-build</id>
+            <phase>process-classes</phase>
+            <goals>
+              <goal>pnpm</goal>
+            </goals>
+            <configuration>
+              <arguments>run build</arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

@@ -232,6 +232,9 @@ final class Renderer {
       attribute("data-j2-client", client.id);
       attribute("data-j2-module", client.url);
       attribute("data-j2-export", client.export);
+      if (client.style != null) {
+        attribute("data-j2-css", client.style);
+      }
       if (client.props != null) {
         attribute("data-j2-props", client.props);
       }

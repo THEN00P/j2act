@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": [],
+    "rootDirs": ["src/main/java", "target/generated-sources/annotations"]
+  },
+  "include": ["src/main/java/**/*.ts", "target/generated-sources/annotations/**/*.d.ts", "client-env.d.ts"]
+}

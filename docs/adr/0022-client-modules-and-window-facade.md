@@ -24,7 +24,7 @@ Types flow from Java to TS, never the other way, so no step runs outside the edi
 
     { "compilerOptions": { "strict": true, "rootDirs": ["src/main/java", "target/generated-sources/annotations"] } }
 
-satisfies types every parameter and flags missing, misspelled or extra methods and wrong return types. Plain JS needs no build and no Node and runs as-is. One JSDoc line, /** @satisfies {import("./Webcam.types").Camera} */, gives it the same autocomplete, and // @ts-check turns mistakes into squiggles. TS needs some build tool (rslib, esbuild or tsc), since browsers cannot run TS; rslib takes src/main/java/**/*.client.ts as library entries and emits ESM next to the class files.
+satisfies types every parameter and flags missing, misspelled or extra methods and wrong return types. Plain JS needs no build and no Node and runs as-is. One JSDoc line, /** @satisfies {import("./Webcam.types").Camera} */, gives it the same autocomplete, and // @ts-check turns mistakes into squiggles. TS needs a build, since browsers cannot run TS; the TypeScript examples below use esbuild, and rslib or Vite's library mode fit the same shape.
 
 Modules reach the classpath next to their class. Plain .client.js files get there as resources: Maven lists src/main/java with **/*.js included (the module and the helpers it imports), next to a re-listed src/main/resources, since overriding <resources> drops the default, as MyBatis does for mapper XML, and Gradle uses the same source set entry. We planned for the processor to copy them. It does not, because a processor runs only when Java recompiles, so after an edit to the JS alone the copy would go stale. The processor instead warns when the sibling module is missing or lacks an export, and it writes mount's prop names as a resource so -parameters is not needed. The runtime serves modules itself at /_j2act/m/<content hash>/<package>/Webcam.client.js with an immutable cache header, because a WAR serves META-INF/resources only from jars in WEB-INF/lib. Only registered files can be fetched; nothing else on the classpath is reachable.
 
@@ -64,6 +64,14 @@ JavaScript never gets a build step, and a JS developer's conventions stay as the
 - The Quill spike (NoteEditor) is a plain `import Quill from "quill"`, whose ES modules import quill-delta, fast-diff and lodash.* as CommonJS. The server's validation messages live in a slot inside Quill's own container and update as the user types, the case wire:ignore leaves stale.
 - mvnpm jars carry no .d.ts, so plain JavaScript sees these packages untyped, as it would without node_modules. // @ts-check stays opt-in per file.
 - The clipboard and geolocation demo is BrowserApis in both examples, built with window().
+
+TypeScript works with the npm conventions unchanged. examples/ts-npm and examples/ts-pnpm verify it with npm and with pnpm:
+- The tools are the usual ones. package.json and node_modules hold the packages. tsc type-checks against the generated types through rootDirs, and client-env.d.ts declares CSS imports as Vite's client types do. esbuild bundles.
+- Maven runs it all through frontend-maven-plugin, which installs Node and npm or pnpm, runs the package manager's install, then `run build` in process-classes, once the processor has written the .types.d.ts.
+- The client modules import as anyone would: `import { Chart } from "chart.js/auto"`, `import Quill from "quill"`, `import "quill/dist/quill.snow.css"`, and CSS modules via `import styles from "./SalesChart.module.css"`.
+- esbuild writes each Name.client.js into target/classes next to its class, with a Name.client.css beside it when the module imports CSS. Code both modules share goes into a chunk, and linked source maps are written beside every file.
+- The runtime serves that output as it is. The served graph takes in the sibling stylesheet, the files its url() and @import name, relative imports into chunks, and source maps. Files go out with their content types. The client element carries data-j2-css, and the runtime loads that stylesheet into the head before mount runs, marked so head morphs leave it alone.
+- Still open: a watch-mode rebuild is not picked up by a running app until the dev re-import step exists, and a lazy import() split point is rejected, since relative dynamic imports are not served.
 
 Re-importing modules in dev and island mounts are later steps of M6.
 

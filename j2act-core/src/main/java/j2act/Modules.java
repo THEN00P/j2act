@@ -32,10 +32,25 @@ final class Modules {
   private static final Pattern DYNAMIC_IMPORT = Pattern.compile("\\bimport\\s*\\(\\s*([\"'])([^\"'\\n]+)\\1");
   private static final Pattern COMMENTS = Pattern.compile("/\\*.*?\\*/|//[^\\n]*", Pattern.DOTALL);
 
+  /** A stylesheet's url("x") and @import "x". */
+  private static final Pattern CSS_URL = Pattern.compile("@import\\s+([\"'])([^\"'\\n]+)\\1|url\\(\\s*([\"']?)([^\"')\\n]+)\\3\\s*\\)");
+  private static final Pattern SOURCE_MAP = Pattern.compile("[#@]\\s*sourceMappingURL=([^\\s*'\"]+)");
+
   private final J2Act engine;
-  private final ConcurrentHashMap<Class<?>, String> paths = new ConcurrentHashMap<>();
-  private final ConcurrentHashMap<String, byte[]> files = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<Class<?>, Loaded> loaded = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<String, Asset> files = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Method, String[]> mountParams = new ConcurrentHashMap<>();
+
+  /** A module's served paths: its script, and the stylesheet a build emitted beside it, if any. */
+  private static final class Loaded {
+    final String script;
+    final String style;
+
+    Loaded(String script, String style) {
+      this.script = script;
+      this.style = style;
+    }
+  }
 
   Modules(J2Act engine) {
     this.engine = engine;
@@ -43,19 +58,32 @@ final class Modules {
 
   /** The module URL for a client interface: its top-level class's sibling .client.js. */
   String url(Class<?> clientType) {
+    return engine.contextPath + J2Act.MODULE_PATH + loaded(clientType).script;
+  }
+
+  /**
+   * The stylesheet a TS build emitted beside the module (Webcam.client.css, from its CSS
+   * imports and CSS modules), or null. The runtime loads it before mounting.
+   */
+  String styleUrl(Class<?> clientType) {
+    String style = loaded(clientType).style;
+    return style == null ? null : engine.contextPath + J2Act.MODULE_PATH + style;
+  }
+
+  private Loaded loaded(Class<?> clientType) {
     Class<?> top = clientType;
     while (top.getEnclosingClass() != null) {
       top = top.getEnclosingClass();
     }
-    return engine.contextPath + J2Act.MODULE_PATH + paths.computeIfAbsent(top, this::load);
+    return loaded.computeIfAbsent(top, this::load);
   }
 
-  /** A registered module's bytes for MODULE_PATH + path, or null; nothing else on the classpath is reachable. */
-  byte[] file(String path) {
+  /** A registered file for MODULE_PATH + path, or null; nothing else on the classpath is reachable. */
+  Asset file(String path) {
     return path == null ? null : files.get(path);
   }
 
-  private String load(Class<?> top) {
+  private Loaded load(Class<?> top) {
     Package pkg = top.getPackage();
     String dir = pkg == null || pkg.getName().isEmpty() ? "" : pkg.getName().replace('.', '/') + "/";
     String entry = dir + top.getSimpleName() + ".client.js";
@@ -75,9 +103,16 @@ final class Modules {
     }
     Graph graph = graph(entry, read);
     for (Map.Entry<String, byte[]> file : graph.files.entrySet()) {
-      files.put(graph.hash + "/" + file.getKey(), serve(graph, file.getKey(), file.getValue()));
+      files.put(graph.hash + "/" + file.getKey(),
+        new Asset(serve(graph, file.getKey(), file.getValue()), Asset.contentType(file.getKey())));
     }
-    return graph.hash + "/" + entry;
+    String style = styleOf(entry);
+    return new Loaded(graph.hash + "/" + entry, graph.files.containsKey(style) ? graph.hash + "/" + style : null);
+  }
+
+  /** Webcam.client.js's stylesheet, as esbuild and other bundlers name it: Webcam.client.css. */
+  private static String styleOf(String entry) {
+    return entry.substring(0, entry.length() - ".js".length()) + ".css";
   }
 
   /** A CommonJS file goes out as an ES module: its relative requires point into the graph, bare ones at packages. */
@@ -130,6 +165,10 @@ final class Modules {
     Map<String, byte[]> files = new TreeMap<>();
     Deque<String> todo = new ArrayDeque<>();
     todo.add(entry);
+    // A TS build's CSS imports and CSS modules end up in the entry's sibling stylesheet.
+    if (read.apply(styleOf(entry)) != null) {
+      todo.add(styleOf(entry));
+    }
     while (!todo.isEmpty()) {
       String path = todo.poll();
       if (files.containsKey(path)) {
@@ -141,7 +180,29 @@ final class Modules {
           + ", which is not on the classpath; include src/main/java **/*.js in the build's resources (ADR 0022)");
       }
       files.put(path, bytes);
-      String code = COMMENTS.matcher(new String(bytes, StandardCharsets.UTF_8)).replaceAll(" ");
+      String raw = new String(bytes, StandardCharsets.UTF_8);
+      // Source maps are served when present, so browser devtools show the TS.
+      Matcher map = SOURCE_MAP.matcher(raw);
+      while (map.find()) {
+        String target = map.group(1);
+        if (isLocal(target) && read.apply(resolve(path, target)) != null) {
+          todo.add(resolve(path, target));
+        }
+      }
+      if (path.endsWith(".css")) {
+        Matcher urls = CSS_URL.matcher(COMMENTS.matcher(raw).replaceAll(" "));
+        while (urls.find()) {
+          String target = (urls.group(2) != null ? urls.group(2) : urls.group(4)).replaceAll("[?#].*$", "");
+          if (isLocal(target) && !target.isEmpty()) {
+            todo.add(resolve(path, target));
+          }
+        }
+        continue;
+      }
+      if (!path.endsWith(".js") && !path.endsWith(".mjs") && !path.endsWith(".cjs")) {
+        continue;
+      }
+      String code = COMMENTS.matcher(raw).replaceAll(" ");
       Matcher dynamic = DYNAMIC_IMPORT.matcher(code);
       while (dynamic.find()) {
         if (isRelative(dynamic.group(2))) {
@@ -184,6 +245,11 @@ final class Modules {
     } catch (NoSuchAlgorithmException e) {
       throw new IllegalStateException(e);
     }
+  }
+
+  /** A path relative to the file, as in CSS url() and sourceMappingURL: no scheme, no leading slash, no fragment. */
+  private static boolean isLocal(String target) {
+    return !target.contains(":") && !target.startsWith("/") && !target.startsWith("#");
   }
 
   private static boolean isRelative(String specifier) {

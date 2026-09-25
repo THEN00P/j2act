@@ -58,6 +58,11 @@
     }
   };
   const slotConfig = { morphStyle: "innerHTML", ignoreActiveValue: true, callbacks: morphConfig.callbacks };
+  // Head morphs leave alone what the runtime added there: client stylesheets.
+  const headConfig = {
+    morphStyle: "innerHTML",
+    callbacks: { beforeNodeRemoved: (node) => !(node.nodeType === 1 && node.hasAttribute("data-j2-keep")) }
+  };
 
   // ---- socket
 
@@ -102,7 +107,7 @@
     } else if (m.t === "patch") {
       patch(m.s, m.h, m.r === "1");
     } else if (m.t === "head") {
-      Idiomorph.morph(document.head, m.h, { morphStyle: "innerHTML" });
+      Idiomorph.morph(document.head, m.h, headConfig);
     } else if (m.t === "url") {
       landed(m.u, m.m);
     } else if (m.t === "go") {
@@ -214,7 +219,7 @@
       // The session root may be a new component after a navigation, with a new anchor.
       const doc = new DOMParser().parseFromString(html, "text/html");
       document.documentElement.setAttribute("data-j2s", anchor);
-      Idiomorph.morph(document.head, doc.head.innerHTML, { morphStyle: "innerHTML" });
+      Idiomorph.morph(document.head, doc.head.innerHTML, headConfig);
       Idiomorph.morph(document.body, doc.body, morphConfig);
     } else {
       const el = document.querySelector('[data-j2s="' + anchor + '"]');
@@ -349,7 +354,9 @@
     }
     const url = el.getAttribute("data-j2-module");
     const name = el.getAttribute("data-j2-export");
-    import(url).then((module) => {
+    const style = el.getAttribute("data-j2-css");
+    // A TS build's stylesheet (CSS imports, CSS modules) is in place before mount runs.
+    Promise.all([import(url), style ? stylesheet(style) : null]).then(([module]) => {
       if (clients.get(id) !== c) {
         return;
       }
@@ -363,6 +370,25 @@
       clientError(c, "import", e);
       failWaiting(c, e);
     });
+  }
+
+  const stylesheets = new Map();   // url -> promise of its <link> having loaded
+
+  function stylesheet(url) {
+    let loaded = stylesheets.get(url);
+    if (!loaded) {
+      loaded = new Promise((resolve, reject) => {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = url;
+        link.setAttribute("data-j2-keep", "");
+        link.onload = () => resolve();
+        link.onerror = () => reject(named("NetworkError", "stylesheet " + url + " did not load"));
+        document.head.append(link);
+      });
+      stylesheets.set(url, loaded);
+    }
+    return loaded;
   }
 
   function start(c) {

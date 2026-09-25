@@ -1,0 +1,25 @@
+{
+  "name": "j2act-ts-pnpm",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript client modules for j2act, bundled with esbuild from pnpm packages (ADR 0022).",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "bundle": "node build.mjs",
+    "build": "pnpm run typecheck && pnpm run bundle"
+  },
+  "dependencies": {
+    "chart.js": "4.5.1",
+    "quill": "2.0.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

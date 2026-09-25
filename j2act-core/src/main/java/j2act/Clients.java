@@ -40,6 +40,8 @@ final class Clients {
     final String id;
     final String url;
     final String export;
+    /** The stylesheet a TS build emitted beside the module, or null. */
+    String style;
     /** The mount props as JSON, or null for a client without mount(...). */
     String props;
     /** DomContent props, rendered as the element's first children. */
@@ -80,6 +82,7 @@ final class Clients {
     cell.mountedEpoch = epoch;
     byId.put(cell.id, cell);
     Binding binding = new Binding(cell.id, session.engine.modules.url(handle.type), Modules.exportName(handle.type));
+    binding.style = session.engine.modules.styleUrl(handle.type);
     if (mount == null) {
       return binding;
     }

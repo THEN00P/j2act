@@ -91,16 +91,16 @@ public class J2ActHandlerMapping extends AbstractHandlerMapping {
     }
     if (path.startsWith(J2Act.MODULE_PATH)) {
       // A client module (ADR 0022): content-hashed URL, so cached for good.
-      byte[] module = j2Act.module(path.substring(J2Act.MODULE_PATH.length()));
+      Asset module = j2Act.module(path.substring(J2Act.MODULE_PATH.length()));
       return (HttpRequestHandler) (req, res) -> {
         if (module == null) {
           res.sendError(HttpServletResponse.SC_NOT_FOUND);
           return;
         }
-        res.setContentType("text/javascript;charset=UTF-8");
+        res.setContentType(module.contentType());
         res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
         res.setHeader("X-Content-Type-Options", "nosniff");
-        res.getOutputStream().write(module);
+        res.getOutputStream().write(module.bytes());
       };
     }
     if (path.startsWith(J2Act.PACKAGE_PATH)) {
