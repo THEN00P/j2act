@@ -3,6 +3,8 @@ package com.example.jakarta.pages;
 import static com.example.jakarta.components.Attachment.attachment;
 import static com.example.jakarta.components.BrowserApis.browserApis;
 import static com.example.jakarta.components.ClockFeed.clockFeed;
+import static com.example.jakarta.components.NoteEditor.noteEditor;
+import static com.example.jakarta.components.SalesChart.salesChart;
 import static com.example.jakarta.components.Countdown.countdown;
 import static com.example.jakarta.components.Counter.counter;
 import static com.example.jakarta.components.GreetingForm.greetingForm;
@@ -49,6 +51,11 @@ public class HomePage extends LiveComponent implements Page {
         section(
           h2("window(): browser APIs from Java"),
           browserApis()
+        ),
+        section(
+          h2("Spikes: Chart.js with a server legend, Quill with live server errors"),
+          salesChart(),
+          noteEditor()
         ),
         section(
           h2("Form"),

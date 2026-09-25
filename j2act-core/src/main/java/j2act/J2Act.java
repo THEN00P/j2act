@@ -70,6 +70,7 @@ public final class J2Act implements AutoCloseable {
   final Preload defaultPreload;
   final long preloadHoldMillis;
   final JsonBinding json;
+  final ImportMap importMap;
   final Modules modules = new Modules(this);
 
   private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
@@ -100,6 +101,9 @@ public final class J2Act implements AutoCloseable {
     this.defaultPreload = b.defaultPreload;
     this.preloadHoldMillis = b.preloadHold.toMillis();
     this.json = b.json;
+    ClassLoader loader = Thread.currentThread().getContextClassLoader();
+    this.importMap = ImportMap.build(loader != null ? loader : J2Act.class.getClassLoader(), b.imports,
+      b.contextPath, this);
     if (b.executor != null) {
       this.executor = b.executor;
       this.ownedExecutor = null;
@@ -556,6 +560,7 @@ public final class J2Act implements AutoCloseable {
     private Preload defaultPreload = Preload.NONE;
     private Duration preloadHold = Duration.ofSeconds(10);
     private JsonBinding json = JsonBinding.basic();
+    private final Map<String, String> imports = new java.util.LinkedHashMap<>();
 
     private Builder(PageResolver resolver) {
       this.resolver = resolver;
@@ -686,6 +691,16 @@ public final class J2Act implements AutoCloseable {
      * the application's Jackson mapper and the Jakarta adapter JSON-B; the default handles
      * plain JSON values only.
      */
+    /**
+     * An import map entry beside the ones mvnpm jars bring (ADR 0022), e.g.
+     * withImport("chart.js", "https://cdn.jsdelivr.net/npm/chart.js@4/+esm"). Wins over a
+     * jar's entry for the same name; an app path like /js/x.js gets the context path.
+     */
+    public Builder withImport(String specifier, String url) {
+      this.imports.put(specifier, url);
+      return this;
+    }
+
     public Builder withJson(JsonBinding json) {
       this.json = java.util.Objects.requireNonNull(json);
       return this;

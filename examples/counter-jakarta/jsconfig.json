@@ -8,5 +8,5 @@
     "lib": ["es2022", "dom"],
     "rootDirs": ["src/main/java", "target/generated-sources/annotations"]
   },
-  "include": ["src/main/java/**/*.js", "target/generated-sources/annotations/**/*.d.ts"]
+  "include": ["src/main/java/**/*.js", "target/generated-sources/annotations/**/*.d.ts", "import-map.d.ts"]
 }

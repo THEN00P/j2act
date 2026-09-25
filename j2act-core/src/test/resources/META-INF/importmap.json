@@ -1,0 +1,7 @@
+{
+  "imports" : {
+    "tiny-lib" : "/_static/tiny-lib/1.0.0/index.js",
+    "tiny-lib/" : "/_static/tiny-lib/1.0.0/",
+    "overridden" : "/_static/overridden/1.0.0/index.js"
+  }
+}

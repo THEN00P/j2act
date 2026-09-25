@@ -321,6 +321,40 @@ async function main() {
   check("a failing call completes exceptionally with a BrowserException",
     await until(`document.getElementById('api-failure').textContent === 'failure: TypeError'`));
 
+  // 17. spikes (ADR 0022): Chart.js and Quill by bare name through the mvnpm import map
+  check("the import map comes before the runtime and names the mvnpm packages", await js(`(() => {
+    const map = document.querySelector('script[type=importmap]');
+    const imports = map ? JSON.parse(map.textContent).imports : {};
+    return imports['chart.js'] === '/_static/chart.js/4.5.1/dist/chart.js' && !!imports['quill']
+      && map.compareDocumentPosition(document.querySelector('script[src$="runtime.js"]')) === Node.DOCUMENT_POSITION_FOLLOWING;
+  })()`));
+  const sales = `document.getElementById('sales')`;
+  check("Chart.js loads by bare name and draws", await until(`${sales}?.querySelector('canvas')?.width > 0
+    && ${sales}.dataset.total === '60'`, 8000));
+  check("the server's legend sits inside the chart's box, after the canvas", await js(`${sales}.querySelector('canvas')
+    .nextElementSibling?.matches('[data-j2-slot]') && ${sales}.querySelector('.sales-total').textContent === 'total 60'`));
+  await js(`window.__canvas = ${sales}.querySelector('canvas'); ${sales}.querySelector('.sales-bump').click(); true`);
+  check("a click inside the legend reaches the chart through update(), not a remount",
+    await until(`${sales}.dataset.total === '70' && ${sales}.querySelector('.sales-total').textContent === 'total 70'`)
+    && await js(`${sales}.querySelector('canvas') === window.__canvas`));
+  await js(`document.getElementById('sales-add').click(); true`);
+  check("new props add a bar", await until(`${sales}.dataset.bars === '4'`));
+  const editor = `document.getElementById('editor')`;
+  check("Quill loads with its dependencies and its stylesheet", await until(`!!${editor}?.querySelector('.ql-editor')
+    && getComputedStyle(${editor}.querySelector('.ql-toolbar')).borderTopStyle === 'solid'`, 8000));
+  check("the server's messages live inside Quill's own container", await js(`${editor}
+    .querySelector('.ql-container > [data-j2-slot] .editor-problems')?.textContent === 'looks good'`));
+  await js(`window.__problems = ${editor}.querySelector('.editor-problems');
+    const area = ${editor}.querySelector('.ql-editor'); area.focus();
+    const selection = getSelection(); selection.selectAllChildren(area); selection.collapseToEnd(); true`);
+  await cdp("Input.insertText", { text: " TODO" });
+  check("typing reaches Java, whose validation re-renders inside Quill",
+    await until(`${editor}.querySelector('.editor-problems')?.textContent === 'remove the TODO'`)
+    && await js(`${editor}.querySelector('.editor-problems') === window.__problems`));
+  await cdp("Input.insertText", { text: " and then a lot more text" });
+  check("it keeps updating as the text grows", await until(`/too long: \\d+ of 40/.test(${editor}
+    .querySelector('.editor-problems').textContent)`), await js(`${editor}.querySelector('.editor-problems').textContent`));
+
   const moduleUrl = await js(`${timer}.getAttribute('data-j2-module')`);
   const headers = await js(`fetch(${JSON.stringify(moduleUrl)})
     .then(r => r.status + ' ' + r.headers.get('cache-control') + ' ' + r.headers.get('content-type'))`);

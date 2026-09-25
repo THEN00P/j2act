@@ -2,6 +2,8 @@ package com.example.counter.pages;
 
 import static com.example.counter.components.BrowserApis.browserApis;
 import static com.example.counter.components.ClockFeed.clockFeed;
+import static com.example.counter.components.NoteEditor.noteEditor;
+import static com.example.counter.components.SalesChart.salesChart;
 import static com.example.counter.components.Countdown.countdown;
 import static com.example.counter.components.Counter.counter;
 import static com.example.counter.components.GreetingForm.greetingForm;
@@ -70,6 +72,11 @@ public class HomePage extends LiveComponent implements Page {
         section(
           h2("window(): browser APIs from Java"),
           browserApis()
+        ),
+        section(
+          h2("Spikes: Chart.js with a server legend, Quill with live server errors"),
+          salesChart(),
+          noteEditor()
         ),
         section(
           h2("Pending UI"),

@@ -104,4 +104,21 @@ b.run(async () => {
   await js(`document.getElementById('api-missing').click(); true`);
   check("a failing call is a BrowserException", await until(`document.getElementById('api-failure').textContent
     === 'failure: TypeError'`));
+
+  // Spikes: mvnpm packages served by WildFly from WEB-INF/lib, imported by bare name.
+  check("the import map carries the context path", await js(`JSON.parse(document.querySelector('script[type=importmap]')
+    .textContent).imports['chart.js'] === '/counter-jakarta/_static/chart.js/4.5.1/dist/chart.js'`));
+  const sales = `document.getElementById('sales')`;
+  check("Chart.js loads under the context path and draws", await until(`${sales}?.querySelector('canvas')?.width > 0
+    && ${sales}.dataset.total === '60'`, 8000));
+  await js(`${sales}.querySelector('.sales-bump').click(); true`);
+  check("the server legend's click updates the chart", await until(`${sales}.dataset.total === '70'`));
+  const editor = `document.getElementById('editor')`;
+  check("Quill and its stylesheet load under the context path", await until(`!!${editor}?.querySelector('.ql-editor')
+    && getComputedStyle(${editor}.querySelector('.ql-toolbar')).borderTopStyle === 'solid'`, 8000));
+  await js(`const area = ${editor}.querySelector('.ql-editor'); area.focus();
+    const selection = getSelection(); selection.selectAllChildren(area); selection.collapseToEnd(); true`);
+  await cdp("Input.insertText", { text: " TODO" });
+  check("typing reaches Java, whose validation re-renders inside Quill",
+    await until(`${editor}.querySelector('.editor-problems')?.textContent === 'remove the TODO'`));
 });
