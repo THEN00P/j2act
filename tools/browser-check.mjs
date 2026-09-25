@@ -325,9 +325,12 @@ async function main() {
   check("the import map comes before the runtime and names the mvnpm packages", await js(`(() => {
     const map = document.querySelector('script[type=importmap]');
     const imports = map ? JSON.parse(map.textContent).imports : {};
-    return imports['chart.js'] === '/_static/chart.js/4.5.1/dist/chart.js' && !!imports['quill']
+    return imports['chart.js'] === '/_j2act/pkg/chart.js/4.5.1/dist/chart.js' && !!imports['quill']
       && map.compareDocumentPosition(document.querySelector('script[src$="runtime.js"]')) === Node.DOCUMENT_POSITION_FOLLOWING;
   })()`));
+  const delta = await js(`fetch('/_j2act/pkg/quill-delta/5.1.0/dist/Delta.js').then(r => r.text())`);
+  check("CommonJS packages are served as ES modules, no build step", delta.includes("export default ")
+    && delta.includes("export const AttributeMap = ") && delta.includes('from "/_j2act/pkg/fast-diff/'));
   const sales = `document.getElementById('sales')`;
   check("Chart.js loads by bare name and draws", await until(`${sales}?.querySelector('canvas')?.width > 0
     && ${sales}.dataset.total === '60'`, 8000));

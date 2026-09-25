@@ -1,6 +1,4 @@
 // The browser half of SalesChart.Bars (ADR 0022): Chart.js by bare name, through the import map.
-// @ts-check
-
 import { Chart } from "chart.js/auto";
 
 /** Per element: its Chart, kept in module state. */

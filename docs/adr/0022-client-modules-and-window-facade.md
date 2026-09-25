@@ -51,11 +51,18 @@ Built in M6: client(X.class), withClient, mount/update/cleanup, direct actions, 
 - the action overload on onSubmit, onKeyDown, onPointerDown and onPointerUp as well as onClick, running the action inside the event; onPointerDown and onPointerUp also take plain handlers of PointerEvent
 - a refusal before the first chunk rejects UploadTarget.send with the refusal message and releases the Blob
 
-Import maps were built with the spikes. The runtime merges every META-INF/importmap.json on the classpath, which each mvnpm jar ships. It adds the context path and J2Act.Builder.withImport entries, and writes one import map ahead of the runtime scripts. When two jars map one name differently, the first wins and a warning is logged. The jars' files under META-INF/resources/_static are served by Spring Boot and by the servlet container from WEB-INF/lib, so j2act serves none of them. What the spikes found:
-- The Chart.js spike (SalesChart) imports "chart.js/auto" by bare name. A server-rendered legend sits in a slot inside the chart's box, and a button in it changes the data, which reaches the chart through update() without a remount.
-- The Quill spike (NoteEditor) keeps a live list of server-side validation messages in a slot inside Quill's own container. It updates as the user types, which is the case wire:ignore leaves stale.
-- Import maps need ES modules all the way down. Quill's ESM build imports quill-delta, which npm ships only as CommonJS, so the browser cannot load it without a bundler. The spike imports Quill's own browser bundle (quill/dist/quill.js) for its side effect instead. That works for any package with a self-contained browser build; the other options are a CDN's ESM conversion through withImport, or a bundling step like mvnpm's web-bundler, which is not built.
-- mvnpm jars carry no .d.ts, so an editor sees the packages untyped. The examples declare them in import-map.d.ts next to a jsconfig.json with the rootDirs above, and `npm i -D <package>` there gives their full types.
+JavaScript never gets a build step, and a JS developer's conventions stay as they are: `import Quill from "quill"`, CommonJS files with `require`, and Node's resolution. Only TypeScript is built, with its own tooling, and takes its types from package.json. Import maps and package serving were built with the spikes:
+- The runtime merges every META-INF/importmap.json on the classpath, which each mvnpm jar ships, and J2Act.Builder.withImport entries, which win. It writes one import map ahead of the runtime scripts, with the context path added. When two jars map one name differently, the first wins and a warning is logged.
+- A bare import resolves as Node and the browser CDNs do. The package.json exports decide, under the browser, import, module and default conditions, then the module field, then main. mvnpm's own map names main, which is CommonJS in dual packages such as eventemitter3.
+- The runtime serves package files itself at PACKAGE_PATH (/_j2act/pkg/name/version/...), read from the jars' META-INF/resources/_static, and only files there. ES module files go out unchanged. CommonJS files go out wrapped as ES modules (CommonJs.java):
+  - The original code runs inside a function that supplies module, exports and require.
+  - Each static require becomes an import. Relative ones resolve as Node does, with .js, .cjs, .json and index.js tried. Bare ones use the require condition, then main. JSON is inlined, and a Node builtin throws when required.
+  - module.exports is the default export, honoring __esModule. Named exports are found as Node's cjs-module-lexer finds them, and __exportStar re-exports pass through.
+  - It is a text transform, not a bundler, so a require with a computed argument cannot be followed.
+- Client modules follow the same rules. A .client.js or a helper it reaches may be CommonJS, and a relative require joins the served graph like a static import.
+- The Chart.js spike (SalesChart) imports "chart.js/auto". A server-rendered legend sits in a slot inside the chart's box, and a button in it changes the data, which reaches the chart through update() without a remount.
+- The Quill spike (NoteEditor) is a plain `import Quill from "quill"`, whose ES modules import quill-delta, fast-diff and lodash.* as CommonJS. The server's validation messages live in a slot inside Quill's own container and update as the user types, the case wire:ignore leaves stale.
+- mvnpm jars carry no .d.ts, so plain JavaScript sees these packages untyped, as it would without node_modules. // @ts-check stays opt-in per file.
 - The clipboard and geolocation demo is BrowserApis in both examples, built with window().
 
 Re-importing modules in dev and island mounts are later steps of M6.

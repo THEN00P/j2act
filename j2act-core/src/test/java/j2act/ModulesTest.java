@@ -49,6 +49,17 @@ class ModulesTest {
   }
 
   @Test
+  void followsRelativeRequiresOfCommonJsHelpersAsNodeResolvesThem() {
+    Map<String, byte[]> files = files(
+      "app/ui/Chart.client.js", "import { axis } from './helpers.js';\nexport const chart = {};",
+      "app/ui/helpers.js", "const util = require('./util');\nconst lib = require('../lib');\nexports.axis = util.x + lib.y;",
+      "app/ui/util.js", "exports.x = 1;",
+      "app/lib/index.js", "exports.y = 2;");
+    assertEquals(List.of("app/lib/index.js", "app/ui/Chart.client.js", "app/ui/helpers.js", "app/ui/util.js"),
+      List.copyOf(graph(files).files.keySet()));
+  }
+
+  @Test
   void theHashCoversEveryFileInTheGraph() {
     Map<String, byte[]> files = files(
       "app/ui/Chart.client.js", "import { axis } from './helpers.js';",

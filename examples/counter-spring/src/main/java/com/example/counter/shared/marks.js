@@ -1,4 +1,4 @@
-// Shared by client modules of several packages; served because countdown-face.js imports it.
+// A CommonJS helper, imported by an ES module: the runtime serves it as one (ADR 0022).
 
 /** @param {string} name */
-export const mark = (name) => name + " ok";
+exports.mark = (name) => name + " ok";

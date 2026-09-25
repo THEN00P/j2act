@@ -1,7 +1,10 @@
 {
-  "imports" : {
-    "tiny-lib" : "/_static/tiny-lib/1.0.0/index.js",
-    "tiny-lib/" : "/_static/tiny-lib/1.0.0/",
-    "overridden" : "/_static/overridden/1.0.0/index.js"
+  "imports": {
+    "tiny-lib": "/_static/tiny-lib/1.0.0/index.js",
+    "tiny-lib/": "/_static/tiny-lib/1.0.0/",
+    "overridden": "/_static/overridden/1.0.0/index.js",
+    "tiny-cjs": "/_static/tiny-cjs/1.0.0/index.js",
+    "tiny-dual": "/_static/tiny-dual/2.0.0/index.js",
+    "tiny-dual/": "/_static/tiny-dual/2.0.0/"
   }
 }

@@ -41,6 +41,8 @@ public final class J2Act implements AutoCloseable {
   public static final String UPLOAD_PATH = "/_j2act/up/";
   /** Where adapters serve client modules: GET MODULE_PATH + hash/package/Name.client.js (ADR 0022). */
   public static final String MODULE_PATH = "/_j2act/m/";
+  /** Where adapters serve npm packages from mvnpm jars: GET PACKAGE_PATH + name/version/file (ADR 0022). */
+  public static final String PACKAGE_PATH = "/_j2act/pkg/";
 
   final PageResolver resolver;
   final Executor executor;
@@ -71,6 +73,9 @@ public final class J2Act implements AutoCloseable {
   final long preloadHoldMillis;
   final JsonBinding json;
   final ImportMap importMap;
+  /** Where client modules and package files are read from: the application's class loader. */
+  final ClassLoader resourceLoader;
+  final Packages packages = new Packages(this);
   final Modules modules = new Modules(this);
 
   private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
@@ -102,8 +107,10 @@ public final class J2Act implements AutoCloseable {
     this.preloadHoldMillis = b.preloadHold.toMillis();
     this.json = b.json;
     ClassLoader loader = Thread.currentThread().getContextClassLoader();
-    this.importMap = ImportMap.build(loader != null ? loader : J2Act.class.getClassLoader(), b.imports,
-      b.contextPath, this);
+    this.resourceLoader = loader != null ? loader : J2Act.class.getClassLoader();
+    this.importMap = ImportMap.build(resourceLoader, b.contextPath, this);
+    importMap.preferModules(packages);
+    importMap.addManual(b.imports);
     if (b.executor != null) {
       this.executor = b.executor;
       this.ownedExecutor = null;
@@ -258,6 +265,16 @@ public final class J2Act implements AutoCloseable {
    */
   public byte[] module(String path) {
     return modules.file(path);
+  }
+
+  /**
+   * A package file for a GET to PACKAGE_PATH + path, or null (answer 404): what an mvnpm jar
+   * ships under META-INF/resources/_static, with CommonJS wrapped as an ES module so plain
+   * JavaScript needs no build step. The path carries the version, so the adapter may cache
+   * it forever (ADR 0022).
+   */
+  public Asset packageFile(String path) {
+    return packages.file(path);
   }
 
   /** The framework's upload directory: temp parts and uploads stored without a target. */

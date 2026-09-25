@@ -107,7 +107,7 @@ b.run(async () => {
 
   // Spikes: mvnpm packages served by WildFly from WEB-INF/lib, imported by bare name.
   check("the import map carries the context path", await js(`JSON.parse(document.querySelector('script[type=importmap]')
-    .textContent).imports['chart.js'] === '/counter-jakarta/_static/chart.js/4.5.1/dist/chart.js'`));
+    .textContent).imports['chart.js'] === '/counter-jakarta/_j2act/pkg/chart.js/4.5.1/dist/chart.js'`));
   const sales = `document.getElementById('sales')`;
   check("Chart.js loads under the context path and draws", await until(`${sales}?.querySelector('canvas')?.width > 0
     && ${sales}.dataset.total === '60'`, 8000));

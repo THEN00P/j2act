@@ -1,6 +1,5 @@
 {
   "compilerOptions": {
-    "checkJs": true,
     "strict": true,
     "target": "es2022",
     "module": "es2022",
@@ -8,5 +7,5 @@
     "lib": ["es2022", "dom"],
     "rootDirs": ["src/main/java", "target/generated-sources/annotations"]
   },
-  "include": ["src/main/java/**/*.js", "target/generated-sources/annotations/**/*.d.ts", "import-map.d.ts"]
+  "include": ["src/main/java/**/*.js", "target/generated-sources/annotations/**/*.d.ts"]
 }

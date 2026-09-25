@@ -1,11 +1,7 @@
 // The browser half of NoteEditor.Editor (ADR 0022): Quill by bare name, through the import map.
-// @ts-check
-
-// Quill's ESM build imports quill-delta, which npm ships only as CommonJS, so without a bundler
-// the browser cannot load it. Quill's own browser bundle has everything inside and sets self.Quill.
-import "quill/dist/quill.js";
-
-const Quill = /** @type {any} */ (globalThis).Quill;
+// Quill's ES modules import quill-delta, which npm ships as CommonJS; the runtime serves that as an
+// ES module, so this is a plain import with no build step.
+import Quill from "quill";
 
 /** @satisfies {import("./NoteEditor.types").Editor} */
 export const editor = {

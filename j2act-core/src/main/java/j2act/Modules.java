@@ -75,9 +75,39 @@ final class Modules {
     }
     Graph graph = graph(entry, read);
     for (Map.Entry<String, byte[]> file : graph.files.entrySet()) {
-      files.put(graph.hash + "/" + file.getKey(), file.getValue());
+      files.put(graph.hash + "/" + file.getKey(), serve(graph, file.getKey(), file.getValue()));
     }
     return graph.hash + "/" + entry;
+  }
+
+  /** A CommonJS file goes out as an ES module: its relative requires point into the graph, bare ones at packages. */
+  private byte[] serve(Graph graph, String path, byte[] bytes) {
+    String code = new String(bytes, StandardCharsets.UTF_8);
+    if (!path.endsWith(".js") && !path.endsWith(".cjs") || !CommonJs.isCommonJs(code)) {
+      return bytes;
+    }
+    String wrapped = CommonJs.wrap(code, specifier -> {
+      if (!isRelative(specifier)) {
+        return engine.packages.resolveBare(specifier);
+      }
+      String found = requireTarget(resolve(path, specifier), graph.files::containsKey);
+      if (found == null) {
+        return null;
+      }
+      return found.endsWith(".json") ? CommonJs.Target.json(new String(graph.files.get(found), StandardCharsets.UTF_8))
+        : CommonJs.Target.module(engine.contextPath + J2Act.MODULE_PATH + graph.hash + "/" + found);
+    });
+    return wrapped.getBytes(StandardCharsets.UTF_8);
+  }
+
+  /** Node's resolution of a relative require: as is, with .js, .cjs or .json, or a directory's index.js. */
+  private static String requireTarget(String path, java.util.function.Predicate<String> exists) {
+    for (String candidate : new String[] {path, path + ".js", path + ".cjs", path + ".json", path + "/index.js"}) {
+      if (exists.test(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   /** A module and the files its relative static imports reach, with one hash over all of them. */
@@ -123,6 +153,18 @@ final class Modules {
       while (imports.find()) {
         if (isRelative(imports.group(2))) {
           todo.add(resolve(path, imports.group(2)));
+        }
+      }
+      // CommonJS helpers: relative requires resolve as in Node, extension optional.
+      String text = new String(bytes, StandardCharsets.UTF_8);
+      for (String specifier : CommonJs.isCommonJs(text) ? CommonJs.requires(text) : java.util.List.<String>of()) {
+        if (isRelative(specifier)) {
+          String found = requireTarget(resolve(path, specifier), candidate -> read.apply(candidate) != null);
+          if (found == null) {
+            throw new IllegalStateException("client module " + entry + ": " + path + " requires " + specifier
+              + ", which is not on the classpath; include src/main/java **/*.js in the build's resources (ADR 0022)");
+          }
+          todo.add(found);
         }
       }
     }
