@@ -55,7 +55,7 @@ export default function j2act(options = {}) {
   let staging;
   return {
     name: "j2act",
-    config(config) {
+    config(config, env) {
       root = path.resolve(config.root || process.cwd());
       const detected = options.classpathDir ? { classpathDir: options.classpathDir } : layout(root);
       outDir = path.join(root, detected.classpathDir, "META-INF/j2act/vite");
@@ -70,15 +70,17 @@ export default function j2act(options = {}) {
       }
       return {
         appType: "custom",
-        publicDir: false,
+        publicDir: config.publicDir ?? false,
         // Relative URLs everywhere: the runtime serves the files under its own path.
         base: "./",
         build: {
           outDir: staging,
           emptyOutDir: true,
           manifest: NEXT_MANIFEST,
-          sourcemap: true,
-          modulePreload: { polyfill: false },
+          // Source maps in dev builds only, unless vite.config sets build.sourcemap: true for
+          // maps the browser can load, or "hidden" for maps on disk that the runtime never serves.
+          sourcemap: config.build?.sourcemap ?? env.mode === "development",
+          modulePreload: config.build?.modulePreload ?? { polyfill: false },
           rolldownOptions: {
             input,
             // No entry's exports are unused: the runtime imports them by name.

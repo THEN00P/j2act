@@ -99,6 +99,33 @@ The regular checks still pass on this branch: full build, Spring 75/75, WildFly 
 
 IntelliJ Community has no Jakarta EE or WildFly run configurations, so there is nothing to mirror for WildFly. For Spring, IntelliJ builds Gradle projects through Gradle by default, so `j2actBundle` runs on every Run. For Maven projects it uses its own builder, which runs annotation processors but no Maven plugins. The processor still writes the dev token there, so dev mode starts the watcher, just as Vaadin handles IntelliJ with its dev server.
 
+## Round 2: after the first Eclipse run
+
+What the Eclipse run showed, and what changed.
+
+- **Maven: dev mode never started.**
+  - m2e-wtp applies the war plugin's `packagingExcludes`, so excluding the dev token from the WAR also removed it from Eclipse's exploded deployment.
+  - Fix: nothing is excluded any more. Dev mode requires the token to be a plain file on disk: a class folder, or an exploded deployment (WildFly's `vfs:` URLs name the real path there).
+  - A token inside a WAR file or a jar never counts, even on the developer's machine. Checked: the packaged Gradle WAR (token inside) on a local WildFly stays in production mode, 6/6, while the exploded Maven deployment beside it starts dev mode, 9/9 with live re-import.
+- **Gradle: no types on import, no warnings in Problems, no dev token, nothing to serve.**
+  - Buildship configures no annotation processing, so Eclipse's compiler never ran the processor. The types that appeared on save came from `autoBuildTasks` running Gradle's `compileJava`, which is the good news: Buildship in Eclipse does run `autoBuildTasks`. Warnings from that Gradle compile go to the console, not to Problems.
+  - Fix: the plugin applies `com.diffplug.eclipse.apt` (the maintained successor of `net.ltgt.apt-eclipse`, the usual answer for Gradle plus Eclipse annotation processing) and runs its tasks as Buildship synchronization tasks.
+  - `j2actBundle` no longer depends on `compileJava`, so an Eclipse auto build runs Vite only.
+- **Gradle: WTP needed `eclipse-wtp` and a facet by hand.**
+  - The plugin applies `eclipse-wtp` to WAR projects, raises Gradle's Servlet 2.4 default web facet to 6.0 (only when it is still the default), and maps `build/j2act` to `WEB-INF/classes`, so WTP publishes and exports the Vite output.
+  - Checked with `gradle eclipse`: APT enabled, processor on the factory path, `jst.web` 6.0, `jst.java` 11, the `build/j2act` mapping.
+- **Class version too high on WildFly.** Buildship takes Eclipse's compiler level from the toolchain, not from `options.release`. The sample now sets the toolchain to 11, plus the foojay resolver so Gradle downloads JDK 11 when it finds none.
+- **Tailwind's new class did not reach the page.** This was the same missing dev mode. With dev mode on an exploded WildFly deployment, saving a new class in a `.java` file puts it into the open page's stylesheet without a reload (checked).
+- **`chart.js/auto` versus `chart.js`.**
+  - `chart.js/auto` is the documented import that registers every chart type; plain `chart.js` needs `Chart.register(...)` or throws at runtime ("bar" is not a registered controller). Restored.
+  - The error Eclipse showed for `chart.js/auto` is still to be identified.
+- **Also changed:**
+  - `vite build` and `tsc` are separate tasks: `j2actTypecheck` under `check` in Gradle, the `typecheck` goal in Maven's test phase.
+  - Source maps are off in production builds unless `build.sourcemap` is set in `vite.config`.
+  - The plugins only set conventions and defaults: `node { }` settings, `build.sourcemap`, `publicDir` and `modulePreload` in `vite.config`, and the package manager from package.json's `packageManager` field all win.
+  - The Java sources are inputs of the Vite build when Tailwind is a dependency.
+- **The recursion probe:** `div(each(..., n -> salesChart()))` inside `SalesChart.render` renders the chart inside itself without end. Moved the idea to the checklist: put the probe in `HomePage` instead.
+
 ## Eclipse checklist (for you to run)
 
 Setup, once:
@@ -112,7 +139,7 @@ For each of `spike/gradle-wildfly` (Import > Existing Gradle Project) and `spike
   - `node_modules` appears; for Gradle, Node lands in `.gradle/nodejs`.
   - `.j2act/types/com/example/spike/components/SalesChart.types.d.ts` exists.
   - The Problems view has no errors.
-- **E2 Processor.** Add a component in `each(...)` without `withKey` to any page, for example `div(each(List.of("a"), n -> salesChart()))`.
+- **E2 Processor.** Add a component in `each(...)` without `withKey` to `HomePage`, for example `div(each(List.of("a"), n -> salesChart()))`. Not inside `SalesChart` itself: there it renders itself without end.
   - Is there a j2act warning in Problems?
   - For Gradle this is the open question, since Buildship does not configure annotation processing.
 - **E3 Save a `.ts` edit** (change `const BUILD = "one"`). Does the build output update without a Gradle or Maven run?

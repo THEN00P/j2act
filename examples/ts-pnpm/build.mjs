@@ -22,5 +22,6 @@ await esbuild.build({
   chunkNames: "chunks/[name]-[hash]",
   assetNames: "assets/[name]-[hash]",
   loader: { ".woff2": "file", ".woff": "file", ".png": "file", ".svg": "file" },
-  logLevel: "info",
+  // Warnings and errors only: esbuild prints its summary on stderr, which Maven logs as [ERROR].
+  logLevel: "warning",
 });

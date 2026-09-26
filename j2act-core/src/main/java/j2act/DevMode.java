@@ -42,7 +42,7 @@ final class DevMode implements AutoCloseable {
       return null;
     }
     URL token = engine.resourceLoader.getResource("META-INF/j2act/dev.json");
-    if (token == null || !"file".equals(token.getProtocol()) && !"vfs".equals(token.getProtocol())) {
+    if (token == null || !onDisk(token)) {
       return null;
     }
     if (underTest()) {
@@ -61,6 +61,22 @@ final class DevMode implements AutoCloseable {
       return null;
     }
     return new DevMode(dir);
+  }
+
+  /**
+   * The token as a plain file: a class folder, or an exploded deployment such as the one an IDE
+   * publishes to WildFly (vfs: URLs name the real path then). Inside a jar, a boot jar or a WAR
+   * file it is not, wherever that archive runs, so a packaged app is never in dev mode.
+   */
+  static boolean onDisk(URL token) {
+    if (!"file".equals(token.getProtocol()) && !"vfs".equals(token.getProtocol())) {
+      return false;
+    }
+    try {
+      return java.nio.file.Files.isRegularFile(java.nio.file.Paths.get(new java.net.URI("file", null, token.getPath(), null)));
+    } catch (java.net.URISyntaxException | RuntimeException e) {
+      return false;
+    }
   }
 
   private static boolean underTest() {

@@ -4,14 +4,11 @@ plugins {
 }
 
 java {
-  // WildFly 29 on Java 11, built with any newer JDK.
+  // WildFly 29 on Java 11. The toolchain, not options.release: Buildship takes Eclipse's
+  // compiler level from it, and WildFly on 11 rejects classes built for a newer Java.
   toolchain {
-    languageVersion = JavaLanguageVersion.of(17)
+    languageVersion = JavaLanguageVersion.of(11)
   }
-}
-
-tasks.withType<JavaCompile>().configureEach {
-  options.release = 11
 }
 
 repositories {

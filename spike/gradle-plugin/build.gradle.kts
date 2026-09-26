@@ -11,6 +11,8 @@ repositories {
 
 dependencies {
   implementation("com.github.node-gradle:gradle-node-plugin:7.1.0")
+  // Eclipse annotation processing for Buildship projects (com.diffplug.eclipse.apt).
+  implementation("com.diffplug.gradle:goomph:4.4.1")
 }
 
 java {

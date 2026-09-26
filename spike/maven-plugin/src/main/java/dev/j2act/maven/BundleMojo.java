@@ -19,7 +19,7 @@ import org.codehaus.plexus.util.Scanner;
 import org.sonatype.plexus.build.incremental.BuildContext;
 
 /**
- * SPIKE: builds the client modules with the package's build script (tsc and Vite) into
+ * SPIKE: builds the client modules and page entries with Vite into
  * target/classes. In Eclipse's incremental builds it runs only when a frontend file changed,
  * as told by m2e's BuildContext, and refreshes its output so Eclipse sees and publishes it.
  * Node comes from frontend-maven-plugin's install (project/node) or the PATH.
@@ -52,34 +52,24 @@ public class BundleMojo extends AbstractMojo {
       getLog().debug("j2act: no frontend file changed");
       return;
     }
-    File nodeDir = new File(basedir, "node");
-    boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
-    File node = new File(nodeDir, windows ? "node.exe" : "node");
-    String nodeCommand = node.isFile() ? node.getAbsolutePath() : "node";
-    boolean pnpm = new File(basedir, "pnpm-lock.yaml").isFile();
-    File cli = new File(nodeDir, pnpm ? "node_modules/pnpm/bin/pnpm.cjs" : "node_modules/npm/bin/npm-cli.js");
-    List<String> command = new ArrayList<>();
-    if (cli.isFile()) {
-      command.add(nodeCommand);
-      command.add(cli.getAbsolutePath());
-    } else {
-      command.add(pnpm ? "pnpm" : "npm");
-    }
-    command.add("run");
-    command.add("build");
-    run(command, nodeDir);
+    // vite build, as `npm exec vite build`: type errors are the typecheck goal's, not the build's.
+    exec(basedir, List.of("vite", "build"));
     buildContext.refresh(new File(outputDirectory, "META-INF/j2act/vite"));
   }
 
-  /** In an incremental build: did a client module, a page entry or the frontend configuration change? */
+  /**
+   * In an incremental build: did a client module, a page entry or the frontend configuration
+   * change? With Tailwind, Java sources count too, since it reads class names from them.
+   */
   private boolean changed() {
+    boolean tailwind = read(new File(basedir, "package.json")).contains("\"tailwindcss\"");
     for (String dir : new String[] {"src/main/java", "src/main/frontend"}) {
       File root = new File(basedir, dir);
       if (!root.isDirectory()) {
         continue;
       }
       Scanner scanner = buildContext.newScanner(root);
-      scanner.setIncludes(FRONTEND_SOURCES);
+      scanner.setIncludes(tailwind ? new String[] {"**/*"} : FRONTEND_SOURCES);
       scanner.scan();
       if (scanner.getIncludedFiles().length > 0) {
         return true;
@@ -90,10 +80,40 @@ public class BundleMojo extends AbstractMojo {
         return true;
       }
     }
-    return buildContext.hasDelta(".j2act/types");
+    return false;
   }
 
-  private void run(List<String> command, File nodeDir) throws MojoExecutionException {
+  /** `npm exec -- <command>` or `pnpm exec <command>` in the project, with the Node frontend-maven-plugin installed. */
+  void exec(File basedir, List<String> args) throws MojoExecutionException {
+    File nodeDir = new File(basedir, "node");
+    boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
+    File node = new File(nodeDir, windows ? "node.exe" : "node");
+    boolean pnpm = new File(basedir, "pnpm-lock.yaml").isFile();
+    File cli = new File(nodeDir, pnpm ? "node_modules/pnpm/bin/pnpm.cjs" : "node_modules/npm/bin/npm-cli.js");
+    List<String> command = new ArrayList<>();
+    if (cli.isFile()) {
+      command.add(node.isFile() ? node.getAbsolutePath() : "node");
+      command.add(cli.getAbsolutePath());
+    } else {
+      command.add(pnpm ? "pnpm" : "npm");
+    }
+    command.add("exec");
+    if (!pnpm) {
+      command.add("--");
+    }
+    command.addAll(args);
+    run(basedir, command, nodeDir);
+  }
+
+  static String read(File file) {
+    try {
+      return file.isFile() ? new String(java.nio.file.Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8) : "";
+    } catch (IOException e) {
+      return "";
+    }
+  }
+
+  void run(File basedir, List<String> command, File nodeDir) throws MojoExecutionException {
     getLog().info("j2act: " + String.join(" ", command));
     ProcessBuilder builder = new ProcessBuilder(command).directory(basedir).redirectErrorStream(true);
     Map<String, String> env = builder.environment();
