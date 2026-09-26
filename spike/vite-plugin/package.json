@@ -1,0 +1,11 @@
+{
+  "name": "@j2act/vite",
+  "version": "0.1.0-spike",
+  "private": true,
+  "type": "module",
+  "description": "SPIKE: j2act client modules as Vite entries, built onto the classpath with a manifest.",
+  "exports": "./index.js",
+  "peerDependencies": {
+    "vite": ">=7"
+  }
+}

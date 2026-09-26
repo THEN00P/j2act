@@ -136,6 +136,8 @@
       ack(m.a);
     } else if (m.t === "expired") {
       remount();
+    } else if (m.t === "mods") {
+      reimport(m.m);
     }
   }
 
@@ -338,25 +340,26 @@
 
   function mountClient(el) {
     const id = el.getAttribute("data-j2-client");
+    const url = el.getAttribute("data-j2-module");
     let c = clients.get(id);
-    if (c && c.el === el) {
+    // A new build of the module (dev mode) mounts again; otherwise only props can change.
+    if (c && c.el === el && c.url === url) {
       propsChanged(c);
       return;
     }
     if (c) {
       unmount(c);
     }
-    c = { id: id, el: el, props: el.getAttribute("data-j2-props"), api: null, decoded: null, cleanup: null,
-      ready: false, failed: null, waiting: [] };
+    c = { id: id, el: el, url: url, props: el.getAttribute("data-j2-props"), api: null, decoded: null,
+      cleanup: null, ready: false, failed: null, waiting: [] };
     clients.set(id, c);
     if (!el.__j2attrs) {
       el.__j2attrs = attributeNames(el);
     }
-    const url = el.getAttribute("data-j2-module");
     const name = el.getAttribute("data-j2-export");
-    const style = el.getAttribute("data-j2-css");
-    // A TS build's stylesheet (CSS imports, CSS modules) is in place before mount runs.
-    Promise.all([import(url), style ? stylesheet(style) : null]).then(([module]) => {
+    const styles = (el.getAttribute("data-j2-css") || "").split(" ").filter(Boolean);
+    // A build's stylesheets (CSS imports, CSS modules) are in place before mount runs.
+    Promise.all([import(url), ...styles.map(stylesheet)]).then(([module]) => {
       if (clients.get(id) !== c) {
         return;
       }
@@ -389,6 +392,40 @@
       stylesheets.set(url, loaded);
     }
     return loaded;
+  }
+
+  // SPIKE, dev mode: a new build moved these files. Stylesheets swap in place without a flash,
+  // clients whose module moved mount again with their current props; Java state is untouched.
+  function reimport(moved) {
+    if (moved["*"]) {
+      location.reload();
+      return;
+    }
+    document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
+      const next = moved[link.getAttribute("href")];
+      if (!next) {
+        return;
+      }
+      const fresh = link.cloneNode();
+      fresh.href = next;
+      fresh.onload = () => link.remove();
+      link.after(fresh);
+      if (stylesheets.has(link.getAttribute("href"))) {
+        stylesheets.set(next, stylesheets.get(link.getAttribute("href")));
+        stylesheets.delete(link.getAttribute("href"));
+      }
+    });
+    document.querySelectorAll("[data-j2-client]").forEach((el) => {
+      const url = el.getAttribute("data-j2-module");
+      if (moved[url]) {
+        el.setAttribute("data-j2-module", moved[url]);
+      }
+      const css = el.getAttribute("data-j2-css");
+      if (css) {
+        el.setAttribute("data-j2-css", css.split(" ").map((u) => moved[u] || u).join(" "));
+      }
+    });
+    scanClients();
   }
 
   function start(c) {

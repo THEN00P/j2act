@@ -77,6 +77,7 @@ public final class J2Act implements AutoCloseable {
   final ClassLoader resourceLoader;
   final Packages packages = new Packages(this);
   final Modules modules = new Modules(this);
+  private final DevMode dev;
 
   private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Connection, Session> byConnection = new ConcurrentHashMap<>();
@@ -121,6 +122,31 @@ public final class J2Act implements AutoCloseable {
     this.sweeper = Executors.newSingleThreadScheduledExecutor(daemon("j2act-sweeper"));
     long every = b.sweepInterval.toMillis();
     sweeper.scheduleWithFixedDelay(this::sweep, every, every, TimeUnit.MILLISECONDS);
+    this.dev = DevMode.detect(this);
+    if (dev != null) {
+      modules.viteDisk = dev.viteDir();
+      dev.start(this);
+      sweeper.scheduleWithFixedDelay(this::devRefresh, 300, 300, TimeUnit.MILLISECONDS);
+    }
+  }
+
+  /** SPIKE: dev mode's poll of the Vite manifest; pages re-import what moved. */
+  private void devRefresh() {
+    try {
+      Map<String, String> moved = modules.refresh();
+      if (moved.isEmpty()) {
+        return;
+      }
+      StringBuilder b = new StringBuilder("{\"t\":\"mods\",\"m\":");
+      Json.write(moved, b);
+      String message = b.append('}').toString();
+      for (Session session : sessions.values()) {
+        session.post(() -> session.send(message));
+      }
+      log(System.Logger.Level.INFO, "j2act dev: new build, " + moved.size() + " changed file(s) re-imported", null);
+    } catch (RuntimeException e) {
+      log(System.Logger.Level.WARNING, "j2act dev: reading the new build failed", e);
+    }
   }
 
   public static Builder builder(PageResolver resolver) {
@@ -450,6 +476,9 @@ public final class J2Act implements AutoCloseable {
 
   @Override public void close() {
     sweeper.shutdownNow();
+    if (dev != null) {
+      dev.close();
+    }
     for (Session session : sessions.values()) {
       discard(session, false);
     }

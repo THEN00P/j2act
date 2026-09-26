@@ -35,6 +35,7 @@ public final class J2ActProcessor extends AbstractProcessor {
 
   private Checks checks;
   private ClientTypes clientTypes;
+  private boolean tokenWritten;
 
   @Override public SourceVersion getSupportedSourceVersion() {
     return SourceVersion.latestSupported();
@@ -65,6 +66,10 @@ public final class J2ActProcessor extends AbstractProcessor {
   }
 
   @Override public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment round) {
+    if (!tokenWritten && !round.getRootElements().isEmpty()) {
+      tokenWritten = true;
+      clientTypes.project = DevToken.write(processingEnv.getFiler(), round.getRootElements().iterator().next());
+    }
     for (Element root : round.getRootElements()) {
       if (root instanceof TypeElement) {
         try {

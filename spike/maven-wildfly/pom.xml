@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <!-- SPIKE: the Maven + WildFly row. Standalone, with j2act from the local repository. -->
+  <groupId>com.example</groupId>
+  <artifactId>maven-wildfly</artifactId>
+  <version>1</version>
+  <packaging>war</packaging>
+
+  <properties>
+    <maven.compiler.release>11</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <j2act.version>0.1.0-SNAPSHOT</j2act.version>
+    <node.version>v24.14.0</node.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-jakarta</artifactId>
+      <version>${j2act.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-html</artifactId>
+      <version>${j2act.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-router</artifactId>
+      <version>${j2act.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>jakarta.platform</groupId>
+      <artifactId>jakarta.jakartaee-api</artifactId>
+      <version>10.0.0</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>maven-wildfly</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <annotationProcessorPaths>
+            <path>
+              <groupId>dev.j2act</groupId>
+              <artifactId>j2act-processor</artifactId>
+              <version>${j2act.version}</version>
+            </path>
+          </annotationProcessorPaths>
+        </configuration>
+      </plugin>
+      <!-- Node and node_modules, as in any Maven project with a frontend. -->
+      <plugin>
+        <groupId>com.github.eirslett</groupId>
+        <artifactId>frontend-maven-plugin</artifactId>
+        <version>2.0.2</version>
+        <configuration>
+          <nodeVersion>${node.version}</nodeVersion>
+        </configuration>
+        <executions>
+          <execution>
+            <id>install-node-and-npm</id>
+            <phase>initialize</phase>
+            <goals>
+              <goal>install-node-and-npm</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>npm-ci</id>
+            <phase>initialize</phase>
+            <goals>
+              <goal>npm</goal>
+            </goals>
+            <configuration>
+              <arguments>ci</arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <!-- The client modules' build, incremental in Eclipse. -->
+      <plugin>
+        <groupId>dev.j2act</groupId>
+        <artifactId>j2act-maven-plugin</artifactId>
+        <version>${j2act.version}</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>bundle</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-war-plugin</artifactId>
+        <version>3.4.0</version>
+        <configuration>
+          <failOnMissingWebXml>false</failOnMissingWebXml>
+          <!-- The dev token stays out of the archive. -->
+          <packagingExcludes>WEB-INF/classes/META-INF/j2act/dev.json</packagingExcludes>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

@@ -67,6 +67,11 @@ final class ClientTypes {
   private final Filer filer;
   private final boolean jsonb;
   private final Properties domInterfaces = new Properties();
+  /**
+   * SPIKE: the project folder with a package.json, when there is one. The types then also go to
+   * its .j2act/types, one place for Maven, Gradle and every IDE, as SvelteKit's .svelte-kit/types.
+   */
+  java.io.File project;
 
   ClientTypes(ProcessingEnvironment env, Source source) {
     this.source = source;
@@ -109,10 +114,28 @@ final class ClientTypes {
       report(Diagnostic.Kind.WARNING, "j2act: cannot write " + root.getSimpleName()
         + ".types.d.ts: " + e.getMessage(), root);
     }
+    if (project != null) {
+      writeProjectTypes(pkg, root.getSimpleName() + ".types.d.ts", text, root);
+    }
     for (Map.Entry<TypeElement, ExecutableElement> mount : file.mounts.entrySet()) {
       writeMountParams(root, mount.getKey(), mount.getValue());
     }
     checkModule(root, clients);
+  }
+
+  /** Rewritten only when the text changed, so file watchers (tsc, Vite) stay quiet. */
+  private void writeProjectTypes(String pkg, String name, String text, TypeElement root) {
+    java.nio.file.Path out = project.toPath().resolve(".j2act/types").resolve(pkg.replace('.', '/')).resolve(name);
+    try {
+      byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+      if (java.nio.file.Files.isRegularFile(out) && java.util.Arrays.equals(java.nio.file.Files.readAllBytes(out), bytes)) {
+        return;
+      }
+      java.nio.file.Files.createDirectories(out.getParent());
+      java.nio.file.Files.write(out, bytes);
+    } catch (IOException e) {
+      report(Diagnostic.Kind.WARNING, "j2act: cannot write " + out + ": " + e.getMessage(), root);
+    }
   }
 
   /** The prop names of mount(...) for the runtime, so -parameters is not needed: Webcam$Camera.mount-params. */
