@@ -48,13 +48,22 @@ public class BundleMojo extends AbstractMojo {
     if (skip || !new File(basedir, "package.json").isFile()) {
       return;
     }
-    if (buildContext.isIncremental() && !changed()) {
+    File output = new File(outputDirectory, "META-INF/j2act/vite");
+    // An incremental build runs Vite when a frontend file changed, or when no build is there at
+    // all: a failed or cleaned-away build must not stay missing until the next edit.
+    if (buildContext.isIncremental() && !changed() && new File(output, ".vite/manifest.json").isFile()) {
       getLog().debug("j2act: no frontend file changed");
       return;
     }
-    // vite build, as `npm exec vite build`: type errors are the typecheck goal's, not the build's.
-    exec(basedir, List.of("vite", "build"));
-    buildContext.refresh(new File(outputDirectory, "META-INF/j2act/vite"));
+    // vite build: type errors are the typecheck goal's, not the build's. Once more on failure,
+    // since an IDE clean can pull the folder away from under a build.
+    try {
+      exec(basedir, List.of("vite", "build"));
+    } catch (MojoExecutionException first) {
+      getLog().warn("j2act: vite build failed, trying once more: " + first.getMessage());
+      exec(basedir, List.of("vite", "build"));
+    }
+    buildContext.refresh(output);
   }
 
   /**
@@ -83,25 +92,23 @@ public class BundleMojo extends AbstractMojo {
     return false;
   }
 
-  /** `npm exec -- <command>` or `pnpm exec <command>` in the project, with the Node frontend-maven-plugin installed. */
+  /**
+   * A tool from node_modules, run by Node directly, not through npm or a shell: vite or tsc. Node
+   * is the one frontend-maven-plugin installed in the project, else the one on the PATH.
+   */
   void exec(File basedir, List<String> args) throws MojoExecutionException {
+    String script = args.get(0).equals("tsc") ? "node_modules/typescript/bin/tsc" : "node_modules/vite/bin/vite.js";
+    File tool = new File(basedir, script);
+    if (!tool.isFile()) {
+      throw new MojoExecutionException("j2act: " + tool + " is missing; install the npm packages first");
+    }
     File nodeDir = new File(basedir, "node");
     boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
     File node = new File(nodeDir, windows ? "node.exe" : "node");
-    boolean pnpm = new File(basedir, "pnpm-lock.yaml").isFile();
-    File cli = new File(nodeDir, pnpm ? "node_modules/pnpm/bin/pnpm.cjs" : "node_modules/npm/bin/npm-cli.js");
     List<String> command = new ArrayList<>();
-    if (cli.isFile()) {
-      command.add(node.isFile() ? node.getAbsolutePath() : "node");
-      command.add(cli.getAbsolutePath());
-    } else {
-      command.add(pnpm ? "pnpm" : "npm");
-    }
-    command.add("exec");
-    if (!pnpm) {
-      command.add("--");
-    }
-    command.addAll(args);
+    command.add(node.isFile() ? node.getAbsolutePath() : "node");
+    command.add(tool.getAbsolutePath());
+    command.addAll(args.subList(1, args.size()));
     run(basedir, command, nodeDir);
   }
 
@@ -123,14 +130,21 @@ public class BundleMojo extends AbstractMojo {
     }
     try {
       Process process = builder.start();
+      java.util.ArrayDeque<String> tail = new java.util.ArrayDeque<>();
       try (BufferedReader out = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
         for (String line; (line = out.readLine()) != null; ) {
           getLog().info(line);
+          tail.addLast(line.replaceAll("\\p{Cntrl}\\[[0-9;]*m", ""));
+          if (tail.size() > 20) {
+            tail.removeFirst();
+          }
         }
       }
       int exit = process.waitFor();
       if (exit != 0) {
-        throw new MojoExecutionException("j2act: " + String.join(" ", command) + " failed with exit code " + exit);
+        // The tool's own last lines go into the error: m2e shows the message in Problems, not the log.
+        throw new MojoExecutionException("j2act: " + String.join(" ", command) + " failed with exit code " + exit
+          + ":\n" + String.join("\n", tail));
       }
     } catch (IOException e) {
       throw new MojoExecutionException("j2act: could not run " + command.get(0), e);

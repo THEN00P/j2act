@@ -58,6 +58,9 @@ public abstract class EclipseAptTask extends DefaultTask {
     update(new File(settings, "org.eclipse.jdt.core.prefs"), p -> {
       p.setProperty("eclipse.preferences.version", "1");
       p.setProperty("org.eclipse.jdt.core.compiler.processAnnotations", "enabled");
+      // Parameter names in the class files, as javac -parameters: the runtime's fallback for
+      // mount() prop names when a processor output is missing.
+      p.setProperty("org.eclipse.jdt.core.compiler.codegen.methodParameters", "generate");
     });
   }
 

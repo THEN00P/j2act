@@ -133,6 +133,9 @@ public class J2ActPlugin implements Plugin<Project> {
       task.getProjectDir().set(project.getLayout().getProjectDirectory());
     });
     eclipse.synchronizationTasks(apt);
+    // Eclipse writes annotation processor resources (.mount-params, the dev token) to the default
+    // output folder, and WTP publishes only the source folders' outputs: make them the same.
+    eclipse.getClasspath().setDefaultOutputDir(project.file("bin/main"));
     project.getPlugins().withType(WarPlugin.class, war -> {
       project.getPluginManager().apply(EclipseWtpPlugin.class);
       eclipse.getWtp().getFacet().getFile().whenMerged(f -> {
