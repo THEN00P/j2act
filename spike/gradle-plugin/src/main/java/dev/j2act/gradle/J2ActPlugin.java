@@ -119,15 +119,20 @@ public class J2ActPlugin implements Plugin<Project> {
   }
 
   /**
-   * Eclipse with Buildship runs no annotation processors: goomph's apt plugin writes the
-   * .factorypath and settings, run on every Gradle refresh. A WAR project gets WTP, with a
-   * Jakarta EE 10 web facet in place of Gradle's Servlet 2.4 default.
+   * Eclipse with Buildship runs no annotation processors: j2actEclipseApt writes the settings on
+   * every Gradle refresh. A WAR project gets WTP, with a Jakarta EE 10 web facet in place of
+   * Gradle's Servlet 2.4 default.
    */
   private void eclipse(Project project) {
     project.getPluginManager().apply(EclipsePlugin.class);
-    project.getPluginManager().apply("com.diffplug.eclipse.apt");
     EclipseModel eclipse = project.getExtensions().getByType(EclipseModel.class);
-    eclipse.synchronizationTasks("eclipseJdtApt", "eclipseFactorypath", "eclipseJdt");
+    TaskProvider<EclipseAptTask> apt = project.getTasks().register("j2actEclipseApt", EclipseAptTask.class, task -> {
+      task.setGroup("ide");
+      task.setDescription("Turns on annotation processing for Eclipse (Buildship does not).");
+      task.getProcessorPath().from(project.getConfigurations().getByName("annotationProcessor"));
+      task.getProjectDir().set(project.getLayout().getProjectDirectory());
+    });
+    eclipse.synchronizationTasks(apt);
     project.getPlugins().withType(WarPlugin.class, war -> {
       project.getPluginManager().apply(EclipseWtpPlugin.class);
       eclipse.getWtp().getFacet().getFile().whenMerged(f -> {

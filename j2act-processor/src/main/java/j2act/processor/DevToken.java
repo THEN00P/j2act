@@ -28,14 +28,19 @@ final class DevToken {
    * Writes the token and returns the project folder, or null when there is none. The token names
    * one type it came from, as Gradle's incremental compile wants of an isolating processor.
    */
-  static File write(Filer filer, Element origin) {
+  static File write(Filer filer, Element origin, java.nio.file.Path sourceFile) {
     try {
       FileObject token = filer.createResource(StandardLocation.CLASS_OUTPUT, "", PATH, origin);
       URI uri = token.toUri();
       if (!"file".equals(uri.getScheme())) {
         return null;
       }
-      File project = projectOf(new File(uri));
+      // From the source file when the compiler names it: an IDE's class output may sit in a
+      // folder that holds a copy of the project (Eclipse copied one into bin/).
+      File project = sourceFile != null ? projectOf(sourceFile.toFile()) : null;
+      if (project == null) {
+        project = projectOf(new File(uri));
+      }
       if (project == null) {
         return null;
       }
