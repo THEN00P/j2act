@@ -13,7 +13,7 @@ repositories {
 
 dependencies {
   implementation("com.github.node-gradle:gradle-node-plugin:7.1.0")
-  implementation("io.github.then00p:exploded-hotswap:0.1.0-SNAPSHOT")
+  implementation("io.github.then00p:exploded-hotswap-gradle-plugin:0.1.0-SNAPSHOT")
 }
 
 java {
