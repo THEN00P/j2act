@@ -61,6 +61,15 @@ public abstract class EclipseAptTask extends DefaultTask {
       // Parameter names in the class files, as javac -parameters: the runtime's fallback for
       // mount() prop names when a processor output is missing.
       p.setProperty("org.eclipse.jdt.core.compiler.codegen.methodParameters", "generate");
+      // TypeScript beside the Java sources is Vite's input, not a resource: Eclipse would copy it
+      // into bin/main, publish it, and check the stale copy. Plain .client.js still gets copied.
+      String filter = p.getProperty("org.eclipse.jdt.core.builder.resourceCopyExclusionFilter", "*.launch");
+      for (String pattern : new String[] {"*.ts", "*.tsx", "*.mts"}) {
+        if (!(("," + filter + ",").contains("," + pattern + ","))) {
+          filter = filter.isEmpty() ? pattern : filter + "," + pattern;
+        }
+      }
+      p.setProperty("org.eclipse.jdt.core.builder.resourceCopyExclusionFilter", filter);
     });
   }
 
