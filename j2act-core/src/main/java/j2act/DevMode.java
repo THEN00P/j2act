@@ -27,12 +27,23 @@ final class DevMode implements AutoCloseable {
     "org.junit.", "org.testng.", "org.springframework.boot.test.", "io.cucumber.", "org.spockframework."
   };
 
+  /** The runner's exit code when node_modules changed under it: start it again. */
+  static final int RESTART = 75;
+  /** Terminal colours in Vite's output, dropped from the log. */
+  private static final String ANSI = "\u001B\\[[0-9;]*m";
+
   final File project;
+  private J2Act engine;
+  private String node;
   private Process vite;
   private FileLock lock;
   private FileChannel lockChannel;
+  /** Package-private for the test that checks a closed DevMode leaves no hook behind. */
+  Thread stopHook;
+  private boolean closed;
+  private int crashes;
 
-  private DevMode(File project) {
+  DevMode(File project) {
     this.project = project;
   }
 
@@ -99,47 +110,127 @@ final class DevMode implements AutoCloseable {
 
   /** Starts `vite build --watch` unless another process holds the project's watch lock. */
   void start(J2Act engine) {
+    this.engine = engine;
     // @j2act/vite's runner ends with this JVM, since it watches its stdin pipe.
-    File runner = new File(project, "node_modules/@j2act/vite/dev.js");
+    File runner = runner();
     if (!runner.isFile()) {
       engine.log(System.Logger.Level.WARNING, "j2act dev: " + runner + " is missing; run the build once"
         + " (gradle build, mvn package or npm install), then restart", null);
       return;
     }
-    String node = findNode();
+    node = findNode();
     if (node == null) {
       engine.log(System.Logger.Level.WARNING, "j2act dev: no Node found in the project or on the PATH;"
         + " serving the last build", null);
       return;
     }
     try {
-      File lockFile = new File(project, "node_modules/.j2act-dev.lock");
-      lockChannel = new RandomAccessFile(lockFile, "rw").getChannel();
+      // Outside node_modules: npm ci deletes that folder, and on Windows a file this JVM holds
+      // open stops it halfway, leaving a broken install behind.
+      java.nio.file.Path lockFile = project.toPath().resolve(".j2act/dev.lock");
+      java.nio.file.Files.createDirectories(lockFile.getParent());
+      lockChannel = new RandomAccessFile(lockFile.toFile(), "rw").getChannel();
       lock = lockChannel.tryLock();
       if (lock == null) {
         engine.log(System.Logger.Level.INFO, "j2act dev: another process already watches " + project, null);
         lockChannel.close();
+        lockChannel = null;
         return;
       }
-      List<String> command = new ArrayList<>(List.of(node, runner.getAbsolutePath()));
-      // stdin stays a pipe the JVM holds open: the runner exits when it closes.
-      vite = new ProcessBuilder(command).directory(project).redirectErrorStream(true).start();
-      engine.log(System.Logger.Level.INFO, "j2act dev: vite build --watch in " + project, null);
-      Thread pump = new Thread(() -> {
-        try (BufferedReader out = new BufferedReader(new InputStreamReader(vite.getInputStream(), StandardCharsets.UTF_8))) {
-          for (String line; (line = out.readLine()) != null; ) {
-            engine.log(System.Logger.Level.INFO, "vite: " + line.replaceAll("\u001B\\[[0-9;]*m", ""), null);
-          }
-        } catch (IOException e) {
-          // The process ended.
-        }
-      }, "j2act-vite");
-      pump.setDaemon(true);
-      pump.start();
-      Runtime.getRuntime().addShutdownHook(new Thread(this::close, "j2act-vite-stop"));
     } catch (IOException e) {
       engine.log(System.Logger.Level.WARNING, "j2act dev: could not start vite", e);
+      return;
     }
+    registerStopHook();
+    launch();
+  }
+
+  private File runner() {
+    return new File(project, "node_modules/@j2act/vite/dev.js");
+  }
+
+  /** Runs the runner, and runs it again when it exits while dev mode is on. */
+  private synchronized void launch() {
+    if (closed) {
+      return;
+    }
+    Process process;
+    try {
+      // stdin stays a pipe the JVM holds open: the runner exits when it closes.
+      process = new ProcessBuilder(node, runner().getAbsolutePath()).directory(project).redirectErrorStream(true).start();
+    } catch (IOException e) {
+      engine.log(System.Logger.Level.WARNING, "j2act dev: could not start vite", e);
+      return;
+    }
+    vite = process;
+    long startedAt = System.currentTimeMillis();
+    engine.log(System.Logger.Level.INFO, "j2act dev: vite build --watch in " + project, null);
+    Thread pump = new Thread(() -> {
+      try (BufferedReader out = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+        for (String line; (line = out.readLine()) != null; ) {
+          engine.log(System.Logger.Level.INFO, "vite: " + line.replaceAll(ANSI, ""), null);
+        }
+      } catch (IOException e) {
+        // The process ended.
+      }
+      exited(process, startedAt);
+    }, "j2act-vite");
+    pump.setDaemon(true);
+    // A thread keeps its context class loader alive: never the application's, which a redeploy drops.
+    pump.setContextClassLoader(null);
+    pump.start();
+  }
+
+  /**
+   * The runner ended while dev mode is on. It exits with RESTART when node_modules changed under it
+   * (an npm install), and then starts again at once with a fresh Node; a crash starts it again after
+   * a pause, until it keeps crashing.
+   */
+  private void exited(Process process, long startedAt) {
+    int code;
+    try {
+      code = process.waitFor();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return;
+    }
+    synchronized (this) {
+      if (closed || vite != process) {
+        return;
+      }
+      vite = null;
+      if (code == RESTART) {
+        engine.log(System.Logger.Level.INFO, "j2act dev: node_modules changed, starting vite again", null);
+        crashes = 0;
+      } else {
+        crashes = System.currentTimeMillis() - startedAt < 30_000 ? crashes + 1 : 1;
+        if (crashes > 3) {
+          engine.log(System.Logger.Level.WARNING, "j2act dev: vite keeps exiting (code " + code + "); serving the last"
+            + " build. Fix the error above, then redeploy.", null);
+          return;
+        }
+        engine.log(System.Logger.Level.WARNING, "j2act dev: vite exited with code " + code + ", starting it again", null);
+      }
+    }
+    try {
+      Thread.sleep(code == RESTART ? 200 : 2000);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return;
+    }
+    launch();
+  }
+
+  /**
+   * Stops the runner when the JVM exits without closing the engine. The hook is removed on close:
+   * a registered hook stays reachable until the JVM exits, and through it this DevMode, its engine
+   * and the class loader of an application that was redeployed long ago.
+   */
+  void registerStopHook() {
+    Thread hook = new Thread(this::close, "j2act-vite-stop");
+    hook.setContextClassLoader(null);
+    Runtime.getRuntime().addShutdownHook(hook);
+    stopHook = hook;
   }
 
   /** Node as the Gradle plugin, frontend-maven-plugin or the machine installed it. */
@@ -170,6 +261,16 @@ final class DevMode implements AutoCloseable {
   }
 
   @Override public synchronized void close() {
+    closed = true;
+    Thread hook = stopHook;
+    stopHook = null;
+    if (hook != null && Thread.currentThread() != hook) {
+      try {
+        Runtime.getRuntime().removeShutdownHook(hook);
+      } catch (IllegalStateException e) {
+        // The JVM is already shutting down.
+      }
+    }
     Process process = vite;
     vite = null;
     if (process != null) {

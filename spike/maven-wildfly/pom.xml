@@ -75,14 +75,16 @@
               <goal>install-node-and-npm</goal>
             </goals>
           </execution>
+          <!-- npm install, not npm ci: Eclipse and VS Code run this on every full build, and npm ci
+               deletes node_modules under the running dev watcher, which Windows stops halfway. -->
           <execution>
-            <id>npm-ci</id>
+            <id>npm-install</id>
             <phase>initialize</phase>
             <goals>
               <goal>npm</goal>
             </goals>
             <configuration>
-              <arguments>ci</arguments>
+              <arguments>install</arguments>
             </configuration>
           </execution>
         </executions>

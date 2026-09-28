@@ -10,7 +10,7 @@ Gradle is a first-class build, as Maven is; the first production user builds wit
 The Gradle plugin:
 - puts j2act-processor on the annotationProcessor path;
 - adds plain .client.js files, and what they import, from src/main/java to the resources. It uses processResources { from("src/main/java") { include(...) } }, because resources.srcDir with an include filters every resource folder.
-- With a package.json, it applies node-gradle with conventions only: Node downloaded, version 24, npm ci when a lockfile exists. The package manager comes from package.json's packageManager field, else the lockfile, else npm. node-gradle's last release is from 2024; we keep it for its configuration and fork it if it is ever abandoned.
+- With a package.json, it applies node-gradle with conventions only: Node downloaded, version 24, and node-gradle's npm install rather than npm ci. The IDE runs the install on every refresh or full build, and npm ci deletes node_modules under the running dev watcher; on Windows the files the watcher holds open stop it halfway, which left a broken install in a spike run. The package manager comes from package.json's packageManager field, else the lockfile, else npm. node-gradle's last release is from 2024; we keep it for its configuration and fork it if it is ever abandoned.
 - registers j2actBundle (vite build), whose output folder joins the main source set, so run, test, war and bootJar see it. With Tailwind among the dependencies, the Java sources are inputs too.
 - registers j2actTypecheck (tsc --noEmit) under check.
 

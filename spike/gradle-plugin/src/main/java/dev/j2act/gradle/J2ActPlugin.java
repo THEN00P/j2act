@@ -63,7 +63,8 @@ public class J2ActPlugin implements Plugin<Project> {
     // Conventions only: whatever the build script sets in node { } wins.
     node.getDownload().convention(true);
     node.getVersion().convention("24.14.0");
-    node.getNpmInstallCommand().convention(project.file("package-lock.json").exists() ? "ci" : "install");
+    // npm install, node-gradle's default, not npm ci: a Gradle refresh in the IDE runs the install,
+    // and npm ci deletes node_modules under the running dev watcher, which Windows stops halfway.
 
     String manager = packageManager(project);
     String install = manager.equals("pnpm") ? "pnpmInstall" : manager.equals("yarn") ? "yarn" : "npmInstall";
