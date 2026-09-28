@@ -50,7 +50,8 @@ public class J2ActPlugin implements Plugin<Project> {
       task.from("src/main/java", spec -> spec.include("**/*.js", "**/*.mjs", "**/*.cjs", "**/*.css", "**/*.json")));
 
     eclipse(project);
-    explodedWar(project);
+    // explodedWar: the WAR as a folder with the editor's classes, for IDE servers, dev mode and HotSwap.
+    project.getPluginManager().apply("io.github.then00p.exploded-hotswap");
     if (project.file("package.json").exists()) {
       vite(project);
     }
@@ -134,9 +135,7 @@ public class J2ActPlugin implements Plugin<Project> {
       task.getProjectDir().set(project.getLayout().getProjectDirectory());
     });
     eclipse.synchronizationTasks(apt);
-    // Eclipse writes annotation processor resources (.mount-params, the dev token) to the default
-    // output folder, and WTP publishes only the source folders' outputs: make them the same.
-    eclipse.getClasspath().setDefaultOutputDir(project.file("bin/main"));
+
     project.getPlugins().withType(WarPlugin.class, war -> {
       project.getPluginManager().apply(EclipseWtpPlugin.class);
       // WTP publishes what the source folders compile to, file by file, so files the annotation
@@ -144,6 +143,10 @@ public class J2ActPlugin implements Plugin<Project> {
       // as m2e-wtp does with target/classes. Added when merged: Gradle's resource() drops folders
       // that do not exist yet, and on a fresh import neither this one nor build/j2act does.
       publish(eclipse, "bin/main");
+      // Eclipse writes the annotation processor's resources (.mount-params, the dev token) to the
+      // default output folder. Making that bin/main too clashed: Buildship in VS Code renamed the
+      // classes' folder to bin/main_.
+      publish(eclipse, "bin/default");
       eclipse.getWtp().getFacet().getFile().whenMerged(f -> {
         WtpFacet facet = (WtpFacet) f;
         for (Facet each : facet.getFacets()) {
@@ -152,27 +155,6 @@ public class J2ActPlugin implements Plugin<Project> {
           }
         }
       });
-    });
-  }
-
-  /**
-   * A WAR project also gets its WAR unpacked into build/exploded/<name>.war on every build. An
-   * IDE's server tooling (VS Code's RSP, JBoss Tools) deploys that folder, and a folder, unlike a
-   * WAR file, can run in dev mode (ADR 0024).
-   */
-  private void explodedWar(Project project) {
-    project.getPlugins().withType(WarPlugin.class, war -> {
-      org.gradle.api.tasks.TaskProvider<org.gradle.api.tasks.bundling.War> archive =
-        project.getTasks().named("war", org.gradle.api.tasks.bundling.War.class);
-      TaskProvider<org.gradle.api.tasks.Sync> exploded = project.getTasks().register("explodedWar",
-        org.gradle.api.tasks.Sync.class, task -> {
-          task.setGroup("build");
-          task.setDescription("Unpacks the WAR into build/exploded, for an IDE server to deploy as a folder.");
-          task.with(archive.get());
-          task.into(project.getLayout().getBuildDirectory().dir(archive.flatMap(w -> w.getArchiveFileName())
-            .map(name -> "exploded/" + name)));
-        });
-      project.getTasks().named("assemble", assemble -> assemble.dependsOn(exploded));
     });
   }
 

@@ -34,8 +34,7 @@ Eclipse with Maven (m2e):
 Eclipse with Gradle (Buildship):
 - Buildship sets up no annotation processing. The plugin's j2actEclipseApt task writes it on every Gradle refresh (a Buildship synchronization task): the processor path in .factorypath, APT on with a project-relative generated source folder under bin/, parameter names stored, and TypeScript left out of the copied resources (Eclipse's checker read a stale copy in bin/main, and WTP published it).
 - goomph's apt plugin was dropped: it writes the generated source folder as an absolute path, which Eclipse on Windows reads as project-relative.
-- Eclipse's default output is bin/main, so the processor's resources sit with the classes.
-- A WAR project gets eclipse-wtp, with a Jakarta EE 10 web facet in place of Gradle's Servlet 2.4 default. bin/main and build/j2act are mapped whole into WEB-INF/classes. WTP publishes a Gradle project's source folders file by file, and left the processor's resources behind.
+- A WAR project gets eclipse-wtp, with a Jakarta EE 10 web facet in place of Gradle's Servlet 2.4 default. bin/main and build/j2act are mapped whole into WEB-INF/classes. WTP publishes a Gradle project's source folders file by file, and left the processor's resources behind. bin/default, where Eclipse writes those resources, is mapped as well.
 - The mappings are added when the component file is merged, since Gradle's resource() drops folders that do not exist yet, as on a fresh import.
 - autoBuildTasks runs j2actBundle on every Eclipse build, and synchronizationTasks installs Node and node_modules on import.
 - The Java level comes from the toolchain, which Buildship reads; it ignores options.release.
@@ -49,4 +48,10 @@ IntelliJ:
 - For Maven it uses its own builder, which runs annotation processors but no Maven plugins, so dev mode's watcher does the frontend build, as with Vaadin.
 - It was not tested (no Jakarta EE license), and its Jakarta EE server integration is out of scope.
 
-A WildFly Gradle plugin is out of scope: every IDE deploys to WildFly on its own. What the IDE deploys decides dev mode. A WAR file is an archive and runs as production. So a WAR project also gets explodedWar, which unpacks the WAR into build/exploded/<name>.war on every build; VS Code's Runtime Server Protocol tooling and JBoss Tools deploy that folder. HotSwap under the debugger works either way.
+A WildFly Gradle plugin is out of scope: every IDE deploys to WildFly on its own. What the IDE deploys decides dev mode and HotSwap, so the j2act plugin applies exploded-hotswap (io.github.then00p.exploded-hotswap, a separate plugin since nothing in it is j2act's). Its explodedWar unpacks the WAR into build/exploded/<name>.war on every build; VS Code's Runtime Server Protocol tooling and JBoss Tools deploy that folder, and a folder, unlike a WAR file, runs in dev mode.
+
+The folder carries the classes the editor compiled whenever every source has a class in bin/main at least as new as itself; otherwise javac's, with a log line saying so. Resources always come from Gradle's build. This is what makes HotSwap work outside Eclipse's WTP. Editors built on the Eclipse Java language server (VS Code, Neovim, Zed) push classes compiled by the Eclipse compiler, and the JVM refuses them over javac's with "delete method not implemented", because the two name lambda methods differently. Checked through JDWP on WildFly 29: the javac build of an edit was refused, the Eclipse compiler's was accepted, and the page showed it on its next render without a reload. The alternative, a JVM with enhanced class redefinition, needs another JDK and is in the backlog.
+
+Maven has the same problem without the separate folder: the editor and mvn share target/classes, and mvn package recompiles the whole module with javac. Its fix is still open.
+
+Eclipse writes the annotation processor's resources to Buildship's default output, bin/default. Making bin/main the default output as well clashed: Buildship in VS Code then renamed the classes' folder to bin/main_. So WTP publishes bin/default too.

@@ -74,7 +74,9 @@ await request("initialize", {
   rootUri: pathToFileURL(project).href,
   capabilities: { workspace: { configuration: true } },
   initializationOptions: { settings: { java: {
-    import: { maven: { enabled: maven }, gradle: { enabled: !maven, annotationProcessing: { enabled: true } } },
+    import: { maven: { enabled: maven }, gradle: { enabled: !maven, annotationProcessing: { enabled: true },
+      // The JDK Gradle runs on, as VS Code's java.import.gradle.java.home sets it.
+      ...(process.env.GRADLE_JAVA_HOME ? { java: { home: process.env.GRADLE_JAVA_HOME } } : {}) } },
     autobuild: { enabled: true },
   } } },
 });

@@ -7,10 +7,13 @@ version = "0.1.0-SNAPSHOT"
 
 repositories {
   gradlePluginPortal()
+  // SPIKE: exploded-hotswap from ../../exploded-hotswap until it is published.
+  mavenLocal()
 }
 
 dependencies {
   implementation("com.github.node-gradle:gradle-node-plugin:7.1.0")
+  implementation("io.github.then00p:exploded-hotswap:0.1.0-SNAPSHOT")
 }
 
 java {
