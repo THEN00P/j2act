@@ -49,4 +49,4 @@ IntelliJ:
 - For Maven it uses its own builder, which runs annotation processors but no Maven plugins, so dev mode's watcher does the frontend build, as with Vaadin.
 - It was not tested (no Jakarta EE license), and its Jakarta EE server integration is out of scope.
 
-A WildFly Gradle plugin is out of scope: every IDE deploys to WildFly on its own.
+A WildFly Gradle plugin is out of scope: every IDE deploys to WildFly on its own. What the IDE deploys decides dev mode. A WAR file is an archive and runs as production. So a WAR project also gets explodedWar, which unpacks the WAR into build/exploded/<name>.war on every build; VS Code's Runtime Server Protocol tooling and JBoss Tools deploy that folder. HotSwap under the debugger works either way.
