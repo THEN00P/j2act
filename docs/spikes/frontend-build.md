@@ -126,6 +126,30 @@ What the Eclipse run showed, and what changed.
   - The Java sources are inputs of the Vite build when Tailwind is a dependency.
 - **The recursion probe:** `div(each(..., n -> salesChart()))` inside `SalesChart.render` renders the chart inside itself without end. Moved the idea to the checklist: put the probe in `HomePage` instead.
 
+## Rounds 3 to 5: Eclipse, until it passed
+
+Codex drove Eclipse (Buildship and m2e) and Chrome for these runs. Final run: WildFly 29 in Debug from Eclipse, both apps.
+- **Passed for both apps:**
+  - import;
+  - the processor warning in Problems;
+  - one watcher per app, with no idle rebuilds;
+  - the page;
+  - live `.ts` re-import with the count kept;
+  - a Tailwind class saved in Java applied after HotSwap, with no reload;
+  - WARs exported from Eclipse work on a separate WildFly, with the last saved build and no dev mode.
+
+What it took, in order:
+- **The dev token finds the project from the Java source file.** Eclipse had copied the Gradle project into `bin/`, and the output-folder walk stopped there.
+- **Our own Eclipse APT settings task instead of goomph.** goomph writes an absolute `genSrcDir`, which Eclipse on Windows reads as project-relative (`Users/...`).
+- **The watcher ignores build output and IDE folders**, so Eclipse's copies and generated files can't start rebuild loops.
+- **m2e runs processors only with `m2e.apt.activation=jdt_apt`**: its default is disabled.
+- **Eclipse's default output is `bin/main`**, so the processor's resources sit with the classes. WTP publishes source folders file by file and dropped them, so `bin/main` and `build/j2act` are mapped whole. The mappings are added when merged, because Gradle drops mappings to folders that don't exist yet.
+- **The Maven bundle goal runs Vite through Node directly**, runs whenever the output is missing, retries once, and shows Vite's own lines in Problems.
+- **Eclipse doesn't copy `.ts` into the output folder.** Its TypeScript checker reported errors from a stale copy there. The Maven plugin will need the same setting.
+- **Chart.js's documented default import** (`import Chart from "chart.js/auto"`) is the one Eclipse's TypeScript accepts.
+- **HotSwap needs a Debug start.** A normal start never applies Java edits.
+- **Harmless:** Eclipse's XML validator reports `cvc-elt.1.a` on poms because it won't download the Maven schema.
+
 ## Eclipse checklist (for you to run)
 
 Setup, once:
