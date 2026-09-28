@@ -115,7 +115,7 @@ public class J2ActPlugin implements Plugin<Project> {
     eclipse.synchronizationTasks(install);
     project.getPlugins().withType(EclipseWtpPlugin.class, wtp ->
       // WTP publishes and exports the Vite output with the classes.
-      eclipse.getWtp().getComponent().resource(Map.of("sourcePath", project.relativePath(out), "deployPath", "/WEB-INF/classes")));
+      publish(eclipse, project.relativePath(out).replace('\\', '/')));
   }
 
   /**
@@ -138,6 +138,11 @@ public class J2ActPlugin implements Plugin<Project> {
     eclipse.getClasspath().setDefaultOutputDir(project.file("bin/main"));
     project.getPlugins().withType(WarPlugin.class, war -> {
       project.getPluginManager().apply(EclipseWtpPlugin.class);
+      // WTP publishes what the source folders compile to, file by file, so files the annotation
+      // processor wrote (.mount-params, the dev token) stayed behind; publish the folder whole,
+      // as m2e-wtp does with target/classes. Added when merged: Gradle's resource() drops folders
+      // that do not exist yet, and on a fresh import neither this one nor build/j2act does.
+      publish(eclipse, "bin/main");
       eclipse.getWtp().getFacet().getFile().whenMerged(f -> {
         WtpFacet facet = (WtpFacet) f;
         for (Facet each : facet.getFacets()) {
@@ -146,6 +151,13 @@ public class J2ActPlugin implements Plugin<Project> {
           }
         }
       });
+    });
+  }
+
+  private static void publish(EclipseModel eclipse, String folder) {
+    eclipse.getWtp().getComponent().getFile().whenMerged(c -> {
+      org.gradle.plugins.ide.eclipse.model.WtpComponent component = (org.gradle.plugins.ide.eclipse.model.WtpComponent) c;
+      component.getWbModuleEntries().add(new org.gradle.plugins.ide.eclipse.model.WbResource("/WEB-INF/classes", folder));
     });
   }
 
