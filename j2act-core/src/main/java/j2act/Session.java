@@ -492,6 +492,56 @@ final class Session {
     return "<!DOCTYPE html>" + renderer.out;
   }
 
+  /**
+   * Lane-only. Classes were swapped while debugging (dev mode): re-render everything, so every
+   * handler on the page is the new code's before the next click; the old ones may call lambda
+   * methods the swap removed or renumbered. A page or layout whose fields changed is mounted
+   * again, since its object would keep the new fields unset; its state starts over.
+   */
+  void hotSwapped() {
+    for (int i = 0; i < frames.size(); i++) {
+      ComponentTag frame = frames.get(i);
+      if (frame.scope != null && frame.scope.shapeChanged(frame.getClass())) {
+        engine.log(System.Logger.Level.INFO, "j2act dev: " + frame.getClass().getName()
+          + " has new fields; mounting it again, so its state starts over", null);
+        remountFrom(i);
+        break;
+      }
+    }
+    if (root != null) {
+      markDirty(root);
+      markDetached(root);
+    }
+  }
+
+  /** Live components passed to client actions render as their own roots, outside their owner's render. */
+  private void markDetached(Scope scope) {
+    for (Scope child : scope.children.values()) {
+      markDetached(child);
+    }
+    for (Scope live : scope.actionScopes.values()) {
+      markDirty(live);
+      markDetached(live);
+    }
+  }
+
+  private void remountFrom(int index) {
+    String url = ((RouteInfo) routeCell.read()).url();
+    Scope stale = frames.get(index).scope;
+    if (index > 0 && stale != null) {
+      stale.dispose();
+    }
+    // applyRoute keeps the frames before the first id that differs, and creates the rest anew.
+    for (int i = frames.size() - 1; i >= index; i--) {
+      frames.remove(i);
+      frameIds.remove(i);
+    }
+    Resolution resolution = resolve(url);
+    if (resolution.match != null) {
+      applyRoute(resolution);
+    }
+  }
+
   void markDirty(Scope scope) {
     if (preload != null && scope.preloading()) {
       // Re-rendered offscreen by flush(), never patched to the client.

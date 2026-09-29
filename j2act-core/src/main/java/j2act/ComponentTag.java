@@ -172,8 +172,9 @@ public abstract class ComponentTag implements DomContent {
     Tag<?> root = render();
     if (scope.settledCount < 0) {
       scope.settledCount = scope.cells.size();
+      scope.settled();
     } else if (renderIndex != scope.settledCount) {
-      throw new IllegalStateException(getClass().getName()
+      throw scope.orderViolation(getClass().getName()
         + " created " + renderIndex + " primitives this render but " + scope.settledCount
         + " before; primitives must not be created conditionally (ADR 0019)");
     }

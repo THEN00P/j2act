@@ -78,6 +78,11 @@ public final class J2Act implements AutoCloseable {
   final Packages packages = new Packages(this);
   final Modules modules = new Modules(this);
   private final DevMode dev;
+  /** Bumped when dev mode sees swapped classes; scopes behind it re-check their shape (Scope.swapped). */
+  volatile long codeEpoch;
+  /** Dev mode watches the class folders because a debugger may swap classes (HotSwap). */
+  volatile boolean watchingClasses;
+  private ClassWatch classWatch;
 
   private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Connection, Session> byConnection = new ConcurrentHashMap<>();
@@ -127,6 +132,47 @@ public final class J2Act implements AutoCloseable {
       modules.viteDisk = dev.viteDir();
       dev.start(this);
       sweeper.scheduleWithFixedDelay(this::devRefresh, 300, 300, TimeUnit.MILLISECONDS);
+      if (HotSwap.debugging() && dev.classRoot != null) {
+        classWatch = new ClassWatch(dev.classRoot, dev.editorOutputs());
+        watchingClasses = true;
+        sweeper.scheduleWithFixedDelay(this::watchClasses, 300, 300, TimeUnit.MILLISECONDS);
+      }
+    }
+  }
+
+  /**
+   * Dev mode's poll of the class folders while a debugger is attached. The debugger swaps the
+   * classes; this re-renders every session with them, soon after and once more a moment later,
+   * since the class file can land before or after the debugger's swap.
+   */
+  private void watchClasses() {
+    try {
+      ClassWatch.Change change = classWatch.poll();
+      if (change.waiting != null) {
+        log(System.Logger.Level.INFO, "j2act dev: " + change.waiting + " is new and not deployed yet; the page"
+          + " re-renders once it is (gradle explodedWar -t, or mvn exploded-hotswap:exploded)", null);
+      }
+      if (change.ready) {
+        // Bumped now for a click that comes first, and before each re-render for a swap that lands late.
+        codeEpoch++;
+        sweeper.schedule(this::hotSwapped, 250, TimeUnit.MILLISECONDS);
+        sweeper.schedule(this::hotSwapped, 1500, TimeUnit.MILLISECONDS);
+      }
+    } catch (RuntimeException e) {
+      log(System.Logger.Level.WARNING, "j2act dev: watching the classes failed", e);
+    }
+  }
+
+  /** The session with this id, or null. */
+  Session session(String sid) {
+    return sessions.get(sid);
+  }
+
+  /** Re-renders every session with the current code (HotSwap in dev mode). */
+  void hotSwapped() {
+    codeEpoch++;
+    for (Session session : sessions.values()) {
+      session.post(session::hotSwapped);
     }
   }
 

@@ -33,6 +33,8 @@ final class DevMode implements AutoCloseable {
   private static final String ANSI = "\u001B\\[[0-9;]*m";
 
   final File project;
+  /** The class folder the app loads from, the one holding the token: an exploded WAR's WEB-INF/classes, say. */
+  java.nio.file.Path classRoot;
   private J2Act engine;
   private String node;
   private Process vite;
@@ -71,7 +73,27 @@ final class DevMode implements AutoCloseable {
     if (dir == null || !new File(dir, "package.json").isFile()) {
       return null;
     }
-    return new DevMode(dir);
+    DevMode dev = new DevMode(dir);
+    dev.classRoot = classRoot(token);
+    return dev;
+  }
+
+  /** The folder above META-INF/j2act/dev.json. */
+  static java.nio.file.Path classRoot(URL token) {
+    try {
+      return java.nio.file.Paths.get(new java.net.URI("file", null, token.getPath(), null)).getParent().getParent().getParent();
+    } catch (java.net.URISyntaxException | RuntimeException e) {
+      return null;
+    }
+  }
+
+  /** Where editors and builds compile this project's classes to; the app may load from another copy. */
+  List<java.nio.file.Path> editorOutputs() {
+    List<java.nio.file.Path> outputs = new ArrayList<>();
+    for (String dir : new String[] {"bin/main", "target/classes", "build/classes/java/main"}) {
+      outputs.add(project.toPath().resolve(dir));
+    }
+    return outputs;
   }
 
   /**

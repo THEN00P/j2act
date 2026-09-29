@@ -53,7 +53,7 @@ A stylesheet or script that a page, rather than a client module, pulls from the 
 _Avoid_: Bundle, Asset pipeline
 
 **Dev mode**:
-The app, started from class folders or an exploded deployment of a project on this machine, runs the Vite watcher itself and re-imports changed client modules and stylesheets with Java state kept. It turns itself on through the dev token and needs no flag (ADR 0024).
+The app, started from class folders or an exploded deployment of a project on this machine, runs the Vite watcher itself and re-imports changed client modules and stylesheets with Java state kept. While a debugger is attached, it also re-renders every page after the debugger swaps classes (ADR 0025). It turns itself on through the dev token and needs no flag (ADR 0024).
 _Avoid_: Debug mode, Watch mode, HMR
 
 **Dev token**:

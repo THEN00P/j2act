@@ -13,8 +13,9 @@ import com.sun.jdi.connect.Connector;
 /**
  * Hot code replace as an IDE's debugger sends it: attaches over JDWP and redefines every loaded
  * class of that name (a redeployed application may leave an older one loaded) with the class file.
- * Used by tools/hotswap-check.mjs; run as a single source file:
- *   java tools/Redefine.java localhost 8787 com.example.Page Page.class
+ * With a fifth argument it first writes the class file there, as the IDE's build does just before
+ * it pushes the class. Used by tools/hotswap-check.mjs; run as a single source file:
+ *   java tools/Redefine.java localhost 8787 com.example.Page Page.class [target/classes/com/example/Page.class]
  */
 public class Redefine {
   public static void main(String[] args) throws Exception {
@@ -27,6 +28,9 @@ public class Redefine {
     try {
       List<ReferenceType> classes = vm.classesByName(args[2]);
       byte[] bytes = Files.readAllBytes(Paths.get(args[3]));
+      if (args.length > 4) {
+        Files.write(Paths.get(args[4]), bytes);
+      }
       Map<ReferenceType, byte[]> redefinitions = new HashMap<>();
       for (ReferenceType type : classes) {
         redefinitions.put(type, bytes);
