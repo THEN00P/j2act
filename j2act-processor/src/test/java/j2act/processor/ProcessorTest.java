@@ -109,6 +109,38 @@ class ProcessorTest {
     }
   }
 
+  /**
+   * A project with a package.json gets the dev token (ADR 0024) naming it, found from the source
+   * file, even when the class output sits inside a copy of the project, as Eclipse once made in
+   * bin/; and the client types go to its .j2act/types (ADR 0023). The same under javac and ECJ.
+   */
+  @Test void aProjectGetsItsDevTokenAndItsTypesInOnePlace() throws IOException {
+    String golden = new String(Files.readAllBytes(FIXTURES.resolve("clients/Webcam.types.d.ts")), StandardCharsets.UTF_8)
+      .replace("\r\n", "\n");
+    for (JavaCompiler compiler : Arrays.asList(ToolProvider.getSystemJavaCompiler(), new EclipseCompiler())) {
+      Path project = Files.createTempDirectory("j2act-project");
+      Files.write(project.resolve("package.json"), "{}".getBytes(StandardCharsets.UTF_8));
+      Files.write(project.resolve("build.gradle.kts"), new byte[0]);
+      Path copy = project.resolve("bin");
+      Files.createDirectories(copy);
+      Files.write(copy.resolve("package.json"), "{}".getBytes(StandardCharsets.UTF_8));
+      Files.write(copy.resolve("build.gradle.kts"), new byte[0]);
+      List<Path> sources = new ArrayList<>();
+      for (Path fixture : sources("clients")) {
+        Path source = project.resolve("src/main/java/clients").resolve(fixture.getFileName());
+        Files.createDirectories(source.getParent());
+        Files.copy(fixture, source);
+        sources.add(source);
+      }
+      compile(compiler, sources, copy.resolve("main"));
+      String name = compiler.getClass().getSimpleName();
+      String token = new String(Files.readAllBytes(copy.resolve("main/META-INF/j2act/dev.json")), StandardCharsets.UTF_8);
+      assertEquals("{\"project\":\"" + project.toAbsolutePath().toString().replace("\\", "\\\\") + "\"}\n", token, name);
+      assertEquals(golden, new String(Files.readAllBytes(project.resolve(".j2act/types/clients/Webcam.types.d.ts")),
+        StandardCharsets.UTF_8), name);
+    }
+  }
+
   private static final class Result {
     /** "File.java:line:column@offset KIND message" for errors and this processor's diagnostics. */
     final List<String> diagnostics = new ArrayList<>();
@@ -117,8 +149,13 @@ class ProcessorTest {
   }
 
   private static Result compile(JavaCompiler compiler, List<Path> sources, String... extraOptions) throws IOException {
+    return compile(compiler, sources, Files.createTempDirectory("j2act-classes"), extraOptions);
+  }
+
+  private static Result compile(JavaCompiler compiler, List<Path> sources, Path classes, String... extraOptions)
+    throws IOException {
     DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-    Path classes = Files.createTempDirectory("j2act-classes");
+    Files.createDirectories(classes);
     Path generated = Files.createTempDirectory("j2act-generated");
     try (StandardJavaFileManager files = compiler.getStandardFileManager(diagnostics, Locale.ROOT, StandardCharsets.UTF_8)) {
       List<String> options = new ArrayList<>(Arrays.asList("-d", classes.toString(), "-s", generated.toString(),

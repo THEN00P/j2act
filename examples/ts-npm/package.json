@@ -2,18 +2,18 @@
   "name": "j2act-ts-npm",
   "private": true,
   "type": "module",
-  "description": "TypeScript client modules for j2act, bundled with esbuild from npm packages (ADR 0022).",
+  "description": "TypeScript client modules for j2act, built by Vite from npm packages (ADR 0023).",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "bundle": "node build.mjs",
-    "build": "npm run typecheck && npm run bundle"
+    "build": "vite build"
   },
   "dependencies": {
     "chart.js": "4.5.1",
     "quill": "2.0.3"
   },
   "devDependencies": {
-    "esbuild": "0.28.2",
-    "typescript": "7.0.2"
+    "@j2act/vite": "file:../../j2act-vite",
+    "typescript": "7.0.2",
+    "vite": "8.3.1"
   }
 }

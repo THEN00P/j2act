@@ -20,11 +20,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Client module files (ADR 0022): Webcam.client.js on the classpath next to Webcam.class,
- * put there by the build's resources configuration (src/main/java **&#47;*.js) or by a TS
- * build. The runtime serves each module with exactly the files its relative static
- * imports reach, under one content hash of them all, since a WAR serves
- * META-INF/resources only from jars. Nothing else on the classpath is reachable.
+ * Client module files. Two sources: Webcam.client.js on the classpath next to Webcam.class,
+ * put there by the build's resources configuration, with no build step (ADR 0022); or a Vite
+ * build under META-INF/j2act/vite, found through its manifest (ADR 0023), which wins. The
+ * runtime serves each module with exactly the files it reaches, under one content hash of
+ * them all, since a WAR serves META-INF/resources only from jars. Nothing else on the
+ * classpath is reachable.
  */
 final class Modules {
 
@@ -38,7 +39,7 @@ final class Modules {
   private static final Pattern CSS_URL = Pattern.compile("@import\\s+([\"'])([^\"'\\n]+)\\1|url\\(\\s*([\"']?)([^\"')\\n]+)\\3\\s*\\)");
   private static final Pattern SOURCE_MAP = Pattern.compile("[#@]\\s*sourceMappingURL=([^\\s*'\"]+)");
 
-  /** SPIKE: where @j2act/vite puts its build on the classpath, with .vite/manifest.json in it. */
+  /** Where @j2act/vite puts its build on the classpath, with .vite/manifest.json in it (ADR 0023). */
   static final String VITE_DIR = "META-INF/j2act/vite/";
   private static final String VITE_MANIFEST = VITE_DIR + ".vite/manifest.json";
 
@@ -50,7 +51,7 @@ final class Modules {
   private final ConcurrentHashMap<Method, String[]> mountParams = new ConcurrentHashMap<>();
   private volatile ViteBuild vite;
   /**
-   * SPIKE, dev mode: the Vite output folder in the project, read directly. The IDE's classpath
+   * Dev mode: the Vite output folder in the project, read directly. The IDE's classpath
    * may not hold it (Buildship leaves it out), and an exploded deployment holds only a copy.
    */
   volatile java.nio.file.Path viteDisk;
@@ -89,7 +90,7 @@ final class Modules {
     this.engine = engine;
   }
 
-  /** The module URL for a client interface: its top-level class's sibling .client.js. */
+  /** The module URL for a client interface: its top-level class's Vite entry or sibling .client.js. */
   String url(Class<?> clientType) {
     return engine.contextPath + J2Act.MODULE_PATH + loaded(clientType).script;
   }
@@ -110,7 +111,7 @@ final class Modules {
     return b.toString();
   }
 
-  /** SPIKE: a page-level Vite entry's URLs: its script or null, then its stylesheets. */
+  /** A page entry's URLs (ADR 0023): its script or null, then its stylesheets. */
   List<String> pageEntry(String source) {
     Loaded page = pages.computeIfAbsent(source, this::loadPage);
     List<String> urls = new ArrayList<>();
@@ -172,7 +173,7 @@ final class Modules {
   }
 
   /**
-   * SPIKE, dev mode: when the manifest changed, drops what was loaded and loads it again from
+   * Dev mode: when the manifest changed, drops what was loaded and loads it again from
    * the new build. Returns every changed served URL, old to new, for the pages to re-import;
    * the old files stay served for pages that still hold them.
    */
@@ -242,13 +243,11 @@ final class Modules {
       throw new IllegalStateException("no client module " + entry + " on the classpath next to "
         + top.getSimpleName() + ".class; put " + top.getSimpleName() + ".client.js beside " + top.getSimpleName()
         + ".java and include src/main/java **/*.js in the build's resources, or build "
-        + top.getSimpleName() + ".client.ts there (ADR 0022)");
+        + top.getSimpleName() + ".client.ts with @j2act/vite (ADR 0022, 0023)");
     }
     Graph graph = graph(entry, read);
     register(graph);
-    String style = styleOf(entry);
-    return new Loaded(graph.hash + "/" + entry,
-      graph.files.containsKey(style) ? List.of(graph.hash + "/" + style) : List.of());
+    return new Loaded(graph.hash + "/" + entry, List.of());
   }
 
   private Loaded loadPage(String source) {
@@ -309,11 +308,6 @@ final class Modules {
     }
   }
 
-  /** Webcam.client.js's stylesheet, as esbuild and other bundlers name it: Webcam.client.css. */
-  private static String styleOf(String entry) {
-    return entry.substring(0, entry.length() - ".js".length()) + ".css";
-  }
-
   /** A CommonJS file goes out as an ES module: its relative requires point into the graph, bare ones at packages. */
   private byte[] serve(Graph graph, String path, byte[] bytes) {
     String code = new String(bytes, StandardCharsets.UTF_8);
@@ -361,13 +355,7 @@ final class Modules {
    * imports are left to import maps; a relative dynamic import() fails, since it is not served.
    */
   static Graph graph(String entry, Function<String, byte[]> read) {
-    List<String> roots = new ArrayList<>();
-    roots.add(entry);
-    // A TS build's CSS imports and CSS modules end up in the entry's sibling stylesheet.
-    if (read.apply(styleOf(entry)) != null) {
-      roots.add(styleOf(entry));
-    }
-    return graph(entry, roots, read);
+    return graph(entry, List.of(entry), read);
   }
 
   /** The same walk from several roots, e.g. a Vite chunk and its stylesheets. */

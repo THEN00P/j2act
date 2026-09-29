@@ -7,8 +7,8 @@
     "lib": ["es2022", "dom", "dom.iterable"],
     "noEmit": true,
     "skipLibCheck": true,
-    "types": [],
-    "rootDirs": ["src/main/java", "target/generated-sources/annotations"]
+    "types": ["vite/client"],
+    "rootDirs": ["src/main/java", ".j2act/types"]
   },
-  "include": ["src/main/java/**/*.ts", "target/generated-sources/annotations/**/*.d.ts", "client-env.d.ts"]
+  "include": ["src/main/java/**/*.ts", ".j2act/types/**/*.d.ts"]
 }

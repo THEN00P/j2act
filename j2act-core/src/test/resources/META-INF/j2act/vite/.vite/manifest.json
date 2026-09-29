@@ -1,0 +1,21 @@
+{
+  "src/main/frontend/app.css": {
+    "file": "assets/src/main/frontend/app-P1.css",
+    "name": "src/main/frontend/app",
+    "src": "src/main/frontend/app.css",
+    "isEntry": true
+  },
+  "src/main/java/j2act/ViteTest.client.ts": {
+    "file": "assets/j2act/ViteTest.client-E1.js",
+    "name": "j2act/ViteTest.client",
+    "src": "src/main/java/j2act/ViteTest.client.ts",
+    "isEntry": true,
+    "imports": ["_numbers-S1.js"],
+    "css": ["assets/ViteTest-C1.css"]
+  },
+  "_numbers-S1.js": {
+    "file": "assets/numbers-S1.js",
+    "name": "numbers",
+    "css": ["assets/numbers-C2.css"]
+  }
+}

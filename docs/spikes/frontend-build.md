@@ -1,5 +1,7 @@
 # Spike: Vite, Tailwind and the IDE build loop
 
+Status: done and merged. The decisions are ADRs 0023 to 0025. The prototypes became `j2act-vite`, `j2act-maven-plugin`, `j2act-gradle-plugin`, the `examples/vite-*` projects and `tools/vite-*.mjs`, and HotSwap from editors on the Eclipse compiler moved to its own project, exploded-hotswap. Paths below are the spike's.
+
 Branch `spike/frontend-build`. Throwaway prototypes that answer how TypeScript, npm packages, CSS modules and Tailwind reach a j2act app built with Gradle or Maven, run from an IDE or a server, with one launch and no second dev server. The results feed the ADRs; the code is not the final shape.
 
 ## What was built

@@ -130,7 +130,7 @@ public final class J2Act implements AutoCloseable {
     }
   }
 
-  /** SPIKE: dev mode's poll of the Vite manifest; pages re-import what moved. */
+  /** Dev mode's poll of the Vite manifest; pages re-import what moved (ADR 0024). */
   private void devRefresh() {
     try {
       Map<String, String> moved = modules.refresh();
@@ -286,7 +286,7 @@ public final class J2Act implements AutoCloseable {
 
   /**
    * A client module file for a GET to MODULE_PATH + path, or null (answer 404): a module,
-   * the files it imports, or a TS build's stylesheet, assets and source maps. Only files a
+   * the files it imports, or a Vite build's chunks, stylesheets, assets and source maps. Only files a
    * rendered client registered are served. The URL carries a content hash, so the adapter
    * may cache it forever (ADR 0022).
    */

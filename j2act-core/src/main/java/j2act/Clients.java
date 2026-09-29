@@ -40,7 +40,7 @@ final class Clients {
     final String id;
     final String url;
     final String export;
-    /** The stylesheet a TS build emitted beside the module, or null. */
+    /** The stylesheets a Vite build emitted for the module, space-separated, or null. */
     String style;
     /** The mount props as JSON, or null for a client without mount(...). */
     String props;

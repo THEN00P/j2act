@@ -15,11 +15,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * SPIKE: dev mode. On when the class output carries META-INF/j2act/dev.json (the annotation
- * processor writes it), the project folder it names exists on this machine, and the token
- * is a plain file rather than inside a jar. Then the app watches the Vite manifest and tells
- * pages to re-import what changed, and runs `vite build --watch` in the project, unless
- * another app already does. Off under test runners, and with -Dj2act.dev=false.
+ * Dev mode (ADR 0024). On when the class output carries META-INF/j2act/dev.json (the annotation
+ * processor writes it), the project folder it names exists on this machine, and the token is a
+ * plain file rather than inside an archive. Then the app watches the Vite manifest and tells pages
+ * to re-import what changed, and runs `vite build --watch` in the project, unless another app
+ * already does. Off under test runners, and with -Dj2act.dev=false.
  */
 final class DevMode implements AutoCloseable {
 

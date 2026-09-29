@@ -394,7 +394,7 @@
     return loaded;
   }
 
-  // SPIKE, dev mode: a new build moved these files. Stylesheets swap in place without a flash,
+  // Dev mode (ADR 0024): a new build moved these files. Stylesheets swap in place without a flash,
   // clients whose module moved mount again with their current props; Java state is untouched.
   function reimport(moved) {
     if (moved["*"]) {

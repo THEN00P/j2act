@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * SPIKE: page-level Vite entries in the head, as Laravel's @vite does: every tag an entry
+ * Page entries in the head (ADR 0023), as Laravel's @vite renders them: every tag an entry
  * needs from the build's manifest, the stylesheets it and its imports carry, then its
  * script. Client modules need nothing here; the runtime finds them from their class.
  *

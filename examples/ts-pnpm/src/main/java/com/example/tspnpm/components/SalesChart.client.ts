@@ -1,5 +1,5 @@
 // The browser half of SalesChart.Bars: npm's Chart.js, a CSS module, and a helper shared with NoteEditor.
-import { Chart } from "chart.js/auto";
+import Chart from "chart.js/auto";
 
 import { total } from "../shared/numbers";
 import styles from "./SalesChart.module.css";

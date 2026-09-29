@@ -68,8 +68,9 @@ final class ClientTypes {
   private final boolean jsonb;
   private final Properties domInterfaces = new Properties();
   /**
-   * SPIKE: the project folder with a package.json, when there is one. The types then also go to
-   * its .j2act/types, one place for Maven, Gradle and every IDE, as SvelteKit's .svelte-kit/types.
+   * The project folder with a package.json, when there is one. The types then also go to its
+   * .j2act/types, one place for Maven, Gradle and every IDE, as SvelteKit's .svelte-kit/types
+   * (ADR 0023).
    */
   java.io.File project;
 

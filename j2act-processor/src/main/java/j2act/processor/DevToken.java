@@ -11,11 +11,11 @@ import javax.tools.FileObject;
 import javax.tools.StandardLocation;
 
 /**
- * SPIKE: writes META-INF/j2act/dev.json into the class output, naming the project folder
+ * Writes META-INF/j2act/dev.json (ADR 0024) into the class output, naming the project folder
  * that holds package.json. The processor runs in every build, the IDE's included, so the
  * runtime can find the project wherever the classes were copied to (an exploded WAR a WTP
  * server published, for one). Only a folder that exists on the running machine turns dev
- * mode on; the Gradle and Maven plugins leave the token out of archives.
+ * mode on, and only while the token is a plain file, never inside an archive.
  */
 final class DevToken {
 
