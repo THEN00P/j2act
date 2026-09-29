@@ -41,12 +41,81 @@ final class Scope implements Observer {
   boolean rendering;
   boolean disposed;
   long renderedEpoch = -1;
+  /** The engine's code epoch this scope last rendered with; behind it after a class swap (dev mode). */
+  long codeEpoch;
+  /** The component class's instance fields when its primitives settled, while dev mode watches classes. */
+  String shape;
 
   Scope(Session session, Scope parent, String address) {
     this.session = session;
     this.parent = parent;
     this.address = address;
     this.anchor = session.nextAnchor();
+    this.codeEpoch = session.engine.codeEpoch;
+  }
+
+  /**
+   * A primitive-order violation (ADR 0019). After a class swap in dev mode it is the new code's
+   * shape rather than a bug, and the component starts over with fresh state, as React Fast Refresh
+   * does when a component's hooks change.
+   */
+  static final class ShapeChanged extends IllegalStateException {
+    ShapeChanged(String message) {
+      super(message);
+    }
+  }
+
+  IllegalStateException orderViolation(String message) {
+    return swapped() ? new ShapeChanged(message) : new IllegalStateException(message);
+  }
+
+  /** Classes were swapped since this scope last rendered. */
+  boolean swapped() {
+    return codeEpoch != session.engine.codeEpoch;
+  }
+
+  /** The component's instance fields, name and type, from its class up to ComponentTag. */
+  static String shapeOf(Class<?> type) {
+    StringBuilder b = new StringBuilder();
+    for (Class<?> c = type; c != null && c != ComponentTag.class && c != Object.class; c = c.getSuperclass()) {
+      for (java.lang.reflect.Field field : c.getDeclaredFields()) {
+        if (!java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+          b.append(c.getName()).append('.').append(field.getName()).append(':').append(field.getType().getName()).append(';');
+        }
+      }
+    }
+    return b.toString();
+  }
+
+  /** After a class swap: the instance's fields differ from those its state was bound to. */
+  boolean shapeChanged(Class<?> type) {
+    return shape != null && swapped() && !shape.equals(shapeOf(type));
+  }
+
+  /** Called when the primitives settle after the first render: records the shape while classes are watched. */
+  void settled() {
+    if (session.engine.watchingClasses) {
+      shape = shapeOf(instance.getClass());
+    }
+  }
+
+  /** Drops this component's own state (not its children's) and binds its field primitives to fresh cells. */
+  void startOver(String reason) {
+    session.engine.log(System.Logger.Level.INFO, "j2act dev: " + instance.getClass().getName()
+      + " starts over with fresh state, since the new code changed it: " + reason, null);
+    unsubscribeAll();
+    for (Cell cell : cells) {
+      try {
+        cell.dispose();
+      } catch (RuntimeException | LinkageError e) {
+        // An effect's cleanup from the old code may call a method the new code removed.
+      }
+      session.cells.remove(cell.address);
+    }
+    cells.clear();
+    settledCount = -1;
+    shape = null;
+    bindFields(instance);
   }
 
   /** Attaches a component object to this slot and binds its field primitives by creation order. */
@@ -57,6 +126,18 @@ final class Scope implements Observer {
     instance = component;
     component.scope = this;
     session.engine.injector.inject(component);
+    if (shapeChanged(component.getClass())) {
+      startOver("its fields changed");
+    } else {
+      try {
+        bindFields(component);
+      } catch (ShapeChanged e) {
+        startOver(e.getMessage());
+      }
+    }
+  }
+
+  private void bindFields(ComponentTag component) {
     List<Primitive> primitives = component.primitives;
     for (int i = 0; i < primitives.size(); i++) {
       bindPrimitive(primitives.get(i), i);
@@ -79,14 +160,14 @@ final class Scope implements Observer {
     if (index < cells.size()) {
       Cell cell = cells.get(index);
       if (!primitive.accepts(cell)) {
-        throw new IllegalStateException(instance.getClass().getName() + " primitive #" + index
+        throw orderViolation(instance.getClass().getName() + " primitive #" + index
           + " changed kind between renders; primitives must be created in the same order every time (ADR 0019)");
       }
       primitive.attach(cell, false);
       return;
     }
     if (settledCount >= 0) {
-      throw new IllegalStateException(instance.getClass().getName() + " created primitive #" + index
+      throw orderViolation(instance.getClass().getName() + " created primitive #" + index
         + " that earlier renders did not; primitives must not be created conditionally (ADR 0019)");
     }
     Cell cell = primitive.createCell(session, address + "#" + index);

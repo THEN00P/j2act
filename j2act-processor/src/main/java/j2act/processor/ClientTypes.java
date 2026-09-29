@@ -96,7 +96,12 @@ final class ClientTypes {
     }
     List<TypeElement> clients = new ArrayList<>();
     collect(root, client, clients);
+    String pkg = elements.getPackageOf(root).getQualifiedName().toString();
     if (clients.isEmpty()) {
+      // It declared clients before, maybe: its types would go stale.
+      if (project != null) {
+        delete(projectTypes(pkg, root.getSimpleName() + ".types.d.ts"));
+      }
       return;
     }
     File file = new File(root);
@@ -104,7 +109,6 @@ final class ClientTypes {
       file.client(c);
     }
     String text = file.render();
-    String pkg = elements.getPackageOf(root).getQualifiedName().toString();
     try {
       FileObject out = filer.createResource(StandardLocation.SOURCE_OUTPUT, pkg,
         root.getSimpleName() + ".types.d.ts", root);
@@ -126,7 +130,7 @@ final class ClientTypes {
 
   /** Rewritten only when the text changed, so file watchers (tsc, Vite) stay quiet. */
   private void writeProjectTypes(String pkg, String name, String text, TypeElement root) {
-    java.nio.file.Path out = project.toPath().resolve(".j2act/types").resolve(pkg.replace('.', '/')).resolve(name);
+    java.nio.file.Path out = projectTypes(pkg, name);
     try {
       byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
       if (java.nio.file.Files.isRegularFile(out) && java.util.Arrays.equals(java.nio.file.Files.readAllBytes(out), bytes)) {
@@ -136,6 +140,61 @@ final class ClientTypes {
       java.nio.file.Files.write(out, bytes);
     } catch (IOException e) {
       report(Diagnostic.Kind.WARNING, "j2act: cannot write " + out + ": " + e.getMessage(), root);
+    }
+  }
+
+  private Path projectTypes(String pkg, String name) {
+    Path dir = project.toPath().resolve(".j2act/types");
+    return pkg.isEmpty() ? dir.resolve(name) : dir.resolve(pkg.replace('.', '/')).resolve(name);
+  }
+
+  /**
+   * Deletes the .j2act/types files of classes the compiler no longer finds, deleted or renamed.
+   * Asked of the compiler, not of the source folders, so an incremental build, which sees only
+   * the files that changed, still knows the class output and every source root.
+   */
+  void prune() {
+    if (project == null) {
+      return;
+    }
+    Path dir = project.toPath().resolve(".j2act/types");
+    if (!Files.isDirectory(dir)) {
+      return;
+    }
+    List<Path> stale = new ArrayList<>();
+    try (java.util.stream.Stream<Path> walk = Files.walk(dir)) {
+      walk.filter(p -> p.getFileName().toString().endsWith(".types.d.ts")).forEach(p -> {
+        String relative = dir.relativize(p).toString().replace('\\', '/');
+        String name = relative.substring(0, relative.length() - ".types.d.ts".length()).replace('/', '.');
+        if (elements.getTypeElement(name) == null) {
+          stale.add(p);
+        }
+      });
+    } catch (IOException | RuntimeException e) {
+      return;
+    }
+    for (Path p : stale) {
+      delete(p);
+    }
+  }
+
+  /** Deletes a types file and the package folders it leaves empty. */
+  private void delete(Path file) {
+    Path root = project.toPath().resolve(".j2act/types");
+    try {
+      if (!Files.deleteIfExists(file)) {
+        return;
+      }
+      for (Path dir = file.getParent(); dir != null && dir.startsWith(root) && !dir.equals(root); dir = dir.getParent()) {
+        try (java.util.stream.Stream<Path> entries = Files.list(dir)) {
+          if (entries.findAny().isPresent()) {
+            break;
+          }
+        }
+        Files.delete(dir);
+      }
+    } catch (IOException e) {
+      // Stale types only confuse tsc until the next build; never fail the compile for them.
     }
   }
 

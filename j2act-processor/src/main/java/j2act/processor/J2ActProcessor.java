@@ -73,6 +73,7 @@ public final class J2ActProcessor extends AbstractProcessor {
       Element origin = round.getRootElements().iterator().next();
       java.nio.file.Path java = source != null && origin instanceof TypeElement ? source.sourceFile((TypeElement) origin) : null;
       clientTypes.project = DevToken.write(processingEnv.getFiler(), origin, java);
+      clientTypes.prune();
     }
     for (Element root : round.getRootElements()) {
       if (root instanceof TypeElement) {

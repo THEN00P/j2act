@@ -141,6 +141,42 @@ class ProcessorTest {
     }
   }
 
+  /**
+   * Types go stale when their class is deleted or renamed, or stops declaring clients. Each
+   * compile removes those, and the package folders they leave empty, under javac and ECJ.
+   */
+  @Test void staleClientTypesAreRemoved() throws IOException {
+    for (JavaCompiler compiler : Arrays.asList(ToolProvider.getSystemJavaCompiler(), new EclipseCompiler())) {
+      Path project = Files.createTempDirectory("j2act-project");
+      Files.write(project.resolve("package.json"), "{}".getBytes(StandardCharsets.UTF_8));
+      Files.write(project.resolve("pom.xml"), new byte[0]);
+      Path src = project.resolve("src/main/java/clients");
+      Files.createDirectories(src);
+      List<Path> sources = new ArrayList<>();
+      for (Path fixture : sources("clients")) {
+        sources.add(Files.copy(fixture, src.resolve(fixture.getFileName())));
+      }
+      Files.copy(FIXTURES.resolve("clients/Webcam.client.ts"), src.resolve("Webcam.client.ts"));
+      Path plain = src.resolve("Plain.java");
+      Files.write(plain, "package clients; public class Plain {}".getBytes(StandardCharsets.UTF_8));
+      sources.add(plain);
+      Path types = project.resolve(".j2act/types");
+      for (String stale : new String[] {"clients/Plain", "clients/Gone", "old/pkg/Gone"}) {
+        Path file = types.resolve(stale + ".types.d.ts");
+        Files.createDirectories(file.getParent());
+        Files.write(file, "export {};".getBytes(StandardCharsets.UTF_8));
+      }
+
+      compile(compiler, sources);
+
+      String name = compiler.getClass().getSimpleName();
+      try (Stream<Path> walk = Files.walk(types)) {
+        assertEquals(Arrays.asList("", "clients", "clients/BadClients.types.d.ts", "clients/Webcam.types.d.ts"), walk
+          .map(p -> types.relativize(p).toString().replace('\\', '/')).sorted().collect(Collectors.toList()), name);
+      }
+    }
+  }
+
   private static final class Result {
     /** "File.java:line:column@offset KIND message" for errors and this processor's diagnostics. */
     final List<String> diagnostics = new ArrayList<>();

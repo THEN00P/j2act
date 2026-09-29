@@ -10,6 +10,8 @@
   <packaging>pom</packaging>
   <name>j2act</name>
 
+  <!-- The Vite examples load j2act-maven-plugin as a build extension, which Maven resolves before
+       it builds anything, so they are their own build: ./mvnw install, then ./mvnw -f examples install. -->
   <modules>
     <module>j2act-codegen</module>
     <module>j2act-core</module>
@@ -21,9 +23,6 @@
     <module>j2act-maven-plugin</module>
     <module>examples/counter-spring</module>
     <module>examples/counter-jakarta</module>
-    <module>examples/ts-npm</module>
-    <module>examples/ts-pnpm</module>
-    <module>examples/vite-maven-wildfly</module>
   </modules>
 
   <properties>

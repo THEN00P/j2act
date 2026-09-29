@@ -53,7 +53,20 @@ final class Renderer {
     Observer previous = Tracking.swap(scope);
     scope.rendering = true;
     try {
-      root = scope.instance.runRender();
+      if (scope.shapeChanged(scope.instance.getClass())) {
+        // Only a held object (a page, a layout, a field of its parent) reaches here: a fresh one
+        // started over when it was bound, and dev mode mounts changed pages and layouts again.
+        session.engine.log(System.Logger.Level.WARNING, "j2act dev: " + scope.instance.getClass().getName()
+          + " has new fields, but its object is held by its parent, so they stay unset until the page reloads", null);
+        scope.shape = Scope.shapeOf(scope.instance.getClass());
+      }
+      try {
+        root = scope.instance.runRender();
+      } catch (Scope.ShapeChanged e) {
+        // Before anything of this render was emitted: start over and render once more.
+        scope.startOver(e.getMessage());
+        root = scope.instance.runRender();
+      }
     } finally {
       scope.rendering = false;
       Tracking.swap(previous);
@@ -102,6 +115,7 @@ final class Renderer {
       }
     }
     session.endHandlers(scope);
+    scope.codeEpoch = session.engine.codeEpoch;
 
     Map<Scope, Boolean> kept = new IdentityHashMap<>();
     for (Scope child : scope.children.values()) {
