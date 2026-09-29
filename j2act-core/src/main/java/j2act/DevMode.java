@@ -111,6 +111,7 @@ final class DevMode implements AutoCloseable {
   /** Starts `vite build --watch` unless another process holds the project's watch lock. */
   void start(J2Act engine) {
     this.engine = engine;
+    HotSwap.check(engine);
     // @j2act/vite's runner ends with this JVM, since it watches its stdin pipe.
     File runner = runner();
     if (!runner.isFile()) {

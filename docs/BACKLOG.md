@@ -10,8 +10,6 @@ Deferred until core is solid (avoid rewrite hell). Signals plus button callbacks
 
 ## Nice-to-haves
 
-- **HotSwap on an enhanced-redefinition JVM**: try JetBrains Runtime (-XX:+AllowEnhancedClassRedefinition) or TravaJDK with HotswapAgent under WildFly 29 on Java 11. It would allow added methods and changed signatures without a redeploy. exploded-hotswap remains the default, since it needs no other JDK.
-
 - **Eclipse WTP after Gradle 10**: Gradle 9 deprecates the eclipse-wtp model (EclipseWtp, the facet block and the component file hooks) for removal in Gradle 10. The Gradle plugin uses it to publish bin/main, bin/default and build/j2act and to set the Jakarta EE 10 facet, and Buildship runs its tasks for WAR projects. Before Gradle 10, check what Buildship does for WTP, or write the two .settings files from a synchronization task as j2actEclipseApt writes the APT ones.
 
 - **Typed value enums on generated tags**: `withType(InputType.EMAIL)` next to the String overloads, generated from the value sets already in the vendored HTML data (ADR 0021).
