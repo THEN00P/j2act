@@ -97,6 +97,21 @@ class J2ActPluginTest {
     assertTrue(Files.isRegularFile(project.resolve("build/resources/main/demo/Hello.client.js")));
   }
 
+  /**
+   * Every task the plugin adds or configures serializes into the configuration cache, and the
+   * entry is reused. A dry run, so no npm: the cache holds the task graph either way.
+   */
+  @ParameterizedTest @MethodSource("gradleVersions")
+  void theConfigurationCacheStoresAndReusesTheBuild(String gradle) throws IOException {
+    setUp("{\"name\":\"demo\"}", "");
+    String[] tasks = {"--configuration-cache", "--dry-run", "build", "explodedWar", "j2actEclipseApt"};
+    String first = run(gradle, tasks).getOutput();
+    assertTrue(first.contains("Configuration cache entry stored"), first);
+    assertTrue(first.contains(":j2actBundle SKIPPED") && first.contains(":j2actTypecheck SKIPPED"), first);
+    String second = run(gradle, tasks).getOutput();
+    assertTrue(second.contains("Configuration cache entry reused"), second);
+  }
+
   @ParameterizedTest @MethodSource("gradleVersions")
   void eclipseGetsAnnotationProcessingAndAWtpDeploymentThatCarriesItsOutputs(String gradle) throws IOException {
     setUp("{\"name\":\"demo\"}", "");

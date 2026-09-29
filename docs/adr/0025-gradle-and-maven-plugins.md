@@ -18,9 +18,33 @@ The Maven plugin has two goals:
 - bundle, in process-classes, runs Vite through Node directly, with no npm or shell in between;
 - typecheck runs in the test phase.
 
-With <extensions>true</extensions>, the Maven plugin will apply the pom boilerplate itself, as defaults: the processor path, the src/main/java resources, m2e.apt.activation, the TypeScript copy filter for Eclipse, and Node. Today the spike's pom still lists all of it.
+With <extensions>true</extensions>, as the Kotlin Maven plugin does it, the Maven plugin applies the rest as defaults after Maven reads the pom:
+
+    <plugin>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-maven-plugin</artifactId>
+      <version>...</version>
+      <extensions>true</extensions>
+    </plugin>
+
+- the bundle and typecheck executions, unless the pom lists executions of its own;
+- j2act-processor on maven-compiler-plugin's annotationProcessorPaths, after any the pom lists;
+- src/main/java as one more resource folder for .js, .mjs, .cjs, .css and .json, unless the pom lists that folder;
+- m2e.apt.activation=jdt_apt, unless set;
+- with a package.json, frontend-maven-plugin installing Node 24 and the package manager (chosen as the Gradle plugin chooses it) and running its install, unless the pom declares frontend-maven-plugin. nodeVersion, pnpmVersion and yarnVersion stay that plugin's own properties;
+- for a WAR, exploded-hotswap's Maven plugin, so mvn exploded-hotswap:exploded resolves.
+
+m2e runs Maven lifecycle participants when it reads a project (m2e 2.x, ProjectRegistryManager), so Eclipse and VS Code see the same processor path, property and executions. Checked with VS Code's Java server: the processor ran, and the bundle ran on import and after an edit.
+
+The trade-off is the processor path. A pom that lists no annotationProcessorPaths lets javac find processors on the classpath, and giving it a path turns that search off, so a Lombok taken from the classpath stops running. JDK 23 already turned that search off by default, and Lombok and MapStruct document the processor path. Such a pom lists Lombok there.
+
+The TypeScript copy filter for Eclipse stays out: m2e has no pom setting for it. The copies in target/classes are harmless under Maven, since tsconfig.json includes only src/main/java and the runtime serves only the files Vite's manifest lists.
+
+Maven resolves build extensions before it builds anything, so this repository's Maven Vite examples cannot sit in the reactor that builds the plugin. They are their own build, examples/pom.xml, after ./mvnw install, as the Gradle examples are.
 
 Type errors fail gradle build, mvn package and mvn verify, the way a failing test does, but never compiling or starting the app. An IntelliJ Run of a Gradle project goes through Gradle, so a type check inside the bundle task would have blocked it.
+
+Every task the Gradle plugin adds or configures works with Gradle's configuration cache, checked on Gradle 8.14 and 9.8. The check found that explodedWar chose between the editor's classes and javac's when the cache entry was stored. A reused entry then kept that first choice, and Gradle 8.14 could not load it at all. The choice is now made when the task runs.
 
 The processor is registered with Gradle as an isolating incremental processor. Before, every Java change recompiled the whole project. Gradle's rules forbid javac's Trees API to incremental processors, and the build-time checks need it. Like Lombok, the processor unwraps Gradle's processing environment. That is safe here because the checks read only the type being compiled. The dev token names the first compiled type as its origin, as isolating processors must.
 

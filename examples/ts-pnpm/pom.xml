@@ -17,9 +17,6 @@
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
-    <m2e.apt.activation>jdt_apt</m2e.apt.activation>
-    <node.version>v24.14.0</node.version>
-    <pnpm.version>10.32.1</pnpm.version>
   </properties>
 
   <dependencyManagement>
@@ -51,62 +48,12 @@
 
   <build>
     <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <configuration>
-          <!-- The build-time checks and the .types.d.ts the TypeScript imports (ADR 0008, 0022). -->
-          <annotationProcessorPaths>
-            <path>
-              <groupId>dev.j2act</groupId>
-              <artifactId>j2act-processor</artifactId>
-              <version>${project.version}</version>
-            </path>
-          </annotationProcessorPaths>
-        </configuration>
-      </plugin>
-      <!-- Node and pnpm install as usual; the j2act plugin below builds with Vite. -->
-      <plugin>
-        <groupId>com.github.eirslett</groupId>
-        <artifactId>frontend-maven-plugin</artifactId>
-        <version>2.0.2</version>
-        <configuration>
-          <nodeVersion>${node.version}</nodeVersion>
-          <pnpmVersion>${pnpm.version}</pnpmVersion>
-        </configuration>
-        <executions>
-          <execution>
-            <id>install-node-and-pnpm</id>
-            <phase>initialize</phase>
-            <goals>
-              <goal>install-node-and-pnpm</goal>
-            </goals>
-          </execution>
-          <execution>
-            <id>pnpm-install</id>
-            <phase>initialize</phase>
-            <goals>
-              <goal>pnpm</goal>
-            </goals>
-            <configuration>
-              <arguments>install --frozen-lockfile</arguments>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-      <!-- vite build into target/classes, incrementally in Eclipse and VS Code; tsc in the test phase (ADR 0025). -->
+      <!-- Vite, tsc, Node, the processor and the IDE setup, as defaults (ADR 0025). -->
       <plugin>
         <groupId>dev.j2act</groupId>
         <artifactId>j2act-maven-plugin</artifactId>
         <version>${project.version}</version>
-        <executions>
-          <execution>
-            <goals>
-              <goal>bundle</goal>
-              <goal>typecheck</goal>
-            </goals>
-          </execution>
-        </executions>
+        <extensions>true</extensions>
       </plugin>
       <plugin>
         <groupId>org.springframework.boot</groupId>

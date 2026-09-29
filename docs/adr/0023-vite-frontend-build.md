@@ -29,6 +29,6 @@ The client types move to .j2act/types at the project root, the same for Maven, G
 
     "rootDirs": ["src/main/java", ".j2act/types"]
 
-The processor writes these files outside the Filer, since the folder is the project's rather than the compiler's. The cost is that Gradle never removes a stale one.
+The processor writes these files outside the Filer, since the folder is the project's rather than the compiler's, so no build tool cleans it. The processor removes stale files itself: a class's file when the class no longer declares clients, and, once per compile, every file whose class the compiler no longer finds. It asks the compiler rather than the source folders, so an incremental build, which compiles only what changed, still sees every class; checked with Gradle's incremental compile and with the Eclipse compiler in VS Code.
 
 Still open: a lazy import() split point, since relative dynamic imports are not served. The evidence is in docs/spikes/frontend-build.md.

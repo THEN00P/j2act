@@ -36,11 +36,23 @@
       <version>3.16.0</version>
       <scope>provided</scope>
     </dependency>
+    <!-- The extension's component annotations; Maven provides them. -->
+    <dependency>
+      <groupId>javax.inject</groupId>
+      <artifactId>javax.inject</artifactId>
+      <version>1</version>
+      <scope>provided</scope>
+    </dependency>
     <!-- Eclipse's incremental builds (m2e) hand the mojo what changed, as frontend-maven-plugin uses it. -->
     <dependency>
       <groupId>org.sonatype.plexus</groupId>
       <artifactId>plexus-build-api</artifactId>
       <version>0.0.7</version>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 

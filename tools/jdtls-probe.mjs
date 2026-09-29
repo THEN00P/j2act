@@ -6,7 +6,7 @@
 //   JDTLS=/tmp/jdtls JAVA=<java 21+> [GRADLE_JAVA_HOME=<jdk 17>] node tools/jdtls-probe.mjs examples/vite-gradle-spring
 //   ... node tools/jdtls-probe.mjs examples/vite-maven-wildfly --edit
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -119,6 +119,24 @@ if (edit) {
   console.log("incremental build after a .ts edit: manifest " + (after && after !== before ? "changed" : "unchanged")
     + ", edited module " + (built ? "built" : "not built"));
   writeFileSync(source, original);
+
+  // A Java edit elsewhere: the incremental compile sees only that file, yet the processor must
+  // keep the unchanged client's types and remove those of a class that is gone.
+  const page = join(project, "src/main/java/com/example/vite/pages/HomePage.java");
+  const pageSource = readFileSync(page, "utf8");
+  const stale = join(project, ".j2act/types/com/example/gone/Old.types.d.ts");
+  mkdirSync(join(stale, ".."), { recursive: true });
+  writeFileSync(stale, "export {};\n");
+  writeFileSync(page, pageSource + "// edited\n");
+  send({ method: "workspace/didChangeWatchedFiles", params: { changes: [{ uri: pathToFileURL(page).href, type: 2 }] } });
+  await new Promise(r => setTimeout(r, 3000));
+  await request("java/buildWorkspace", false);
+  await new Promise(r => setTimeout(r, 15000));
+  const kept = existsSync(join(project, ".j2act/types/com/example/vite/components/SalesChart.types.d.ts"));
+  console.log("incremental build after a .java edit: unchanged client's types " + (kept ? "kept" : "DELETED")
+    + ", stale types " + (existsSync(stale) ? "left behind" : "removed"));
+  writeFileSync(page, pageSource);
+  rmSync(join(project, ".j2act/types/com/example/gone"), { recursive: true, force: true });
 }
 server.kill();
 process.exit(0);
