@@ -35,6 +35,8 @@ public final class J2ActProcessor extends AbstractProcessor {
 
   private Checks checks;
   private ClientTypes clientTypes;
+  private Source source;
+  private boolean tokenWritten;
 
   @Override public SourceVersion getSupportedSourceVersion() {
     return SourceVersion.latestSupported();
@@ -62,9 +64,16 @@ public final class J2ActProcessor extends AbstractProcessor {
       checks = new Checks(env, source);
     }
     clientTypes = new ClientTypes(env, source);
+    this.source = source;
   }
 
   @Override public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment round) {
+    if (!tokenWritten && !round.getRootElements().isEmpty()) {
+      tokenWritten = true;
+      Element origin = round.getRootElements().iterator().next();
+      java.nio.file.Path java = source != null && origin instanceof TypeElement ? source.sourceFile((TypeElement) origin) : null;
+      clientTypes.project = DevToken.write(processingEnv.getFiler(), origin, java);
+    }
     for (Element root : round.getRootElements()) {
       if (root instanceof TypeElement) {
         try {

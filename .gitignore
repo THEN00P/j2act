@@ -7,3 +7,4 @@ CLAUDE.local.md
 node_modules/
 # Node installed by frontend-maven-plugin for the TypeScript examples
 examples/*/node/
+.j2act/

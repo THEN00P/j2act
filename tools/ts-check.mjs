@@ -1,5 +1,5 @@
 // Checks a TypeScript example (examples/ts-npm or ts-pnpm) in headless Chrome: client modules
-// bundled by esbuild from node_modules, with CSS imports and CSS modules (ADR 0022), e.g.
+// built by Vite from node_modules, with CSS imports and CSS modules (ADR 0022, 0023), e.g.
 //   node tools/ts-check.mjs http://localhost:8090/
 import { openBrowser } from "./cdp.mjs";
 
@@ -12,9 +12,9 @@ b.run(async () => {
   const sales = `document.getElementById('sales')`;
   const editor = `document.getElementById('editor')`;
 
-  check("the module's stylesheet, from its CSS imports and CSS modules, loads before mount",
-    await until(`[...document.querySelectorAll('link[data-j2-keep]')].length === 2
-      && !!${sales}?.getAttribute('data-j2-css')?.endsWith('SalesChart.client.css')`));
+  check("the modules' stylesheets, from their CSS imports and CSS modules, load before mount",
+    await until(`[...document.querySelectorAll('link[data-j2-keep]')].length >= 2
+      && (${sales}?.getAttribute('data-j2-css') || '').split(' ').every(u => /\\/assets\\/.+\\.css$/.test(u))`));
 
   check("Chart.js from node_modules draws", await until(`${sales}.querySelector('canvas')?.width > 0
     && ${sales}.dataset.total === '60'`, 8000));
@@ -42,9 +42,9 @@ b.run(async () => {
   check("typing reaches Java, whose validation re-renders inside Quill",
     await until(`${editor}.querySelector('.editor-problems')?.textContent === 'remove the TODO'`));
   check("code shared by both modules runs from one chunk", await js(`${editor}.dataset.words === '4'
-    && performance.getEntriesByType('resource').some(r => r.name.includes('/chunks/chunk-'))`));
+    && performance.getEntriesByType('resource').some(r => /\\/assets\\/numbers-[^/]+\\.js$/.test(r.name))`));
 
   const maps = await js(`Promise.all([...document.querySelectorAll('[data-j2-module]')].map(el =>
     fetch(el.getAttribute('data-j2-module') + '.map').then(r => r.status))).then(s => s.join(' '))`);
-  check("source maps are served, so devtools show the TypeScript", maps === "200 200", maps);
+  check("source maps stay out of a production build unless vite.config asks for them", maps === "404 404", maps);
 });

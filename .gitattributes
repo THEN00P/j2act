@@ -2,3 +2,4 @@
 * text=auto eol=lf
 *.cmd text eol=crlf
 *.jar binary
+*.bat text eol=crlf

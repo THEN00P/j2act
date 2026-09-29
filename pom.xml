@@ -18,10 +18,12 @@
     <module>j2act-processor</module>
     <module>j2act-spring</module>
     <module>j2act-jakarta</module>
+    <module>j2act-maven-plugin</module>
     <module>examples/counter-spring</module>
     <module>examples/counter-jakarta</module>
     <module>examples/ts-npm</module>
     <module>examples/ts-pnpm</module>
+    <module>examples/vite-maven-wildfly</module>
   </modules>
 
   <properties>

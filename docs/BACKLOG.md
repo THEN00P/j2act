@@ -10,6 +10,8 @@ Deferred until core is solid (avoid rewrite hell). Signals plus button callbacks
 
 ## Nice-to-haves
 
+- **HotSwap on an enhanced-redefinition JVM**: try JetBrains Runtime (-XX:+AllowEnhancedClassRedefinition) or TravaJDK with HotswapAgent under WildFly 29 on Java 11. It would allow added methods and changed signatures without a redeploy. exploded-hotswap remains the default, since it needs no other JDK.
+
 - **Typed value enums on generated tags**: `withType(InputType.EMAIL)` next to the String overloads, generated from the value sets already in the vendored HTML data (ADR 0021).
 
 - **In-page overlay devtools (not a browser extension)**: react-scan-style perf overlay (which scopes re-ran, patch sizes), slow-event log, component-tree inspector for our scope tree.

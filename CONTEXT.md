@@ -48,6 +48,18 @@ _Avoid_: Export, FileResponse
 The client half of a component: a Java interface (mount props plus actions) implemented by a plain exported object in a sibling *.client.ts/.js file, typed through processor-generated declarations (ADR 0022).
 _Avoid_: Hook, Controller, JS bridge
 
+**Page entry**:
+A stylesheet or script that a page, rather than a client module, pulls from the Vite build, e.g. the Tailwind stylesheet. It is listed in j2act({ input }) and rendered into the head with vite(...) (ADR 0023).
+_Avoid_: Bundle, Asset pipeline
+
+**Dev mode**:
+The app, started from class folders or an exploded deployment of a project on this machine, runs the Vite watcher itself and re-imports changed client modules and stylesheets with Java state kept. It turns itself on through the dev token and needs no flag (ADR 0024).
+_Avoid_: Debug mode, Watch mode, HMR
+
+**Dev token**:
+META-INF/j2act/dev.json, written by the annotation processor and naming the project folder. It only counts as a plain file on disk, never inside an archive (ADR 0024).
+_Avoid_: Build info, Dev flag
+
 **window()**:
 Generated Java facade mirroring the browser's Web APIs one to one, executed remotely; every call returns a CompletionStage (ADR 0022).
 _Avoid_: Browser, JsRuntime
