@@ -3,6 +3,11 @@ target/
 .idea/
 .vscode/
 *.iml
+# Eclipse
+.project
+.classpath
+.settings/
+.factorypath
 CLAUDE.local.md
 node_modules/
 # Node installed by frontend-maven-plugin for the TypeScript examples
