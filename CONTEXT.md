@@ -8,8 +8,16 @@ Server-driven reactive UI in pure Java. No IDE plugins, no templating language â
 Server-side reactive value owned by one browser connection/island session. Mutations for a session are serialized on one logical thread.
 _Avoid_: Signal, Atom, SharedVar
 
+**Retained State**:
+A State created with retainedState() whose value goes into its session's Snapshot, so it outlives the in-memory session for the same page load: grace expiry, pause, restart, redeploy, another node. Keyed by its component's slot path and field name. A reload still starts empty. Unsaved work only; anything worth keeping still belongs in the app's database (ADR 0026).
+_Avoid_: Persisted State, PersistentState, Saved State, Draft
+
+**Snapshot**:
+The Retained State of one session, saved to retained state storage with an absolute expiry and used at most once to restore that page's session.
+_Avoid_: Checkpoint (that is the opt-in trigger that saves one while the session is live), Backup
+
 **Store**:
-Shared state created once via createStore() (current user, theme, locale); each session holds an isolated copy. Components read via select() on the handle, tracked per-selector so scopes re-render only when their slice changes. No persistence, no middleware.
+Shared state created once via createStore() (current user, theme, locale); each session holds an isolated copy. Components read via select() on the handle, tracked per-selector so scopes re-render only when their slice changes. No middleware. createRetainedStore() makes it Retained State, keyed by its declaring class and field.
 _Avoid_: GlobalState, Context, Singleton, Session
 
 **LiveComponent**:
