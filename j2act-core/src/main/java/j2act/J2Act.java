@@ -12,7 +12,12 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Base64;
+import java.lang.reflect.Type;
+import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -72,6 +77,12 @@ public final class J2Act implements AutoCloseable {
   final Preload defaultPreload;
   final long preloadHoldMillis;
   final JsonBinding json;
+  /** Retained State (ADR 0026): where snapshots go, how long they live, and per-type codecs. */
+  final RetainedStateStorage retainedStorage;
+  final long retainedRetentionMillis;
+  private final Map<Class<?>, RetainedCodec<?>> retainedCodecs;
+  private final Set<String> warnedOnce = ConcurrentHashMap.newKeySet();
+  private volatile long lastStorageSweep;
   final ImportMap importMap;
   /** Where client modules and package files are read from: the application's class loader. */
   final ClassLoader resourceLoader;
@@ -112,6 +123,11 @@ public final class J2Act implements AutoCloseable {
     this.defaultPreload = b.defaultPreload;
     this.preloadHoldMillis = b.preloadHold.toMillis();
     this.json = b.json;
+    this.retainedStorage = b.retainedStorage != null ? b.retainedStorage : new MemoryRetainedStateStorage(b.maxRetainedSnapshots);
+    Duration retention = b.retainedRetention != null ? b.retainedRetention
+      : b.retainedStorage != null ? Duration.ofHours(8) : Duration.ofHours(2);
+    this.retainedRetentionMillis = retention.toMillis();
+    this.retainedCodecs = new java.util.HashMap<>(b.retainedCodecs);
     ClassLoader loader = Thread.currentThread().getContextClassLoader();
     this.resourceLoader = loader != null ? loader : J2Act.class.getClassLoader();
     this.importMap = ImportMap.build(resourceLoader, b.contextPath, this);
@@ -213,6 +229,7 @@ public final class J2Act implements AutoCloseable {
    */
   public ServeResult serve(String url, Exchange exchange) {
     Session session = new Session(this, newSecret(18), newSecret(18), exchange, url);
+    session.restoring = restore(exchange);
     sessions.put(session.id, session);
     try {
       Session.Resolution resolution = await(session.call(() -> session.resolve(url)));
@@ -488,6 +505,16 @@ public final class J2Act implements AutoCloseable {
 
   void sweep() {
     long now = clock.millis();
+    if (now - lastStorageSweep >= 60_000) {
+      lastStorageSweep = now;
+      executor.execute(() -> {
+        try {
+          retainedStorage.sweep(Instant.ofEpochMilli(now));
+        } catch (RuntimeException e) {
+          log(System.Logger.Level.WARNING, "sweeping retained state storage failed", e);
+        }
+      });
+    }
     for (UploadSink sink : uploads.values()) {
       if (now - sink.lastChunkAt > uploadIdleMillis) {
         sink.fail(new IllegalStateException("upload stalled: no bytes for " + uploadIdleMillis + " ms"));
@@ -509,7 +536,102 @@ public final class J2Act implements AutoCloseable {
   private void discard(Session session, boolean expired) {
     sessions.remove(session.id);
     byConnection.values().removeIf(s -> s == session);
-    session.lane.execute(() -> session.dispose(expired));
+    if (!expired) {
+      session.lane.execute(() -> session.dispose(false));
+      return;
+    }
+    // Evicted: its snapshot is saved before the client hears "expired", so the remount finds it (ADR 0026).
+    session.lane.execute(() -> {
+      String snapshot = session.disposed ? null : snapshot(session);
+      if (snapshot == null) {
+        session.dispose(true);
+        return;
+      }
+      executor.execute(() -> {
+        save(session, snapshot);
+        session.lane.execute(() -> session.dispose(true));
+      });
+    });
+  }
+
+  // ---- Retained State (ADR 0026)
+
+  /** Lane-only. The session's snapshot, or null when it has no retained values. */
+  private String snapshot(Session session) {
+    Map<String, String> entries;
+    String principal;
+    try {
+      entries = session.retainedEntries();
+      if (entries.isEmpty()) {
+        return null;
+      }
+      AuthCtx auth = session.currentAuth();
+      principal = auth.isAnonymous() ? null : auth.name();
+    } catch (RuntimeException e) {
+      log(System.Logger.Level.WARNING, "retained state of session " + session.id + " could not be saved", e);
+      return null;
+    }
+    return Retained.encode(clock.millis() + retainedRetentionMillis, principal, entries);
+  }
+
+  private void save(Session session, String snapshot) {
+    try {
+      retainedStorage.save(Retained.id(session.token), snapshot, Instant.ofEpochMilli(clock.millis() + retainedRetentionMillis));
+    } catch (RuntimeException e) {
+      log(System.Logger.Level.WARNING, "retained state of session " + session.id + " could not be saved", e);
+    }
+  }
+
+  /**
+   * The entries to restore into a remount that names its old page's token, or null. A
+   * snapshot is used at most once, and only for the identity that saved it: anonymous
+   * only for anonymous.
+   */
+  private Map<String, String> restore(Exchange exchange) {
+    String token = exchange.header(Retained.RESTORE_HEADER).orElse("");
+    if (token.isEmpty()) {
+      return null;
+    }
+    String id = Retained.id(token);
+    Retained.Snapshot snapshot;
+    try {
+      Optional<String> stored = retainedStorage.load(id);
+      if (!stored.isPresent()) {
+        return null;
+      }
+      retainedStorage.delete(id);
+      snapshot = Retained.decode(stored.get());
+    } catch (RuntimeException e) {
+      log(System.Logger.Level.WARNING, "retained state could not be restored", e);
+      return null;
+    }
+    if (snapshot.expiresAt <= clock.millis()) {
+      return null;
+    }
+    AuthCtx auth = resolveIdentity(exchange);
+    String principal = auth.isAnonymous() ? null : auth.name();
+    if (!Objects.equals(principal, snapshot.principal)) {
+      return null;
+    }
+    return new ConcurrentHashMap<>(snapshot.entries);
+  }
+
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  String writeRetained(Object value, Type type) {
+    RetainedCodec codec = retainedCodecs.get(Retained.rawType(type));
+    return codec != null ? codec.write(value) : json.write(value);
+  }
+
+  Object readRetained(String text, Type type) {
+    RetainedCodec<?> codec = retainedCodecs.get(Retained.rawType(type));
+    return codec != null ? codec.read(text) : json.read(text, type);
+  }
+
+  /** Logs a warning the first time this key comes up. */
+  void warnOnce(String key, String message) {
+    if (warnedOnce.add(key)) {
+      log(System.Logger.Level.WARNING, message, null);
+    }
   }
 
   public int sessionCount() {
@@ -653,6 +775,10 @@ public final class J2Act implements AutoCloseable {
     private Preload defaultPreload = Preload.NONE;
     private Duration preloadHold = Duration.ofSeconds(10);
     private JsonBinding json = JsonBinding.basic();
+    private RetainedStateStorage retainedStorage;
+    private Duration retainedRetention;
+    private int maxRetainedSnapshots = 1000;
+    private final Map<Class<?>, RetainedCodec<?>> retainedCodecs = new java.util.HashMap<>();
     private final Map<String, String> imports = new java.util.LinkedHashMap<>();
 
     private Builder(PageResolver resolver) {
@@ -796,6 +922,37 @@ public final class J2Act implements AutoCloseable {
 
     public Builder withJson(JsonBinding json) {
       this.json = java.util.Objects.requireNonNull(json);
+      return this;
+    }
+
+    /**
+     * Where snapshots of Retained State go (ADR 0026), such as JdbcRetainedStateStorage from
+     * j2act-retained-jdbc. Without it they stay in this JVM's memory: they outlive the grace
+     * window but not a restart.
+     */
+    public Builder withRetainedStateStorage(RetainedStateStorage storage) {
+      this.retainedStorage = java.util.Objects.requireNonNull(storage);
+      return this;
+    }
+
+    /** How long a snapshot lives after it is saved: 2 hours in memory and 8 hours in storage by default, as in .NET. */
+    public Builder withRetainedStateRetention(Duration retention) {
+      this.retainedRetention = retention;
+      return this;
+    }
+
+    /** The in-memory default's cap, oldest dropped first: 1,000 snapshots by default, as in .NET. */
+    public Builder withMaxRetainedSnapshots(int max) {
+      if (max < 1) {
+        throw new IllegalArgumentException("keep at least one snapshot");
+      }
+      this.maxRetainedSnapshots = max;
+      return this;
+    }
+
+    /** Writes and reads Retained State of exactly this declared type with the codec instead of the JsonBinding. */
+    public <T> Builder withRetainedCodec(Class<T> type, RetainedCodec<T> codec) {
+      this.retainedCodecs.put(type, java.util.Objects.requireNonNull(codec));
       return this;
     }
 

@@ -993,7 +993,8 @@
     } catch (ignored) {
       // already closed
     }
-    fetch(location.href, { credentials: "same-origin" })
+    // The old page's token lets the server restore its Retained State, if it kept a snapshot (ADR 0026).
+    fetch(location.href, { credentials: "same-origin", headers: tok ? { "X-J2-Restore": tok } : {} })
       .then((r) => r.text())
       .then((html) => {
         const doc = new DOMParser().parseFromString(html, "text/html");

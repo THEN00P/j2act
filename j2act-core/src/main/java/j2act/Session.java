@@ -223,6 +223,86 @@ final class Session {
     }
   }
 
+  // ---- Retained State (ADR 0026)
+
+  /**
+   * Snapshot entries by key, waiting for their fields while a restored page mounts. Kept until
+   * the first soft navigation, so a form that renders once its query loads still finds its value.
+   */
+  volatile Map<String, String> restoring;
+
+  /** Lane-only. Names a new retained cell after its field, and fills it from the snapshot being restored. */
+  void retain(Scope scope, State<?> state, ValueCell cell, int index) {
+    ComponentTag instance = scope.instance;
+    String component = instance.getClass().getName();
+    java.lang.reflect.Field field = Retained.fieldOf(instance, state);
+    String name = state.retainedName != null ? state.retainedName : field != null ? field.getName() : null;
+    if (name == null) {
+      name = "@" + index;
+      engine.warnOnce("local " + component + name, component + " creates retainedState #" + index
+        + " outside a field, so it is keyed by creation order and a state added above it takes its value;"
+        + " declare it as a field (ADR 0026)");
+    }
+    for (Cell other : scope.cells) {
+      if (other != cell && other instanceof ValueCell && name.equals(((ValueCell) other).retainedName)) {
+        engine.warnOnce("name " + component + "#" + name, component + " has two retained states named \""
+          + name + "\"; the second one is not retained (ADR 0026)");
+        return;
+      }
+    }
+    if (instance.key == null && scope.parent != null) {
+      for (Scope sibling : scope.parent.children.values()) {
+        if (sibling != scope && sibling.instance != null && sibling.instance.getClass() == instance.getClass()
+          && sibling.instance.key == null) {
+          engine.warnOnce("keyless " + scope.parent.address + "@" + component, component
+            + " has retained state and repeats without withKey under " + scope.parent.instance.getClass().getName()
+            + ", so a restore puts values back by position; give each row a stable withKey (ADR 0026)");
+          break;
+        }
+      }
+    }
+    java.lang.reflect.Type type = field == null ? null : Retained.valueType(field);
+    if (type == null) {
+      Object initial = state.initial();
+      type = initial == null ? Object.class : initial.getClass();
+    }
+    cell.retainedName = name;
+    cell.retainedType = type;
+    Map<String, String> entries = restoring;
+    String json = entries == null ? null : entries.remove(scope.slotPath() + "#" + name);
+    if (json != null) {
+      try {
+        cell.initialize(engine.readRetained(json, type));
+      } catch (RuntimeException e) {
+        engine.log(System.Logger.Level.WARNING, "retained " + component + "#" + name
+          + " no longer reads as " + type.getTypeName() + "; it starts from its initial value (ADR 0026)", e);
+      }
+    }
+  }
+
+  /** Lane-only. The retained values of mounted components, by key; null values are left out, as in .NET. */
+  Map<String, String> retainedEntries() {
+    Map<String, String> entries = new LinkedHashMap<>();
+    for (Cell c : cells.values()) {
+      if (!(c instanceof ValueCell) || ((ValueCell) c).retainedName == null) {
+        continue;
+      }
+      ValueCell cell = (ValueCell) c;
+      Scope owner = cell.owner;
+      Object value = cell.peek();
+      if (value == null || cell.disposed || owner == null || owner.disposed || owner.preloading()) {
+        continue;
+      }
+      String key = owner.slotPath() + "#" + cell.retainedName;
+      try {
+        entries.put(key, engine.writeRetained(value, cell.retainedType));
+      } catch (RuntimeException e) {
+        engine.warnOnce("write " + key, "retained " + key + " could not be written to its snapshot (ADR 0026): " + e);
+      }
+    }
+    return entries;
+  }
+
   // ---- stores
 
   /** This session's cell for a store, created on first use with the store's initial value. */
@@ -385,6 +465,7 @@ final class Session {
 
   /** Lane-only soft navigation. Mode is push, replace or pop; the client gets the final URL after the patches. */
   void navigate(String url, String mode) {
+    restoring = null;
     Resolution resolution = resolve(url);
     if (resolution.match == null) {
       // No route here: let the browser load it and get the server's 404.

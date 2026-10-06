@@ -14,6 +14,7 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
@@ -60,6 +61,15 @@ final class Checks {
     Scope scope = new Scope(type, source.imports(type));
     boolean typeAllowsUnsafe = allowsUnsafe(type);
     for (Element member : type.getEnclosedElements()) {
+      if (member.getKind() == ElementKind.FIELD) {
+        Node node = source.member(member);
+        if (node != null && callsRetainedState(node, scope)) {
+          scope.retainedFields.add(member.getSimpleName().toString());
+          retainedType((VariableElement) member, scope);
+        }
+      }
+    }
+    for (Element member : type.getEnclosedElements()) {
       ElementKind kind = member.getKind();
       if (kind.isClass() || kind.isInterface()) {
         check((TypeElement) member);
@@ -67,6 +77,9 @@ final class Checks {
           || kind == ElementKind.ENUM_CONSTANT) {
         Node node = source.member(member);
         if (node != null) {
+          if (kind == ElementKind.METHOD) {
+            scope.methods.add(node);
+          }
           scan(node, scope, typeAllowsUnsafe || allowsUnsafe(member));
         }
       }
@@ -83,6 +96,8 @@ final class Checks {
       }
       capturedLocals(node, scope);
       missingKeys(node, scope);
+      retainedInMethod(node, scope);
+      retainedChangedInPlace(node, scope);
     } else if (node.kind == Node.Kind.NEW && !allowsUnsafe && scope.isType(scope.typeNamed(node.type), UNSAFE_HTML)) {
       report(node, scope, "new UnsafeHtml() renders raw HTML; sanitize the input and mark the method "
         + "@AllowUnsafe(\"why it is safe\") (ADR 0008)");
@@ -233,6 +248,117 @@ final class Checks {
     }
   }
 
+  // ---- Retained State (ADR 0026)
+
+  /** Calls on a value that change it in place, so a retained State never sees a write. */
+  private static final Set<String> MUTATORS = new HashSet<>(Arrays.asList(
+    "add", "addAll", "addFirst", "addLast", "remove", "removeAll", "removeIf", "retainAll", "clear", "put",
+    "putAll", "putIfAbsent", "replace", "replaceAll", "compute", "computeIfAbsent", "computeIfPresent", "merge",
+    "sort", "push", "pop", "offer", "poll"));
+
+  /** Values a snapshot can never hold: they are code, handles or open resources, not data. */
+  private static final List<String> NOT_RETAINABLE = Arrays.asList(
+    "java.util.stream.BaseStream", "java.io.InputStream", "java.io.OutputStream", "java.io.Reader",
+    "java.io.Writer", "java.nio.channels.Channel", "java.sql.Connection", "java.lang.Thread",
+    "java.util.concurrent.Future", "jakarta.persistence.EntityManager", "j2act.Primitive", "j2act.Store",
+    "j2act.ComponentTag", "j2act.UploadRef", "j2act.Exchange");
+
+  private boolean isRetainedState(Node node, Scope scope) {
+    return node.kind == Node.Kind.CALL && node.name.equals("retainedState")
+      && scope.isOwnedBy(scope.candidates(node), COMPONENT);
+  }
+
+  /** A field initializer that is, or chains from, retainedState(...). */
+  private boolean callsRetainedState(Node member, Scope scope) {
+    for (Node node : member.children) {
+      for (Node link = node; link != null && link.kind == Node.Kind.CALL; link = link.receiver) {
+        if (isRetainedState(link, scope)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /** In a method, the runtime cannot see a field name, so the value is keyed by creation order. */
+  private void retainedInMethod(Node call, Scope scope) {
+    if (!isRetainedState(call, scope)) {
+      return;
+    }
+    Node member = call.parent;
+    while (member != null && member.kind != Node.Kind.MEMBER && member.kind != Node.Kind.LAMBDA
+        && member.kind != Node.Kind.CLASS) {
+      member = member.parent;
+    }
+    if (member != null && member.kind == Node.Kind.MEMBER && member.parent == null && scope.methods.contains(member)) {
+      report(call, scope, "retainedState in a method is keyed by creation order, so a state added above it "
+        + "takes its value after a deploy; declare it as a field (ADR 0026)");
+    }
+  }
+
+  /** name.get().add(...) or name.get().setX(...) on a retained field: no set(), so no save. */
+  private void retainedChangedInPlace(Node call, Scope scope) {
+    Node get = call.receiver;
+    if (get == null || !get.is(Node.Kind.CALL, "get") || !get.args.isEmpty() || get.receiver == null) {
+      return;
+    }
+    boolean mutator = MUTATORS.contains(call.name)
+      || call.name.length() > 3 && call.name.startsWith("set") && Character.isUpperCase(call.name.charAt(3));
+    if (!mutator) {
+      return;
+    }
+    Node field = get.receiver;
+    String name;
+    if (field.kind == Node.Kind.IDENT && local(field, field.name) == null) {
+      name = field.name;
+    } else if (field.kind == Node.Kind.SELECT && field.receiver != null && field.receiver.is(Node.Kind.IDENT, "this")) {
+      name = field.name;
+    } else {
+      return;
+    }
+    if (scope.retainedFields.contains(name)) {
+      report(call, scope, "retained " + name + " is changed in place by " + call.name + "(), which is not saved; "
+        + "set a new value with " + name + ".set(...) (ADR 0026)");
+    }
+  }
+
+  /** State&lt;T&gt; fields whose T is code, a handle or an open resource. */
+  private void retainedType(VariableElement field, Scope scope) {
+    TypeMirror declared = field.asType();
+    if (!(declared instanceof DeclaredType) || ((DeclaredType) declared).getTypeArguments().size() != 1) {
+      return;
+    }
+    TypeElement value = scope.element(((DeclaredType) declared).getTypeArguments().get(0));
+    if (value == null) {
+      return;
+    }
+    String reason = null;
+    if (value.getKind() == ElementKind.INTERFACE && isFunctional(value)) {
+      reason = "a function";
+    } else {
+      for (String name : NOT_RETAINABLE) {
+        if (scope.isType(value, name)) {
+          reason = "a " + value.getSimpleName();
+          break;
+        }
+      }
+    }
+    if (reason != null) {
+      source.report(Diagnostic.Kind.WARNING, "j2act: retained " + field.getSimpleName() + " holds " + reason
+        + ", which a snapshot cannot store as JSON (ADR 0026)", field);
+    }
+  }
+
+  private static boolean isFunctional(TypeElement type) {
+    for (AnnotationMirror annotation : type.getAnnotationMirrors()) {
+      if (((TypeElement) annotation.getAnnotationType().asElement()).getQualifiedName()
+          .contentEquals("java.lang.FunctionalInterface")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** What a lambda returns: its expression body, or the operands of its own return statements. */
   private static List<Node> results(Node lambda) {
     List<Node> returns = new ArrayList<>();
@@ -309,6 +435,10 @@ final class Checks {
   /** Name resolution inside one type: locals from the Node tree, everything else from the model. */
   private final class Scope {
     final TypeElement type;
+    /** Fields initialized with retainedState(...) (ADR 0026). */
+    final Set<String> retainedFields = new HashSet<>();
+    /** The method members of this type, as opposed to fields, constructors and initializers. */
+    final Set<Node> methods = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     private final List<Source.Import> imports;
     private final String packageName;
 
@@ -516,7 +646,7 @@ final class Checks {
       return outer instanceof TypeElement ? (TypeElement) outer : null;
     }
 
-    private TypeElement element(TypeMirror type) {
+    TypeElement element(TypeMirror type) {
       if (type.getKind() == TypeKind.TYPEVAR || type.getKind() == TypeKind.DECLARED) {
         TypeMirror erased = types.erasure(type);
         return erased instanceof DeclaredType ? (TypeElement) ((DeclaredType) erased).asElement() : null;

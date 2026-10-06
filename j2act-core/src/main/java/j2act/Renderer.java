@@ -315,19 +315,26 @@ final class Renderer {
   /** Finds or creates the child's scope: by reference for held objects, by slot for fresh ones. */
   private void place(Scope parent, String path, ComponentTag component) {
     Scope child;
+    String local = path + "@" + component.getClass().getName();
     if (component.scope != null) {
       child = component.scope;
+      if (child.parent == parent && child.localPath == null) {
+        // An adopted preloaded page (ADR 0011): its slot is where it renders now.
+        child.localPath = local;
+      }
     } else {
-      String address = parent.address + path + "@" + component.getClass().getName();
+      String address = parent.address + local;
       if (parent.children.containsKey(address)) {
         session.engine.log(System.Logger.Level.WARNING, "duplicate slot " + address
           + "; give repeated siblings distinct withKey values (ADR 0019)", null);
-        address = address + "#dup" + parent.children.size();
+        local = local + "#dup" + parent.children.size();
+        address = parent.address + local;
       }
       child = parent.previousChildren.get(address);
       if (child == null || child.disposed) {
         child = new Scope(session, parent, address);
       }
+      child.localPath = local;
       child.bind(component);
     }
     parent.children.put(child.address, child);

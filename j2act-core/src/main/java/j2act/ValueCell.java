@@ -7,6 +7,9 @@ import java.util.function.UnaryOperator;
 class ValueCell extends Cell {
 
   private volatile Object value;
+  /** For Retained State: its name within its scope's slot and the type its JSON reads as (ADR 0026). */
+  String retainedName;
+  java.lang.reflect.Type retainedType;
 
   ValueCell(Session session, String address, Object initial) {
     super(session, address);
