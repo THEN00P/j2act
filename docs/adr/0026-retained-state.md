@@ -52,7 +52,18 @@ public interface RetainedStateStorage {
 
 The default storage is in memory, as in .NET: at most 1,000 snapshots (`withMaxRetainedSnapshots`), each kept 2 hours from the time it was saved (`withRetainedStateRetention`). Configured storage keeps snapshots 8 hours by default, .NET's distributed retention. Expiry is absolute, not sliding. A snapshot is deleted once it has been restored, so it is used at most once. The expiry is stored inside the snapshot too, so storage that never sweeps still never restores an expired snapshot. `sweep` runs on j2act's existing sweeper.
 
-`j2act-retained-jdbc` is a module with no dependencies: `JdbcRetainedStateStorage.of(dataSource)`. The app hands over a `DataSource` it already has, so database credentials stay with the container. On Spring that is the `DataSource` bean, which the auto-configuration wires when the module is on the classpath. On Jakarta EE it is an injected `@Resource`, such as the `java:comp/DefaultDataSource` every Jakarta EE server provides. The module uses only statements every database runs the same way: an update by id, an insert when no row changed, and the update again when a concurrent insert hit the primary key. Table creation differs between databases only in the long-text column type, so the module ships `schema-<db>.sql` scripts for PostgreSQL, MySQL and MariaDB, SQL Server, Oracle, H2 and SQLite, and never creates tables itself. A separate small pool is recommended, so a busy app pool cannot block saves and saves cannot take the app's connections.
+`j2act-retained-jdbc` is a module with no dependencies: `JdbcRetainedStateStorage.of(dataSource)`. The app hands over a `DataSource` it already has, so database credentials stay with Spring or the container. On Spring Boot, j2act-spring wires it to the app's `DataSource` bean when the module is on the classpath and there is exactly one `DataSource`; a `RetainedStateStorage` bean of the app's own replaces it, for another `DataSource` or table. On Jakarta EE the app passes an injected `@Resource` in its `J2ActListener.customize`, such as the `java:comp/DefaultDataSource` every Jakarta EE server provides:
+
+```java
+@Resource(lookup = "java:comp/DefaultDataSource")
+private DataSource dataSource;
+
+@Override protected void customize(J2Act.Builder builder) {
+  builder.withRetainedStateStorage(JdbcRetainedStateStorage.of(dataSource));
+}
+```
+
+The module uses only statements every database runs the same way: an update by id, an insert when no row changed, and the update again when a concurrent insert hit the primary key, each in its own transaction. Expiry is a `BIGINT` of epoch milliseconds, so no timestamp type is involved. Table creation differs between databases in the long-text column type and in making ids case-sensitive, so the module ships `j2act/jdbc/schema-<db>.sql` scripts for PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, H2 and SQLite, named like Spring's platform names, and never creates tables itself. Each script has one statement per line, so line-based runners such as Hibernate's default read them as well as Flyway or Spring's `spring.sql.init` do. A separate small pool is recommended, so a busy app pool cannot block saves and saves cannot take the app's connections.
 
 Shared storage also means a snapshot can resume on another node, so sticky sessions become a preference for retained values instead of a requirement (ADR 0004).
 

@@ -125,7 +125,7 @@ class CounterAppTest {
     return client;
   }
 
-  private static String find(String html, String regex) {
+  static String find(String html, String regex) {
     Matcher m = Pattern.compile(regex).matcher(html);
     if (!m.find()) {
       fail("no match for " + regex);

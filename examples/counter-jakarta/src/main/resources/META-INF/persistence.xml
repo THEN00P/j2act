@@ -9,6 +9,10 @@
     <class>com.example.jakarta.model.Person</class>
     <properties>
       <property name="jakarta.persistence.schema-generation.database.action" value="drop-and-create"/>
+      <!-- The Retained State table (ADR 0026), from the script j2act-retained-jdbc ships. The
+           default datasource is ExampleDS too; a real app runs the script with its migrations. -->
+      <property name="jakarta.persistence.schema-generation.create-source" value="metadata-then-script"/>
+      <property name="jakarta.persistence.schema-generation.create-script-source" value="j2act/jdbc/schema-h2.sql"/>
     </properties>
   </persistence-unit>
 </persistence>

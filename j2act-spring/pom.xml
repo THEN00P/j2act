@@ -40,5 +40,11 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-websocket</artifactId>
     </dependency>
+    <!-- Wired with the app's DataSource bean when the app adds it (ADR 0026). -->
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-retained-jdbc</artifactId>
+      <optional>true</optional>
+    </dependency>
   </dependencies>
 </project>

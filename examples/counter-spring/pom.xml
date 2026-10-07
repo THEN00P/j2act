@@ -44,6 +44,20 @@
       <groupId>dev.j2act</groupId>
       <artifactId>j2act-spring</artifactId>
     </dependency>
+    <!-- Retained State in the app's database: j2act-spring wires it to the DataSource bean (ADR 0026). -->
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-retained-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <scope>runtime</scope>
+    </dependency>
     <dependency>
       <groupId>jakarta.inject</groupId>
       <artifactId>jakarta.inject-api</artifactId>
