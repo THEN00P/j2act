@@ -27,6 +27,7 @@
   let retry = 0;
   let leaving = false;
   let remounting = false;
+  let paused = null;                 // null, "pausing" or "paused" (ADR 0026)
   const inFlight = new Map();        // ack id -> { el, swap }
   const pendingEls = new Set();      // elements with a click or submit in flight
   const timers = new WeakMap();      // element -> debounce timer
@@ -80,7 +81,7 @@
     };
     ws.onclose = () => {
       ready = false;
-      if (leaving || remounting) {
+      if (leaving || remounting || paused === "paused") {
         return;
       }
       const delay = Math.min(5000, 250 * Math.pow(2, retry++));
@@ -103,6 +104,9 @@
       retry = 0;
       while (queue.length) {
         ws.send(queue.shift());
+      }
+      if (paused === "pausing") {
+        sendPause();
       }
     } else if (m.t === "patch") {
       patch(m.s, m.h, m.r === "1");
@@ -135,7 +139,15 @@
     } else if (m.t === "ack") {
       ack(m.a);
     } else if (m.t === "expired") {
-      remount();
+      if (paused === "pausing") {
+        onPaused(); // evicted while the pause was on its way: its snapshot is saved all the same
+      } else if (!paused) {
+        remount();
+      }
+    } else if (m.t === "paused") {
+      onPaused();
+    } else if (m.t === "pausex") {
+      pauseRefused();
     } else if (m.t === "mods") {
       reimport(m.m);
     }
@@ -1016,6 +1028,7 @@
         retry = 0;
         queue = [];
         connect();
+        resumed();
       })
       .catch(() => {
         remounting = false;
@@ -1031,11 +1044,123 @@
   });
 
   window.addEventListener("pageshow", (e) => {
-    if (e.persisted) {
+    if (e.persisted && paused !== "paused") {
       leaving = false;
       remount();
     }
   });
+
+  // ---- pause and resume (ADR 0026): the snapshot stays on the server, the session is freed
+
+  const autoPauseAfter = Number(meta("j2-autopause") || 0);
+  let pausedByHiding = false;
+  let hiddenTimer = null;
+  let pauseWaiters = [];
+  let resumeWaiters = [];
+
+  function sendPause() {
+    if (ready) {
+      ws.send(JSON.stringify(pausedByHiding ? { t: "pause", a: "1" } : { t: "pause" }));
+    }
+  }
+
+  // Resolves once the server saved the page's Retained State and let its session go.
+  function pause() {
+    if (paused === "paused") {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      pauseWaiters.push(resolve);
+      if (!paused) {
+        paused = "pausing";
+        pausedByHiding = false;
+        sendPause(); // not connected: "ok" sends it once the socket is back
+      }
+    });
+  }
+
+  function onPaused() {
+    paused = "paused";
+    ready = false;
+    document.documentElement.setAttribute("data-j2-paused", "");
+    document.dispatchEvent(new CustomEvent("j2act:paused"));
+    pauseWaiters.splice(0).forEach((resolve) => resolve());
+    if (pausedByHiding && !document.hidden) {
+      resume();
+    }
+  }
+
+  function pauseRefused() {
+    pausedByHiding = false;
+    if (pauseWaiters.length) {
+      sendPause(); // j2act.pause() was called meanwhile, and it does not give way
+      return;
+    }
+    paused = null;
+    if (document.hidden) {
+      hiddenTimer = setTimeout(autoPause, 10000);
+    }
+  }
+
+  // Resolves once the page runs again on a new session, with its Retained State restored.
+  function resume() {
+    if (paused === "pausing") {
+      return new Promise((resolve) => pauseWaiters.push(() => resume().then(resolve)));
+    }
+    if (paused !== "paused") {
+      return Promise.resolve();
+    }
+    paused = null;
+    pausedByHiding = false;
+    document.documentElement.removeAttribute("data-j2-paused");
+    return new Promise((resolve) => {
+      resumeWaiters.push(resolve);
+      remount();
+    });
+  }
+
+  function resumed() {
+    if (resumeWaiters.length) {
+      document.dispatchEvent(new CustomEvent("j2act:resumed"));
+      resumeWaiters.splice(0).forEach((resolve) => resolve());
+    }
+  }
+
+  // What a pause would cut off: the server checks its own side (uploads, downloads, client calls).
+  function busy() {
+    const a = document.activeElement;
+    return inFlight.size > 0 || files.size > 0
+      || (a && a !== document.body && (a.matches("input, textarea, select") || a.isContentEditable))
+      || Array.prototype.some.call(document.querySelectorAll("audio, video"), (m) => !m.paused && !m.ended);
+  }
+
+  function autoPause() {
+    hiddenTimer = null;
+    if (!document.hidden || paused || remounting) {
+      return;
+    }
+    if (busy()) {
+      hiddenTimer = setTimeout(autoPause, 10000);
+      return;
+    }
+    paused = "pausing";
+    pausedByHiding = true;
+    sendPause();
+  }
+
+  if (autoPauseAfter > 0) {
+    document.addEventListener("visibilitychange", () => {
+      clearTimeout(hiddenTimer);
+      hiddenTimer = null;
+      if (document.hidden) {
+        hiddenTimer = setTimeout(autoPause, autoPauseAfter);
+      } else if (paused === "paused" && pausedByHiding) {
+        resume();
+      }
+    });
+  }
+
+  window.j2act = Object.freeze({ pause: pause, resume: resume });
 
   // Clients mount from the props in the HTML at once; their calls into Java queue until the socket is up.
   scanClients();

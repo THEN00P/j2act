@@ -39,7 +39,7 @@ class RetainedStateTest {
   }
 
   /** Counts what reaches storage, around the in-memory default. */
-  static final class CountingStorage implements RetainedStateStorage {
+  static class CountingStorage implements RetainedStateStorage {
     final MemoryRetainedStateStorage inner = new MemoryRetainedStateStorage(1000);
     final AtomicInteger saves = new AtomicInteger();
     final AtomicInteger loads = new AtomicInteger();

@@ -22,6 +22,8 @@ final class Scope implements Observer {
    * keys use slotPath() instead of the address.
    */
   String localPath;
+  /** A Retained State of this component came back from a snapshot; onRestored callbacks run (ADR 0026). */
+  boolean restored;
   final String anchor;
   ComponentTag instance;
   final List<Cell> cells = new ArrayList<>();

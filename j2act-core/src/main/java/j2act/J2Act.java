@@ -81,6 +81,8 @@ public final class J2Act implements AutoCloseable {
   final RetainedStateStorage retainedStorage;
   final long retainedRetentionMillis;
   private final Map<Class<?>, RetainedCodec<?>> retainedCodecs;
+  /** How long a tab stays hidden before its page pauses; 0 when auto-pause is off. */
+  final long autoPauseMillis;
   private final Set<String> warnedOnce = ConcurrentHashMap.newKeySet();
   private volatile long lastStorageSweep;
   final ImportMap importMap;
@@ -128,6 +130,7 @@ public final class J2Act implements AutoCloseable {
       : b.retainedStorage != null ? Duration.ofHours(8) : Duration.ofHours(2);
     this.retainedRetentionMillis = retention.toMillis();
     this.retainedCodecs = new java.util.HashMap<>(b.retainedCodecs);
+    this.autoPauseMillis = b.autoPause == null ? 0 : b.autoPause.toMillis();
     ClassLoader loader = Thread.currentThread().getContextClassLoader();
     this.resourceLoader = loader != null ? loader : J2Act.class.getClassLoader();
     this.importMap = ImportMap.build(resourceLoader, b.contextPath, this);
@@ -457,6 +460,19 @@ public final class J2Act implements AutoCloseable {
         String mode = "pop".equals(message.get("m")) ? "pop" : "push";
         session.post(() -> session.onNavigate(target, mode));
       }
+    } else if ("pause".equals(type)) {
+      // j2act.pause() (ADR 0026). An automatic pause gives way while something is in flight, and the client tries again later.
+      boolean automatic = "1".equals(message.get("a"));
+      session.post(() -> {
+        if (sessions.get(session.id) != session) {
+          return; // already evicted or paused: its farewell is on the way
+        }
+        if (automatic && (session.clients.busy() || transferring(session))) {
+          session.send(Json.object("t", "pausex"));
+        } else {
+          retire(session, "paused");
+        }
+      });
     } else if ("bye".equals(type)) {
       byConnection.remove(connection);
       discard(session, false);
@@ -534,24 +550,43 @@ public final class J2Act implements AutoCloseable {
   }
 
   private void discard(Session session, boolean expired) {
-    sessions.remove(session.id);
-    byConnection.values().removeIf(s -> s == session);
-    if (!expired) {
-      session.lane.execute(() -> session.dispose(false));
+    if (expired) {
+      retire(session, "expired");
       return;
     }
-    // Evicted: its snapshot is saved before the client hears "expired", so the remount finds it (ADR 0026).
+    sessions.remove(session.id);
+    byConnection.values().removeIf(s -> s == session);
+    session.lane.execute(() -> session.dispose(null));
+  }
+
+  /**
+   * Evicts or pauses a session: its snapshot is saved before the client hears the farewell
+   * ("expired" or "paused"), so the remount that follows finds it (ADR 0026).
+   */
+  private void retire(Session session, String farewell) {
+    sessions.remove(session.id);
+    // The socket stays mapped until the farewell, so a message sent meanwhile cannot bring an "expired" before the save ends.
+    Runnable end = () -> {
+      byConnection.values().removeIf(s -> s == session);
+      session.dispose(farewell);
+    };
     session.lane.execute(() -> {
       String snapshot = session.disposed ? null : snapshot(session);
       if (snapshot == null) {
-        session.dispose(true);
+        end.run();
         return;
       }
       executor.execute(() -> {
         save(session, snapshot);
-        session.lane.execute(() -> session.dispose(true));
+        session.lane.execute(end);
       });
     });
+  }
+
+  /** An upload or download of this session that would break if it were paused now. */
+  boolean transferring(Session session) {
+    return uploads.values().stream().anyMatch(sink -> sink.session == session)
+      || downloads.values().stream().anyMatch(download -> download.session == session);
   }
 
   // ---- Retained State (ADR 0026)
@@ -561,6 +596,7 @@ public final class J2Act implements AutoCloseable {
     Map<String, String> entries;
     String principal;
     try {
+      session.persisting();
       entries = session.retainedEntries();
       if (entries.isEmpty()) {
         return null;
@@ -778,6 +814,7 @@ public final class J2Act implements AutoCloseable {
     private RetainedStateStorage retainedStorage;
     private Duration retainedRetention;
     private int maxRetainedSnapshots = 1000;
+    private Duration autoPause;
     private final Map<Class<?>, RetainedCodec<?>> retainedCodecs = new java.util.HashMap<>();
     private final Map<String, String> imports = new java.util.LinkedHashMap<>();
 
@@ -947,6 +984,25 @@ public final class J2Act implements AutoCloseable {
         throw new IllegalArgumentException("keep at least one snapshot");
       }
       this.maxRetainedSnapshots = max;
+      return this;
+    }
+
+    /** Pauses a page whose tab stayed hidden for 2 minutes, as .NET 11 does; see {@link #withAutoPause(Duration)}. */
+    public Builder withAutoPause() {
+      return withAutoPause(Duration.ofMinutes(2));
+    }
+
+    /**
+     * Pauses a page whose tab stayed hidden this long (ADR 0026): its Retained State is saved,
+     * its session freed, and it resumes when the tab is shown again. Off by default. The pause
+     * waits while an event, upload, download or client module call is in flight, an input has
+     * focus or media is playing.
+     */
+    public Builder withAutoPause(Duration hiddenDelay) {
+      if (hiddenDelay.isNegative() || hiddenDelay.isZero()) {
+        throw new IllegalArgumentException("the auto-pause delay must be positive");
+      }
+      this.autoPause = hiddenDelay;
       return this;
     }
 

@@ -31,10 +31,15 @@ public class App extends J2ActListener {
 
   @Override protected void customize(J2Act.Builder builder) {
     builder.withRetainedStateStorage(JdbcRetainedStateStorage.of(dataSource));
-    // The Retained State browser check evicts idle sessions quickly: -Ddemo.idle-timeout=PT3S.
+    // The Retained State browser check evicts idle sessions quickly and pauses hidden tabs:
+    // -Ddemo.idle-timeout=PT3S -Ddemo.auto-pause=PT1S.
     String idleTimeout = System.getProperty("demo.idle-timeout");
     if (idleTimeout != null) {
       builder.withIdleTimeout(Duration.parse(idleTimeout)).withSweepInterval(Duration.ofSeconds(1));
+    }
+    String autoPause = System.getProperty("demo.auto-pause");
+    if (autoPause != null) {
+      builder.withAutoPause(Duration.parse(autoPause));
     }
   }
 }

@@ -40,9 +40,18 @@ public class CounterApp {
     );
   }
 
-  /** tools/retained-check.mjs starts the demo with --demo.idle-timeout=PT3S to see an evicted session restore. */
+  /**
+   * tools/retained-check.mjs starts the demo with --demo.idle-timeout=PT3S to see an evicted
+   * session restore, and --demo.auto-pause=PT1S to see a hidden tab pause and resume.
+   */
   @Bean
-  public J2ActCustomizer demoTimeouts(@Value("${demo.idle-timeout:PT12H}") Duration idleTimeout) {
-    return builder -> builder.withIdleTimeout(idleTimeout).withSweepInterval(Duration.ofSeconds(1));
+  public J2ActCustomizer demoTimeouts(@Value("${demo.idle-timeout:PT12H}") Duration idleTimeout,
+      @Value("${demo.auto-pause:PT0S}") Duration autoPause) {
+    return builder -> {
+      builder.withIdleTimeout(idleTimeout).withSweepInterval(Duration.ofSeconds(1));
+      if (!autoPause.isZero()) {
+        builder.withAutoPause(autoPause);
+      }
+    };
   }
 }

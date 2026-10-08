@@ -325,6 +325,11 @@ final class Clients {
     }
   }
 
+  /** Lane-only. A client module call is waiting for its result. */
+  boolean busy() {
+    return !calls.isEmpty();
+  }
+
   void dispose() {
     for (String id : new ArrayList<>(calls.keySet())) {
       settle(id, null, new ClientException("AbortError", "the session ended"));

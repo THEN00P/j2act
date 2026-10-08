@@ -62,6 +62,35 @@ public abstract class ComponentTag implements DomContent {
     return register(new State<>(initial, true, name));
   }
 
+  /**
+   * Runs on the session's lane right before its snapshot is taken, on eviction or a pause, so
+   * the component can copy values into its retained fields (ADR 0026), as .NET's
+   * RegisterOnPersisting does. Like every primitive, call it in a field initializer or render().
+   */
+  protected final void onPersisting(Runnable callback) {
+    register(new PersistHook(callback));
+  }
+
+  /**
+   * Runs once after this component's first render when its Retained State came back from a
+   * snapshot (ADR 0026), as .NET's RegisterOnRestoring does. It does not run when nothing of
+   * this component was restored, such as on a fresh page load.
+   */
+  protected final void onRestored(Runnable callback) {
+    java.util.Objects.requireNonNull(callback, "callback");
+    register(new Effect(() -> {
+      if (scope != null && scope.restored) {
+        Observer previous = Tracking.swap(null);
+        try {
+          callback.run();
+        } finally {
+          Tracking.swap(previous);
+        }
+      }
+      return null;
+    }));
+  }
+
   protected final <T> Prop<T> prop() {
     return register(new Prop<>(null));
   }

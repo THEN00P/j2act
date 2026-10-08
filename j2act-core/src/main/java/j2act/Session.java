@@ -273,9 +273,27 @@ final class Session {
     if (json != null) {
       try {
         cell.initialize(engine.readRetained(json, type));
+        scope.restored = true;
       } catch (RuntimeException e) {
         engine.log(System.Logger.Level.WARNING, "retained " + component + "#" + name
           + " no longer reads as " + type.getTypeName() + "; it starts from its initial value (ADR 0026)", e);
+      }
+    }
+  }
+
+  /** Lane-only. Runs the onPersisting callbacks of mounted components, before their values are taken. */
+  void persisting() {
+    for (Cell c : new ArrayList<>(cells.values())) {
+      if (!(c instanceof PersistCell) || c.disposed || c.owner == null || c.owner.disposed || c.owner.preloading()) {
+        continue;
+      }
+      Observer previous = Tracking.swap(null);
+      try {
+        ((PersistCell) c).callback.run();
+      } catch (RuntimeException e) {
+        engine.log(System.Logger.Level.WARNING, "onPersisting failed at " + c.address + " (ADR 0026)", e);
+      } finally {
+        Tracking.swap(previous);
       }
     }
   }
@@ -816,6 +834,9 @@ final class Session {
     }
     b.append("<meta name=\"j2-session\" content=\"").append(id).append("\">");
     b.append("<meta name=\"j2-token\" content=\"").append(token).append("\">");
+    if (engine.autoPauseMillis > 0) {
+      b.append("<meta name=\"j2-autopause\" content=\"").append(engine.autoPauseMillis).append("\">");
+    }
     if (engine.defaultPreload == Preload.INTENT) {
       b.append("<meta name=\"j2-preload\" content=\"intent\">");
     }
@@ -1051,8 +1072,11 @@ final class Session {
     }
   }
 
-  /** Lane-only. Runs effect cleanups, drops cells and handlers; later writes to held handles are no-ops. */
-  void dispose(boolean expired) {
+  /**
+   * Lane-only. Runs effect cleanups, drops cells and handlers; later writes to held handles are
+   * no-ops. A farewell ("expired" or "paused") goes to the client before its socket closes.
+   */
+  void dispose(String farewell) {
     if (disposed) {
       return;
     }
@@ -1074,9 +1098,9 @@ final class Session {
     deleteOwnedFiles();
     Connection c = connection;
     connection = null;
-    if (c != null && expired) {
+    if (c != null && farewell != null) {
       try {
-        c.send(Json.object("t", "expired"));
+        c.send(Json.object("t", farewell));
       } catch (Exception ignored) {
         // closing anyway
       }

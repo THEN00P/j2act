@@ -24,20 +24,20 @@ Each entry restores on its own. An entry whose JSON no longer reads as the field
 
 Values must be replaced through `set()`. Changing a retained list in place does not mark the session dirty and is not saved until something else is.
 
-`onPersisting(Runnable)` runs on the session's lane right before a snapshot is taken, so a component can copy data into its retained fields, as .NET's `RegisterOnPersisting` allows. `onRestored(Runnable)` runs once after the restored values are in place, as `RegisterOnRestoring` does. .NET's `RestoreBehavior` and `AllowUpdates` exist for prerendering and enhanced navigation, which hand state between render modes. We have neither, so they have no counterpart.
+`onPersisting(Runnable)` runs on the session's lane right before a snapshot is taken, so a component can copy data into its retained fields, as .NET's `RegisterOnPersisting` allows. `onRestored(Runnable)` runs once, after the component's first render, when any of its retained values came back from a snapshot, as `RegisterOnRestoring` does; on a fresh page load it does not run. Both are primitives like `effect`, declared in a field initializer or `render()`. A callback that throws is logged, and the snapshot is still taken. .NET's `RestoreBehavior` and `AllowUpdates` exist for prerendering and enhanced navigation, which hand state between render modes. We have neither, so they have no counterpart.
 
 ## When a snapshot is saved
 
 These are .NET's triggers:
 
 - **Eviction.** When the grace window ends, the session's snapshot is saved before the session is discarded.
-- **Pause.** `j2act.pause()` in the browser saves the snapshot, discards the session and shows the paused state. `j2act.resume()` remounts with the snapshot.
-- **Auto-pause**, opt-in with `withAutoPause(hiddenDelay)`, 2 minutes by default as in .NET 11. A tab hidden that long pauses. The pause waits while an upload, a download or a client module call is in flight, and does not happen while a bound input has focus or media is playing.
+- **Pause.** `j2act.pause()` in the browser, like `Blazor.pauseCircuit()`, saves the snapshot, discards the session and marks the page paused. `j2act.resume()` remounts with the snapshot, morphing the page in place. Both return promises. Pause is on the same socket as events, so events sent before it are handled first. A page calls them from a client module (ADR 0022), as the demos' `DraftNote.client.js` does. While paused, `<html>` carries `data-j2-paused` and the document gets `j2act:paused` and later `j2act:resumed` events. j2act draws no paused UI of its own, since it has no reconnect UI either; the page styles what it wants by that attribute.
+- **Auto-pause**, opt-in with `withAutoPause()`, 2 minutes as in .NET 11, or `withAutoPause(hiddenDelay)`. A tab hidden that long pauses and resumes when it is shown again. The pause waits while an event, an upload, a download or a client module call is in flight, an input has focus or media is playing; the server checks its side and answers a refused pause, and the client tries again 10 seconds later while the tab stays hidden.
 - **Server-requested pause.** `Session.requestPause()`, like `Circuit.RequestCircuitPauseAsync`. The client runs the normal pause, and the runtime's `onPauseRequested` hook can veto it. `J2Act.close()` requests a pause from every connected session and waits up to `withShutdownPauseTimeout` (10 seconds) before it lets the container stop. A session that vetoes or misses the deadline loses its state like any connection loss, as in .NET.
 
 One trigger goes beyond .NET 11 and is opt-in. `withCheckpointInterval(...)` saves dirty sessions on that interval without discarding them, so a hard crash loses at most one interval. .NET tracks the same idea as "persist without evicting" (dotnet/aspnetcore#64840), which is not yet scheduled. Every trigger takes the snapshot through the same path.
 
-Sessions with no retained fields never touch storage. Storage is called on the executor, never on a session's lane, and a failed save is logged and dropped.
+Every trigger keeps the session's socket until the snapshot is saved, so a message that arrives meanwhile cannot make the client remount before the snapshot exists. Sessions with no retained fields never touch storage, and pausing them still frees the session. Storage is called on the executor, never on a session's lane, and a failed save is logged and dropped.
 
 ## Storage
 
