@@ -26,6 +26,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -83,6 +84,10 @@ public final class J2Act implements AutoCloseable {
   private final Map<Class<?>, RetainedCodec<?>> retainedCodecs;
   /** How long a tab stays hidden before its page pauses; 0 when auto-pause is off. */
   final long autoPauseMillis;
+  /** What components reach with application() (ADR 0027). */
+  final Application application = new Application(this);
+  /** How long close() waits for sessions' snapshots; 0 when they are not saved on shutdown. */
+  private final long shutdownSaveMillis;
   private final Set<String> warnedOnce = ConcurrentHashMap.newKeySet();
   private volatile long lastStorageSweep;
   final ImportMap importMap;
@@ -131,6 +136,7 @@ public final class J2Act implements AutoCloseable {
     this.retainedRetentionMillis = retention.toMillis();
     this.retainedCodecs = new java.util.HashMap<>(b.retainedCodecs);
     this.autoPauseMillis = b.autoPause == null ? 0 : b.autoPause.toMillis();
+    this.shutdownSaveMillis = b.shutdownSave == null ? 0 : b.shutdownSave.toMillis();
     ClassLoader loader = Thread.currentThread().getContextClassLoader();
     this.resourceLoader = loader != null ? loader : J2Act.class.getClassLoader();
     this.importMap = ImportMap.build(resourceLoader, b.contextPath, this);
@@ -233,6 +239,7 @@ public final class J2Act implements AutoCloseable {
   public ServeResult serve(String url, Exchange exchange) {
     Session session = new Session(this, newSecret(18), newSecret(18), exchange, url);
     session.restoring = restore(exchange);
+    session.restored = session.restoring != null;
     sessions.put(session.id, session);
     try {
       Session.Resolution resolution = await(session.call(() -> session.resolve(url)));
@@ -563,24 +570,29 @@ public final class J2Act implements AutoCloseable {
    * Evicts or pauses a session: its snapshot is saved before the client hears the farewell
    * ("expired" or "paused"), so the remount that follows finds it (ADR 0026).
    */
-  private void retire(Session session, String farewell) {
+  private CompletableFuture<Void> retire(Session session, String farewell) {
     sessions.remove(session.id);
+    CompletableFuture<Void> done = new CompletableFuture<>();
     // The socket stays mapped until the farewell, so a message sent meanwhile cannot bring an "expired" before the save ends.
-    Runnable end = () -> {
+    java.util.function.Consumer<Boolean> end = saved -> {
       byConnection.values().removeIf(s -> s == session);
-      session.dispose(farewell);
+      // "paused" says whether there was anything to save, so j2act.resume() can tell a page that got nothing back.
+      session.dispose(farewell.isEmpty() ? "" : "paused".equals(farewell)
+        ? Json.object("t", farewell, "s", saved ? "1" : "0") : Json.object("t", farewell));
+      done.complete(null);
     };
     session.lane.execute(() -> {
       String snapshot = session.disposed ? null : snapshot(session);
       if (snapshot == null) {
-        end.run();
+        end.accept(false);
         return;
       }
       executor.execute(() -> {
         save(session, snapshot);
-        session.lane.execute(end);
+        session.lane.execute(() -> end.accept(true));
       });
     });
+    return done;
   }
 
   /** An upload or download of this session that would break if it were paused now. */
@@ -678,10 +690,47 @@ public final class J2Act implements AutoCloseable {
     return stats;
   }
 
+  /**
+   * Asks every connected page to pause (ADR 0026), as .NET's Circuit.RequestCircuitPauseAsync
+   * asks one: each runs its j2act.onPausing handlers, then pauses. Returns how many were asked.
+   * Components reach it as application().requestPause().
+   */
+  public int requestPause() {
+    int asked = 0;
+    for (Session session : sessions.values()) {
+      if (session.connection != null) {
+        session.post(session::requestPause);
+        asked++;
+      }
+    }
+    return asked;
+  }
+
+  /**
+   * Discards every session. With withSaveOnShutdown, their Retained State is saved first,
+   * waiting up to its timeout, and their sockets close without a word: the pages reconnect
+   * to the next server, hear "expired" and remount with their snapshots (ADR 0026).
+   */
   @Override public void close() {
     sweeper.shutdownNow();
     if (dev != null) {
       dev.close();
+    }
+    if (shutdownSaveMillis > 0) {
+      java.util.List<CompletableFuture<Void>> saves = new java.util.ArrayList<>();
+      for (Session session : sessions.values()) {
+        saves.add(retire(session, ""));
+      }
+      try {
+        CompletableFuture.allOf(saves.toArray(new CompletableFuture<?>[0])).get(shutdownSaveMillis, TimeUnit.MILLISECONDS);
+      } catch (TimeoutException e) {
+        log(System.Logger.Level.WARNING, saves.stream().filter(f -> !f.isDone()).count()
+          + " sessions were not saved within the shutdown timeout; their Retained State is lost", null);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      } catch (ExecutionException e) {
+        log(System.Logger.Level.WARNING, "saving sessions on shutdown failed", e);
+      }
     }
     for (Session session : sessions.values()) {
       discard(session, false);
@@ -815,6 +864,7 @@ public final class J2Act implements AutoCloseable {
     private Duration retainedRetention;
     private int maxRetainedSnapshots = 1000;
     private Duration autoPause;
+    private Duration shutdownSave;
     private final Map<Class<?>, RetainedCodec<?>> retainedCodecs = new java.util.HashMap<>();
     private final Map<String, String> imports = new java.util.LinkedHashMap<>();
 
@@ -1003,6 +1053,25 @@ public final class J2Act implements AutoCloseable {
         throw new IllegalArgumentException("the auto-pause delay must be positive");
       }
       this.autoPause = hiddenDelay;
+      return this;
+    }
+
+    /** Saves every session's Retained State when j2act closes, waiting up to 10 seconds; see {@link #withSaveOnShutdown(Duration)}. */
+    public Builder withSaveOnShutdown() {
+      return withSaveOnShutdown(Duration.ofSeconds(10));
+    }
+
+    /**
+     * Saves every session's Retained State when j2act closes, such as on a restart or redeploy,
+     * and waits up to this long for storage (ADR 0026). Off by default, as .NET does not pause
+     * circuits on shutdown. It only helps with storage that outlives the JVM, such as
+     * j2act-retained-jdbc. The pages reconnect to the next server and remount with their values.
+     */
+    public Builder withSaveOnShutdown(Duration timeout) {
+      if (timeout.isNegative() || timeout.isZero()) {
+        throw new IllegalArgumentException("the shutdown save timeout must be positive");
+      }
+      this.shutdownSave = timeout;
       return this;
     }
 

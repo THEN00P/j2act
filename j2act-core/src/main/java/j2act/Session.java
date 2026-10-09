@@ -230,6 +230,8 @@ final class Session {
    * the first soft navigation, so a form that renders once its query loads still finds its value.
    */
   volatile Map<String, String> restoring;
+  /** This page load came with a snapshot that was restored; the page hears it in a meta tag. */
+  boolean restored;
 
   /** Lane-only. Names a new retained cell after its field, and fills it from the snapshot being restored. */
   void retain(Scope scope, State<?> state, ValueCell cell, int index) {
@@ -279,6 +281,15 @@ final class Session {
           + " no longer reads as " + type.getTypeName() + "; it starts from its initial value (ADR 0026)", e);
       }
     }
+  }
+
+  /** Lane-only. Asks the page to pause (ADR 0026); false when it is not connected, as in .NET. */
+  boolean requestPause() {
+    if (disposed || connection == null) {
+      return false;
+    }
+    send(Json.object("t", "rp"));
+    return true;
   }
 
   /** Lane-only. Runs the onPersisting callbacks of mounted components, before their values are taken. */
@@ -834,6 +845,9 @@ final class Session {
     }
     b.append("<meta name=\"j2-session\" content=\"").append(id).append("\">");
     b.append("<meta name=\"j2-token\" content=\"").append(token).append("\">");
+    if (restored) {
+      b.append("<meta name=\"j2-restored\" content=\"1\">");
+    }
     if (engine.autoPauseMillis > 0) {
       b.append("<meta name=\"j2-autopause\" content=\"").append(engine.autoPauseMillis).append("\">");
     }
@@ -1074,7 +1088,8 @@ final class Session {
 
   /**
    * Lane-only. Runs effect cleanups, drops cells and handlers; later writes to held handles are
-   * no-ops. A farewell ("expired" or "paused") goes to the client before its socket closes.
+   * no-ops. A farewell message, such as {"t":"expired"}, goes to the client before its socket
+   * closes; an empty one closes it without a word, and null leaves it to the client.
    */
   void dispose(String farewell) {
     if (disposed) {
@@ -1100,7 +1115,9 @@ final class Session {
     connection = null;
     if (c != null && farewell != null) {
       try {
-        c.send(Json.object("t", farewell));
+        if (!farewell.isEmpty()) {
+          c.send(farewell);
+        }
       } catch (Exception ignored) {
         // closing anyway
       }

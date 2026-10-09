@@ -80,6 +80,10 @@ _Avoid_: View, Screen, Controller
 Reusable LiveComponent taking props (values/State) via with* builders that write tracked Prop<T> fields, reading auth() and URL via pathParam()/queryParam() ambiently like Pages, so it works in Pages and Islands.
 _Avoid_: Widget, Partial
 
+**Application**:
+The deployment's j2act as components see it, reached with application(): what spans every page, such as asking them all to pause. Never called session, which readers take for the HTTP session shared by every tab (ADR 0027).
+_Avoid_: Session, Context
+
 **AuthCtx**:
 Resolved identity for a session (principal, roles, claims). Supplied by the host via any `Exchange -> AuthCtx` function. Empty when anonymous.
 _Avoid_: Principal, Session, User

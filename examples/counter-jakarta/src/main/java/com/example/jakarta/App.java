@@ -30,7 +30,8 @@ public class App extends J2ActListener {
   }
 
   @Override protected void customize(J2Act.Builder builder) {
-    builder.withRetainedStateStorage(JdbcRetainedStateStorage.of(dataSource));
+    // WildFly's default datasource outlives a redeploy, so drafts saved on undeploy come back (ADR 0026).
+    builder.withRetainedStateStorage(JdbcRetainedStateStorage.of(dataSource)).withSaveOnShutdown();
     // The Retained State browser check evicts idle sessions quickly and pauses hidden tabs:
     // -Ddemo.idle-timeout=PT3S -Ddemo.auto-pause=PT1S.
     String idleTimeout = System.getProperty("demo.idle-timeout");

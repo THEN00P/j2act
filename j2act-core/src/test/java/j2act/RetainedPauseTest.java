@@ -5,6 +5,7 @@ import static j2act.RetainedStateTest.remount;
 import static j2act.RetainedStateTest.type;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.OutputStream;
@@ -47,6 +48,27 @@ class RetainedPauseTest {
       String html = h.load("/", remount(old));
       assertTrue(html.contains("name=Ada;"), html);
       assertTrue(html.contains("scratch=;"), html);
+    }
+  }
+
+  @Test
+  void pausedSaysWhetherThereWasStateAndTheRemountWhetherItCameBack() {
+    CountingStorage storage = new CountingStorage();
+    try (Harness h = harness(Form::new, storage)) {
+      h.load();
+      h.connect();
+      assertFalse(h.html.contains("j2-restored"), "a fresh page restored nothing");
+      type(h, "name", "Ada");
+      String old = h.token;
+      assertEquals("1", pause(h, false).get("s"), "there was Retained State to save");
+
+      assertTrue(h.load("/", remount(old)).contains("<meta name=\"j2-restored\" content=\"1\">"));
+      assertFalse(h.load("/", remount(old)).contains("j2-restored"), "a used snapshot does not come back");
+    }
+    try (Harness h = harness(RetainedStateTest.Plain::new, storage)) {
+      h.load();
+      h.connect();
+      assertEquals("0", pause(h, false).get("s"), "nothing to save, so nothing to miss on resume");
     }
   }
 
@@ -242,5 +264,133 @@ class RetainedPauseTest {
         T.span("name=" + name.get() + ";"),
         T.input().withId("name").onChange(e -> name.set(e.value()))));
     }
+  }
+
+  static final class Asking extends LiveComponent {
+    static volatile Integer asked;
+    private final State<String> name = retainedState("");
+
+    @Override public Tag<?> render() {
+      return T.page("asking", T.div(
+        T.input().withId("name").onChange(e -> name.set(e.value())),
+        T.button("ask").onClick(e -> asked = application().requestPause())));
+    }
+  }
+
+  @Test
+  void theApplicationAsksEveryPageToPauseAndThePagesDoTheRest() {
+    CountingStorage storage = new CountingStorage();
+    Asking.asked = null;
+    try (Harness h = harness(Asking::new, storage)) {
+      h.load();
+      h.connect();
+      type(h, "name", "Ada");
+      int from = h.conn.size();
+      h.click(Harness.clickOn(h.html, "ask"));
+      h.conn.await(from, m -> "rp".equals(m.get("t")));
+      assertEquals(1, Asking.asked, "application().requestPause() asked the one connected page");
+      assertEquals(1, h.engine.sessionCount(), "asking does not pause: the page does, after its onPausing handlers");
+      assertEquals(0, storage.saves.get());
+      assertEquals("paused", pause(h, false).get("t"));
+    }
+  }
+
+  static final class TabPausing extends LiveComponent {
+    static volatile Boolean asked;
+    static volatile TabPausing mounted;
+    private final State<String> name = retainedState("");
+
+    @Override public Tag<?> render() {
+      mounted = this;
+      return T.page("tab", T.div(
+        T.input().withId("name").onChange(e -> name.set(e.value())),
+        T.button("pause tab").onClick(e -> pauseTab().thenAccept(a -> asked = a))));
+    }
+  }
+
+  @Test
+  void pauseTabAsksOnlyItsOwnTab() {
+    CountingStorage storage = new CountingStorage();
+    TabPausing.asked = null;
+    try (Harness h = harness(TabPausing::new, storage)) {
+      // A second tab on the same server, with its own socket.
+      String otherHtml = h.engine.serve("/", Exchange.empty()).html();
+      Harness.FakeConnection other = new Harness.FakeConnection();
+      h.engine.onMessage(other, Json.object("t", "hello",
+        "sid", Harness.find(otherHtml, "name=\"j2-session\" content=\"([^\"]+)\""),
+        "tok", Harness.find(otherHtml, "name=\"j2-token\" content=\"([^\"]+)\"")));
+      other.await(0, m -> "ok".equals(m.get("t")));
+      h.load();
+      h.connect();
+      TabPausing first = TabPausing.mounted;
+      int from = h.conn.size();
+      h.click(Harness.clickOn(h.html, "pause tab"));
+      h.conn.await(from, m -> "rp".equals(m.get("t")));
+      Harness.eventually(() -> Boolean.TRUE.equals(TabPausing.asked), "pauseTab() completes with true");
+      assertFalse(other.since(0, m -> "rp".equals(m.get("t"))).stream().findAny().isPresent(), "only this tab");
+
+      assertEquals("paused", pause(h, false).get("t"));
+      Harness.eventually(() -> h.engine.sessionCount() == 1, "the tab's session is freed, the other goes on");
+      assertThrows(IllegalStateException.class, first::pauseTab, "a component whose tab is gone is unmounted, as for navigate()");
+    }
+  }
+
+  @Test
+  void applicationNeedsAMountedComponentOrASession() {
+    Asking unmounted = new Asking();
+    assertThrows(IllegalStateException.class, unmounted::application);
+  }
+
+  @Test
+  void aPageThatIsNotConnectedIsNotAsked() {
+    try (Harness h = harness(Form::new, new CountingStorage())) {
+      h.load();
+      assertEquals(0, h.engine.requestPause());
+    }
+  }
+
+  @Test
+  void closingSavesEverySessionWhenAskedAndClosesItsSocketWithoutAWord() {
+    CountingStorage storage = new CountingStorage();
+    Harness h = harness(Form::new, storage, J2Act.Builder::withSaveOnShutdown);
+    h.load();
+    h.connect();
+    type(h, "name", "Ada");
+    String old = h.token;
+    int from = h.conn.size();
+    h.close();
+    assertTrue(storage.has(old), "saved before close() returned");
+    assertTrue(h.conn.closed);
+    assertFalse(h.conn.since(from, m -> "expired".equals(m.get("t")) || "paused".equals(m.get("t"))).stream().findAny().isPresent(),
+      "the page hears nothing from a server going down; it reconnects to the next one");
+
+    try (Harness next = harness(Form::new, storage)) {
+      assertTrue(next.load("/", remount(old)).contains("name=Ada;"), "the next server restores it");
+    }
+  }
+
+  @Test
+  void closingSavesNothingByDefaultAsInDotNet() {
+    CountingStorage storage = new CountingStorage();
+    Harness h = harness(Form::new, storage);
+    h.load();
+    h.connect();
+    type(h, "name", "Ada");
+    h.close();
+    assertEquals(0, storage.saves.get());
+  }
+
+  @Test
+  void closingGivesUpOnStorageAfterTheTimeout() {
+    SlowStorage storage = new SlowStorage();
+    Harness h = harness(Form::new, storage, b -> b.withSaveOnShutdown(Duration.ofMillis(200)));
+    h.load();
+    h.connect();
+    type(h, "name", "Ada");
+    long start = System.nanoTime();
+    h.close();
+    long tookMillis = (System.nanoTime() - start) / 1_000_000;
+    storage.release.countDown();
+    assertTrue(tookMillis < 3000, "close() waited " + tookMillis + " ms");
   }
 }

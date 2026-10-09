@@ -37,7 +37,10 @@ public final class DraftNote extends ComponentTag {
           .onChange(e -> draft.set(e.value()))
       ),
       p("Saved draft: " + (draft.get().isEmpty() ? "none" : draft.get())).withId("draft-echo"),
-      div().withId("pause-controls").withClient(pauseControls.mount())
+      div().withId("pause-controls").withClient(pauseControls.mount()),
+      // The server can ask too: this tab, or every tab as before a deploy. Each then pauses as if Pause was clicked.
+      button("Pause this tab from the server").withId("pause-tab").onClick(e -> pauseTab()),
+      button("Pause every tab from the server").withId("pause-all").onClick(e -> application().requestPause())
     );
   }
 }

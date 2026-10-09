@@ -169,6 +169,27 @@ public abstract class ComponentTag implements DomContent {
     register(new Effect(body));
   }
 
+  /**
+   * Asks this browser tab, and only this one, to pause (ADR 0026), as .NET's
+   * Circuit.RequestCircuitPauseAsync asks one circuit: the tab runs its j2act.onPausing
+   * handlers, then pauses, saving its Retained State and freeing its session.
+   * application().requestPause() asks every tab. Completes with false when the tab is not
+   * connected; like navigate(), it throws once the component is unmounted.
+   */
+  protected final java.util.concurrent.CompletionStage<Boolean> pauseTab() {
+    Session session = session("pauseTab()");
+    return session.call(session::requestPause).handle((asked, error) -> error == null && asked);
+  }
+
+  /**
+   * The deployment this component runs in (ADR 0027): what spans every page, such as asking
+   * them all to pause. What the component owns is on this class; what its page shares is too,
+   * since a component can be a page.
+   */
+  protected final Application application() {
+    return session("application()").engine.application;
+  }
+
   /** Path parameter of the current route, e.g. "id" for /users/{id}. Tracked: a change re-renders or refetches. */
   protected final String pathParam(String name) {
     return route().params.get(name);

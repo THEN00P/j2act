@@ -48,6 +48,8 @@ public class CounterApp {
   public J2ActCustomizer demoTimeouts(@Value("${demo.idle-timeout:PT12H}") Duration idleTimeout,
       @Value("${demo.auto-pause:PT0S}") Duration autoPause) {
     return builder -> {
+      // Drafts are in the H2 file, so a restart keeps them (ADR 0026).
+      builder.withSaveOnShutdown();
       builder.withIdleTimeout(idleTimeout).withSweepInterval(Duration.ofSeconds(1));
       if (!autoPause.isZero()) {
         builder.withAutoPause(autoPause);
