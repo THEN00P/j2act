@@ -18,13 +18,18 @@ const { js, until, open, check } = b;
 
 const session = `document.querySelector('meta[name="j2-session"]').content`;
 const echo = `document.getElementById('draft-echo')?.textContent`;
+const signer = `document.getElementById('signer-echo')?.textContent`;
+// The draft is a retained State, the signer a retained Store.
+const fill = () => js(`for (const [id, value] of [['draft', 'half-filled'], ['signer', 'Ada']]) {
+  const i = document.getElementById(id); i.value = value; i.dispatchEvent(new Event('change', { bubbles: true })); } true`);
 
 b.run(async () => {
   await open(URL);
-  await js(`const i = document.getElementById('draft'); i.value = 'half-filled'; i.dispatchEvent(new Event('change', { bubbles: true })); true`);
-  check("the draft reaches the server", await until(`${echo} === 'Saved draft: half-filled'`));
+  await fill();
+  check("the draft and signer reach the server", await until(`${echo} === 'Saved draft: half-filled' && ${signer} === 'Signer: Ada'`));
   await js(`window.__samePage = true; true`);
-  const restored = `${echo} === 'Saved draft: half-filled' && document.getElementById('draft').value === 'half-filled'`;
+  const restored = `${echo} === 'Saved draft: half-filled' && document.getElementById('draft').value === 'half-filled'
+    && ${signer} === 'Signer: Ada' && document.getElementById('signer').value === 'Ada'`;
   const paused = `document.documentElement.hasAttribute('data-j2-paused')`;
   const noteShown = `getComputedStyle(document.getElementById('paused-note')).display !== 'none'`;
 
@@ -70,9 +75,10 @@ b.run(async () => {
   const lost = await js(`j2act.resume()`);
   check(`resume() answers false when the snapshot was used up meanwhile (got ${lost})`,
     lost === false && await until(`${session} !== ${JSON.stringify(beforeLost)}`));
-  check("and the page runs anyway, without the draft", await until(`${echo} === 'Saved draft: none'`));
-  await js(`{ const i = document.getElementById('draft'); i.value = 'half-filled'; i.dispatchEvent(new Event('change', { bubbles: true })); } true`);
-  check("the draft is typed again", await until(restored));
+  check("and the page runs anyway, without the draft or signer",
+    await until(`${echo} === 'Saved draft: none' && ${signer} === 'Signer: none'`));
+  await fill();
+  check("the draft and signer are typed again", await until(restored));
   check("resume() answers true when the draft came back",
     await js(`j2act.pause().then(() => j2act.resume())`) === true && await until(restored));
 
@@ -105,5 +111,5 @@ b.run(async () => {
 
   await js(`location.reload(); true`);
   await until("document.readyState === 'complete' && typeof Idiomorph !== 'undefined'");
-  check("a reload starts empty", await until(`${echo} === 'Saved draft: none'`));
+  check("a reload starts empty", await until(`${echo} === 'Saved draft: none' && ${signer} === 'Signer: none'`));
 });

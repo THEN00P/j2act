@@ -238,8 +238,7 @@ public final class J2Act implements AutoCloseable {
    */
   public ServeResult serve(String url, Exchange exchange) {
     Session session = new Session(this, newSecret(18), newSecret(18), exchange, url);
-    session.restoring = restore(exchange);
-    session.restored = session.restoring != null;
+    session.restore(restore(exchange));
     sessions.put(session.id, session);
     try {
       Session.Resolution resolution = await(session.call(() -> session.resolve(url)));

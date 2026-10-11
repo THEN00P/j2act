@@ -27,7 +27,16 @@ public final class State<T> extends Primitive implements Supplier<T> {
 
   /** Declares shared state with a per-session copy; see {@link Store}. Usually a static field. */
   public static <T> Store<T> createStore(T initial) {
-    return new Store<>(initial);
+    return new Store<>(initial, null);
+  }
+
+  /**
+   * A Store whose per-session value outlives the in-memory session for the page load (ADR
+   * 0026), as .NET persists a scoped service registered with RegisterPersistentService. Keyed
+   * by the declaring class and the static field holding it, so declare it as a static field.
+   */
+  public static <T> Store<T> createRetainedStore(T initial) {
+    return new Store<>(initial, StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).getCallerClass());
   }
 
   @Override

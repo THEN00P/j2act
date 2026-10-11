@@ -36,6 +36,7 @@ final class Checks {
   private static final String ALLOW_UNSAFE = "j2act.AllowUnsafe";
   private static final String PRIMITIVE = "j2act.Primitive";
   private static final String STORE = "j2act.Store";
+  private static final String STATE = "j2act.State";
   private static final String STREAM = "java.util.stream.Stream";
 
   /** Setters of URL-valued attributes in the generated tags. */
@@ -65,6 +66,11 @@ final class Checks {
         Node node = source.member(member);
         if (node != null && callsRetainedState(node, scope)) {
           scope.retainedFields.add(member.getSimpleName().toString());
+          retainedType((VariableElement) member, scope);
+        } else if (node != null && member.getModifiers().contains(javax.lang.model.element.Modifier.STATIC)
+            && initializesRetainedStore(node, scope)) {
+          scope.retainedFields.add(member.getSimpleName().toString());
+          scope.storeFields.add(node.children.get(0).origin);
           retainedType((VariableElement) member, scope);
         }
       }
@@ -97,6 +103,7 @@ final class Checks {
       capturedLocals(node, scope);
       missingKeys(node, scope);
       retainedInMethod(node, scope);
+      retainedStoreOutsideAField(node, scope);
       retainedChangedInPlace(node, scope);
     } else if (node.kind == Node.Kind.NEW && !allowsUnsafe && scope.isType(scope.typeNamed(node.type), UNSAFE_HTML)) {
       report(node, scope, "new UnsafeHtml() renders raw HTML; sanitize the input and mark the method "
@@ -280,6 +287,36 @@ final class Checks {
     return false;
   }
 
+  private boolean isRetainedStore(Node node, Scope scope) {
+    return node.kind == Node.Kind.CALL && node.name.equals("createRetainedStore")
+      && scope.isOwnedBy(scope.candidates(node), STATE);
+  }
+
+  /** A field initializer that is createRetainedStore(...) itself. */
+  private boolean initializesRetainedStore(Node member, Scope scope) {
+    return member.children.size() == 1 && isRetainedStore(member.children.get(0), scope);
+  }
+
+  /** A retained store is keyed by the static field holding it; anywhere else the runtime finds none. */
+  private void retainedStoreOutsideAField(Node call, Scope scope) {
+    if (isRetainedStore(call, scope) && !scope.storeFields.contains(call.origin)) {
+      report(call, scope, "createRetainedStore is keyed by the static field holding it, so elsewhere it is not "
+        + "retained; make it a static field's initializer (ADR 0026)");
+    }
+  }
+
+  /** Owner.name, a static field of another type initialized with createRetainedStore(...). */
+  private boolean isRetainedStoreField(TypeElement owner, String name) {
+    for (Element member : owner.getEnclosedElements()) {
+      if (member.getKind() == ElementKind.FIELD && member.getSimpleName().contentEquals(name)
+          && member.getModifiers().contains(javax.lang.model.element.Modifier.STATIC)) {
+        Node node = source.member(member);
+        return node != null && initializesRetainedStore(node, new Scope(owner, source.imports(owner)));
+      }
+    }
+    return false;
+  }
+
   /** In a method, the runtime cannot see a field name, so the value is keyed by creation order. */
   private void retainedInMethod(Node call, Scope scope) {
     if (!isRetainedState(call, scope)) {
@@ -296,7 +333,7 @@ final class Checks {
     }
   }
 
-  /** name.get().add(...) or name.get().setX(...) on a retained field: no set(), so no save. */
+  /** name.get().add(...) or name.get().setX(...) on a retained field or store: no set(), so no save. */
   private void retainedChangedInPlace(Node call, Scope scope) {
     Node get = call.receiver;
     if (get == null || !get.is(Node.Kind.CALL, "get") || !get.args.isEmpty() || get.receiver == null) {
@@ -313,6 +350,13 @@ final class Checks {
       name = field.name;
     } else if (field.kind == Node.Kind.SELECT && field.receiver != null && field.receiver.is(Node.Kind.IDENT, "this")) {
       name = field.name;
+    } else if (field.kind == Node.Kind.SELECT && field.receiver != null) {
+      TypeElement owner = scope.asType(field.receiver);
+      if (owner != null && isRetainedStoreField(owner, field.name)) {
+        report(call, scope, "retained " + field.name + " is changed in place by " + call.name + "(), which is not "
+          + "saved; set a new value with " + field.name + ".set(...) (ADR 0026)");
+      }
+      return;
     } else {
       return;
     }
@@ -322,7 +366,7 @@ final class Checks {
     }
   }
 
-  /** State&lt;T&gt; fields whose T is code, a handle or an open resource. */
+  /** State&lt;T&gt; and Store&lt;T&gt; fields whose T is code, a handle or an open resource. */
   private void retainedType(VariableElement field, Scope scope) {
     TypeMirror declared = field.asType();
     if (!(declared instanceof DeclaredType) || ((DeclaredType) declared).getTypeArguments().size() != 1) {
@@ -435,8 +479,10 @@ final class Checks {
   /** Name resolution inside one type: locals from the Node tree, everything else from the model. */
   private final class Scope {
     final TypeElement type;
-    /** Fields initialized with retainedState(...) (ADR 0026). */
+    /** Fields initialized with retainedState(...), and static ones with createRetainedStore(...) (ADR 0026). */
     final Set<String> retainedFields = new HashSet<>();
+    /** The compiler nodes of the createRetainedStore(...) calls that initialize a static field. */
+    final Set<Object> storeFields = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     /** The method members of this type, as opposed to fields, constructors and initializers. */
     final Set<Node> methods = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     private final List<Source.Import> imports;

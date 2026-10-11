@@ -230,8 +230,28 @@ final class Session {
    * the first soft navigation, so a form that renders once its query loads still finds its value.
    */
   volatile Map<String, String> restoring;
+  /**
+   * Snapshot entries of retained stores, waiting for their first use in this session. Kept
+   * across navigations, since a store outlives pages, and saved again if never used.
+   */
+  final Map<String, String> restoringStores = new java.util.concurrent.ConcurrentHashMap<>();
   /** This page load came with a snapshot that was restored; the page hears it in a meta tag. */
   boolean restored;
+
+  /** Before the first render. The entries of a restored snapshot, or null on a fresh page load. */
+  void restore(Map<String, String> entries) {
+    restored = entries != null;
+    if (entries != null) {
+      for (java.util.Iterator<Map.Entry<String, String>> i = entries.entrySet().iterator(); i.hasNext(); ) {
+        Map.Entry<String, String> entry = i.next();
+        if (entry.getKey().startsWith(Retained.STORE_PREFIX)) {
+          restoringStores.put(entry.getKey(), entry.getValue());
+          i.remove();
+        }
+      }
+    }
+    restoring = entries;
+  }
 
   /** Lane-only. Names a new retained cell after its field, and fills it from the snapshot being restored. */
   void retain(Scope scope, State<?> state, ValueCell cell, int index) {
@@ -319,16 +339,19 @@ final class Session {
       ValueCell cell = (ValueCell) c;
       Scope owner = cell.owner;
       Object value = cell.peek();
-      if (value == null || cell.disposed || owner == null || owner.disposed || owner.preloading()) {
+      if (value == null || cell.disposed || owner != null && (owner.disposed || owner.preloading())) {
         continue;
       }
-      String key = owner.slotPath() + "#" + cell.retainedName;
+      // A retained store has no owner and is named by its whole key.
+      String key = owner == null ? cell.retainedName : owner.slotPath() + "#" + cell.retainedName;
       try {
         entries.put(key, engine.writeRetained(value, cell.retainedType));
       } catch (RuntimeException e) {
         engine.warnOnce("write " + key, "retained " + key + " could not be written to its snapshot (ADR 0026): " + e);
       }
     }
+    // A restored store this session never used keeps its value.
+    restoringStores.forEach(entries::putIfAbsent);
     return entries;
   }
 
@@ -336,7 +359,34 @@ final class Session {
 
   /** This session's cell for a store, created on first use with the store's initial value. */
   ValueCell storeCell(Store<?> store) {
-    return (ValueCell) cells.computeIfAbsent(store.address, address -> new ValueCell(this, address, store.initial));
+    return (ValueCell) cells.computeIfAbsent(store.address, address -> {
+      ValueCell cell = new ValueCell(this, address, store.initial);
+      if (store.declaring != null) {
+        retainStore(store, cell);
+      }
+      return cell;
+    });
+  }
+
+  /** Names a retained store's cell after its static field, and fills it from the snapshot being restored. */
+  private void retainStore(Store<?> store, ValueCell cell) {
+    Retained.StoreField field = store.retainedField();
+    if (field == null) {
+      engine.warnOnce("store " + store.address, store.declaring.getName() + " creates a retained store that no"
+        + " static field of it holds, so it has no key and is not retained; declare it as a static field (ADR 0026)");
+      return;
+    }
+    cell.retainedName = field.key;
+    cell.retainedType = field.type;
+    String json = restoringStores.remove(field.key);
+    if (json != null) {
+      try {
+        cell.initialize(engine.readRetained(json, field.type));
+      } catch (RuntimeException e) {
+        engine.log(System.Logger.Level.WARNING, "retained " + field.key + " no longer reads as "
+          + field.type.getTypeName() + "; it starts from its initial value (ADR 0026)", e);
+      }
+    }
   }
 
   // ---- identity (ADR 0004, 0008)
