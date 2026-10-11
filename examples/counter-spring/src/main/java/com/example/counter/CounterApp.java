@@ -42,17 +42,22 @@ public class CounterApp {
 
   /**
    * tools/retained-check.mjs starts the demo with --demo.idle-timeout=PT3S to see an evicted
-   * session restore, and --demo.auto-pause=PT1S to see a hidden tab pause and resume.
+   * session restore, and --demo.auto-pause=PT1S to see a hidden tab pause and resume. With
+   * --demo.checkpoint-interval=PT1S, drafts also survive the process being killed.
    */
   @Bean
   public J2ActCustomizer demoTimeouts(@Value("${demo.idle-timeout:PT12H}") Duration idleTimeout,
-      @Value("${demo.auto-pause:PT0S}") Duration autoPause) {
+      @Value("${demo.auto-pause:PT0S}") Duration autoPause,
+      @Value("${demo.checkpoint-interval:PT0S}") Duration checkpointInterval) {
     return builder -> {
       // Drafts are in the H2 file, so a restart keeps them (ADR 0026).
       builder.withSaveOnShutdown();
       builder.withIdleTimeout(idleTimeout).withSweepInterval(Duration.ofSeconds(1));
       if (!autoPause.isZero()) {
         builder.withAutoPause(autoPause);
+      }
+      if (!checkpointInterval.isZero()) {
+        builder.withCheckpointInterval(checkpointInterval);
       }
     };
   }

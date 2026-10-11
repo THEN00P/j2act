@@ -88,6 +88,7 @@ public final class J2Act implements AutoCloseable {
   final Application application = new Application(this);
   /** How long close() waits for sessions' snapshots; 0 when they are not saved on shutdown. */
   private final long shutdownSaveMillis;
+  private final long checkpointMillis;
   private final Set<String> warnedOnce = ConcurrentHashMap.newKeySet();
   private volatile long lastStorageSweep;
   final ImportMap importMap;
@@ -137,6 +138,7 @@ public final class J2Act implements AutoCloseable {
     this.retainedCodecs = new java.util.HashMap<>(b.retainedCodecs);
     this.autoPauseMillis = b.autoPause == null ? 0 : b.autoPause.toMillis();
     this.shutdownSaveMillis = b.shutdownSave == null ? 0 : b.shutdownSave.toMillis();
+    this.checkpointMillis = b.checkpointInterval == null ? 0 : b.checkpointInterval.toMillis();
     ClassLoader loader = Thread.currentThread().getContextClassLoader();
     this.resourceLoader = loader != null ? loader : J2Act.class.getClassLoader();
     this.importMap = ImportMap.build(resourceLoader, b.contextPath, this);
@@ -152,6 +154,9 @@ public final class J2Act implements AutoCloseable {
     this.sweeper = Executors.newSingleThreadScheduledExecutor(daemon("j2act-sweeper"));
     long every = b.sweepInterval.toMillis();
     sweeper.scheduleWithFixedDelay(this::sweep, every, every, TimeUnit.MILLISECONDS);
+    if (checkpointMillis > 0) {
+      sweeper.scheduleWithFixedDelay(this::checkpoint, checkpointMillis, checkpointMillis, TimeUnit.MILLISECONDS);
+    }
     this.dev = DevMode.detect(this);
     if (dev != null) {
       modules.viteDisk = dev.viteDir();
@@ -481,6 +486,13 @@ public final class J2Act implements AutoCloseable {
       });
     } else if ("bye".equals(type)) {
       byConnection.remove(connection);
+      // The page is gone for good, so its checkpoint can never be restored (ADR 0026).
+      session.lane.execute(() -> {
+        if (session.stored) {
+          session.stored = false;
+          write(session, () -> delete(session));
+        }
+      });
       discard(session, false);
     }
   }
@@ -581,17 +593,32 @@ public final class J2Act implements AutoCloseable {
       done.complete(null);
     };
     session.lane.execute(() -> {
-      String snapshot = session.disposed ? null : snapshot(session);
-      if (snapshot == null) {
+      if (session.disposed) {
         end.accept(false);
         return;
       }
-      executor.execute(() -> {
-        save(session, snapshot);
-        session.lane.execute(() -> end.accept(true));
-      });
+      session.persisting();
+      persist(session).thenAccept(saved -> session.lane.execute(() -> end.accept(saved)));
     });
     return done;
+  }
+
+  /**
+   * Saves the snapshot of every session with a changed retained value, without discarding it
+   * (ADR 0026), so a crash loses at most one interval. onPersisting runs first in each.
+   */
+  private void checkpoint() {
+    for (Session session : sessions.values()) {
+      session.post(() -> {
+        if (sessions.get(session.id) != session) {
+          return; // being evicted or paused, which saves it anyway
+        }
+        session.persisting();
+        if (session.retainedDirty) {
+          persist(session);
+        }
+      });
+    }
   }
 
   /** An upload or download of this session that would break if it were paused now. */
@@ -602,12 +629,34 @@ public final class J2Act implements AutoCloseable {
 
   // ---- Retained State (ADR 0026)
 
+  /**
+   * Lane-only. Takes the session's snapshot and queues it for storage; with nothing to save, it
+   * deletes the checkpoint the snapshot would have replaced. Completes with whether it saved one.
+   */
+  private CompletableFuture<Boolean> persist(Session session) {
+    session.retainedDirty = false;
+    String snapshot = snapshot(session);
+    if (snapshot != null) {
+      session.stored = true;
+      return write(session, () -> save(session, snapshot)).thenApply(v -> true);
+    }
+    if (session.stored) {
+      session.stored = false;
+      return write(session, () -> delete(session)).thenApply(v -> false);
+    }
+    return CompletableFuture.completedFuture(false);
+  }
+
+  /** Lane-only. Runs a storage write after the session's earlier ones, on the executor. */
+  private CompletableFuture<Void> write(Session session, Runnable write) {
+    return session.storageWrites = session.storageWrites.thenRunAsync(write, executor);
+  }
+
   /** Lane-only. The session's snapshot, or null when it has no retained values. */
   private String snapshot(Session session) {
     Map<String, String> entries;
     String principal;
     try {
-      session.persisting();
       entries = session.retainedEntries();
       if (entries.isEmpty()) {
         return null;
@@ -626,6 +675,14 @@ public final class J2Act implements AutoCloseable {
       retainedStorage.save(Retained.id(session.token), snapshot, Instant.ofEpochMilli(clock.millis() + retainedRetentionMillis));
     } catch (RuntimeException e) {
       log(System.Logger.Level.WARNING, "retained state of session " + session.id + " could not be saved", e);
+    }
+  }
+
+  private void delete(Session session) {
+    try {
+      retainedStorage.delete(Retained.id(session.token));
+    } catch (RuntimeException e) {
+      log(System.Logger.Level.WARNING, "retained state of session " + session.id + " could not be deleted", e);
     }
   }
 
@@ -864,6 +921,7 @@ public final class J2Act implements AutoCloseable {
     private int maxRetainedSnapshots = 1000;
     private Duration autoPause;
     private Duration shutdownSave;
+    private Duration checkpointInterval;
     private final Map<Class<?>, RetainedCodec<?>> retainedCodecs = new java.util.HashMap<>();
     private final Map<String, String> imports = new java.util.LinkedHashMap<>();
 
@@ -1071,6 +1129,20 @@ public final class J2Act implements AutoCloseable {
         throw new IllegalArgumentException("the shutdown save timeout must be positive");
       }
       this.shutdownSave = timeout;
+      return this;
+    }
+
+    /**
+     * Also saves the Retained State of live sessions on this interval, those with a changed
+     * value, without discarding them, so a crash or a kill loses at most one interval (ADR
+     * 0026). Off by default and beyond .NET, which tracks it as dotnet/aspnetcore#64840. Each
+     * save writes to storage, so pick an interval storage can take for every open tab.
+     */
+    public Builder withCheckpointInterval(Duration interval) {
+      if (interval.isNegative() || interval.isZero()) {
+        throw new IllegalArgumentException("the checkpoint interval must be positive");
+      }
+      this.checkpointInterval = interval;
       return this;
     }
 

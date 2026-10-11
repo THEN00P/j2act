@@ -237,10 +237,18 @@ final class Session {
   final Map<String, String> restoringStores = new java.util.concurrent.ConcurrentHashMap<>();
   /** This page load came with a snapshot that was restored; the page hears it in a meta tag. */
   boolean restored;
+  /** Lane-only. A retained value changed since the last snapshot; checkpoints save only such sessions. */
+  boolean retainedDirty;
+  /** Lane-only. Storage holds a checkpoint of this live session, which bye deletes. */
+  boolean stored;
+  /** This session's storage writes, in the order the lane took their snapshots, so an older one never lands last. */
+  java.util.concurrent.CompletableFuture<Void> storageWrites = java.util.concurrent.CompletableFuture.completedFuture(null);
 
   /** Before the first render. The entries of a restored snapshot, or null on a fresh page load. */
   void restore(Map<String, String> entries) {
     restored = entries != null;
+    // A restored snapshot was deleted from storage, so the next checkpoint saves it again.
+    retainedDirty = restored;
     if (entries != null) {
       for (java.util.Iterator<Map.Entry<String, String>> i = entries.entrySet().iterator(); i.hasNext(); ) {
         Map.Entry<String, String> entry = i.next();

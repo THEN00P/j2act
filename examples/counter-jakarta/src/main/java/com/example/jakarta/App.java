@@ -33,7 +33,8 @@ public class App extends J2ActListener {
     // WildFly's default datasource outlives a redeploy, so drafts saved on undeploy come back (ADR 0026).
     builder.withRetainedStateStorage(JdbcRetainedStateStorage.of(dataSource)).withSaveOnShutdown();
     // The Retained State browser check evicts idle sessions quickly and pauses hidden tabs:
-    // -Ddemo.idle-timeout=PT3S -Ddemo.auto-pause=PT1S.
+    // -Ddemo.idle-timeout=PT3S -Ddemo.auto-pause=PT1S. -Ddemo.checkpoint-interval=PT1S saves live
+    // drafts too, so they survive the server being killed.
     String idleTimeout = System.getProperty("demo.idle-timeout");
     if (idleTimeout != null) {
       builder.withIdleTimeout(Duration.parse(idleTimeout)).withSweepInterval(Duration.ofSeconds(1));
@@ -41,6 +42,10 @@ public class App extends J2ActListener {
     String autoPause = System.getProperty("demo.auto-pause");
     if (autoPause != null) {
       builder.withAutoPause(Duration.parse(autoPause));
+    }
+    String checkpointInterval = System.getProperty("demo.checkpoint-interval");
+    if (checkpointInterval != null) {
+      builder.withCheckpointInterval(Duration.parse(checkpointInterval));
     }
   }
 }

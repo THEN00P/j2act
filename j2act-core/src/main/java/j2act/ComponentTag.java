@@ -63,7 +63,8 @@ public abstract class ComponentTag implements DomContent {
   }
 
   /**
-   * Runs on the session's lane right before its snapshot is taken, on eviction or a pause, so
+   * Runs on the session's lane right before its snapshot is taken, on eviction, a pause or a
+   * checkpoint (where it runs at every interval, to see whether anything changed), so
    * the component can copy values into its retained fields (ADR 0026), as .NET's
    * RegisterOnPersisting does. Like every primitive, call it in a field initializer or render().
    */

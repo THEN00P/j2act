@@ -5,7 +5,8 @@
 //   java -jar examples/counter-spring/target/counter-spring-*.jar --server.port=8089 --demo.idle-timeout=PT3S --demo.auto-pause=PT1S
 //   node tools/retained-check.mjs http://localhost:8089/
 // With --restart "<command>" it also runs that command mid-check, such as a WildFly reload, and
-// expects the draft back from the next deployment (the demos save sessions on shutdown).
+// expects the draft back from the next deployment (the demos save sessions on shutdown). A demo
+// started with --demo.checkpoint-interval=PT1S keeps it even when the command kills the server.
 import { execSync } from "node:child_process";
 import { openBrowser } from "./cdp.mjs";
 
@@ -106,7 +107,7 @@ b.run(async () => {
     execSync(RESTART, { stdio: "inherit", shell: process.platform === "win32" ? "bash" : "/bin/sh" });
     check("after the restart the page remounts on the next server",
       await until(`${session} !== ${JSON.stringify(beforeRestart)}`, 90000));
-    check("the draft saved on shutdown came back", await until(restored));
+    check("the draft came back on the next server", await until(restored));
   }
 
   await js(`location.reload(); true`);
