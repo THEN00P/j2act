@@ -1,10 +1,10 @@
 # Gradle and Maven plugins, and the IDE builds they configure
 
-Gradle is a first-class build, as Maven is. The Gradle plugin is built with Gradle 8.14 and Java 11 bytecode, so builds that still run Gradle on Java 11 can use it, and its TestKit tests run on Gradle 8 and 9; the first production user builds with Gradle and deploys to WildFly. Both builds get a j2act plugin, id("dev.j2act") and dev.j2act:j2act-maven-plugin, with Vaadin's and Quarkus' plugins as precedent. The plugins only supply defaults. Everything the user sets in node { }, in vite.config, in the pom or in the build script wins.
+Gradle is a first-class build, as Maven is. The Gradle plugin is built with Gradle 9 and Java 11 bytecode, so builds that still run Gradle 8 on Java 11 can use it, and its TestKit tests run on Gradle 8 and 9; the first production user builds with Gradle and deploys to WildFly. Both builds get a j2act plugin, id("io.github.then00p.j2act") and io.github.then00p.j2act:j2act-maven-plugin, with Vaadin's and Quarkus' plugins as precedent. The plugins only supply defaults. Everything the user sets in node { }, in vite.config, in the pom or in the build script wins.
 
     plugins {
       war
-      id("dev.j2act")
+      id("io.github.then00p.j2act")
     }
 
 The Gradle plugin:
@@ -21,7 +21,7 @@ The Maven plugin has two goals:
 With <extensions>true</extensions>, as the Kotlin Maven plugin does it, the Maven plugin applies the rest as defaults after Maven reads the pom:
 
     <plugin>
-      <groupId>dev.j2act</groupId>
+      <groupId>io.github.then00p.j2act</groupId>
       <artifactId>j2act-maven-plugin</artifactId>
       <version>...</version>
       <extensions>true</extensions>

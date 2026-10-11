@@ -1,0 +1,99 @@
+name: Release
+
+# Push a tag such as v0.1.0 (ADR 0029). The tag names the version of everything it releases; the
+# repository itself stays on the snapshot version.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # npm provenance: the package records the workflow run that built it.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Version from the tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: j2act-core/package-lock.json
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          # Writes a settings.xml whose central server reads these variables.
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_PASSWORD
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      # As in CI: the jar ships the checked-in runtime.js, which must be what its sources build (ADR 0028).
+      - name: Client runtime
+        working-directory: j2act-core
+        run: |
+          npm ci
+          npm run check
+          npm run build
+          if [ -n "$(git status --porcelain -- src/main/resources)" ]; then
+            echo "::error::runtime.js is stale: run npm run build in j2act-core and commit the result"
+            exit 1
+          fi
+
+      - name: Set the version
+        run: ./mvnw -B org.codehaus.mojo:versions-maven-plugin:2.22.0:set -DnewVersion="$VERSION" -DprocessAllModules=true -DgenerateBackupPoms=false
+
+      # Builds, tests, signs and uploads; Central releases it once it has validated the bundle.
+      - name: Maven modules to Maven Central
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          MAVEN_GPG_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: ./mvnw -B -Prelease deploy -DautoPublish=true
+
+      # Its tests take j2act-processor at the release version from ~/.m2, where the deploy installed it.
+      - name: Gradle plugin, build and test
+        working-directory: j2act-gradle-plugin
+        env:
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_PASSPHRASE }}
+        run: ./gradlew build -PreleaseVersion="$VERSION"
+
+      - name: Gradle plugin to Maven Central and the Plugin Portal
+        working-directory: j2act-gradle-plugin
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_PASSPHRASE }}
+          GRADLE_PUBLISH_KEY: ${{ secrets.GRADLE_PUBLISH_KEY }}
+          GRADLE_PUBLISH_SECRET: ${{ secrets.GRADLE_PUBLISH_SECRET }}
+        run: ./gradlew publishAndReleaseToMavenCentral publishPlugins -PreleaseVersion="$VERSION"
+
+      # A prerelease such as 0.2.0-rc.1 goes to the next dist-tag, so npm install keeps the latest release.
+      - name: "@j2act/vite to npm"
+        working-directory: j2act-vite
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          case "$VERSION" in
+            *-*) npm publish --provenance --tag next ;;
+            *) npm publish --provenance ;;
+          esac
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag $([[ "$VERSION" == *-* ]] && echo --prerelease)

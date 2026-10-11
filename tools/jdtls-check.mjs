@@ -44,7 +44,7 @@ writeFileSync(join(project, "pom.xml"), `<?xml version="1.0" encoding="UTF-8"?>
   </properties>
   <dependencies>
     <dependency>
-      <groupId>dev.j2act</groupId>
+      <groupId>io.github.then00p.j2act</groupId>
       <artifactId>j2act-html</artifactId>
       <version>${version}</version>
     </dependency>
@@ -58,7 +58,7 @@ writeFileSync(join(project, "pom.xml"), `<?xml version="1.0" encoding="UTF-8"?>
         <configuration>
           <annotationProcessorPaths>
             <path>
-              <groupId>dev.j2act</groupId>
+              <groupId>io.github.then00p.j2act</groupId>
               <artifactId>j2act-processor</artifactId>
               <version>${version}</version>
             </path>

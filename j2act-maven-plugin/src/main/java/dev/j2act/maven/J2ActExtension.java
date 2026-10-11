@@ -20,7 +20,7 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 
 /**
  * {@code <extensions>true</extensions>} on j2act-maven-plugin (ADR 0025): the pom boilerplate
- * as defaults, as the Kotlin Maven plugin's extension does it, and as id("dev.j2act") does it for
+ * as defaults, as the Kotlin Maven plugin's extension does it, and as id("io.github.then00p.j2act") does it for
  * Gradle. Whatever the pom declares wins. Maven and m2e (Eclipse, VS Code) both run it after
  * reading the projects, so the IDEs see the same build as mvn does.
  * <ul>
@@ -37,12 +37,12 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 @Singleton
 public class J2ActExtension extends AbstractMavenLifecycleParticipant {
 
-  static final String PLUGIN = "dev.j2act:j2act-maven-plugin";
+  static final String PLUGIN = "io.github.then00p.j2act:j2act-maven-plugin";
   static final String COMPILER = "org.apache.maven.plugins:maven-compiler-plugin";
   static final String FRONTEND = "com.github.eirslett:frontend-maven-plugin";
   static final String FRONTEND_VERSION = "2.0.2";
   static final String EXPLODED = "io.github.then00p:exploded-hotswap-maven-plugin";
-  static final String EXPLODED_VERSION = "0.1.0-SNAPSHOT";
+  static final String EXPLODED_VERSION = "0.1.0";
   static final String NODE_VERSION = "v24.14.0";
   static final String PNPM_VERSION = "10.32.1";
   static final String YARN_VERSION = "v1.22.22";
@@ -114,7 +114,7 @@ public class J2ActExtension extends AbstractMavenLifecycleParticipant {
       }
     }
     Xpp3Dom path = new Xpp3Dom("path");
-    path.addChild(element("groupId", "dev.j2act"));
+    path.addChild(element("groupId", "io.github.then00p.j2act"));
     path.addChild(element("artifactId", "j2act-processor"));
     path.addChild(element("version", version));
     paths.addChild(path);
