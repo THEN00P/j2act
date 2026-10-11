@@ -32,6 +32,11 @@
       <groupId>dev.j2act</groupId>
       <artifactId>j2act-router</artifactId>
     </dependency>
+    <!-- Retained State in the container's database, through java:comp/DefaultDataSource (ADR 0026). -->
+    <dependency>
+      <groupId>dev.j2act</groupId>
+      <artifactId>j2act-retained-jdbc</artifactId>
+    </dependency>
     <dependency>
       <groupId>jakarta.platform</groupId>
       <artifactId>jakarta.jakartaee-api</artifactId>

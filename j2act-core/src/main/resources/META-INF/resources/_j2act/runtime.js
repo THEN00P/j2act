@@ -27,6 +27,7 @@
   let retry = 0;
   let leaving = false;
   let remounting = false;
+  let paused = null;                 // null, "deferring", "pausing" or "paused" (ADR 0026)
   const inFlight = new Map();        // ack id -> { el, swap }
   const pendingEls = new Set();      // elements with a click or submit in flight
   const timers = new WeakMap();      // element -> debounce timer
@@ -80,7 +81,7 @@
     };
     ws.onclose = () => {
       ready = false;
-      if (leaving || remounting) {
+      if (leaving || remounting || paused === "paused") {
         return;
       }
       const delay = Math.min(5000, 250 * Math.pow(2, retry++));
@@ -103,6 +104,9 @@
       retry = 0;
       while (queue.length) {
         ws.send(queue.shift());
+      }
+      if (paused === "pausing") {
+        sendPause();
       }
     } else if (m.t === "patch") {
       patch(m.s, m.h, m.r === "1");
@@ -135,7 +139,20 @@
     } else if (m.t === "ack") {
       ack(m.a);
     } else if (m.t === "expired") {
-      remount();
+      if (paused === "pausing" || paused === "deferring") {
+        stopDeferral("the session ended");
+        onPaused(true); // evicted while the pause was on its way: a snapshot may be saved all the same
+      } else if (!paused) {
+        remount();
+      }
+    } else if (m.t === "paused") {
+      onPaused(m.s === "1");
+    } else if (m.t === "pausex") {
+      pauseRefused();
+    } else if (m.t === "rp") {
+      if (!paused) {
+        beginPause(false); // the server asked, as RequestCircuitPauseAsync does: handlers may delay it, not refuse it
+      }
     } else if (m.t === "mods") {
       reimport(m.m);
     }
@@ -993,7 +1010,8 @@
     } catch (ignored) {
       // already closed
     }
-    fetch(location.href, { credentials: "same-origin" })
+    // The old page's token lets the server restore its Retained State, if it kept a snapshot (ADR 0026).
+    fetch(location.href, { credentials: "same-origin", headers: tok ? { "X-J2-Restore": tok } : {} })
       .then((r) => r.text())
       .then((html) => {
         const doc = new DOMParser().parseFromString(html, "text/html");
@@ -1015,6 +1033,7 @@
         retry = 0;
         queue = [];
         connect();
+        resumed(read("j2-restored") === "1");
       })
       .catch(() => {
         remounting = false;
@@ -1030,11 +1049,182 @@
   });
 
   window.addEventListener("pageshow", (e) => {
-    if (e.persisted) {
+    if (e.persisted && paused !== "paused") {
       leaving = false;
       remount();
     }
   });
+
+  // ---- pause and resume (ADR 0026): the snapshot stays on the server, the session is freed
+
+  const autoPauseAfter = Number(meta("j2-autopause") || 0);
+  let pausedByHiding = false;
+  let hiddenTimer = null;
+  let pauseWaiters = [];
+  let resumeWaiters = [];
+  let pausedWithState = false;
+  let pausingHandlers = [];
+  let deferral = null;               // AbortController while onPausing handlers run
+
+  // As .NET's onCircuitPausing: runs before every pause and delays it until its promise settles.
+  // The signal aborts when the pause is called off, e.g. the hidden tab is shown again.
+  function onPausing(handler) {
+    pausingHandlers.push(handler);
+    return () => {
+      pausingHandlers = pausingHandlers.filter((h) => h !== handler);
+    };
+  }
+
+  function sendPause() {
+    if (ready) {
+      ws.send(JSON.stringify(pausedByHiding ? { t: "pause", a: "1" } : { t: "pause" }));
+    }
+  }
+
+  function settlePause(ok) {
+    pauseWaiters.splice(0).forEach((resolve) => resolve(ok));
+  }
+
+  // Runs the onPausing handlers, then asks the server; a handler that fails calls the pause off.
+  function beginPause(automatic) {
+    paused = "deferring";
+    pausedByHiding = automatic;
+    const controller = new AbortController();
+    deferral = controller;
+    Promise.all(pausingHandlers.map((h) => Promise.resolve().then(() => h(controller.signal)))).then(() => {
+      if (deferral === controller) {
+        deferral = null;
+        paused = "pausing";
+        sendPause(); // not connected: "ok" sends it once the socket is back
+      }
+    }, (e) => {
+      if (deferral === controller) {
+        console.warn("j2act: an onPausing handler failed, so the page did not pause", e);
+        cancelPause("an onPausing handler failed");
+      }
+    });
+  }
+
+  function stopDeferral(reason) {
+    if (deferral) {
+      deferral.abort(reason);
+      deferral = null;
+    }
+  }
+
+  function cancelPause(reason) {
+    stopDeferral(reason);
+    paused = null;
+    pausedByHiding = false;
+    settlePause(false);
+  }
+
+  // Resolves true once the server saved the page's Retained State and let its session go.
+  function pause() {
+    if (paused === "paused") {
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      pauseWaiters.push(resolve);
+      if (!paused) {
+        beginPause(false);
+      } else {
+        pausedByHiding = false; // asked for: it no longer gives way, nor resumes when the tab is shown
+      }
+    });
+  }
+
+  // saved: the server had Retained State to keep, so resume() reports whether it came back.
+  function onPaused(saved) {
+    pausedWithState = saved;
+    paused = "paused";
+    ready = false;
+    document.documentElement.setAttribute("data-j2-paused", "");
+    document.dispatchEvent(new CustomEvent("j2act:paused"));
+    settlePause(true);
+    if (pausedByHiding && !document.hidden) {
+      resume();
+    }
+  }
+
+  function pauseRefused() {
+    if (!pausedByHiding) {
+      sendPause(); // j2act.pause() was called meanwhile, and it does not give way
+      return;
+    }
+    paused = null;
+    pausedByHiding = false;
+    if (document.hidden) {
+      hiddenTimer = setTimeout(autoPause, 10000);
+    }
+  }
+
+  // Resolves once the page runs again on a new session: true when its Retained State came back, or it had none.
+  function resume() {
+    if (paused === "deferring") {
+      cancelPause("resumed");
+      return Promise.resolve(true);
+    }
+    if (paused === "pausing") {
+      return new Promise((resolve) => pauseWaiters.push(() => resume().then(resolve)));
+    }
+    if (paused !== "paused") {
+      return Promise.resolve(false);
+    }
+    paused = null;
+    pausedByHiding = false;
+    document.documentElement.removeAttribute("data-j2-paused");
+    return new Promise((resolve) => {
+      resumeWaiters.push(resolve);
+      remount();
+    });
+  }
+
+  // As .NET's resumeCircuit(): false when the page had state to keep and got none back, as when
+  // its snapshot expired, was used already or belongs to someone else. The page runs either way.
+  function resumed(restored) {
+    if (resumeWaiters.length) {
+      const ok = restored || !pausedWithState;
+      document.dispatchEvent(new CustomEvent("j2act:resumed", { detail: { restored: ok } }));
+      resumeWaiters.splice(0).forEach((resolve) => resolve(ok));
+    }
+  }
+
+  // What a pause would cut off: the server checks its own side (uploads, downloads, client calls).
+  function busy() {
+    const a = document.activeElement;
+    return inFlight.size > 0 || files.size > 0
+      || (a && a !== document.body && (a.matches("input, textarea, select") || a.isContentEditable))
+      || Array.prototype.some.call(document.querySelectorAll("audio, video"), (m) => !m.paused && !m.ended);
+  }
+
+  function autoPause() {
+    hiddenTimer = null;
+    if (!document.hidden || paused || remounting) {
+      return;
+    }
+    if (busy()) {
+      hiddenTimer = setTimeout(autoPause, 10000);
+      return;
+    }
+    beginPause(true);
+  }
+
+  if (autoPauseAfter > 0) {
+    document.addEventListener("visibilitychange", () => {
+      clearTimeout(hiddenTimer);
+      hiddenTimer = null;
+      if (document.hidden) {
+        hiddenTimer = setTimeout(autoPause, autoPauseAfter);
+      } else if (paused === "deferring" && pausedByHiding) {
+        cancelPause("the tab is visible again");
+      } else if (paused === "paused" && pausedByHiding) {
+        resume();
+      }
+    });
+  }
+
+  window.j2act = Object.freeze({ pause: pause, resume: resume, onPausing: onPausing });
 
   // Clients mount from the props in the HTML at once; their calls into Java queue until the socket is up.
   scanClients();

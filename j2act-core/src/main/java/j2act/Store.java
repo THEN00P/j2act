@@ -6,7 +6,8 @@ import java.util.function.UnaryOperator;
 
 /**
  * Shared state declared once, typically as a static field, with an isolated copy per
- * session (CONTEXT: Store): current user, theme, locale. No persistence, no middleware.
+ * session (CONTEXT: Store): current user, theme, locale. No middleware. A store made with
+ * State.createRetainedStore keeps its value in the session's Retained State (ADR 0026).
  *
  * <pre>{@code
  * public static final Store<Theme> theme = State.createStore(Theme.LIGHT);
@@ -22,9 +23,22 @@ public final class Store<T> {
 
   final T initial;
   final String address = "store:" + IDS.incrementAndGet();
+  /** For a retained store, the class that created it, whose static field names it; else null. */
+  final Class<?> declaring;
+  private volatile Retained.StoreField field;
 
-  Store(T initial) {
+  Store(T initial, Class<?> declaring) {
     this.initial = initial;
+    this.declaring = declaring;
+  }
+
+  /** The retained store's snapshot key and value type, or null while no static field holds it. */
+  Retained.StoreField retainedField() {
+    Retained.StoreField found = field;
+    if (found == null) {
+      found = field = Retained.storeField(declaring, this);
+    }
+    return found;
   }
 
   /** This session's whole value, tracked. */

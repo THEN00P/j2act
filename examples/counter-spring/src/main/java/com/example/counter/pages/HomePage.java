@@ -6,6 +6,7 @@ import static com.example.counter.components.NoteEditor.noteEditor;
 import static com.example.counter.components.SalesChart.salesChart;
 import static com.example.counter.components.Countdown.countdown;
 import static com.example.counter.components.Counter.counter;
+import static com.example.counter.components.DraftNote.draftNote;
 import static com.example.counter.components.GreetingForm.greetingForm;
 import static com.example.counter.components.NameRows.nameRows;
 import static com.example.counter.components.ProfileCard.profileCard;
@@ -64,6 +65,10 @@ public class HomePage extends LiveComponent implements Page {
         section(
           h2("Forms, keys and focus").withId("forms"),
           greetingForm()
+        ),
+        section(
+          h2("Retained State: a draft that outlives the session"),
+          draftNote()
         ),
         section(
           h2("Client module: ticks in the browser, caption from the server"),

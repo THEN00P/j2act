@@ -7,6 +7,7 @@ import static com.example.jakarta.components.NoteEditor.noteEditor;
 import static com.example.jakarta.components.SalesChart.salesChart;
 import static com.example.jakarta.components.Countdown.countdown;
 import static com.example.jakarta.components.Counter.counter;
+import static com.example.jakarta.components.DraftNote.draftNote;
 import static com.example.jakarta.components.GreetingForm.greetingForm;
 import static com.example.jakarta.components.PeopleCount.peopleCount;
 import static com.example.jakarta.components.SearchBox.searchBox;
@@ -60,6 +61,10 @@ public class HomePage extends LiveComponent implements Page {
         section(
           h2("Form"),
           greetingForm()
+        ),
+        section(
+          h2("Retained State: a draft that outlives the session"),
+          draftNote()
         )
       )
     );

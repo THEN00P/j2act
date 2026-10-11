@@ -16,6 +16,14 @@ final class Scope implements Observer {
   final Session session;
   final Scope parent;
   final String address;
+  /**
+   * Where this scope sits under its parent, "path@class" as in its address, set each time it is
+   * placed. A preloaded page keeps its preload address once adopted (ADR 0011), so Retained State
+   * keys use slotPath() instead of the address.
+   */
+  String localPath;
+  /** A Retained State of this component came back from a snapshot; onRestored callbacks run (ADR 0026). */
+  boolean restored;
   final String anchor;
   ComponentTag instance;
   final List<Cell> cells = new ArrayList<>();
@@ -63,6 +71,11 @@ final class Scope implements Observer {
     ShapeChanged(String message) {
       super(message);
     }
+  }
+
+  /** The slot path a page mounted from its URL would give this scope; keys Retained State (ADR 0026). */
+  String slotPath() {
+    return parent == null || localPath == null ? address : parent.slotPath() + localPath;
   }
 
   IllegalStateException orderViolation(String message) {
@@ -174,6 +187,9 @@ final class Scope implements Observer {
     cell.owner = this;
     cells.add(cell);
     session.cells.put(cell.address, cell);
+    if (primitive instanceof State && ((State<?>) primitive).retained) {
+      session.retain(this, (State<?>) primitive, (ValueCell) cell, index);
+    }
     primitive.attach(cell, true);
   }
 

@@ -20,6 +20,7 @@
     <module>j2act-processor</module>
     <module>j2act-spring</module>
     <module>j2act-jakarta</module>
+    <module>j2act-retained-jdbc</module>
     <module>j2act-maven-plugin</module>
     <module>examples/counter-spring</module>
     <module>examples/counter-jakarta</module>
@@ -71,6 +72,11 @@
       <dependency>
         <groupId>dev.j2act</groupId>
         <artifactId>j2act-jakarta</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.j2act</groupId>
+        <artifactId>j2act-retained-jdbc</artifactId>
         <version>${project.version}</version>
       </dependency>
     </dependencies>

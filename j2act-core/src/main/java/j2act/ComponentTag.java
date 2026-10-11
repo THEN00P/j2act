@@ -43,6 +43,55 @@ public abstract class ComponentTag implements DomContent {
     return register(new State<>(initial));
   }
 
+  /**
+   * A State whose value outlives the in-memory session for this page load (ADR 0026): it
+   * comes back after the grace window, a pause, a restart or a redeploy, while a reload
+   * still starts empty. Keyed by this component's slot and the field holding it, so declare
+   * it as a field; give a repeated component a withKey. Replace values through set(), since
+   * changing a retained list in place does not count as a change.
+   */
+  protected final <T> State<T> retainedState(T initial) {
+    return register(new State<>(initial, true, null));
+  }
+
+  /** A Retained State with an explicit name instead of its field's name; never required. */
+  protected final <T> State<T> retainedState(String name, T initial) {
+    if (name == null || name.isEmpty()) {
+      throw new IllegalArgumentException("a retained state name must not be empty");
+    }
+    return register(new State<>(initial, true, name));
+  }
+
+  /**
+   * Runs on the session's lane right before its snapshot is taken, on eviction, a pause or a
+   * checkpoint (where it runs at every interval, to see whether anything changed), so
+   * the component can copy values into its retained fields (ADR 0026), as .NET's
+   * RegisterOnPersisting does. Like every primitive, call it in a field initializer or render().
+   */
+  protected final void onPersisting(Runnable callback) {
+    register(new PersistHook(callback));
+  }
+
+  /**
+   * Runs once after this component's first render when its Retained State came back from a
+   * snapshot (ADR 0026), as .NET's RegisterOnRestoring does. It does not run when nothing of
+   * this component was restored, such as on a fresh page load.
+   */
+  protected final void onRestored(Runnable callback) {
+    java.util.Objects.requireNonNull(callback, "callback");
+    register(new Effect(() -> {
+      if (scope != null && scope.restored) {
+        Observer previous = Tracking.swap(null);
+        try {
+          callback.run();
+        } finally {
+          Tracking.swap(previous);
+        }
+      }
+      return null;
+    }));
+  }
+
   protected final <T> Prop<T> prop() {
     return register(new Prop<>(null));
   }
@@ -119,6 +168,27 @@ public abstract class ComponentTag implements DomContent {
   /** Runs after mount and whenever a State it read changes; returns its cleanup or null. */
   protected final void effect(Supplier<Runnable> body) {
     register(new Effect(body));
+  }
+
+  /**
+   * Asks this browser tab, and only this one, to pause (ADR 0026), as .NET's
+   * Circuit.RequestCircuitPauseAsync asks one circuit: the tab runs its j2act.onPausing
+   * handlers, then pauses, saving its Retained State and freeing its session.
+   * application().requestPause() asks every tab. Completes with false when the tab is not
+   * connected; like navigate(), it throws once the component is unmounted.
+   */
+  protected final java.util.concurrent.CompletionStage<Boolean> pauseTab() {
+    Session session = session("pauseTab()");
+    return session.call(session::requestPause).handle((asked, error) -> error == null && asked);
+  }
+
+  /**
+   * The deployment this component runs in (ADR 0027): what spans every page, such as asking
+   * them all to pause. What the component owns is on this class; what its page shares is too,
+   * since a component can be a page.
+   */
+  protected final Application application() {
+    return session("application()").engine.application;
   }
 
   /** Path parameter of the current route, e.g. "id" for /users/{id}. Tracked: a change re-renders or refetches. */

@@ -7,6 +7,9 @@ import java.util.function.UnaryOperator;
 class ValueCell extends Cell {
 
   private volatile Object value;
+  /** For Retained State: its name within its scope's slot and the type its JSON reads as (ADR 0026). */
+  String retainedName;
+  java.lang.reflect.Type retainedType;
 
   ValueCell(Session session, String address, Object initial) {
     super(session, address);
@@ -51,6 +54,16 @@ class ValueCell extends Cell {
       return;
     }
     value = next;
+    if (retainedName != null) {
+      session.retainedDirty = true;
+    }
     notifyObservers();
+  }
+
+  @Override void dispose() {
+    if (retainedName != null && !disposed) {
+      session.retainedDirty = true; // an unmounted component's value leaves the snapshot
+    }
+    super.dispose();
   }
 }
