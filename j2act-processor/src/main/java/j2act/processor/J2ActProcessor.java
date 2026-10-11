@@ -23,7 +23,7 @@ import javax.tools.Diagnostic;
  * <pre>{@code
  * <annotationProcessorPaths>
  *   <path>
- *     <groupId>dev.j2act</groupId>
+ *     <groupId>io.github.then00p.j2act</groupId>
  *     <artifactId>j2act-processor</artifactId>
  *     <version>${j2act.version}</version>
  *   </path>
@@ -74,6 +74,7 @@ public final class J2ActProcessor extends AbstractProcessor {
       java.nio.file.Path java = source != null && origin instanceof TypeElement ? source.sourceFile((TypeElement) origin) : null;
       clientTypes.project = DevToken.write(processingEnv.getFiler(), origin, java);
       clientTypes.prune();
+      clientTypes.writeRuntimeTypes(origin);
     }
     for (Element root : round.getRootElements()) {
       if (root instanceof TypeElement) {

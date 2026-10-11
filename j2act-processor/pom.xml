@@ -39,6 +39,19 @@
     </dependency>
   </dependencies>
   <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <!-- The runtime's API types, which the processor copies into .j2act/types (ADR 0028). -->
+      <resource>
+        <directory>../j2act-core/src/main/ts</directory>
+        <targetPath>j2act/processor</targetPath>
+        <includes>
+          <include>j2act.d.ts</include>
+        </includes>
+      </resource>
+    </resources>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

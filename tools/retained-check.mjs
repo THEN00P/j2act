@@ -111,6 +111,6 @@ b.run(async () => {
   }
 
   await js(`location.reload(); true`);
-  await until("document.readyState === 'complete' && typeof Idiomorph !== 'undefined'");
+  await until("document.readyState === 'complete' && typeof j2act !== 'undefined'");
   check("a reload starts empty", await until(`${echo} === 'Saved draft: none' && ${signer} === 'Signer: none'`));
 });

@@ -50,7 +50,7 @@ async function main() {
   await cdp("Runtime.enable");
   await cdp("Page.enable");
   await cdp("Page.navigate", { url: URL });
-  await until("document.readyState === 'complete' && typeof Idiomorph !== 'undefined'");
+  await until("document.readyState === 'complete' && typeof j2act !== 'undefined'");
   await sleep(400); // socket hello/ok
 
   const btn = (label) => `[...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith(${JSON.stringify(label)}))`;
@@ -253,7 +253,7 @@ async function main() {
 
   // 15. client module (ADR 0022): mounts from the HTML, calls back, keeps its DOM through morphs
   await cdp("Page.navigate", { url: URL });
-  await until("document.readyState === 'complete' && typeof Idiomorph !== 'undefined'");
+  await until("document.readyState === 'complete' && typeof j2act !== 'undefined'");
   const timer = `document.getElementById('timer')`;
   check("the client module mounts from the page's props", await until(`${timer}?.querySelector('.face')?.textContent === '5'`));
   check("bean props go through the app's Jackson mapper", await js(`${timer}.dataset.unit === 's'`));
