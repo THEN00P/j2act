@@ -25,215 +25,215 @@ export interface RetainedOptions {
   autoPauseAfter: number;
 }
 
-export class Retained {
-  private current: Phase = "running";
+export type Retained = ReturnType<typeof createRetained>;
+
+export function createRetained(options: RetainedOptions) {
+  let current: Phase = "running";
   /** The pause started because the tab was hidden: it gives way when busy, and the tab showing again resumes. */
-  private byHiding = false;
+  let byHiding = false;
   /** The server had Retained State to keep, so resume() reports whether it came back. */
-  private withState = false;
-  private deferral: AbortController | null = null;
-  private handlers: ((signal: AbortSignal) => unknown)[] = [];
-  private pauseWaiters: ((ok: boolean) => void)[] = [];
-  private resumeWaiters: ((ok: boolean) => void)[] = [];
-  private hiddenTimer: ReturnType<typeof setTimeout> | undefined;
-  private readonly options: RetainedOptions;
-
-  constructor(options: RetainedOptions) {
-    this.options = options;
-  }
-
-  get phase(): Phase {
-    return this.current;
-  }
-
-  /** window.j2act; see j2act.d.ts. */
-  api(): J2ActRuntime {
-    return Object.freeze({
-      pause: () => this.pause(),
-      resume: () => this.resume(),
-      onPausing: (handler: (signal: AbortSignal) => unknown) => this.onPausing(handler)
-    });
-  }
-
-  /** Hidden tabs pause after autoPauseAfter, and resume when shown, if the pause was theirs. */
-  listen(doc: Document): void {
-    if (this.options.autoPauseAfter <= 0) {
-      return;
-    }
-    doc.addEventListener("visibilitychange", () => {
-      clearTimeout(this.hiddenTimer);
-      this.hiddenTimer = undefined;
-      if (doc.hidden) {
-        this.hiddenTimer = setTimeout(() => this.autoPause(), this.options.autoPauseAfter);
-      } else if (this.current === "deferring" && this.byHiding) {
-        this.cancel("the tab is visible again");
-      } else if (this.current === "paused" && this.byHiding) {
-        void this.resume();
-      }
-    });
-  }
+  let withState = false;
+  let deferral: AbortController | null = null;
+  let handlers: ((signal: AbortSignal) => unknown)[] = [];
+  const pauseWaiters: ((ok: boolean) => void)[] = [];
+  const resumeWaiters: ((ok: boolean) => void)[] = [];
+  let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** As .NET's onCircuitPausing: runs before every pause and delays it until its promise settles. */
-  onPausing(handler: (signal: AbortSignal) => unknown): () => void {
-    this.handlers.push(handler);
+  function onPausing(handler: (signal: AbortSignal) => unknown): () => void {
+    handlers.push(handler);
     return () => {
-      this.handlers = this.handlers.filter((h) => h !== handler);
+      handlers = handlers.filter((h) => h !== handler);
     };
   }
 
   /** Resolves true once the server saved the page's Retained State and let its session go. */
-  pause(): Promise<boolean> {
-    if (this.current === "paused") {
+  function pause(): Promise<boolean> {
+    if (current === "paused") {
       return Promise.resolve(true);
     }
     return new Promise((resolve) => {
-      this.pauseWaiters.push(resolve);
-      if (this.current === "running") {
-        this.begin(false);
+      pauseWaiters.push(resolve);
+      if (current === "running") {
+        begin(false);
       } else {
-        this.byHiding = false; // asked for: it no longer gives way, nor resumes when the tab is shown
+        byHiding = false; // asked for: it no longer gives way, nor resumes when the tab is shown
       }
     });
   }
 
   /** Resolves once the page runs again on a new session: true when its Retained State came back, or it had none. */
-  resume(): Promise<boolean> {
-    if (this.current === "deferring") {
-      this.cancel("resumed");
+  function resume(): Promise<boolean> {
+    if (current === "deferring") {
+      cancel("resumed");
       return Promise.resolve(true);
     }
-    if (this.current === "pausing") {
-      return new Promise((resolve) => this.pauseWaiters.push(() => this.resume().then(resolve)));
+    if (current === "pausing") {
+      return new Promise((resolve) => pauseWaiters.push(() => resume().then(resolve)));
     }
-    if (this.current !== "paused") {
+    if (current !== "paused") {
       return Promise.resolve(false);
     }
-    this.current = "running";
-    this.byHiding = false;
+    current = "running";
+    byHiding = false;
     document.documentElement.removeAttribute("data-j2-paused");
     return new Promise((resolve) => {
-      this.resumeWaiters.push(resolve);
-      this.options.remount();
+      resumeWaiters.push(resolve);
+      options.remount();
     });
   }
 
-  /** The socket is up again: a pause that waited for it goes out now. */
-  connected(): void {
-    if (this.current === "pausing") {
-      this.send();
-    }
-  }
-
-  /** The server asked for a pause, as RequestCircuitPauseAsync does: handlers may delay it, not refuse it. */
-  requested(): void {
-    if (this.current === "running") {
-      this.begin(false);
-    }
-  }
-
-  /**
-   * The session is gone. Evicted while a pause was on its way, a snapshot may be saved all the
-   * same, so the page counts as paused. Returns whether the page should remount instead.
-   */
-  expired(): boolean {
-    if (this.current === "pausing" || this.current === "deferring") {
-      this.stopDeferral("the session ended");
-      this.paused(true);
-      return false;
-    }
-    return this.current === "running";
-  }
-
   /** The server let the session go; saved: it had Retained State to keep. */
-  paused(saved: boolean): void {
-    this.withState = saved;
-    this.current = "paused";
-    this.options.stopSending();
+  function paused(saved: boolean): void {
+    withState = saved;
+    current = "paused";
+    options.stopSending();
     document.documentElement.setAttribute("data-j2-paused", "");
     document.dispatchEvent(new CustomEvent("j2act:paused"));
-    this.settle(true);
-    if (this.byHiding && !document.hidden) {
-      void this.resume();
-    }
-  }
-
-  /** The server was busy for an automatic pause. */
-  refused(): void {
-    if (!this.byHiding) {
-      this.send(); // j2act.pause() was called meanwhile, and it does not give way
-      return;
-    }
-    this.current = "running";
-    this.byHiding = false;
-    if (document.hidden) {
-      this.hiddenTimer = setTimeout(() => this.autoPause(), RETRY_MS);
-    }
-  }
-
-  /**
-   * The page runs on its new session. As .NET's resumeCircuit(): false when the page had state to
-   * keep and got none back, as when its snapshot expired, was used already or belongs to someone
-   * else. The page runs either way.
-   */
-  resumed(restored: boolean): void {
-    if (this.resumeWaiters.length) {
-      const ok = restored || !this.withState;
-      document.dispatchEvent(new CustomEvent("j2act:resumed", { detail: { restored: ok } }));
-      this.resumeWaiters.splice(0).forEach((resolve) => resolve(ok));
+    settle(true);
+    if (byHiding && !document.hidden) {
+      void resume();
     }
   }
 
   /** Runs the onPausing handlers, then asks the server; a handler that fails calls the pause off. */
-  private begin(automatic: boolean): void {
-    this.current = "deferring";
-    this.byHiding = automatic;
+  function begin(automatic: boolean): void {
+    current = "deferring";
+    byHiding = automatic;
     const controller = new AbortController();
-    this.deferral = controller;
-    Promise.all(this.handlers.map((h) => Promise.resolve().then(() => h(controller.signal)))).then(() => {
-      if (this.deferral === controller) {
-        this.deferral = null;
-        this.current = "pausing";
-        this.send(); // not connected: "ok" sends it once the socket is back
+    deferral = controller;
+    Promise.all(handlers.map((h) => Promise.resolve().then(() => h(controller.signal)))).then(() => {
+      if (deferral === controller) {
+        deferral = null;
+        current = "pausing";
+        send(); // not connected: "ok" sends it once the socket is back
       }
     }, (e) => {
-      if (this.deferral === controller) {
+      if (deferral === controller) {
         console.warn("j2act: an onPausing handler failed, so the page did not pause", e);
-        this.cancel("an onPausing handler failed");
+        cancel("an onPausing handler failed");
       }
     });
   }
 
-  private send(): void {
-    this.options.sendIfReady(this.byHiding ? { t: "pause", a: "1" } : { t: "pause" });
+  function send(): void {
+    options.sendIfReady(byHiding ? { t: "pause", a: "1" } : { t: "pause" });
   }
 
-  private cancel(reason: string): void {
-    this.stopDeferral(reason);
-    this.current = "running";
-    this.byHiding = false;
-    this.settle(false);
+  function cancel(reason: string): void {
+    stopDeferral(reason);
+    current = "running";
+    byHiding = false;
+    settle(false);
   }
 
-  private stopDeferral(reason: string): void {
-    if (this.deferral) {
-      this.deferral.abort(reason);
-      this.deferral = null;
+  function stopDeferral(reason: string): void {
+    if (deferral) {
+      deferral.abort(reason);
+      deferral = null;
     }
   }
 
-  private settle(ok: boolean): void {
-    this.pauseWaiters.splice(0).forEach((resolve) => resolve(ok));
+  function settle(ok: boolean): void {
+    pauseWaiters.splice(0).forEach((resolve) => resolve(ok));
   }
 
-  private autoPause(): void {
-    this.hiddenTimer = undefined;
-    if (!document.hidden || this.current !== "running" || this.options.remounting()) {
+  function autoPause(): void {
+    hiddenTimer = undefined;
+    if (!document.hidden || current !== "running" || options.remounting()) {
       return;
     }
-    if (this.options.busy()) {
-      this.hiddenTimer = setTimeout(() => this.autoPause(), RETRY_MS);
+    if (options.busy()) {
+      hiddenTimer = setTimeout(autoPause, RETRY_MS);
       return;
     }
-    this.begin(true);
+    begin(true);
   }
+
+  return {
+    get phase(): Phase {
+      return current;
+    },
+
+    onPausing,
+    pause,
+    resume,
+    paused,
+
+    /** window.j2act; see j2act.d.ts. */
+    api(): J2ActRuntime {
+      return Object.freeze({ pause, resume, onPausing });
+    },
+
+    /** Hidden tabs pause after autoPauseAfter, and resume when shown, if the pause was theirs. */
+    listen(doc: Document): void {
+      if (options.autoPauseAfter <= 0) {
+        return;
+      }
+      doc.addEventListener("visibilitychange", () => {
+        clearTimeout(hiddenTimer);
+        hiddenTimer = undefined;
+        if (doc.hidden) {
+          hiddenTimer = setTimeout(autoPause, options.autoPauseAfter);
+        } else if (current === "deferring" && byHiding) {
+          cancel("the tab is visible again");
+        } else if (current === "paused" && byHiding) {
+          void resume();
+        }
+      });
+    },
+
+    /** The socket is up again: a pause that waited for it goes out now. */
+    connected(): void {
+      if (current === "pausing") {
+        send();
+      }
+    },
+
+    /** The server asked for a pause, as RequestCircuitPauseAsync does: handlers may delay it, not refuse it. */
+    requested(): void {
+      if (current === "running") {
+        begin(false);
+      }
+    },
+
+    /**
+     * The session is gone. Evicted while a pause was on its way, a snapshot may be saved all the
+     * same, so the page counts as paused. Returns whether the page should remount instead.
+     */
+    expired(): boolean {
+      if (current === "pausing" || current === "deferring") {
+        stopDeferral("the session ended");
+        paused(true);
+        return false;
+      }
+      return current === "running";
+    },
+
+    /** The server was busy for an automatic pause. */
+    refused(): void {
+      if (!byHiding) {
+        send(); // j2act.pause() was called meanwhile, and it does not give way
+        return;
+      }
+      current = "running";
+      byHiding = false;
+      if (document.hidden) {
+        hiddenTimer = setTimeout(autoPause, RETRY_MS);
+      }
+    },
+
+    /**
+     * The page runs on its new session. As .NET's resumeCircuit(): false when the page had state to
+     * keep and got none back, as when its snapshot expired, was used already or belongs to someone
+     * else. The page runs either way.
+     */
+    resumed(restored: boolean): void {
+      if (resumeWaiters.length) {
+        const ok = restored || !withState;
+        document.dispatchEvent(new CustomEvent("j2act:resumed", { detail: { restored: ok } }));
+        resumeWaiters.splice(0).forEach((resolve) => resolve(ok));
+      }
+    }
+  };
 }

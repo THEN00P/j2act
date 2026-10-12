@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-1a7cce70994048270f44d8a06af963432563a4fcff9545f1558f8f77b2cd80f4 */
+* sources: sha256-68f5d8e1a72f9136812455993354cc48b15a4b9160ffee1848dad585561cdd28 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -26,34 +26,26 @@
 	}
 	//#endregion
 	//#region src/main/ts/clients.ts
-	var Clients = class {
-		clients = /* @__PURE__ */ new Map();
-		liveAnchors = /* @__PURE__ */ new Set();
-		lostSlots = /* @__PURE__ */ new Set();
-		serverAttrs = /* @__PURE__ */ new WeakMap();
-		stylesheets = /* @__PURE__ */ new Map();
-		send;
-		uploads;
-		morphSlot;
-		constructor(options) {
-			this.send = options.send;
-			this.uploads = options.uploads;
-			this.morphSlot = options.morphSlot;
-		}
+	function createClients({ send, uploads, morphSlot }) {
+		const clients = /* @__PURE__ */ new Map();
+		const liveAnchors = /* @__PURE__ */ new Set();
+		const lostSlots = /* @__PURE__ */ new Set();
+		const serverAttrs = /* @__PURE__ */ new WeakMap();
+		const stylesheets = /* @__PURE__ */ new Map();
 		/** Mounts new client elements, updates changed props and unmounts removed ones. */
-		scan() {
-			document.querySelectorAll("[data-j2-client]").forEach((el) => this.mount(el));
-			this.clients.forEach((c) => {
-				if (!c.el.isConnected || c.el.getAttribute("data-j2-client") !== c.id) this.unmount(c);
+		function scan() {
+			document.querySelectorAll("[data-j2-client]").forEach((el) => mount(el));
+			clients.forEach((c) => {
+				if (!c.el.isConnected || c.el.getAttribute("data-j2-client") !== c.id) unmount(c);
 			});
 		}
 		/** Values from Java: callbacks become functions, slots elements, Upload targets objects with send(). */
-		revive(json) {
+		function revive(json) {
 			return JSON.parse(json, (_key, value) => {
 				if (value && typeof value === "object" && !Array.isArray(value)) {
-					if (typeof value.$fn === "string") return this.callback(value.$fn);
+					if (typeof value.$fn === "string") return callback(value.$fn);
 					if (typeof value.$slot === "string") return document.querySelector("[data-j2-slot=\"" + CSS.escape(value.$slot) + "\"]");
-					if (typeof value.$upload === "string") return this.uploads.target(value.$upload);
+					if (typeof value.$upload === "string") return uploads.target(value.$upload);
 					if (typeof value.$html === "string") {
 						const snapshot = document.createElement("div");
 						snapshot.style.display = "contents";
@@ -64,7 +56,7 @@
 						const template = document.createElement("template");
 						template.innerHTML = value.$live;
 						const root = template.content.firstElementChild;
-						this.liveAnchors.add(root.getAttribute("data-j2s"));
+						liveAnchors.add(root.getAttribute("data-j2s"));
 						return root;
 					}
 				}
@@ -75,33 +67,33 @@
 		* A patch found no element for its anchor. If it was live content given to an action, the
 		* client dropped it, and the server stops patching it.
 		*/
-		anchorGone(anchor) {
-			if (this.liveAnchors.delete(anchor)) {
+		function anchorGone(anchor) {
+			if (liveAnchors.delete(anchor)) {
 				console.warn("j2act: live content " + anchor + " passed to a client action left the document (ADR 0022)");
-				this.send({
+				send({
 					t: "lg",
 					s: anchor
 				});
 			}
 		}
 		/** A call from Java, sent after the patch: queued until its client has mounted. */
-		call(m) {
-			const c = this.clients.get(m.c);
-			if (!c) this.reply(m.i, false, named("AbortError", "the client is not mounted"));
-			else if (c.failure) this.reply(m.i, false, c.failure.error);
+		function call(m) {
+			const c = clients.get(m.c);
+			if (!c) reply(m.i, false, named("AbortError", "the client is not mounted"));
+			else if (c.failure) reply(m.i, false, c.failure.error);
 			else if (!c.ready) c.waiting.push(m);
-			else this.run(c, m);
+			else run(c, m);
 		}
 		/** An action bound to an event, run inside it: the client must have mounted already. */
-		callNow(id, name, args) {
-			const c = this.clients.get(id);
+		function callNow(id, name, args) {
+			const c = clients.get(id);
 			if (!c || !c.ready) throw c && c.failure ? c.failure.error : named("InvalidStateError", "the client has not mounted yet");
-			return this.invoke(c, name, this.revive(JSON.stringify(args)));
+			return invoke(c, name, revive(JSON.stringify(args)));
 		}
 		/** Answers a call from Java, an action's or a window() call's. */
-		reply(i, ok, value) {
+		function reply(i, ok, value) {
 			if (ok) try {
-				this.send({
+				send({
 					t: "cr",
 					i,
 					ok: "1",
@@ -112,7 +104,7 @@
 				value = e;
 			}
 			console.warn("j2act: client action failed", value);
-			this.send({
+			send({
 				t: "cr",
 				i,
 				ok: "0",
@@ -120,22 +112,22 @@
 			});
 		}
 		/** Server attributes follow the render; attributes the client added stay; slots morph where they live. */
-		sync(el, fresh) {
+		function sync(el, fresh) {
 			const names = attributeNames(fresh);
-			for (const name of this.serverAttrs.get(el) || []) if (names.indexOf(name) < 0) el.removeAttribute(name);
+			for (const name of serverAttrs.get(el) || []) if (names.indexOf(name) < 0) el.removeAttribute(name);
 			for (const name of names) {
 				const value = fresh.getAttribute(name);
 				if (el.getAttribute(name) !== value) el.setAttribute(name, value);
 			}
-			this.serverAttrs.set(el, names);
+			serverAttrs.set(el, names);
 			fresh.querySelectorAll(":scope > [data-j2-slot]").forEach((slot) => {
 				const id = slot.getAttribute("data-j2-slot");
 				const live = document.querySelector("[data-j2-slot=\"" + CSS.escape(id) + "\"]");
-				if (live) this.morphSlot(live, slot.innerHTML);
-				else if (!this.lostSlots.has(id)) {
-					this.lostSlots.add(id);
+				if (live) morphSlot(live, slot.innerHTML);
+				else if (!lostSlots.has(id)) {
+					lostSlots.add(id);
 					console.warn("j2act: slot " + id + " left the document, so it stopped updating (ADR 0022)");
-					this.send({
+					send({
 						t: "ce",
 						c: el.getAttribute("data-j2-client"),
 						e: "slot " + id + " left the document, so it stopped updating"
@@ -147,7 +139,7 @@
 		* Dev mode (ADR 0024): a new build moved these files. Stylesheets swap in place without a
 		* flash, clients whose module moved mount again with their current props; Java state is untouched.
 		*/
-		reimport(moved) {
+		function reimport(moved) {
 			if (moved["*"]) {
 				location.reload();
 				return;
@@ -160,10 +152,10 @@
 				fresh.href = next;
 				fresh.onload = () => link.remove();
 				link.after(fresh);
-				const loaded = this.stylesheets.get(href);
+				const loaded = stylesheets.get(href);
 				if (loaded) {
-					this.stylesheets.set(next, loaded);
-					this.stylesheets.delete(href);
+					stylesheets.set(next, loaded);
+					stylesheets.delete(href);
 				}
 			});
 			document.querySelectorAll("[data-j2-client]").forEach((el) => {
@@ -172,17 +164,17 @@
 				const css = el.getAttribute("data-j2-css");
 				if (css) el.setAttribute("data-j2-css", css.split(" ").map((u) => moved[u] || u).join(" "));
 			});
-			this.scan();
+			scan();
 		}
-		mount(el) {
+		function mount(el) {
 			const id = el.getAttribute("data-j2-client");
 			const url = el.getAttribute("data-j2-module");
-			let c = this.clients.get(id);
+			let c = clients.get(id);
 			if (c && c.el === el && c.url === url) {
-				this.propsChanged(c);
+				propsChanged(c);
 				return;
 			}
-			if (c) this.unmount(c);
+			if (c) unmount(c);
 			const client = {
 				id,
 				el,
@@ -196,26 +188,26 @@
 				waiting: []
 			};
 			c = client;
-			this.clients.set(id, client);
-			if (!this.serverAttrs.has(el)) this.serverAttrs.set(el, attributeNames(el));
+			clients.set(id, client);
+			if (!serverAttrs.has(el)) serverAttrs.set(el, attributeNames(el));
 			const name = el.getAttribute("data-j2-export");
 			const styles = (el.getAttribute("data-j2-css") || "").split(" ").filter(Boolean);
 			Promise.all([import(
 				/* @vite-ignore */
 				url
-), ...styles.map((s) => this.stylesheet(s))]).then(([module]) => {
-				if (this.clients.get(id) !== client) return;
+), ...styles.map((s) => stylesheet(s))]).then(([module]) => {
+				if (clients.get(id) !== client) return;
 				if (!module[name] || typeof module[name] !== "object") throw named("ReferenceError", url + " has no export " + name);
 				client.api = module[name];
-				this.start(client);
+				start(client);
 			}).catch((e) => {
 				client.failure = { error: e };
-				this.error(client, "import", e);
-				this.failWaiting(client, e);
+				error(client, "import", e);
+				failWaiting(client, e);
 			});
 		}
-		stylesheet(url) {
-			let loaded = this.stylesheets.get(url);
+		function stylesheet(url) {
+			let loaded = stylesheets.get(url);
 			if (!loaded) {
 				loaded = new Promise((resolve, reject) => {
 					const link = document.createElement("link");
@@ -226,31 +218,31 @@
 					link.onerror = () => reject(named("NetworkError", "stylesheet " + url + " did not load"));
 					document.head.append(link);
 				});
-				this.stylesheets.set(url, loaded);
+				stylesheets.set(url, loaded);
 			}
 			return loaded;
 		}
-		start(c) {
+		function start(c) {
 			const api = c.api;
 			try {
-				c.decoded = c.props == null ? null : this.revive(c.props);
+				c.decoded = c.props == null ? null : revive(c.props);
 				if (typeof api.mount === "function") {
 					const cleanup = c.props == null ? api.mount(c.el) : api.mount(c.el, c.decoded);
 					c.cleanup = typeof cleanup === "function" ? cleanup : null;
 				}
 			} catch (e) {
 				c.failure = { error: e };
-				this.error(c, "mount", e);
-				this.failWaiting(c, e);
+				error(c, "mount", e);
+				failWaiting(c, e);
 				return;
 			}
 			c.ready = true;
 			const waiting = c.waiting;
 			c.waiting = [];
-			waiting.forEach((m) => this.run(c, m));
+			waiting.forEach((m) => run(c, m));
 		}
 		/** update runs only when props really changed; without it the client mounts again. */
-		propsChanged(c) {
+		function propsChanged(c) {
 			const props = c.el.getAttribute("data-j2-props");
 			if (props === c.props) return;
 			c.props = props;
@@ -259,55 +251,55 @@
 			if (typeof api.update === "function") {
 				const previous = c.decoded;
 				try {
-					c.decoded = this.revive(props);
+					c.decoded = revive(props);
 					api.update(c.el, c.decoded, previous);
 				} catch (e) {
-					this.error(c, "update", e);
+					error(c, "update", e);
 				}
 			} else {
-				this.stop(c);
+				stop(c);
 				c.ready = false;
-				this.start(c);
+				start(c);
 			}
 		}
-		stop(c) {
+		function stop(c) {
 			if (c.cleanup) {
 				try {
 					c.cleanup();
 				} catch (e) {
-					this.error(c, "cleanup", e);
+					error(c, "cleanup", e);
 				}
 				c.cleanup = null;
 			}
 		}
-		unmount(c) {
-			this.clients.delete(c.id);
-			this.stop(c);
-			this.failWaiting(c, named("AbortError", "the client unmounted"));
+		function unmount(c) {
+			clients.delete(c.id);
+			stop(c);
+			failWaiting(c, named("AbortError", "the client unmounted"));
 		}
-		failWaiting(c, e) {
+		function failWaiting(c, e) {
 			const waiting = c.waiting;
 			c.waiting = [];
-			waiting.forEach((m) => this.reply(m.i, false, e));
+			waiting.forEach((m) => reply(m.i, false, e));
 		}
-		invoke(c, name, args) {
+		function invoke(c, name, args) {
 			const fn = c.api[name];
 			if (typeof fn !== "function") throw named("TypeError", c.el.getAttribute("data-j2-export") + " has no action " + name);
 			return fn.apply(c.api, [c.el, ...args]);
 		}
-		run(c, m) {
+		function run(c, m) {
 			let result;
 			try {
-				result = this.invoke(c, m.n, this.revive(m.a));
+				result = invoke(c, m.n, revive(m.a));
 			} catch (e) {
-				this.reply(m.i, false, e);
+				reply(m.i, false, e);
 				return;
 			}
-			Promise.resolve(result).then((v) => this.reply(m.i, true, v), (e) => this.reply(m.i, false, e));
+			Promise.resolve(result).then((v) => reply(m.i, true, v), (e) => reply(m.i, false, e));
 		}
-		callback(id) {
+		function callback(id) {
 			return (...args) => {
-				this.send({
+				send({
 					t: "cb",
 					h: id,
 					v: JSON.stringify(args)
@@ -315,15 +307,25 @@
 			};
 		}
 		/** Mount, update and cleanup failures and missing exports: the console here, the log on the server. */
-		error(c, what, e) {
+		function error(c, what, e) {
 			console.error("j2act: client " + c.el.getAttribute("data-j2-export") + " failed in " + what, e);
-			this.send({
+			send({
 				t: "ce",
 				c: c.id,
 				e: what + ": " + errorText(e)
 			});
 		}
-	};
+		return {
+			scan,
+			revive,
+			anchorGone,
+			call,
+			callNow,
+			reply,
+			sync,
+			reimport
+		};
+	}
 	function attributeNames(el) {
 		return Array.from(el.attributes, (a) => a.name);
 	}
@@ -333,73 +335,75 @@
 	* The page's socket (ADR 0010): says hello with the session id and token, queues messages until
 	* the server answers ok, and reconnects with backoff unless the page is leaving or paused.
 	*/
-	var Connection = class {
-		sid;
-		tok;
-		ready = false;
-		ws = null;
-		queue = [];
-		retry = 0;
-		url;
-		onMessage;
-		reconnects;
-		constructor(url, sid, tok, onMessage, reconnects) {
-			this.url = url;
-			this.sid = sid;
-			this.tok = tok;
-			this.onMessage = onMessage;
-			this.reconnects = reconnects;
-		}
-		connect() {
-			const ws = new WebSocket(this.url);
-			this.ws = ws;
-			ws.onopen = () => {
-				ws.send(JSON.stringify({
+	function createConnection(url, sid, tok, onMessage, reconnects) {
+		let ready = false;
+		let ws = null;
+		let queue = [];
+		let retry = 0;
+		function connect() {
+			const socket = new WebSocket(url);
+			ws = socket;
+			socket.onopen = () => {
+				socket.send(JSON.stringify({
 					t: "hello",
-					sid: this.sid,
-					tok: this.tok
+					sid,
+					tok
 				}));
 			};
-			ws.onmessage = (e) => {
-				this.onMessage(JSON.parse(e.data));
+			socket.onmessage = (e) => {
+				onMessage(JSON.parse(e.data));
 			};
-			ws.onclose = () => {
-				if (this.ws !== ws) return;
-				this.ready = false;
-				if (this.reconnects()) setTimeout(() => this.connect(), backoff(this.retry++));
+			socket.onclose = () => {
+				if (ws !== socket) return;
+				ready = false;
+				if (reconnects()) setTimeout(connect, backoff(retry++));
 			};
 		}
-		/** The server accepted the hello: send what queued meanwhile. */
-		opened() {
-			this.ready = true;
-			this.retry = 0;
-			while (this.queue.length) this.ws.send(this.queue.shift());
-		}
-		/** Sends now, or once the socket is up. */
-		send(message) {
-			const text = JSON.stringify(message);
-			if (this.ready) this.ws.send(text);
-			else this.queue.push(text);
-		}
-		/** Sends only if the socket is up: worth nothing once the moment passed. */
-		sendIfReady(message) {
-			if (this.ready) this.ws.send(JSON.stringify(message));
-		}
-		close() {
-			this.ready = false;
-			try {
-				this.ws?.close();
-			} catch {}
-		}
-		/** A new session: what queued for the old one is meaningless to it. */
-		restart(sid, tok) {
-			this.sid = sid;
-			this.tok = tok;
-			this.retry = 0;
-			this.queue = [];
-			this.connect();
-		}
-	};
+		return {
+			connect,
+			/** The session's token, which the page's HTTP requests carry too. */
+			get tok() {
+				return tok;
+			},
+			get ready() {
+				return ready;
+			},
+			/** The server accepted the hello: send what queued meanwhile. */
+			opened() {
+				ready = true;
+				retry = 0;
+				while (queue.length) ws.send(queue.shift());
+			},
+			/** Sends now, or once the socket is up. */
+			send(message) {
+				const text = JSON.stringify(message);
+				if (ready) ws.send(text);
+				else queue.push(text);
+			},
+			/** Sends only if the socket is up: worth nothing once the moment passed. */
+			sendIfReady(message) {
+				if (ready) ws.send(JSON.stringify(message));
+			},
+			/** The socket is about to close: queue from now on. */
+			hold() {
+				ready = false;
+			},
+			close() {
+				ready = false;
+				try {
+					ws?.close();
+				} catch {}
+			},
+			/** A new session: what queued for the old one is meaningless to it. */
+			restart(newSid, newTok) {
+				sid = newSid;
+				tok = newTok;
+				retry = 0;
+				queue = [];
+				connect();
+			}
+		};
+	}
 	//#endregion
 	//#region src/main/ts/web.ts
 	/**
@@ -447,148 +451,69 @@
 	}
 	//#endregion
 	//#region src/main/ts/events.ts
-	var Events = class {
-		ackSeq = 0;
-		timers = /* @__PURE__ */ new WeakMap();
-		throttles = /* @__PURE__ */ new WeakMap();
-		send;
-		pending;
-		clients;
-		uploads;
-		constructor(options) {
-			this.send = options.send;
-			this.pending = options.pending;
-			this.clients = options.clients;
-			this.uploads = options.uploads;
-		}
-		listen(doc) {
-			doc.addEventListener("click", (e) => {
-				const el = closest(e.target, "[data-j2-click]");
-				if (!el) return;
-				if (el.tagName === "A" || el.type === "submit") e.preventDefault();
-				if (el.hasAttribute("data-j2-call-click")) {
-					this.boundAction(el, "click");
-					return;
-				}
-				this.schedule(el, "click");
-			});
-			for (const type of ["pointerdown", "pointerup"]) doc.addEventListener(type, (e) => {
-				const el = closest(e.target, "[data-j2-" + type + "]");
-				if (!el) return;
-				const extra = {
-					pt: e.pointerType,
-					px: String(e.clientX),
-					py: String(e.clientY)
-				};
-				if (el.hasAttribute("data-j2-call-" + type)) this.boundAction(el, type, extra);
-				else this.dispatch(el, type, "", extra);
-			});
-			for (const type of ["input", "change"]) doc.addEventListener(type, (e) => {
-				const el = bound(e.target, type);
-				if (!el) return;
-				if (el.type === "file") this.dispatch(el, type, "", this.uploads.picked(el));
-				else this.schedule(el, type);
-			});
-			for (const [listen, type] of [["focusin", "focus"], ["focusout", "blur"]]) doc.addEventListener(listen, (e) => {
-				const el = bound(e.target, type);
-				if (el) this.dispatch(el, type, valueOf(el));
-			});
-			doc.addEventListener("keydown", (e) => {
-				const el = bound(e.target, "keydown");
-				if (!el) return;
-				const filter = el.getAttribute("data-j2-keys");
-				if (filter && filter.split(" ").indexOf(e.key) < 0) return;
-				const mods = (e.ctrlKey ? "c" : "") + (e.shiftKey ? "s" : "") + (e.altKey ? "a" : "") + (e.metaKey ? "m" : "");
-				if (el.hasAttribute("data-j2-call-keydown")) {
-					this.boundAction(el, "keydown", {
-						k: e.key,
-						m: mods
-					});
-					return;
-				}
-				this.dispatch(el, "keydown", valueOf(el), {
-					k: e.key,
-					m: mods
-				});
-			});
-			doc.addEventListener("submit", (e) => {
-				const form = bound(e.target, "submit");
-				if (!form) return;
-				e.preventDefault();
-				if (form.hasAttribute("data-j2-call-submit")) {
-					this.boundAction(form, "submit");
-					return;
-				}
-				const submitter = e.submitter;
-				const fields = new FormData(form);
-				if (submitter && submitter.name) fields.append(submitter.name, submitter.value);
-				const encoded = [];
-				fields.forEach((value, name) => {
-					if (typeof value === "string") encoded.push(encodeURIComponent(name) + "=" + encodeURIComponent(value));
-				});
-				this.dispatch(form, "submit", encoded.join("&"), void 0, submitter || form);
-			});
-		}
+	/** Listens on doc for every event a render can bind. */
+	function listenForEvents(doc, { send, pending, clients, uploads }) {
+		let ackSeq = 0;
+		const timers = /* @__PURE__ */ new WeakMap();
+		const throttles = /* @__PURE__ */ new WeakMap();
 		/**
 		* Sends the event to the handler the render bound. A click or submit blocks its element until
 		* the ack, with pending UI on pendingOn, which for a submit is the submitter button.
 		*/
-		dispatch(el, type, value, extra, pendingOn) {
+		function dispatch(el, type, value, extra, pendingOn) {
 			const blocking = type === "click" || type === "submit";
-			if (blocking && this.pending.has(el)) return;
+			if (blocking && pending.has(el)) return;
 			const handlerId = el.getAttribute("data-j2-" + type);
 			if (!handlerId) return;
-			const a = String(++this.ackSeq);
-			if (blocking) this.pending.start(el, a, pendingOn || el);
-			const message = {
+			const a = String(++ackSeq);
+			if (blocking) pending.start(el, a, pendingOn || el);
+			send({
 				t: "ev",
 				h: handlerId,
 				v: value == null ? "" : value,
 				a,
 				...extra
-			};
-			this.send(message);
+			});
 		}
-		schedule(el, type) {
+		function schedule(el, type) {
 			const throttleMs = parseInt(el.getAttribute("data-j2-throttle") || "-1", 10);
 			if (throttleMs >= 0) {
-				this.throttle(el, type, throttleMs);
+				throttle(el, type, throttleMs);
 				return;
 			}
 			const ms = parseInt(el.getAttribute("data-j2-debounce") || "-1", 10);
 			const read = () => type === "click" ? null : valueOf(el);
 			if (ms < 0) {
-				this.dispatch(el, type, read());
+				dispatch(el, type, read());
 				return;
 			}
-			clearTimeout(this.timers.get(el));
-			this.timers.set(el, setTimeout(() => {
-				this.timers.delete(el);
-				this.dispatch(el, type, read());
+			clearTimeout(timers.get(el));
+			timers.set(el, setTimeout(() => {
+				timers.delete(el);
+				dispatch(el, type, read());
 			}, ms));
 		}
 		/**
 		* The leading event at once, then at most one per interval: input and change send the latest
 		* value when the interval ends, clicks inside it are dropped (ADR 0013).
 		*/
-		throttle(el, type, ms) {
-			let state = this.throttles.get(el);
+		function throttle(el, type, ms) {
+			const state = throttles.get(el);
 			if (state) {
 				if (type !== "click") state.trailing = type;
 				return;
 			}
 			const running = { trailing: null };
-			state = running;
-			this.throttles.set(el, running);
-			this.dispatch(el, type, type === "click" ? null : valueOf(el));
+			throttles.set(el, running);
+			dispatch(el, type, type === "click" ? null : valueOf(el));
 			const tick = () => {
 				if (!running.trailing) {
-					this.throttles.delete(el);
+					throttles.delete(el);
 					return;
 				}
 				const next = running.trailing;
 				running.trailing = null;
-				this.dispatch(el, next, valueOf(el));
+				dispatch(el, next, valueOf(el));
 				setTimeout(tick, ms);
 			};
 			setTimeout(tick, ms);
@@ -598,31 +523,97 @@
 		* synchronously inside the event, which grants user activation, so gesture-gated APIs work.
 		* Its result, or its error as x, then goes to the handler like an event's value.
 		*/
-		boundAction(el, type, extra) {
-			if (this.pending.has(el)) return;
+		function boundAction(el, type, extra) {
+			if (pending.has(el)) return;
 			const call = JSON.parse(el.getAttribute("data-j2-call-" + type));
 			let result;
 			try {
-				result = call.w ? runWeb(call.w) : this.clients.callNow(call.c, call.n, call.a);
+				result = call.w ? runWeb(call.w) : clients.callNow(call.c, call.n, call.a);
 			} catch (e) {
 				console.warn("j2act: client action failed", e);
-				this.dispatch(el, type, "", {
+				dispatch(el, type, "", {
 					...extra,
 					x: errorText(e)
 				});
 				return;
 			}
 			Promise.resolve(result).then((v) => {
-				this.dispatch(el, type, JSON.stringify(v === void 0 ? null : v), extra);
+				dispatch(el, type, JSON.stringify(v === void 0 ? null : v), extra);
 			}, (e) => {
 				console.warn("j2act: client action failed", e);
-				this.dispatch(el, type, "", {
+				dispatch(el, type, "", {
 					...extra,
 					x: errorText(e)
 				});
 			});
 		}
-	};
+		doc.addEventListener("click", (e) => {
+			const el = closest(e.target, "[data-j2-click]");
+			if (!el) return;
+			if (el.tagName === "A" || el.type === "submit") e.preventDefault();
+			if (el.hasAttribute("data-j2-call-click")) {
+				boundAction(el, "click");
+				return;
+			}
+			schedule(el, "click");
+		});
+		for (const type of ["pointerdown", "pointerup"]) doc.addEventListener(type, (e) => {
+			const el = closest(e.target, "[data-j2-" + type + "]");
+			if (!el) return;
+			const extra = {
+				pt: e.pointerType,
+				px: String(e.clientX),
+				py: String(e.clientY)
+			};
+			if (el.hasAttribute("data-j2-call-" + type)) boundAction(el, type, extra);
+			else dispatch(el, type, "", extra);
+		});
+		for (const type of ["input", "change"]) doc.addEventListener(type, (e) => {
+			const el = bound(e.target, type);
+			if (!el) return;
+			if (el.type === "file") dispatch(el, type, "", uploads.picked(el));
+			else schedule(el, type);
+		});
+		for (const [listen, type] of [["focusin", "focus"], ["focusout", "blur"]]) doc.addEventListener(listen, (e) => {
+			const el = bound(e.target, type);
+			if (el) dispatch(el, type, valueOf(el));
+		});
+		doc.addEventListener("keydown", (e) => {
+			const el = bound(e.target, "keydown");
+			if (!el) return;
+			const filter = el.getAttribute("data-j2-keys");
+			if (filter && filter.split(" ").indexOf(e.key) < 0) return;
+			const mods = (e.ctrlKey ? "c" : "") + (e.shiftKey ? "s" : "") + (e.altKey ? "a" : "") + (e.metaKey ? "m" : "");
+			if (el.hasAttribute("data-j2-call-keydown")) {
+				boundAction(el, "keydown", {
+					k: e.key,
+					m: mods
+				});
+				return;
+			}
+			dispatch(el, "keydown", valueOf(el), {
+				k: e.key,
+				m: mods
+			});
+		});
+		doc.addEventListener("submit", (e) => {
+			const form = bound(e.target, "submit");
+			if (!form) return;
+			e.preventDefault();
+			if (form.hasAttribute("data-j2-call-submit")) {
+				boundAction(form, "submit");
+				return;
+			}
+			const submitter = e.submitter;
+			const fields = new FormData(form);
+			if (submitter && submitter.name) fields.append(submitter.name, submitter.value);
+			const encoded = [];
+			fields.forEach((value, name) => {
+				if (typeof value === "string") encoded.push(encodeURIComponent(name) + "=" + encodeURIComponent(value));
+			});
+			dispatch(form, "submit", encoded.join("&"), void 0, submitter || form);
+		});
+	}
 	function closest(target, selector) {
 		return target instanceof Element ? target.closest(selector) : null;
 	}
@@ -1624,169 +1615,167 @@
 	* pending state of a blocked element, form state the render did not set (ADR 0013), a client
 	* element's node and children (ADR 0022), and what the runtime added to the head.
 	*/
-	var Morpher = class {
-		config;
-		slotConfig;
-		headConfig;
-		constructor(pending, syncClient) {
-			const callbacks = {
-				beforeAttributeUpdated: (name, el) => {
-					if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) return false;
-					if ((name === "value" || name === "checked" || name === "selected") && el.hasAttribute("data-j2-ctl")) return el.getAttribute("data-j2-ctl").split(" ").indexOf(name) >= 0;
-					return true;
-				},
-				beforeNodeMorphed: (oldNode, newNode) => {
-					if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.hasAttribute("data-j2-client") && oldNode.getAttribute("data-j2-client") === newNode.getAttribute("data-j2-client")) {
-						syncClient(oldNode, newNode);
-						return false;
-					}
-					return true;
+	function createMorpher(pending, syncClient) {
+		const callbacks = {
+			beforeAttributeUpdated: (name, el) => {
+				if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) return false;
+				if ((name === "value" || name === "checked" || name === "selected") && el.hasAttribute("data-j2-ctl")) return el.getAttribute("data-j2-ctl").split(" ").indexOf(name) >= 0;
+				return true;
+			},
+			beforeNodeMorphed: (oldNode, newNode) => {
+				if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.hasAttribute("data-j2-client") && oldNode.getAttribute("data-j2-client") === newNode.getAttribute("data-j2-client")) {
+					syncClient(oldNode, newNode);
+					return false;
 				}
-			};
-			this.config = {
-				morphStyle: "outerHTML",
-				ignoreActiveValue: true,
-				callbacks
-			};
-			this.slotConfig = {
-				morphStyle: "innerHTML",
-				ignoreActiveValue: true,
-				callbacks
-			};
-			this.headConfig = {
-				morphStyle: "innerHTML",
-				callbacks: { beforeNodeRemoved: (node) => !(node.nodeType === 1 && node.hasAttribute("data-j2-keep")) }
-			};
-		}
-		/**
-		* Morphs the component at anchor; false when it is not in the document. The session root may
-		* be a new component after a navigation, with a new anchor, so it replaces head and body.
-		*/
-		patch(anchor, html, isRoot) {
-			if (isRoot) {
-				const doc = new DOMParser().parseFromString(html, "text/html");
-				document.documentElement.setAttribute("data-j2s", anchor);
-				this.head(doc.head.innerHTML);
-				this.body(doc.body);
 				return true;
 			}
-			const el = document.querySelector("[data-j2s=\"" + anchor + "\"]");
-			if (!el) return false;
-			Idiomorph.morph(el, html, this.config);
-			return true;
+		};
+		const config = {
+			morphStyle: "outerHTML",
+			ignoreActiveValue: true,
+			callbacks
+		};
+		const slotConfig = {
+			morphStyle: "innerHTML",
+			ignoreActiveValue: true,
+			callbacks
+		};
+		const headConfig = {
+			morphStyle: "innerHTML",
+			callbacks: { beforeNodeRemoved: (node) => !(node.nodeType === 1 && node.hasAttribute("data-j2-keep")) }
+		};
+		function head(html) {
+			Idiomorph.morph(document.head, html, headConfig);
 		}
-		head(html) {
-			Idiomorph.morph(document.head, html, this.headConfig);
+		function body(fresh) {
+			Idiomorph.morph(document.body, fresh, config);
 		}
-		body(body) {
-			Idiomorph.morph(document.body, body, this.config);
-		}
-		slot(live, html) {
-			Idiomorph.morph(live, html, this.slotConfig);
-		}
-	};
+		return {
+			head,
+			body,
+			/**
+			* Morphs the component at anchor; false when it is not in the document. The session root may
+			* be a new component after a navigation, with a new anchor, so it replaces head and body.
+			*/
+			patch(anchor, html, isRoot) {
+				if (isRoot) {
+					const doc = new DOMParser().parseFromString(html, "text/html");
+					document.documentElement.setAttribute("data-j2s", anchor);
+					head(doc.head.innerHTML);
+					body(doc.body);
+					return true;
+				}
+				const el = document.querySelector("[data-j2s=\"" + anchor + "\"]");
+				if (!el) return false;
+				Idiomorph.morph(el, html, config);
+				return true;
+			},
+			slot(live, html) {
+				Idiomorph.morph(live, html, slotConfig);
+			}
+		};
+	}
 	//#endregion
 	//#region src/main/ts/navigation.ts
-	var Navigation = class {
-		pendingHash = "";
-		preloadedAt = /* @__PURE__ */ new Map();
-		hoverTimer;
-		send;
-		base;
-		preloadByDefault;
-		constructor(send, base, preloadByDefault) {
-			this.send = send;
-			this.base = base;
-			this.preloadByDefault = preloadByDefault;
-		}
-		listen(doc) {
-			if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+	/**
+	* Soft navigation (ADR 0011): links and back/forward go over the socket, and the server answers
+	* with patches, then the final URL. Intent on a link (hover, focus, touch) asks the server to
+	* mount its target early.
+	*/
+	function createNavigation(send, base, preloadByDefault) {
+		let pendingHash = "";
+		const preloadedAt = /* @__PURE__ */ new Map();
+		let hoverTimer;
+		function go(url, mode) {
 			history.replaceState({
 				j2: 1,
 				y: window.scrollY
 			}, "");
-			doc.addEventListener("mouseover", (e) => {
-				const u = this.preloadUrl(e.target);
-				clearTimeout(this.hoverTimer);
-				if (u) this.hoverTimer = setTimeout(() => this.preload(u), 50);
-			});
-			for (const type of ["focusin", "touchstart"]) doc.addEventListener(type, (e) => {
-				const u = this.preloadUrl(e.target);
-				if (u) this.preload(u);
-			}, { passive: true });
-			doc.addEventListener("click", (e) => {
-				if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-				const a = link(e.target);
-				if (!a || a.hasAttribute("data-j2-click") || a.hasAttribute("download") || a.hasAttribute("data-j2-reload") || a.target && a.target !== "_self") return;
-				const url = new URL(a.href, location.href);
-				if (!this.inApp(url)) return;
-				if (url.pathname === location.pathname && url.search === location.search && url.hash) return;
-				e.preventDefault();
-				this.go(url, "push");
-			});
-			window.addEventListener("popstate", () => {
-				this.pendingHash = location.hash;
-				this.send({
-					t: "nav",
-					u: location.pathname + location.search,
-					m: "pop"
-				});
-			});
-		}
-		/** The server's answer to a navigation, after its patches: the final URL, after redirects. */
-		landed(u, mode) {
-			const target = u + this.pendingHash;
-			if (mode === "push") history.pushState({
-				j2: 1,
-				y: 0
-			}, "", target);
-			else if (mode === "replace") history.replaceState({
-				j2: 1,
-				y: 0
-			}, "", target);
-			if (mode === "pop") {
-				const y = history.state && typeof history.state.y === "number" ? history.state.y : 0;
-				window.scrollTo(0, y);
-			} else if (this.pendingHash) {
-				const anchor = document.getElementById(decodeURIComponent(this.pendingHash.slice(1)));
-				if (anchor) anchor.scrollIntoView();
-			} else window.scrollTo(0, 0);
-			this.pendingHash = "";
-		}
-		go(url, mode) {
-			history.replaceState({
-				j2: 1,
-				y: window.scrollY
-			}, "");
-			this.pendingHash = url.hash;
-			this.send({
+			pendingHash = url.hash;
+			send({
 				t: "nav",
 				u: url.pathname + url.search,
 				m: mode
 			});
 		}
-		inApp(url) {
-			return url.origin === location.origin && (this.base === "" || url.pathname === this.base || url.pathname.indexOf(this.base + "/") === 0);
+		function inApp(url) {
+			return url.origin === location.origin && (base === "" || url.pathname === base || url.pathname.indexOf(base + "/") === 0);
 		}
-		preloadUrl(target) {
+		function preloadUrl(target) {
 			const a = link(target);
 			if (!a || a.hasAttribute("download") || a.hasAttribute("data-j2-reload") || a.target && a.target !== "_self") return null;
 			const mode = a.getAttribute("data-j2-preload");
-			if (mode === "none" || mode !== "intent" && !this.preloadByDefault) return null;
+			if (mode === "none" || mode !== "intent" && !preloadByDefault) return null;
 			const url = new URL(a.href, location.href);
-			if (!this.inApp(url) || url.pathname === location.pathname && url.search === location.search) return null;
+			if (!inApp(url) || url.pathname === location.pathname && url.search === location.search) return null;
 			return url.pathname + url.search;
 		}
-		preload(u) {
-			const at = this.preloadedAt.get(u);
+		function preload(u) {
+			const at = preloadedAt.get(u);
 			if (at && Date.now() - at < 5e3) return;
-			this.preloadedAt.set(u, Date.now());
-			this.send({
+			preloadedAt.set(u, Date.now());
+			send({
 				t: "pre",
 				u
 			});
 		}
-	};
+		return {
+			listen(doc) {
+				if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+				history.replaceState({
+					j2: 1,
+					y: window.scrollY
+				}, "");
+				doc.addEventListener("mouseover", (e) => {
+					const u = preloadUrl(e.target);
+					clearTimeout(hoverTimer);
+					if (u) hoverTimer = setTimeout(() => preload(u), 50);
+				});
+				for (const type of ["focusin", "touchstart"]) doc.addEventListener(type, (e) => {
+					const u = preloadUrl(e.target);
+					if (u) preload(u);
+				}, { passive: true });
+				doc.addEventListener("click", (e) => {
+					if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+					const a = link(e.target);
+					if (!a || a.hasAttribute("data-j2-click") || a.hasAttribute("download") || a.hasAttribute("data-j2-reload") || a.target && a.target !== "_self") return;
+					const url = new URL(a.href, location.href);
+					if (!inApp(url)) return;
+					if (url.pathname === location.pathname && url.search === location.search && url.hash) return;
+					e.preventDefault();
+					go(url, "push");
+				});
+				window.addEventListener("popstate", () => {
+					pendingHash = location.hash;
+					send({
+						t: "nav",
+						u: location.pathname + location.search,
+						m: "pop"
+					});
+				});
+			},
+			/** The server's answer to a navigation, after its patches: the final URL, after redirects. */
+			landed(u, mode) {
+				const target = u + pendingHash;
+				if (mode === "push") history.pushState({
+					j2: 1,
+					y: 0
+				}, "", target);
+				else if (mode === "replace") history.replaceState({
+					j2: 1,
+					y: 0
+				}, "", target);
+				if (mode === "pop") {
+					const y = history.state && typeof history.state.y === "number" ? history.state.y : 0;
+					window.scrollTo(0, y);
+				} else if (pendingHash) {
+					const anchor = document.getElementById(decodeURIComponent(pendingHash.slice(1)));
+					if (anchor) anchor.scrollIntoView();
+				} else window.scrollTo(0, 0);
+				pendingHash = "";
+			}
+		};
+	}
 	function link(target) {
 		return target instanceof Element ? target.closest("a[href]") : null;
 	}
@@ -1797,227 +1786,231 @@
 	* replaced it. The element is blocked meanwhile; swap is where withPending markup goes, which for
 	* a submit is the submitter button.
 	*/
-	var Pending = class {
-		inFlight = /* @__PURE__ */ new Map();
-		blocked = /* @__PURE__ */ new Set();
-		saved = /* @__PURE__ */ new WeakMap();
-		has(el) {
-			return this.blocked.has(el);
-		}
-		get size() {
-			return this.inFlight.size;
-		}
-		start(el, ack, swap) {
-			this.blocked.add(el);
-			this.inFlight.set(ack, {
-				el,
-				swap
-			});
-			for (const target of [el, swap]) {
-				target.setAttribute("data-pending", "");
-				target.setAttribute("aria-busy", "true");
+	function createPending() {
+		const inFlight = /* @__PURE__ */ new Map();
+		const blocked = /* @__PURE__ */ new Set();
+		const saved = /* @__PURE__ */ new WeakMap();
+		return {
+			has(el) {
+				return blocked.has(el);
+			},
+			get size() {
+				return inFlight.size;
+			},
+			start(el, ack, swap) {
+				blocked.add(el);
+				inFlight.set(ack, {
+					el,
+					swap
+				});
+				for (const target of [el, swap]) {
+					target.setAttribute("data-pending", "");
+					target.setAttribute("aria-busy", "true");
+				}
+				const tpl = swap.querySelector(":scope > template[data-j2-pending]");
+				if (tpl) {
+					saved.set(swap, swap.innerHTML);
+					swap.innerHTML = tpl.outerHTML + "<span data-j2-pending-live>" + tpl.innerHTML + "</span>";
+				}
+			},
+			ack(ack) {
+				const entry = inFlight.get(ack);
+				inFlight.delete(ack);
+				if (!entry) return;
+				blocked.delete(entry.el);
+				for (const target of [entry.el, entry.swap]) {
+					target.removeAttribute("data-pending");
+					target.removeAttribute("aria-busy");
+				}
+				const swap = entry.swap;
+				const before = saved.get(swap);
+				saved.delete(swap);
+				if (before !== void 0 && swap.querySelector(":scope > [data-j2-pending-live]")) swap.innerHTML = before;
+			},
+			/** A new session will never ack these. */
+			clear() {
+				inFlight.clear();
+				blocked.clear();
 			}
-			const tpl = swap.querySelector(":scope > template[data-j2-pending]");
-			if (tpl) {
-				this.saved.set(swap, swap.innerHTML);
-				swap.innerHTML = tpl.outerHTML + "<span data-j2-pending-live>" + tpl.innerHTML + "</span>";
-			}
-		}
-		ack(ack) {
-			const entry = this.inFlight.get(ack);
-			this.inFlight.delete(ack);
-			if (!entry) return;
-			this.blocked.delete(entry.el);
-			for (const target of [entry.el, entry.swap]) {
-				target.removeAttribute("data-pending");
-				target.removeAttribute("aria-busy");
-			}
-			const swap = entry.swap;
-			const saved = this.saved.get(swap);
-			this.saved.delete(swap);
-			if (saved !== void 0 && swap.querySelector(":scope > [data-j2-pending-live]")) swap.innerHTML = saved;
-		}
-		/** A new session will never ack these. */
-		clear() {
-			this.inFlight.clear();
-			this.blocked.clear();
-		}
-	};
+		};
+	}
 	//#endregion
 	//#region src/main/ts/retained.ts
 	/** How long a hidden tab waits before trying again, after the server or the page was busy. */
 	var RETRY_MS = 1e4;
-	var Retained = class {
-		current = "running";
+	function createRetained(options) {
+		let current = "running";
 		/** The pause started because the tab was hidden: it gives way when busy, and the tab showing again resumes. */
-		byHiding = false;
+		let byHiding = false;
 		/** The server had Retained State to keep, so resume() reports whether it came back. */
-		withState = false;
-		deferral = null;
-		handlers = [];
-		pauseWaiters = [];
-		resumeWaiters = [];
-		hiddenTimer;
-		options;
-		constructor(options) {
-			this.options = options;
-		}
-		get phase() {
-			return this.current;
-		}
-		/** window.j2act; see j2act.d.ts. */
-		api() {
-			return Object.freeze({
-				pause: () => this.pause(),
-				resume: () => this.resume(),
-				onPausing: (handler) => this.onPausing(handler)
-			});
-		}
-		/** Hidden tabs pause after autoPauseAfter, and resume when shown, if the pause was theirs. */
-		listen(doc) {
-			if (this.options.autoPauseAfter <= 0) return;
-			doc.addEventListener("visibilitychange", () => {
-				clearTimeout(this.hiddenTimer);
-				this.hiddenTimer = void 0;
-				if (doc.hidden) this.hiddenTimer = setTimeout(() => this.autoPause(), this.options.autoPauseAfter);
-				else if (this.current === "deferring" && this.byHiding) this.cancel("the tab is visible again");
-				else if (this.current === "paused" && this.byHiding) this.resume();
-			});
-		}
+		let withState = false;
+		let deferral = null;
+		let handlers = [];
+		const pauseWaiters = [];
+		const resumeWaiters = [];
+		let hiddenTimer;
 		/** As .NET's onCircuitPausing: runs before every pause and delays it until its promise settles. */
-		onPausing(handler) {
-			this.handlers.push(handler);
+		function onPausing(handler) {
+			handlers.push(handler);
 			return () => {
-				this.handlers = this.handlers.filter((h) => h !== handler);
+				handlers = handlers.filter((h) => h !== handler);
 			};
 		}
 		/** Resolves true once the server saved the page's Retained State and let its session go. */
-		pause() {
-			if (this.current === "paused") return Promise.resolve(true);
+		function pause() {
+			if (current === "paused") return Promise.resolve(true);
 			return new Promise((resolve) => {
-				this.pauseWaiters.push(resolve);
-				if (this.current === "running") this.begin(false);
-				else this.byHiding = false;
+				pauseWaiters.push(resolve);
+				if (current === "running") begin(false);
+				else byHiding = false;
 			});
 		}
 		/** Resolves once the page runs again on a new session: true when its Retained State came back, or it had none. */
-		resume() {
-			if (this.current === "deferring") {
-				this.cancel("resumed");
+		function resume() {
+			if (current === "deferring") {
+				cancel("resumed");
 				return Promise.resolve(true);
 			}
-			if (this.current === "pausing") return new Promise((resolve) => this.pauseWaiters.push(() => this.resume().then(resolve)));
-			if (this.current !== "paused") return Promise.resolve(false);
-			this.current = "running";
-			this.byHiding = false;
+			if (current === "pausing") return new Promise((resolve) => pauseWaiters.push(() => resume().then(resolve)));
+			if (current !== "paused") return Promise.resolve(false);
+			current = "running";
+			byHiding = false;
 			document.documentElement.removeAttribute("data-j2-paused");
 			return new Promise((resolve) => {
-				this.resumeWaiters.push(resolve);
-				this.options.remount();
+				resumeWaiters.push(resolve);
+				options.remount();
 			});
-		}
-		/** The socket is up again: a pause that waited for it goes out now. */
-		connected() {
-			if (this.current === "pausing") this.send();
-		}
-		/** The server asked for a pause, as RequestCircuitPauseAsync does: handlers may delay it, not refuse it. */
-		requested() {
-			if (this.current === "running") this.begin(false);
-		}
-		/**
-		* The session is gone. Evicted while a pause was on its way, a snapshot may be saved all the
-		* same, so the page counts as paused. Returns whether the page should remount instead.
-		*/
-		expired() {
-			if (this.current === "pausing" || this.current === "deferring") {
-				this.stopDeferral("the session ended");
-				this.paused(true);
-				return false;
-			}
-			return this.current === "running";
 		}
 		/** The server let the session go; saved: it had Retained State to keep. */
-		paused(saved) {
-			this.withState = saved;
-			this.current = "paused";
-			this.options.stopSending();
+		function paused(saved) {
+			withState = saved;
+			current = "paused";
+			options.stopSending();
 			document.documentElement.setAttribute("data-j2-paused", "");
 			document.dispatchEvent(new CustomEvent("j2act:paused"));
-			this.settle(true);
-			if (this.byHiding && !document.hidden) this.resume();
-		}
-		/** The server was busy for an automatic pause. */
-		refused() {
-			if (!this.byHiding) {
-				this.send();
-				return;
-			}
-			this.current = "running";
-			this.byHiding = false;
-			if (document.hidden) this.hiddenTimer = setTimeout(() => this.autoPause(), RETRY_MS);
-		}
-		/**
-		* The page runs on its new session. As .NET's resumeCircuit(): false when the page had state to
-		* keep and got none back, as when its snapshot expired, was used already or belongs to someone
-		* else. The page runs either way.
-		*/
-		resumed(restored) {
-			if (this.resumeWaiters.length) {
-				const ok = restored || !this.withState;
-				document.dispatchEvent(new CustomEvent("j2act:resumed", { detail: { restored: ok } }));
-				this.resumeWaiters.splice(0).forEach((resolve) => resolve(ok));
-			}
+			settle(true);
+			if (byHiding && !document.hidden) resume();
 		}
 		/** Runs the onPausing handlers, then asks the server; a handler that fails calls the pause off. */
-		begin(automatic) {
-			this.current = "deferring";
-			this.byHiding = automatic;
+		function begin(automatic) {
+			current = "deferring";
+			byHiding = automatic;
 			const controller = new AbortController();
-			this.deferral = controller;
-			Promise.all(this.handlers.map((h) => Promise.resolve().then(() => h(controller.signal)))).then(() => {
-				if (this.deferral === controller) {
-					this.deferral = null;
-					this.current = "pausing";
-					this.send();
+			deferral = controller;
+			Promise.all(handlers.map((h) => Promise.resolve().then(() => h(controller.signal)))).then(() => {
+				if (deferral === controller) {
+					deferral = null;
+					current = "pausing";
+					send();
 				}
 			}, (e) => {
-				if (this.deferral === controller) {
+				if (deferral === controller) {
 					console.warn("j2act: an onPausing handler failed, so the page did not pause", e);
-					this.cancel("an onPausing handler failed");
+					cancel("an onPausing handler failed");
 				}
 			});
 		}
-		send() {
-			this.options.sendIfReady(this.byHiding ? {
+		function send() {
+			options.sendIfReady(byHiding ? {
 				t: "pause",
 				a: "1"
 			} : { t: "pause" });
 		}
-		cancel(reason) {
-			this.stopDeferral(reason);
-			this.current = "running";
-			this.byHiding = false;
-			this.settle(false);
+		function cancel(reason) {
+			stopDeferral(reason);
+			current = "running";
+			byHiding = false;
+			settle(false);
 		}
-		stopDeferral(reason) {
-			if (this.deferral) {
-				this.deferral.abort(reason);
-				this.deferral = null;
+		function stopDeferral(reason) {
+			if (deferral) {
+				deferral.abort(reason);
+				deferral = null;
 			}
 		}
-		settle(ok) {
-			this.pauseWaiters.splice(0).forEach((resolve) => resolve(ok));
+		function settle(ok) {
+			pauseWaiters.splice(0).forEach((resolve) => resolve(ok));
 		}
-		autoPause() {
-			this.hiddenTimer = void 0;
-			if (!document.hidden || this.current !== "running" || this.options.remounting()) return;
-			if (this.options.busy()) {
-				this.hiddenTimer = setTimeout(() => this.autoPause(), RETRY_MS);
+		function autoPause() {
+			hiddenTimer = void 0;
+			if (!document.hidden || current !== "running" || options.remounting()) return;
+			if (options.busy()) {
+				hiddenTimer = setTimeout(autoPause, RETRY_MS);
 				return;
 			}
-			this.begin(true);
+			begin(true);
 		}
-	};
+		return {
+			get phase() {
+				return current;
+			},
+			onPausing,
+			pause,
+			resume,
+			paused,
+			/** window.j2act; see j2act.d.ts. */
+			api() {
+				return Object.freeze({
+					pause,
+					resume,
+					onPausing
+				});
+			},
+			/** Hidden tabs pause after autoPauseAfter, and resume when shown, if the pause was theirs. */
+			listen(doc) {
+				if (options.autoPauseAfter <= 0) return;
+				doc.addEventListener("visibilitychange", () => {
+					clearTimeout(hiddenTimer);
+					hiddenTimer = void 0;
+					if (doc.hidden) hiddenTimer = setTimeout(autoPause, options.autoPauseAfter);
+					else if (current === "deferring" && byHiding) cancel("the tab is visible again");
+					else if (current === "paused" && byHiding) resume();
+				});
+			},
+			/** The socket is up again: a pause that waited for it goes out now. */
+			connected() {
+				if (current === "pausing") send();
+			},
+			/** The server asked for a pause, as RequestCircuitPauseAsync does: handlers may delay it, not refuse it. */
+			requested() {
+				if (current === "running") begin(false);
+			},
+			/**
+			* The session is gone. Evicted while a pause was on its way, a snapshot may be saved all the
+			* same, so the page counts as paused. Returns whether the page should remount instead.
+			*/
+			expired() {
+				if (current === "pausing" || current === "deferring") {
+					stopDeferral("the session ended");
+					paused(true);
+					return false;
+				}
+				return current === "running";
+			},
+			/** The server was busy for an automatic pause. */
+			refused() {
+				if (!byHiding) {
+					send();
+					return;
+				}
+				current = "running";
+				byHiding = false;
+				if (document.hidden) hiddenTimer = setTimeout(autoPause, RETRY_MS);
+			},
+			/**
+			* The page runs on its new session. As .NET's resumeCircuit(): false when the page had state to
+			* keep and got none back, as when its snapshot expired, was used already or belongs to someone
+			* else. The page runs either way.
+			*/
+			resumed(restored) {
+				if (resumeWaiters.length) {
+					const ok = restored || !withState;
+					document.dispatchEvent(new CustomEvent("j2act:resumed", { detail: { restored: ok } }));
+					resumeWaiters.splice(0).forEach((resolve) => resolve(ok));
+				}
+			}
+		};
+	}
 	//#endregion
 	//#region src/main/ts/uploads.ts
 	var CHUNK = 524288;
@@ -2025,114 +2018,110 @@
 	* Uploads (ADR 0006): the event names the file, the server answers with where to send it, and
 	* the chunks go over HTTP.
 	*/
-	var Uploads = class {
-		files = /* @__PURE__ */ new Map();
-		waiters = /* @__PURE__ */ new Map();
-		seq = 0;
-		send;
-		token;
-		constructor(send, token) {
-			this.send = send;
-			this.token = token;
-		}
-		/** Files still being sent. */
-		get size() {
-			return this.files.size;
-		}
-		/** A file input changed: its event names the file, which waits here for the server's go. */
-		picked(input) {
-			const file = input.files && input.files[0];
-			if (!file) return {};
-			const id = String(++this.seq);
-			this.files.set(id, file);
-			return {
-				fi: id,
-				fn: file.name,
-				fs: String(file.size),
-				ft: file.type || ""
-			};
-		}
-		target(handler) {
-			return { send: (blob, name) => {
-				return new Promise((resolve, reject) => {
-					const fileId = String(++this.seq);
-					this.files.set(fileId, blob);
-					this.waiters.set(fileId, {
-						resolve,
-						reject
-					});
-					this.send({
-						t: "cb",
-						h: handler,
-						v: "[]",
-						fi: fileId,
-						fn: name || blob.name || "blob",
-						fs: String(blob.size),
-						ft: blob.type || ""
-					});
-				});
-			} };
-		}
-		/** Refused before the first chunk: drop the file, reject an UploadTarget.send. */
-		refused(id, message) {
-			this.files.delete(id);
-			this.settle(id, named("NotAllowedError", message));
-		}
-		/**
-		* Sends the file in order. The server's offset decides where each chunk starts, so a failed
-		* or repeated chunk resumes where the bytes really stopped.
-		*/
-		upload(id, url) {
-			const file = this.files.get(id);
-			if (!file) return;
-			let offset = 0;
-			let failures = 0;
-			const again = () => {
-				if (++failures > 8) {
-					this.files.delete(id);
-					this.settle(id, named("NetworkError", "the upload kept failing"));
-					return;
-				}
-				setTimeout(next, backoff(failures));
-			};
-			const next = () => {
-				fetch(url + "?o=" + offset, {
-					method: "POST",
-					credentials: "same-origin",
-					headers: {
-						"X-J2-Token": this.token() || "",
-						"Content-Type": "application/octet-stream"
-					},
-					body: file.slice(offset, offset + CHUNK)
-				}).then((r) => {
-					return r.json().catch(() => ({})).then((j) => ({
-						status: r.status,
-						body: j
-					}));
-				}).then((res) => {
-					if ((res.status === 200 || res.status === 409) && typeof res.body.o === "number") {
-						failures = 0;
-						offset = res.body.o;
-						if (res.body.done) {
-							this.files.delete(id);
-							this.settle(id, null);
-						} else next();
-					} else if (res.status === 429) again();
-					else {
-						this.files.delete(id);
-						this.settle(id, named("NotAllowedError", "the server refused the upload"));
-					}
-				}, again);
-			};
-			next();
-		}
-		settle(id, error) {
-			const waiter = this.waiters.get(id);
-			this.waiters.delete(id);
+	function createUploads(send, token) {
+		const files = /* @__PURE__ */ new Map();
+		const waiters = /* @__PURE__ */ new Map();
+		let seq = 0;
+		function settle(id, error) {
+			const waiter = waiters.get(id);
+			waiters.delete(id);
 			if (waiter && error) waiter.reject(error);
 			else if (waiter) waiter.resolve();
 		}
-	};
+		return {
+			/** Files still being sent. */
+			get size() {
+				return files.size;
+			},
+			/** A file input changed: its event names the file, which waits here for the server's go. */
+			picked(input) {
+				const file = input.files && input.files[0];
+				if (!file) return {};
+				const id = String(++seq);
+				files.set(id, file);
+				return {
+					fi: id,
+					fn: file.name,
+					fs: String(file.size),
+					ft: file.type || ""
+				};
+			},
+			target(handler) {
+				return { send: (blob, name) => {
+					return new Promise((resolve, reject) => {
+						const fileId = String(++seq);
+						files.set(fileId, blob);
+						waiters.set(fileId, {
+							resolve,
+							reject
+						});
+						send({
+							t: "cb",
+							h: handler,
+							v: "[]",
+							fi: fileId,
+							fn: name || blob.name || "blob",
+							fs: String(blob.size),
+							ft: blob.type || ""
+						});
+					});
+				} };
+			},
+			/** Refused before the first chunk: drop the file, reject an UploadTarget.send. */
+			refused(id, message) {
+				files.delete(id);
+				settle(id, named("NotAllowedError", message));
+			},
+			/**
+			* Sends the file in order. The server's offset decides where each chunk starts, so a failed
+			* or repeated chunk resumes where the bytes really stopped.
+			*/
+			upload(id, url) {
+				const file = files.get(id);
+				if (!file) return;
+				let offset = 0;
+				let failures = 0;
+				const again = () => {
+					if (++failures > 8) {
+						files.delete(id);
+						settle(id, named("NetworkError", "the upload kept failing"));
+						return;
+					}
+					setTimeout(next, backoff(failures));
+				};
+				const next = () => {
+					fetch(url + "?o=" + offset, {
+						method: "POST",
+						credentials: "same-origin",
+						headers: {
+							"X-J2-Token": token() || "",
+							"Content-Type": "application/octet-stream"
+						},
+						body: file.slice(offset, offset + CHUNK)
+					}).then((r) => {
+						return r.json().catch(() => ({})).then((j) => ({
+							status: r.status,
+							body: j
+						}));
+					}).then((res) => {
+						if ((res.status === 200 || res.status === 409) && typeof res.body.o === "number") {
+							failures = 0;
+							offset = res.body.o;
+							if (res.body.done) {
+								files.delete(id);
+								settle(id, null);
+							} else next();
+						} else if (res.status === 429) again();
+						else {
+							files.delete(id);
+							settle(id, named("NotAllowedError", "the server refused the upload"));
+						}
+					}, again);
+				};
+				next();
+			}
+		};
+	}
 	//#endregion
 	//#region src/main/ts/main.ts
 	function start() {
@@ -2142,92 +2131,62 @@
 		if (!sid || !wsPath) return;
 		let leaving = false;
 		let remounting = false;
-		const connection = new Connection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath, sid, meta(document, "j2-token"), onMessage, () => !leaving && !remounting && retained.phase !== "paused");
+		const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath, sid, meta(document, "j2-token"), onMessage, () => !leaving && !remounting && retained.phase !== "paused");
 		const send = (message) => connection.send(message);
-		const pending = new Pending();
-		const uploads = new Uploads(send, () => connection.tok);
-		const morpher = new Morpher(pending, (el, fresh) => clients.sync(el, fresh));
-		const clients = new Clients({
+		const pending = createPending();
+		const uploads = createUploads(send, () => connection.tok);
+		const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
+		const clients = createClients({
 			send,
 			uploads,
 			morphSlot: (live, html) => morpher.slot(live, html)
 		});
-		const events = new Events({
-			send,
-			pending,
-			clients,
-			uploads
-		});
-		const navigation = new Navigation(send, base, meta(document, "j2-preload") === "intent");
-		const retained = new Retained({
+		const navigation = createNavigation(send, base, meta(document, "j2-preload") === "intent");
+		const retained = createRetained({
 			sendIfReady: (message) => connection.sendIfReady(message),
-			stopSending: () => {
-				connection.ready = false;
-			},
+			stopSending: () => connection.hold(),
 			remount,
 			remounting: () => remounting,
 			busy,
 			autoPauseAfter: Number(meta(document, "j2-autopause") || 0)
 		});
-		function onMessage(m) {
-			switch (m.t) {
-				case "ok":
-					connection.opened();
-					retained.connected();
-					break;
-				case "patch":
-					if (!morpher.patch(m.s, m.h, m.r === "1")) clients.anchorGone(m.s);
-					clients.scan();
-					break;
-				case "head":
-					morpher.head(m.h);
-					break;
-				case "url":
-					navigation.landed(m.u, m.m);
-					break;
-				case "go":
-					location.assign(m.u);
-					break;
-				case "dl":
-					download(m.u);
-					break;
-				case "up":
-					uploads.upload(m.f, m.u);
-					break;
-				case "upx":
-					uploads.refused(m.f, m.e);
-					break;
-				case "wa": {
-					let result;
-					try {
-						result = runWeb(JSON.parse(m.w));
-					} catch (e) {
-						clients.reply(m.i, false, e);
-						break;
-					}
-					result.then((v) => clients.reply(m.i, true, v), (e) => clients.reply(m.i, false, e));
-					break;
+		const handlers = {
+			ok: () => {
+				connection.opened();
+				retained.connected();
+			},
+			patch: (m) => {
+				if (!morpher.patch(m.s, m.h, m.r === "1")) clients.anchorGone(m.s);
+				clients.scan();
+			},
+			head: (m) => morpher.head(m.h),
+			url: (m) => navigation.landed(m.u, m.m),
+			go: (m) => location.assign(m.u),
+			dl: (m) => download(m.u),
+			up: (m) => uploads.upload(m.f, m.u),
+			upx: (m) => uploads.refused(m.f, m.e),
+			wa: (m) => {
+				let result;
+				try {
+					result = runWeb(JSON.parse(m.w));
+				} catch (e) {
+					clients.reply(m.i, false, e);
+					return;
 				}
-				case "ca":
-					clients.call(m);
-					break;
-				case "ack":
-					pending.ack(m.a);
-					break;
-				case "expired":
-					if (retained.expired()) remount();
-					break;
-				case "paused":
-					retained.paused(m.s === "1");
-					break;
-				case "pausex":
-					retained.refused();
-					break;
-				case "rp":
-					retained.requested();
-					break;
-				case "mods": clients.reimport(m.m);
-			}
+				result.then((v) => clients.reply(m.i, true, v), (e) => clients.reply(m.i, false, e));
+			},
+			ca: (m) => clients.call(m),
+			ack: (m) => pending.ack(m.a),
+			expired: () => {
+				if (retained.expired()) remount();
+			},
+			paused: (m) => retained.paused(m.s === "1"),
+			pausex: () => retained.refused(),
+			rp: () => retained.requested(),
+			mods: (m) => clients.reimport(m.m)
+		};
+		function onMessage(m) {
+			handlers[m.t]?.(m);
 		}
 		function remount() {
 			if (remounting) return;
@@ -2273,7 +2232,12 @@
 			}
 		});
 		navigation.listen(document);
-		events.listen(document);
+		listenForEvents(document, {
+			send,
+			pending,
+			clients,
+			uploads
+		});
 		retained.listen(document);
 		window.j2act = retained.api();
 		clients.scan();

@@ -1,12 +1,12 @@
-import { Clients } from "./clients.ts";
-import { Connection } from "./connection.ts";
-import { Events } from "./events.ts";
-import { Morpher } from "./morph.ts";
-import { Navigation } from "./navigation.ts";
-import { Pending } from "./pending.ts";
+import { createClients } from "./clients.ts";
+import { createConnection } from "./connection.ts";
+import { listenForEvents } from "./events.ts";
+import { createMorpher } from "./morph.ts";
+import { createNavigation } from "./navigation.ts";
+import { createPending } from "./pending.ts";
 import type { ClientMessage, ServerMessage } from "./protocol.ts";
-import { Retained } from "./retained.ts";
-import { Uploads } from "./uploads.ts";
+import { createRetained } from "./retained.ts";
+import { createUploads } from "./uploads.ts";
 import { meta } from "./util.ts";
 import { runWeb } from "./web.ts";
 
@@ -16,6 +16,9 @@ import { runWeb } from "./web.ts";
  * pending UI and reconnect (ADR 0003, 0010, 0013). It also runs client modules: their
  * lifecycle, actions, callbacks and slots (ADR 0022).
  */
+
+/** One handler per server message type; a type left out does not compile. */
+type Handlers = { [T in ServerMessage["t"]]: (m: Extract<ServerMessage, { t: T }>) => void };
 
 function start(): void {
   const sid = meta(document, "j2-session");
@@ -28,93 +31,67 @@ function start(): void {
   let leaving = false;
   let remounting = false;
 
-  const connection = new Connection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath,
+  const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath,
     sid, meta(document, "j2-token"), onMessage,
     () => !leaving && !remounting && retained.phase !== "paused");
   const send = (message: ClientMessage) => connection.send(message);
-  const pending = new Pending();
-  const uploads = new Uploads(send, () => connection.tok);
-  const morpher: Morpher = new Morpher(pending, (el, fresh) => clients.sync(el, fresh));
-  const clients = new Clients({ send: send, uploads: uploads, morphSlot: (live, html) => morpher.slot(live, html) });
-  const events = new Events({ send: send, pending: pending, clients: clients, uploads: uploads });
-  const navigation = new Navigation(send, base, meta(document, "j2-preload") === "intent");
-  const retained = new Retained({
+  const pending = createPending();
+  const uploads = createUploads(send, () => connection.tok);
+  const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
+  const clients = createClients({ send: send, uploads: uploads, morphSlot: (live, html) => morpher.slot(live, html) });
+  const navigation = createNavigation(send, base, meta(document, "j2-preload") === "intent");
+  const retained = createRetained({
     sendIfReady: (message) => connection.sendIfReady(message),
-    stopSending: () => {
-      connection.ready = false;
-    },
+    stopSending: () => connection.hold(),
     remount: remount,
     remounting: () => remounting,
     busy: busy,
     autoPauseAfter: Number(meta(document, "j2-autopause") || 0)
   });
 
-  function onMessage(m: ServerMessage): void {
-    switch (m.t) {
-      case "ok":
-        connection.opened();
-        retained.connected();
-        break;
-      case "patch":
-        if (!morpher.patch(m.s, m.h, m.r === "1")) {
-          clients.anchorGone(m.s);
-        }
-        clients.scan();
-        break;
-      case "head":
-        morpher.head(m.h);
-        break;
-      case "url":
-        navigation.landed(m.u, m.m);
-        break;
-      case "go":
-        location.assign(m.u);
-        break;
-      case "dl":
-        download(m.u);
-        break;
-      case "up":
-        uploads.upload(m.f, m.u);
-        break;
-      case "upx":
-        uploads.refused(m.f, m.e);
-        break;
-      case "wa": {
-        // A window() call from Java, after the patch it came with.
-        let result;
-        try {
-          result = runWeb(JSON.parse(m.w));
-        } catch (e) {
-          clients.reply(m.i, false, e);
-          break;
-        }
-        result.then((v) => clients.reply(m.i, true, v), (e) => clients.reply(m.i, false, e));
-        break;
+  const handlers: Handlers = {
+    ok: () => {
+      connection.opened();
+      retained.connected();
+    },
+    patch: (m) => {
+      if (!morpher.patch(m.s, m.h, m.r === "1")) {
+        clients.anchorGone(m.s);
       }
-      case "ca":
-        clients.call(m);
-        break;
-      case "ack":
-        pending.ack(m.a);
-        break;
-      case "expired":
-        if (retained.expired()) {
-          remount();
-        }
-        break;
-      case "paused":
-        retained.paused(m.s === "1");
-        break;
-      case "pausex":
-        retained.refused();
-        break;
-      case "rp":
-        retained.requested();
-        break;
-      case "mods":
-        clients.reimport(m.m);
-        break;
-    }
+      clients.scan();
+    },
+    head: (m) => morpher.head(m.h),
+    url: (m) => navigation.landed(m.u, m.m),
+    go: (m) => location.assign(m.u),
+    dl: (m) => download(m.u),
+    up: (m) => uploads.upload(m.f, m.u),
+    upx: (m) => uploads.refused(m.f, m.e),
+    // A window() call from Java, after the patch it came with.
+    wa: (m) => {
+      let result;
+      try {
+        result = runWeb(JSON.parse(m.w));
+      } catch (e) {
+        clients.reply(m.i, false, e);
+        return;
+      }
+      result.then((v) => clients.reply(m.i, true, v), (e) => clients.reply(m.i, false, e));
+    },
+    ca: (m) => clients.call(m),
+    ack: (m) => pending.ack(m.a),
+    expired: () => {
+      if (retained.expired()) {
+        remount();
+      }
+    },
+    paused: (m) => retained.paused(m.s === "1"),
+    pausex: () => retained.refused(),
+    rp: () => retained.requested(),
+    mods: (m) => clients.reimport(m.m)
+  };
+
+  function onMessage(m: ServerMessage): void {
+    (handlers[m.t] as ((m: ServerMessage) => void) | undefined)?.(m);
   }
 
   // ---- session lifetime (ADR 0010)
@@ -173,7 +150,7 @@ function start(): void {
   });
 
   navigation.listen(document);
-  events.listen(document);
+  listenForEvents(document, { send: send, pending: pending, clients: clients, uploads: uploads });
   retained.listen(document);
   window.j2act = retained.api();
 

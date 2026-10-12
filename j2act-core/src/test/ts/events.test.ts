@@ -1,9 +1,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { Clients } from "../../main/ts/clients.ts";
-import { Events } from "../../main/ts/events.ts";
-import { Pending } from "../../main/ts/pending.ts";
+import { createClients } from "../../main/ts/clients.ts";
+import { listenForEvents } from "../../main/ts/events.ts";
+import { createPending, type Pending } from "../../main/ts/pending.ts";
 import type { ClientMessage } from "../../main/ts/protocol.ts";
-import { Uploads } from "../../main/ts/uploads.ts";
+import { createUploads } from "../../main/ts/uploads.ts";
 
 describe("Events", () => {
   let sent: ClientMessage[];
@@ -12,10 +12,10 @@ describe("Events", () => {
   beforeAll(() => {
     // Listeners stay on the document for the whole file; each test reads what it sent.
     const send = (m: ClientMessage) => sent.push(m);
-    pending = new Pending();
-    const uploads = new Uploads(send, () => "tok");
-    const clients = new Clients({ send: send, uploads: uploads, morphSlot: () => {} });
-    new Events({ send: send, pending: pending, clients: clients, uploads: uploads }).listen(document);
+    pending = createPending();
+    const uploads = createUploads(send, () => "tok");
+    const clients = createClients({ send: send, uploads: uploads, morphSlot: () => {} });
+    listenForEvents(document, { send: send, pending: pending, clients: clients, uploads: uploads });
   });
 
   beforeEach(() => {

@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { Pending } from "../../main/ts/pending.ts";
+import { createPending, type Pending } from "../../main/ts/pending.ts";
 
 describe("Pending", () => {
   let pending: Pending;
   let button: HTMLButtonElement;
 
   beforeEach(() => {
-    pending = new Pending();
+    pending = createPending();
     document.body.innerHTML = '<button>Save<template data-j2-pending>Saving…</template></button>';
     button = document.querySelector("button")!;
   });

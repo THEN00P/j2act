@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientMessage } from "../../main/ts/protocol.ts";
-import { Retained } from "../../main/ts/retained.ts";
+import { createRetained, type Retained } from "../../main/ts/retained.ts";
 
 describe("Retained", () => {
   // Each test has its own; a Retained from an earlier test still listens on the document.
@@ -9,7 +9,7 @@ describe("Retained", () => {
 
   function make(autoPauseAfter = 0): Retained {
     const own = t;
-    return new Retained({
+    return createRetained({
       sendIfReady: (m) => {
         if (own.ready) {
           own.sent.push(m);

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Clients } from "../../main/ts/clients.ts";
+import { createClients, type Clients } from "../../main/ts/clients.ts";
 import type { ClientMessage } from "../../main/ts/protocol.ts";
-import { Uploads } from "../../main/ts/uploads.ts";
+import { createUploads } from "../../main/ts/uploads.ts";
 
 describe("Clients", () => {
   let sent: ClientMessage[];
@@ -12,7 +12,7 @@ describe("Clients", () => {
     sent = [];
     morphed = [];
     const send = (m: ClientMessage) => sent.push(m);
-    clients = new Clients({ send: send, uploads: new Uploads(send, () => "tok"), morphSlot: (el, html) => morphed.push([el, html]) });
+    clients = createClients({ send: send, uploads: createUploads(send, () => "tok"), morphSlot: (el, html) => morphed.push([el, html]) });
     document.body.innerHTML = "";
   });
 
