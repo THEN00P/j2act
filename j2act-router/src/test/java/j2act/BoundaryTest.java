@@ -174,7 +174,7 @@ class BoundaryTest {
       List<Map<String, String>> nav = h.nav("/slow");
       List<String> order = new java.util.ArrayList<>();
       for (Map<String, String> m : nav) {
-        order.add(m.get("type") + (m.containsKey("h") && m.get("html").contains("slow loading") ? ":loading" : ""));
+        order.add(m.get("type") + (m.containsKey("html") && m.get("html").contains("slow loading") ? ":loading" : ""));
       }
       assertFalse(order.contains("patch:loading"), "fast data never shows loading(): " + order);
       assertTrue(Harness.last(nav, "patch").contains("slow data"), order.toString());
