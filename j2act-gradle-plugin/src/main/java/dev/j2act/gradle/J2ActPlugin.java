@@ -2,6 +2,7 @@ package dev.j2act.gradle;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
@@ -31,19 +32,28 @@ import com.github.gradle.node.pnpm.task.PnpmTask;
 import com.github.gradle.node.yarn.task.YarnTask;
 
 /**
- * id("dev.j2act") (ADR 0025): everything a j2act app needs from Gradle, as defaults the build script can override.
- * The annotation processor, client modules beside the Java sources as resources, and, with a
- * package.json, Node (node-gradle, configured only by convention), a Vite build whose output
- * joins the main source set, a tsc check, and the Eclipse setup Buildship leaves out.
+ * id("io.github.then00p.j2act") (ADR 0025): everything a j2act app needs from Gradle, as defaults
+ * the build script can override. The annotation processor, client modules beside the Java sources
+ * as resources, and, with a package.json, Node (node-gradle, configured only by convention), a Vite
+ * build whose output joins the main source set, a tsc check, and the Eclipse setup Buildship leaves out.
  */
 public class J2ActPlugin implements Plugin<Project> {
 
-  static final String VERSION = "0.1.0-SNAPSHOT";
+  /** This plugin's version, which is also the j2act-processor version it adds; the build writes it. */
+  static final String VERSION = version();
   private static final Pattern PACKAGE_MANAGER = Pattern.compile("\"packageManager\"\\s*:\\s*\"(npm|pnpm|yarn)@");
+
+  private static String version() {
+    try (InputStream in = J2ActPlugin.class.getResourceAsStream("version.txt")) {
+      return new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
+    } catch (IOException | NullPointerException e) {
+      throw new IllegalStateException("j2act-gradle-plugin is missing its version.txt", e);
+    }
+  }
 
   @Override public void apply(Project project) {
     project.getPluginManager().apply(JavaPlugin.class);
-    project.getDependencies().add("annotationProcessor", "dev.j2act:j2act-processor:" + VERSION);
+    project.getDependencies().add("annotationProcessor", "io.github.then00p.j2act:j2act-processor:" + VERSION);
 
     // Plain JavaScript client modules need no build: they and what they import are resources.
     project.getTasks().named("processResources", ProcessResources.class, task ->

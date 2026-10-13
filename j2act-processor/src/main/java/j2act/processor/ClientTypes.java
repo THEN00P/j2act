@@ -128,8 +128,28 @@ final class ClientTypes {
     checkModule(root, clients);
   }
 
+  /**
+   * The runtime's own API, window.j2act and its events, as .j2act/types/j2act.d.ts (ADR 0028).
+   * Only editors and tsc read it; plain JavaScript runs the same without it.
+   */
+  void writeRuntimeTypes(Element origin) {
+    if (project == null) {
+      return;
+    }
+    String text;
+    try (InputStream in = ClientTypes.class.getResourceAsStream("j2act.d.ts")) {
+      if (in == null) {
+        return;
+      }
+      text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+    } catch (IOException e) {
+      return;
+    }
+    writeProjectTypes("", "j2act.d.ts", text, origin);
+  }
+
   /** Rewritten only when the text changed, so file watchers (tsc, Vite) stay quiet. */
-  private void writeProjectTypes(String pkg, String name, String text, TypeElement root) {
+  private void writeProjectTypes(String pkg, String name, String text, Element root) {
     java.nio.file.Path out = projectTypes(pkg, name);
     try {
       byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);

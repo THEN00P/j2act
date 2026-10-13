@@ -4,11 +4,36 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>dev.j2act</groupId>
+  <groupId>io.github.then00p.j2act</groupId>
   <artifactId>j2act-parent</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>j2act</name>
+  <description>Server-driven web UI for Java: components render HTML on the server and patch the page over a socket.</description>
+  <url>https://github.com/THEN00P/j2act</url>
+  <inceptionYear>2026</inceptionYear>
+
+  <licenses>
+    <license>
+      <name>The Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <id>THEN00P</id>
+      <name>THEN00P</name>
+      <url>https://github.com/THEN00P</url>
+    </developer>
+  </developers>
+
+  <scm>
+    <url>https://github.com/THEN00P/j2act</url>
+    <connection>scm:git:https://github.com/THEN00P/j2act.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/THEN00P/j2act.git</developerConnection>
+  </scm>
 
   <!-- The Vite examples load j2act-maven-plugin as a build extension, which Maven resolves before
        it builds anything, so they are their own build: ./mvnw install, then ./mvnw -f examples install. -->
@@ -45,37 +70,37 @@
         <scope>import</scope>
       </dependency>
       <dependency>
-        <groupId>dev.j2act</groupId>
+        <groupId>io.github.then00p.j2act</groupId>
         <artifactId>j2act-core</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>dev.j2act</groupId>
+        <groupId>io.github.then00p.j2act</groupId>
         <artifactId>j2act-html</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>dev.j2act</groupId>
+        <groupId>io.github.then00p.j2act</groupId>
         <artifactId>j2act-router</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>dev.j2act</groupId>
+        <groupId>io.github.then00p.j2act</groupId>
         <artifactId>j2act-processor</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>dev.j2act</groupId>
+        <groupId>io.github.then00p.j2act</groupId>
         <artifactId>j2act-spring</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>dev.j2act</groupId>
+        <groupId>io.github.then00p.j2act</groupId>
         <artifactId>j2act-jakarta</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>dev.j2act</groupId>
+        <groupId>io.github.then00p.j2act</groupId>
         <artifactId>j2act-retained-jdbc</artifactId>
         <version>${project.version}</version>
       </dependency>
@@ -97,9 +122,9 @@
             <configuration>
               <rules>
                 <requireJavaVersion>
-                  <!-- The Spring modules target 17; everything else is still compiled with release 11. -->
-                  <version>[17,)</version>
-                  <message>Build with JDK 17 or newer. Libraries still target Java 11 bytecode except the Spring modules.</message>
+                  <!-- Built on 21 or 25. The bytecode stays release 11, and 17 for the Spring modules. -->
+                  <version>[21,)</version>
+                  <message>Build with JDK 21 or newer (CI uses 21 and 25). Libraries still target Java 11 bytecode except the Spring modules (17).</message>
                 </requireJavaVersion>
               </rules>
             </configuration>
@@ -130,4 +155,83 @@
       </plugins>
     </pluginManagement>
   </build>
+
+  <profiles>
+    <!--
+      ./mvnw -Prelease deploy uploads to Maven Central (ADR 0029). Signing runs in-process with the
+      armored key in MAVEN_GPG_KEY and its passphrase in MAVEN_GPG_PASSPHRASE, so no gpg program is
+      needed. The upload waits for validation; -DautoPublish=true, as the release workflow passes,
+      also releases it, otherwise it waits in the Central Portal to be published or dropped.
+    -->
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.4.0</version>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals>
+                  <goal>jar-no-fork</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.12.0</version>
+            <configuration>
+              <doclint>none</doclint>
+              <quiet>true</quiet>
+            </configuration>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.8</version>
+            <configuration>
+              <signer>bc</signer>
+            </configuration>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.11.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <deploymentName>j2act ${project.version}</deploymentName>
+              <!-- Build-time only, or demos. -->
+              <excludeArtifacts>
+                <excludeArtifact>j2act-codegen</excludeArtifact>
+                <excludeArtifact>counter-spring</excludeArtifact>
+                <excludeArtifact>counter-jakarta</excludeArtifact>
+              </excludeArtifacts>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

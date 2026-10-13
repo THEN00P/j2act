@@ -7,4 +7,9 @@ pluginManagement {
   }
 }
 
+plugins {
+  // Downloads the JDK 17 toolchain when this machine has none Gradle can find.
+  id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
+
 rootProject.name = "vite-gradle-spring"

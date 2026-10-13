@@ -40,7 +40,6 @@ class CounterAppTest {
   @Test
   void runtimeAssetsAreServed() throws Exception {
     assertEquals(200, get("/_j2act/runtime.js").statusCode());
-    assertEquals(200, get("/_j2act/idiomorph.js").statusCode());
   }
 
   @Test

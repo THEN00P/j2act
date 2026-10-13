@@ -16,7 +16,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * What id("dev.j2act") sets up (ADR 0025), checked without running npm: tasks, defaults that
+ * What id("io.github.then00p.j2act") sets up (ADR 0025), checked without running npm: tasks, defaults that
  * the build script overrides, and the Eclipse files Buildship does not write itself.
  * j2act-processor comes from the local repository (./mvnw install).
  */
@@ -40,7 +40,7 @@ class J2ActPluginTest {
 
   private void setUp(String packageJson, String extraBuild) throws IOException {
     write("settings.gradle", "rootProject.name = 'demo'\n");
-    write("build.gradle", "plugins {\n  id 'war'\n  id 'dev.j2act'\n}\n"
+    write("build.gradle", "plugins {\n  id 'war'\n  id 'io.github.then00p.j2act'\n}\n"
       + "repositories {\n  mavenLocal()\n  mavenCentral()\n}\n" + extraBuild);
     if (packageJson != null) {
       write("package.json", packageJson);

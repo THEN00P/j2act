@@ -1,6 +1,6 @@
 plugins {
   war
-  id("dev.j2act")
+  id("io.github.then00p.j2act")
 }
 
 java {
@@ -17,9 +17,9 @@ repositories {
 }
 
 dependencies {
-  implementation("dev.j2act:j2act-jakarta:0.1.0-SNAPSHOT")
-  implementation("dev.j2act:j2act-html:0.1.0-SNAPSHOT")
-  implementation("dev.j2act:j2act-router:0.1.0-SNAPSHOT")
+  implementation("io.github.then00p.j2act:j2act-jakarta:0.1.0-SNAPSHOT")
+  implementation("io.github.then00p.j2act:j2act-html:0.1.0-SNAPSHOT")
+  implementation("io.github.then00p.j2act:j2act-router:0.1.0-SNAPSHOT")
   compileOnly("jakarta.platform:jakarta.jakartaee-api:10.0.0")
 }
 

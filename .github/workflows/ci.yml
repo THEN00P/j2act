@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # The JDKs the build runs on; the bytecode stays release 11 (17 for the Spring modules).
+    strategy:
+      fail-fast: false
+      matrix:
+        java: [21, 25]
+    name: build (JDK ${{ matrix.java }})
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: j2act-core/package-lock.json
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+
+      - name: Type-check and test the client runtime
+        working-directory: j2act-core
+        run: |
+          npm ci
+          npm run check
+
+      # The jar ships the checked-in runtime.js (ADR 0028), so it must be exactly what its sources build.
+      - name: Build the client runtime from source
+        working-directory: j2act-core
+        run: npm run build
+
+      - name: The checked-in runtime matches its sources
+        run: |
+          if [ -n "$(git status --porcelain -- j2act-core/src/main/resources)" ]; then
+            git status --short -- j2act-core/src/main/resources
+            git diff --stat -- j2act-core/src/main/resources
+            echo "::error::runtime.js is stale: run npm run build in j2act-core and commit the result"
+            exit 1
+          fi
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      # With the release profile, so the source and javadoc jars Central needs are built on every push
+      # and a javadoc error never first shows up in a release; signing is left to the release workflow.
+      - name: Build and test
+        run: ./mvnw -B -Prelease -Dgpg.skip install
+
+      # The rest uses what the root build installed into ~/.m2, and exploded-hotswap from Maven Central.
+
+      # The Maven Vite examples load j2act-maven-plugin as a build extension, which Maven resolves
+      # before it builds anything, so they are their own build (ADR 0025).
+      - name: Maven Vite examples
+        run: ./mvnw -B -f examples install
+
+      - name: Gradle plugin, with its TestKit tests on Gradle 8 and 9
+        working-directory: j2act-gradle-plugin
+        run: ./gradlew build
+
+      - name: Gradle example, Spring
+        working-directory: examples/vite-gradle-spring
+        run: ./gradlew build
+
+      - name: Gradle example, WildFly
+        working-directory: examples/vite-gradle-wildfly
+        run: ./gradlew build

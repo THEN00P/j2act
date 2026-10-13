@@ -917,8 +917,6 @@ final class Session {
     b.append("\"><meta name=\"j2-ws\" content=\"");
     Html.escape(engine.contextPath + "/_j2act/ws", b);
     b.append("\"><script src=\"");
-    Html.escape(engine.contextPath + "/_j2act/idiomorph.js", b);
-    b.append("\" defer></script><script src=\"");
     Html.escape(engine.contextPath + "/_j2act/runtime.js", b);
     b.append("\" defer></script>");
     return b.toString();

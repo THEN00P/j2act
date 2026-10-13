@@ -1,0 +1,19 @@
+{
+  "name": "j2act-runtime",
+  "private": true,
+  "type": "module",
+  "description": "The j2act client runtime, built from src/main/ts into the checked-in runtime.js (ADR 0028).",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "check": "tsc -p tsconfig.json && vitest run"
+  },
+  "devDependencies": {
+    "happy-dom": "20.14.6",
+    "idiomorph": "0.8.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.4",
+    "vitest": "5.0.3"
+  }
+}

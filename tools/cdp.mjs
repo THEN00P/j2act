@@ -56,7 +56,7 @@ export async function openBrowser(port = 9333) {
     await cdp("Runtime.enable");
     await cdp("Page.enable");
     await cdp("Page.navigate", { url });
-    await until("document.readyState === 'complete' && typeof Idiomorph !== 'undefined'");
+    await until("document.readyState === 'complete' && typeof j2act !== 'undefined'");
     await sleep(400); // socket hello/ok
   };
   const results = [];

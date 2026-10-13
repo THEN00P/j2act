@@ -112,7 +112,8 @@ class ProcessorTest {
   /**
    * A project with a package.json gets the dev token (ADR 0024) naming it, found from the source
    * file, even when the class output sits inside a copy of the project, as Eclipse once made in
-   * bin/; and the client types go to its .j2act/types (ADR 0023). The same under javac and ECJ.
+   * bin/; and the client types go to its .j2act/types (ADR 0023), next to the runtime API's
+   * j2act.d.ts (ADR 0028). The same under javac and ECJ.
    */
   @Test void aProjectGetsItsDevTokenAndItsTypesInOnePlace() throws IOException {
     String golden = new String(Files.readAllBytes(FIXTURES.resolve("clients/Webcam.types.d.ts")), StandardCharsets.UTF_8)
@@ -138,6 +139,8 @@ class ProcessorTest {
       assertEquals("{\"project\":\"" + project.toAbsolutePath().toString().replace("\\", "\\\\") + "\"}\n", token, name);
       assertEquals(golden, new String(Files.readAllBytes(project.resolve(".j2act/types/clients/Webcam.types.d.ts")),
         StandardCharsets.UTF_8), name);
+      assertEquals(new String(Files.readAllBytes(Paths.get("../j2act-core/src/main/ts/j2act.d.ts")), StandardCharsets.UTF_8),
+        new String(Files.readAllBytes(project.resolve(".j2act/types/j2act.d.ts")), StandardCharsets.UTF_8), name);
     }
   }
 
@@ -171,7 +174,8 @@ class ProcessorTest {
 
       String name = compiler.getClass().getSimpleName();
       try (Stream<Path> walk = Files.walk(types)) {
-        assertEquals(Arrays.asList("", "clients", "clients/BadClients.types.d.ts", "clients/Webcam.types.d.ts"), walk
+        assertEquals(Arrays.asList("", "clients", "clients/BadClients.types.d.ts", "clients/Webcam.types.d.ts",
+          "j2act.d.ts"), walk
           .map(p -> types.relativize(p).toString().replace('\\', '/')).sorted().collect(Collectors.toList()), name);
       }
     }
