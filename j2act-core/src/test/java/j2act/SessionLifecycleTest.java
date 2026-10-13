@@ -30,8 +30,8 @@ class SessionLifecycleTest {
       h.engine.onClose(h.conn);
 
       Harness.FakeConnection second = new Harness.FakeConnection();
-      h.engine.onMessage(second, Json.object("t", "hello", "sid", h.sid, "tok", h.token));
-      second.await(0, m -> "ok".equals(m.get("t")));
+      h.engine.onMessage(second, Json.object("type", "hello", "session", h.sid, "token", h.token));
+      second.await(0, m -> "ready".equals(m.get("type")));
       assertEquals(1, h.engine.sessionCount());
     }
   }
@@ -40,8 +40,8 @@ class SessionLifecycleTest {
   void wrongTokenIsToldToRemount() {
     try (Harness h = new Harness(IdentityTest.TwoCounters::new)) {
       h.load();
-      h.engine.onMessage(h.conn, Json.object("t", "hello", "sid", h.sid, "tok", "forged"));
-      h.conn.await(0, m -> "expired".equals(m.get("t")));
+      h.engine.onMessage(h.conn, Json.object("type", "hello", "session", h.sid, "token", "forged"));
+      h.conn.await(0, m -> "expired".equals(m.get("type")));
       assertTrue(h.conn.closed);
     }
   }
@@ -52,8 +52,8 @@ class SessionLifecycleTest {
       h.load();
       h.connect();
       String id = Harness.clickOn(h.html, "A:0");
-      assertTrue(h.click(id).get(0).get("h").contains("A:1"));
-      assertTrue(h.click(id).get(0).get("h").contains("A:2"), "same element, same id, still invokable");
+      assertTrue(h.click(id).get(0).get("html").contains("A:1"));
+      assertTrue(h.click(id).get(0).get("html").contains("A:2"), "same element, same id, still invokable");
     }
   }
 
@@ -62,13 +62,13 @@ class SessionLifecycleTest {
     try (Harness h = new Harness(IdentityTest.Toggle::new)) {
       h.load();
       h.connect();
-      String shown = h.click(Harness.clickOn(h.html, "toggle")).get(0).get("h");
+      String shown = h.click(Harness.clickOn(h.html, "toggle")).get(0).get("html");
       String x = Harness.clickOn(shown, "X:0");
       h.click(Harness.clickOn(shown, "toggle"));
 
       int from = h.conn.size();
       assertTrue(h.click(x).isEmpty());
-      assertEquals("0", h.conn.since(from, m -> "ack".equals(m.get("t"))).get(0).get("ok"));
+      assertEquals("false", h.conn.since(from, m -> "ack".equals(m.get("type"))).get(0).get("ok"));
       h.click("made-up-id");
       assertEquals(2, h.engine.stats().rejectedEvents.get());
     }

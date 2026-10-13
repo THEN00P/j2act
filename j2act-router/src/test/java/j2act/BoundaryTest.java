@@ -160,8 +160,8 @@ class BoundaryTest {
       h.connect();
       int from = h.conn.size();
       gate.countDown();
-      String patch = h.awaitPatch(from, p -> p.contains("widget data")).get("h");
-      assertTrue(patch.startsWith("<div data-j2s=") && !patch.contains("Page chrome"), "only the widget patches: " + patch);
+      String patch = h.awaitPatch(from, p -> p.contains("widget data")).get("html");
+      assertTrue(patch.startsWith("<div data-j2-scope=") && !patch.contains("Page chrome"), "only the widget patches: " + patch);
     }
   }
 
@@ -174,7 +174,7 @@ class BoundaryTest {
       List<Map<String, String>> nav = h.nav("/slow");
       List<String> order = new java.util.ArrayList<>();
       for (Map<String, String> m : nav) {
-        order.add(m.get("t") + (m.containsKey("h") && m.get("h").contains("slow loading") ? ":loading" : ""));
+        order.add(m.get("type") + (m.containsKey("h") && m.get("html").contains("slow loading") ? ":loading" : ""));
       }
       assertFalse(order.contains("patch:loading"), "fast data never shows loading(): " + order);
       assertTrue(Harness.last(nav, "patch").contains("slow data"), order.toString());

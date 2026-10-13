@@ -5,9 +5,9 @@ export type Connection = ReturnType<typeof createConnection>;
 
 /**
  * The page's socket (ADR 0010): says hello with the session id and token, queues messages until
- * the server answers ok, and reconnects with backoff unless the page is leaving or paused.
+ * the server answers ready, and reconnects with backoff unless the page is leaving or paused.
  */
-export function createConnection(url: string, sid: string | null, tok: string | null,
+export function createConnection(url: string, session: string | null, token: string | null,
                                  onMessage: (m: ServerMessage) => void, reconnects: () => boolean) {
   let ready = false;
   let ws: WebSocket | null = null;
@@ -18,7 +18,7 @@ export function createConnection(url: string, sid: string | null, tok: string | 
     const socket = new WebSocket(url);
     ws = socket;
     socket.onopen = () => {
-      socket.send(JSON.stringify({ t: "hello", sid: sid, tok: tok } satisfies ClientMessage));
+      socket.send(JSON.stringify({ type: "hello", session: session, token: token } satisfies ClientMessage));
     };
     socket.onmessage = (e) => {
       onMessage(JSON.parse(e.data));
@@ -38,8 +38,8 @@ export function createConnection(url: string, sid: string | null, tok: string | 
     connect,
 
     /** The session's token, which the page's HTTP requests carry too. */
-    get tok(): string | null {
-      return tok;
+    get token(): string | null {
+      return token;
     },
 
     get ready(): boolean {
@@ -87,9 +87,9 @@ export function createConnection(url: string, sid: string | null, tok: string | 
     },
 
     /** A new session: what queued for the old one is meaningless to it. */
-    restart(newSid: string | null, newTok: string | null): void {
-      sid = newSid;
-      tok = newTok;
+    restart(newSession: string | null, newToken: string | null): void {
+      session = newSession;
+      token = newToken;
       retry = 0;
       queue = [];
       connect();

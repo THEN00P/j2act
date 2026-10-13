@@ -40,7 +40,7 @@ class DownloadTest {
   }
 
   private static String token(Harness h, int from) {
-    String url = h.conn.await(from, m -> "dl".equals(m.get("t"))).get("u");
+    String url = h.conn.await(from, m -> "download".equals(m.get("type"))).get("url");
     assertTrue(url.startsWith(J2Act.DOWNLOAD_PATH), url);
     return url.substring(J2Act.DOWNLOAD_PATH.length());
   }

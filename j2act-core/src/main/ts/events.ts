@@ -39,11 +39,11 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
     if (!handlerId) {
       return;
     }
-    const a = String(++ackSeq);
+    const id = String(++ackSeq);
     if (blocking) {
-      pending.start(el, a, pendingOn || el);
+      pending.start(el, id, pendingOn || el);
     }
-    const message: ClientMessage = { t: "ev", h: handlerId, v: value == null ? "" : value, a: a, ...extra };
+    const message: ClientMessage = { type: "event", id: id, handler: handlerId, value: value == null ? "" : value, ...extra };
     send(message);
   }
 
@@ -97,7 +97,7 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
   /**
    * onClick/onSubmit/onKeyDown/onPointerDown/onPointerUp(action, then): the action runs
    * synchronously inside the event, which grants user activation, so gesture-gated APIs work.
-   * Its result, or its error as x, then goes to the handler like an event's value.
+   * Its result, or its error, then goes to the handler like an event's value.
    */
   function boundAction(el: Element, type: string, extra?: EventFields): void {
     if (pending.has(el)) {
@@ -106,17 +106,17 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
     const call: BoundCall = JSON.parse(el.getAttribute("data-j2-call-" + type)!);
     let result;
     try {
-      result = call.w ? runWeb(call.w) : clients.callNow(call.c, call.n, call.a);
+      result = call.window ? runWeb(call.window) : clients.callNow(call.client, call.action, call.args);
     } catch (e) {
       console.warn("j2act: client action failed", e);
-      dispatch(el, type, "", { ...extra, x: errorText(e) });
+      dispatch(el, type, "", { ...extra, error: errorText(e) });
       return;
     }
     Promise.resolve(result).then((v) => {
       dispatch(el, type, JSON.stringify(v === undefined ? null : v), extra);
     }, (e) => {
       console.warn("j2act: client action failed", e);
-      dispatch(el, type, "", { ...extra, x: errorText(e) });
+      dispatch(el, type, "", { ...extra, error: errorText(e) });
     });
   }
 
@@ -142,7 +142,7 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
       if (!el) {
         return;
       }
-      const extra = { pt: e.pointerType, px: String(e.clientX), py: String(e.clientY) };
+      const extra = { pointerType: e.pointerType, clientX: e.clientX, clientY: e.clientY };
       if (el.hasAttribute("data-j2-call-" + type)) {
         boundAction(el, type, extra);
       } else {
@@ -185,12 +185,12 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
     if (filter && filter.split(" ").indexOf(e.key) < 0) {
       return;
     }
-    const mods = (e.ctrlKey ? "c" : "") + (e.shiftKey ? "s" : "") + (e.altKey ? "a" : "") + (e.metaKey ? "m" : "");
+    const key = { key: e.key, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey };
     if (el.hasAttribute("data-j2-call-keydown")) {
-      boundAction(el, "keydown", { k: e.key, m: mods });
+      boundAction(el, "keydown", key);
       return;
     }
-    dispatch(el, "keydown", valueOf(el), { k: e.key, m: mods });
+    dispatch(el, "keydown", valueOf(el), key);
   });
 
   // The browser's own submit never happens; fields travel URL-encoded, file inputs excluded.

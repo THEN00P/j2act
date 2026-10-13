@@ -39,7 +39,7 @@ class DataPrimitivesTest {
       assertTrue(h.click(add).isEmpty(), "2 is still small");
       List<Map<String, String>> third = h.click(add);
       assertEquals(1, third.size());
-      assertTrue(third.get(0).get("h").contains("big"));
+      assertTrue(third.get(0).get("html").contains("big"));
     }
   }
 
@@ -89,7 +89,7 @@ class DataPrimitivesTest {
       int themeBefore = themeRenders.get();
       List<Map<String, String>> patches = h.click(Harness.clickOn(h.html, "bigger"));
       assertEquals(1, patches.size(), patches.toString());
-      assertTrue(patches.get(0).get("h").contains("size 13"));
+      assertTrue(patches.get(0).get("html").contains("size 13"));
       assertEquals(themeBefore, themeRenders.get(), "theme slice did not change");
 
       String other = h.engine.serve("/").html();
@@ -257,7 +257,7 @@ class DataPrimitivesTest {
     try (Harness h = new Harness(SharedPage::new)) {
       String html = h.load();
       h.connect();
-      String page = h.click(Harness.clickOn(html, "hide first")).get(0).get("h");
+      String page = h.click(Harness.clickOn(html, "hide first")).get(0).get("html");
       assertFalse(page.contains("first rows"), page);
       assertTrue(page.contains("second rows(a)#1"), "no refetch on hand-over: " + page);
 

@@ -20,7 +20,7 @@ describe("Clients", () => {
     it("turns callbacks into functions that call Java", () => {
       const props = clients.revive('{"onPick":{"$fn":"h9"}}') as { onPick: (...args: unknown[]) => void };
       props.onPick(1, "two");
-      expect(sent).toEqual([{ t: "cb", h: "h9", v: '[1,"two"]' }]);
+      expect(sent).toEqual([{ type: "callback", handler: "h9", args: '[1,"two"]' }]);
     });
 
     it("finds slots and makes snapshots", () => {
@@ -34,24 +34,25 @@ describe("Clients", () => {
     it("sends an UploadTarget's blob through a callback", () => {
       const props = clients.revive('{"to":{"$upload":"h10"}}') as { to: { send(b: Blob, n?: string): Promise<void> } };
       props.to.send(new Blob(["abc"], { type: "text/plain" }), "a.txt");
-      expect(sent).toEqual([{ t: "cb", h: "h10", v: "[]", fi: "1", fn: "a.txt", fs: "3", ft: "text/plain" }]);
+      expect(sent).toEqual([{ type: "callback", handler: "h10", args: "[]", fileId: "1", fileName: "a.txt", fileSize: 3,
+        fileType: "text/plain" }]);
     });
 
     it("tracks live content, and reports it once it left the document", () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      const root = clients.revive('{"$live":"<div data-j2s=\\"a7\\">x</div>"}') as Element;
-      expect(root.getAttribute("data-j2s")).toBe("a7");
+      const root = clients.revive('{"$live":"<div data-j2-scope=\\"a7\\">x</div>"}') as Element;
+      expect(root.getAttribute("data-j2-scope")).toBe("a7");
       clients.anchorGone("a7");
       clients.anchorGone("a7");
-      expect(sent).toEqual([{ t: "lg", s: "a7" }]);
+      expect(sent).toEqual([{ type: "liveGone", anchor: "a7" }]);
       warn.mockRestore();
     });
   });
 
   it("answers a call for a client that is not mounted", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    clients.call({ t: "ca", i: "5", c: "j2c-x", n: "play", a: "[]" });
-    expect(sent).toEqual([{ t: "cr", i: "5", ok: "0", e: "AbortError: the client is not mounted" }]);
+    clients.call({ type: "clientCall", id: "5", client: "j2c-x", action: "play", args: "[]" });
+    expect(sent).toEqual([{ type: "callResult", id: "5", ok: false, error: "AbortError: the client is not mounted" }]);
     warn.mockRestore();
   });
 
@@ -61,8 +62,8 @@ describe("Clients", () => {
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
     clients.reply("2", true, cyclic);
-    expect(sent[0]).toEqual({ t: "cr", i: "1", ok: "1", v: "null" });
-    expect(sent[1]).toMatchObject({ t: "cr", i: "2", ok: "0", e: expect.stringMatching(/^TypeError: /) });
+    expect(sent[0]).toEqual({ type: "callResult", id: "1", ok: true, value: "null" });
+    expect(sent[1]).toMatchObject({ type: "callResult", id: "2", ok: false, error: expect.stringMatching(/^TypeError: /) });
     warn.mockRestore();
   });
 
@@ -87,7 +88,7 @@ describe("Clients", () => {
     const next = fresh('<div id="c" data-j2-client="j2c-1"><div data-j2-slot="gone"></div></div>');
     clients.sync(el, next);
     clients.sync(el, next);
-    expect(sent).toEqual([{ t: "ce", c: "j2c-1", e: "slot gone left the document, so it stopped updating" }]);
+    expect(sent).toEqual([{ type: "clientError", client: "j2c-1", error: "slot gone left the document, so it stopped updating" }]);
     warn.mockRestore();
   });
 

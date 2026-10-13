@@ -58,7 +58,7 @@ class CounterAppTest {
     Client client = connect();
     String patch = client.event(find(client.html, "data-j2-click=\"([^\"]+)\"[^>]*>A: 0"), "");
     assertTrue(patch.contains("A: 1"), patch);
-    assertTrue(patch.contains("\"h\":\"<button"), "expected a counter-sized patch, got " + patch);
+    assertTrue(patch.contains("\"html\":\"<button"), "expected a counter-sized patch, got " + patch);
     assertFalse(patch.contains("B: 0"), patch);
     client.close();
   }
@@ -67,9 +67,9 @@ class CounterAppTest {
   void searchInputRefetchesAndPatchesTheFilteredList() throws Exception {
     Client client = connect();
     String handler = find(client.html, "id=\"search\"[^>]*data-j2-input=\"([^\"]+)\"");
-    client.send("{\"t\":\"ev\",\"h\":\"" + handler + "\",\"v\":\"hop\",\"a\":\"1\"}");
+    client.send("{\"type\":\"event\",\"handler\":\"" + handler + "\",\"value\":\"hop\",\"id\":\"1\"}");
     String patch = client.await(m -> m.contains("Grace Hopper</li>") && !m.contains("Ada Lovelace"));
-    assertTrue(patch.contains("\"t\":\"patch\""), patch);
+    assertTrue(patch.contains("\"type\":\"patch\""), patch);
     client.close();
   }
 
@@ -77,7 +77,7 @@ class CounterAppTest {
   void formSubmitArrivesAsDecodedFields() throws Exception {
     Client client = connect();
     String handler = find(client.html, "id=\"greet\"[^>]*data-j2-submit=\"([^\"]+)\"");
-    client.send("{\"t\":\"ev\",\"h\":\"" + handler + "\",\"v\":\"name=Grace+H&loud=yes\",\"a\":\"7\"}");
+    client.send("{\"type\":\"event\",\"handler\":\"" + handler + "\",\"value\":\"name=Grace+H&loud=yes\",\"id\":\"7\"}");
     client.await(m -> m.contains("HELLO, GRACE H!"));
     client.close();
   }
@@ -95,7 +95,7 @@ class CounterAppTest {
     int listenersBefore = bus.listenerCount();
     int sessionsBefore = j2Act.sessionCount();
     Client client = connect();
-    client.send("{\"t\":\"bye\"}");
+    client.send("{\"type\":\"bye\"}");
     long deadline = System.currentTimeMillis() + 5000;
     while (System.currentTimeMillis() < deadline && bus.listenerCount() > listenersBefore) {
       Thread.sleep(20);
@@ -118,9 +118,9 @@ class CounterAppTest {
     client.socket = http.newWebSocketBuilder()
       .buildAsync(URI.create("ws://localhost:" + port + "/_j2act/ws"), client)
       .get(5, TimeUnit.SECONDS);
-    client.send("{\"t\":\"hello\",\"sid\":\"" + find(html, "name=\"j2-session\" content=\"([^\"]+)\"")
-      + "\",\"tok\":\"" + find(html, "name=\"j2-token\" content=\"([^\"]+)\"") + "\"}");
-    client.await(m -> m.contains("\"t\":\"ok\""));
+    client.send("{\"type\":\"hello\",\"session\":\"" + find(html, "name=\"j2-session\" content=\"([^\"]+)\"")
+      + "\",\"token\":\"" + find(html, "name=\"j2-token\" content=\"([^\"]+)\"") + "\"}");
+    client.await(m -> m.contains("\"type\":\"ready\""));
     return client;
   }
 
@@ -161,10 +161,10 @@ class CounterAppTest {
     String event(String handlerId, String value) throws Exception {
       int from = messages.size();
       String a = String.valueOf(++ack + 1000);
-      send("{\"t\":\"ev\",\"h\":\"" + handlerId + "\",\"v\":\"" + value + "\",\"a\":\"" + a + "\"}");
-      await(m -> m.contains("\"t\":\"ack\"") && m.contains("\"a\":\"" + a + "\""));
+      send("{\"type\":\"event\",\"handler\":\"" + handlerId + "\",\"value\":\"" + value + "\",\"id\":\"" + a + "\"}");
+      await(m -> m.contains("\"type\":\"ack\"") && m.contains("\"id\":\"" + a + "\""));
       for (String m : messages.subList(from, messages.size())) {
-        if (m.contains("\"t\":\"patch\"")) {
+        if (m.contains("\"type\":\"patch\"")) {
           return m;
         }
       }

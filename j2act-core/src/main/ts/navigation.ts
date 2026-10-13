@@ -15,7 +15,7 @@ export function createNavigation(send: Send, base: string, preloadByDefault: boo
   function go(url: URL, mode: NavMode): void {
     history.replaceState({ j2: 1, y: window.scrollY }, "");
     pendingHash = url.hash;
-    send({ t: "nav", u: url.pathname + url.search, m: mode });
+    send({ type: "navigate", url: url.pathname + url.search, mode: mode });
   }
 
   function inApp(url: URL): boolean {
@@ -45,7 +45,7 @@ export function createNavigation(send: Send, base: string, preloadByDefault: boo
       return;
     }
     preloadedAt.set(u, Date.now());
-    send({ t: "pre", u: u });
+    send({ type: "preload", url: u });
   }
 
   return {
@@ -93,7 +93,7 @@ export function createNavigation(send: Send, base: string, preloadByDefault: boo
 
       window.addEventListener("popstate", () => {
         pendingHash = location.hash;
-        send({ t: "nav", u: location.pathname + location.search, m: "pop" });
+        send({ type: "navigate", url: location.pathname + location.search, mode: "pop" });
       });
     },
 

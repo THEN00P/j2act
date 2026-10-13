@@ -5,12 +5,18 @@ public final class KeyEvent {
 
   private final String key;
   private final String value;
-  private final String modifiers;
+  private final boolean ctrl;
+  private final boolean shift;
+  private final boolean alt;
+  private final boolean meta;
 
-  KeyEvent(String key, String value, String modifiers) {
+  KeyEvent(String key, String value, boolean ctrl, boolean shift, boolean alt, boolean meta) {
     this.key = key == null ? "" : key;
     this.value = value == null ? "" : value;
-    this.modifiers = modifiers == null ? "" : modifiers;
+    this.ctrl = ctrl;
+    this.shift = shift;
+    this.alt = alt;
+    this.meta = meta;
   }
 
   /** The DOM key name, e.g. "Enter", "Escape", "a". */
@@ -24,18 +30,18 @@ public final class KeyEvent {
   }
 
   public boolean ctrl() {
-    return modifiers.indexOf('c') >= 0;
+    return ctrl;
   }
 
   public boolean shift() {
-    return modifiers.indexOf('s') >= 0;
+    return shift;
   }
 
   public boolean alt() {
-    return modifiers.indexOf('a') >= 0;
+    return alt;
   }
 
   public boolean meta() {
-    return modifiers.indexOf('m') >= 0;
+    return meta;
   }
 }

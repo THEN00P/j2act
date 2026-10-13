@@ -9,7 +9,7 @@ import java.util.Map;
 
 /**
  * Walks one component's tree to HTML. Each component renders with its own scope as
- * observer, so its reads subscribe only itself, and gets a data-j2s anchor on its root
+ * observer, so its reads subscribe only itself, and gets a data-j2-scope anchor on its root
  * element for targeted morphs (ADR 0003). Lane-only.
  */
 final class Renderer {
@@ -171,7 +171,7 @@ final class Renderer {
     out = document;
     session.recordHead(scope, head);
     out.append("<html");
-    attribute("data-j2s", scope.anchor);
+    attribute("data-j2-scope", scope.anchor);
     for (Map.Entry<String, String> attr : html.attributes.entrySet()) {
       attribute(attr.getKey(), attr.getValue());
     }
@@ -184,7 +184,7 @@ final class Renderer {
    */
   private void renderOutlet(Scope scope, ContainerTag<?> html) {
     out.append("<div");
-    attribute("data-j2s", scope.anchor);
+    attribute("data-j2-scope", scope.anchor);
     attribute("data-j2-outlet", "");
     attribute("style", "display:contents");
     out.append('>');
@@ -207,11 +207,11 @@ final class Renderer {
   private void renderTag(Scope scope, String path, Tag<?> tag, String anchor) {
     out.append('<').append(tag.name);
     if (anchor != null) {
-      attribute("data-j2s", anchor);
+      attribute("data-j2-scope", anchor);
     }
     String controlled = Html.controlled(tag);
     if (controlled != null) {
-      attribute("data-j2-ctl", controlled);
+      attribute("data-j2-controlled", controlled);
     }
     for (Map.Entry<String, String> attr : tag.attributes.entrySet()) {
       attribute(attr.getKey(), attr.getValue());

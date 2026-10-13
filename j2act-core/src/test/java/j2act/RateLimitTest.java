@@ -32,8 +32,8 @@ class RateLimitTest {
   private static boolean click(Harness h, String handler, int ack) {
     int from = h.conn.size();
     String a = String.valueOf(ack);
-    h.engine.onMessage(h.conn, Json.object("t", "ev", "h", handler, "v", "", "a", a));
-    return "1".equals(h.conn.await(from, m -> "ack".equals(m.get("t")) && a.equals(m.get("a"))).get("ok"));
+    h.engine.onMessage(h.conn, Json.object("type", "event", "handler", handler, "value", "", "id", a));
+    return "true".equals(h.conn.await(from, m -> "ack".equals(m.get("type")) && a.equals(m.get("id"))).get("ok"));
   }
 
   private static Exchange as(String user) {
@@ -78,7 +78,7 @@ class RateLimitTest {
       h.connect();
       String add = Harness.clickOn(h.html, "add");
       for (int i = 1; i <= 60 && !h.conn.closed; i++) {
-        h.engine.onMessage(h.conn, Json.object("t", "ev", "h", add, "v", "", "a", String.valueOf(i)));
+        h.engine.onMessage(h.conn, Json.object("type", "event", "handler", add, "value", "", "id", String.valueOf(i)));
       }
       assertTrue(h.conn.closed);
     }
@@ -89,7 +89,7 @@ class RateLimitTest {
     try (Harness h = new Harness(Clicks::new, b -> b.withMaxFrameSize(1000))) {
       h.load();
       h.connect();
-      h.engine.onMessage(h.conn, Json.object("t", "ev", "h", "x", "v", "y".repeat(2000), "a", "1"));
+      h.engine.onMessage(h.conn, Json.object("type", "event", "handler", "x", "value", "y".repeat(2000), "id", "1"));
       assertTrue(h.conn.closed);
     }
   }
@@ -100,10 +100,10 @@ class RateLimitTest {
       h.load();
       h.connect();
       int from = h.conn.size();
-      h.engine.onMessage(h.conn, Json.object("t", "ev", "h", Harness.handlerOn(h.html, "change", "file"), "v", "",
-        "a", "1", "fi", "f", "fn", "a.txt", "fs", "3", "ft", "text/plain"));
-      Map<String, String> up = h.conn.await(from, m -> "up".equals(m.get("t")));
-      String token = up.get("u").substring(J2Act.UPLOAD_PATH.length());
+      h.engine.onMessage(h.conn, Json.object("type", "event", "handler", Harness.handlerOn(h.html, "change", "file"), "value", "",
+        "id", "1", "fileId", "f", "fileName", "a.txt", "fileSize", "3", "fileType", "text/plain"));
+      Map<String, String> up = h.conn.await(from, m -> "upload".equals(m.get("type")));
+      String token = up.get("url").substring(J2Act.UPLOAD_PATH.length());
       Exchange csrf = Exchange.of(Collections.emptyMap(), Collections.singletonMap("X-J2-Token", List.of(h.token)));
       int[] statuses = new int[3];
       for (int i = 0; i < 3; i++) {

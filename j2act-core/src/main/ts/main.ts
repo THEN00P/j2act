@@ -18,7 +18,7 @@ import { runWeb } from "./web.ts";
  */
 
 /** One handler per server message type; a type left out does not compile. */
-type Handlers = { [T in ServerMessage["t"]]: (m: Extract<ServerMessage, { t: T }>) => void };
+type Handlers = { [T in ServerMessage["type"]]: (m: Extract<ServerMessage, { type: T }>) => void };
 
 function start(): void {
   const sid = meta(document, "j2-session");
@@ -36,7 +36,7 @@ function start(): void {
     () => !leaving && !remounting && retained.phase !== "paused");
   const send = (message: ClientMessage) => connection.send(message);
   const pending = createPending();
-  const uploads = createUploads(send, () => connection.tok);
+  const uploads = createUploads(send, () => connection.token);
   const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
   const clients = createClients({ send: send, uploads: uploads, morphSlot: (live, html) => morpher.slot(live, html) });
   const navigation = createNavigation(send, base, meta(document, "j2-preload") === "intent");
@@ -50,48 +50,48 @@ function start(): void {
   });
 
   const handlers: Handlers = {
-    ok: () => {
+    ready: () => {
       connection.opened();
       retained.connected();
     },
     patch: (m) => {
-      if (!morpher.patch(m.s, m.h, m.r === "1")) {
-        clients.anchorGone(m.s);
+      if (!morpher.patch(m.anchor, m.html, m.root === true)) {
+        clients.anchorGone(m.anchor);
       }
       clients.scan();
     },
-    head: (m) => morpher.head(m.h),
-    url: (m) => navigation.landed(m.u, m.m),
-    go: (m) => location.assign(m.u),
-    dl: (m) => download(m.u),
-    up: (m) => uploads.upload(m.f, m.u),
-    upx: (m) => uploads.refused(m.f, m.e),
+    head: (m) => morpher.head(m.html),
+    url: (m) => navigation.landed(m.url, m.mode),
+    load: (m) => location.assign(m.url),
+    download: (m) => download(m.url),
+    upload: (m) => uploads.upload(m.file, m.url),
+    uploadRefused: (m) => uploads.refused(m.file, m.error),
     // A window() call from Java, after the patch it came with.
-    wa: (m) => {
+    windowCall: (m) => {
       let result;
       try {
-        result = runWeb(JSON.parse(m.w));
+        result = runWeb(JSON.parse(m.call));
       } catch (e) {
-        clients.reply(m.i, false, e);
+        clients.reply(m.id, false, e);
         return;
       }
-      result.then((v) => clients.reply(m.i, true, v), (e) => clients.reply(m.i, false, e));
+      result.then((v) => clients.reply(m.id, true, v), (e) => clients.reply(m.id, false, e));
     },
-    ca: (m) => clients.call(m),
-    ack: (m) => pending.ack(m.a),
+    clientCall: (m) => clients.call(m),
+    ack: (m) => pending.ack(m.id),
     expired: () => {
       if (retained.expired()) {
         remount();
       }
     },
-    paused: (m) => retained.paused(m.s === "1"),
-    pausex: () => retained.refused(),
-    rp: () => retained.requested(),
-    mods: (m) => clients.reimport(m.m)
+    paused: (m) => retained.paused(m.saved === true),
+    pauseRefused: () => retained.refused(),
+    pauseRequested: () => retained.requested(),
+    modules: (m) => clients.reimport(m.modules)
   };
 
   function onMessage(m: ServerMessage): void {
-    (handlers[m.t] as ((m: ServerMessage) => void) | undefined)?.(m);
+    (handlers[m.type] as ((m: ServerMessage) => void) | undefined)?.(m);
   }
 
   // ---- session lifetime (ADR 0010)
@@ -103,7 +103,7 @@ function start(): void {
     remounting = true;
     connection.close();
     // The old page's token lets the server restore its Retained State, if it kept a snapshot (ADR 0026).
-    const tok = connection.tok;
+    const tok = connection.token;
     fetch(location.href, { credentials: "same-origin", headers: tok ? { "X-J2-Restore": tok } : {} })
       .then((r) => r.text())
       .then((html) => {
@@ -112,7 +112,7 @@ function start(): void {
         const tok = meta(doc, "j2-token");
         document.querySelector<HTMLMetaElement>('meta[name="j2-session"]')!.content = sid!;
         document.querySelector<HTMLMetaElement>('meta[name="j2-token"]')!.content = tok!;
-        document.documentElement.setAttribute("data-j2s", doc.documentElement.getAttribute("data-j2s")!);
+        document.documentElement.setAttribute("data-j2-scope", doc.documentElement.getAttribute("data-j2-scope")!);
         document.title = doc.title;
         pending.clear();
         morpher.body(doc.body);
@@ -138,7 +138,7 @@ function start(): void {
   window.addEventListener("pagehide", () => {
     if (connection.ready) {
       leaving = true;
-      connection.sendIfReady({ t: "bye" });
+      connection.sendIfReady({ type: "bye" });
     }
   });
 

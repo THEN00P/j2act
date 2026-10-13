@@ -72,7 +72,7 @@ class RetainedRoutingTest {
     try (Harness h = harness(storage)) {
       h.load("/", Exchange.empty());
       h.connect();
-      h.engine.onMessage(h.conn, Json.object("t", "pre", "u", "/form"));
+      h.engine.onMessage(h.conn, Json.object("type", "preload", "url", "/form"));
       Thread.sleep(100);
       typeAfterNav(h, h.nav("/form"), "Ada");
       String old = RetainedStateTest.evict(h, storage);

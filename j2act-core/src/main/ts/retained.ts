@@ -12,7 +12,7 @@ export type Phase = "running" | "deferring" | "pausing" | "paused";
 const RETRY_MS = 10000;
 
 export interface RetainedOptions {
-  /** Sends if the socket is up; a pause asked for while it is down goes out with the next "ok". */
+  /** Sends if the socket is up; a pause asked for while it is down goes out with the next "ready". */
   sendIfReady: (message: ClientMessage) => void;
   /** The socket is about to close: queue from now on. */
   stopSending: () => void;
@@ -106,7 +106,7 @@ export function createRetained(options: RetainedOptions) {
       if (deferral === controller) {
         deferral = null;
         current = "pausing";
-        send(); // not connected: "ok" sends it once the socket is back
+        send(); // not connected: "ready" sends it once the socket is back
       }
     }, (e) => {
       if (deferral === controller) {
@@ -117,7 +117,7 @@ export function createRetained(options: RetainedOptions) {
   }
 
   function send(): void {
-    options.sendIfReady(byHiding ? { t: "pause", a: "1" } : { t: "pause" });
+    options.sendIfReady(byHiding ? { type: "pause", automatic: true } : { type: "pause" });
   }
 
   function cancel(reason: string): void {

@@ -43,12 +43,12 @@ public final class WebPath {
   // ---- steps: nothing runs yet
 
   public WebPath get(String name) {
-    return step(List.of("g", name));
+    return step(List.of("get", name));
   }
 
   /** An operation whose result is navigated further, such as getElementById. */
   public WebPath call(String name, Object... args) {
-    return step(java.util.Arrays.asList("c", name, plain(java.util.Arrays.asList(args))));
+    return step(java.util.Arrays.asList("call", name, plain(java.util.Arrays.asList(args))));
   }
 
   private WebPath step(Object step) {
@@ -87,20 +87,20 @@ public final class WebPath {
   private <T> CompletionStage<T> run(String kind, String name, List<Object> args, int success, int failure,
                                      String shape, Decoder<T> decoder) {
     Map<String, Object> call = new LinkedHashMap<>();
-    call.put("p", steps);
-    call.put("k", kind);
+    call.put("path", steps);
+    call.put("kind", kind);
     if (name != null) {
-      call.put("n", name);
+      call.put("name", name);
     }
-    call.put("a", plain(args));
+    call.put("args", plain(args));
     if (success >= 0) {
-      call.put("cb", failure >= 0 ? List.of(success, failure) : List.of(success));
+      call.put("callbacks", failure >= 0 ? List.of(success, failure) : List.of(success));
     }
     StringBuilder json = new StringBuilder();
     Json.write(call, json);
     if (shape != null) {
       json.setLength(json.length() - 1);
-      json.append(",\"r\":").append(shape).append('}');
+      json.append(",\"shape\":").append(shape).append('}');
     }
     String what = describe(name);
     Decoder<Object> decode = (Decoder<Object>) decoder;

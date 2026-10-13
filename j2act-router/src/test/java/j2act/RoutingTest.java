@@ -178,7 +178,7 @@ class RoutingTest {
   @Test
   void softNavigationKeepsTheSharedLayoutAndItsState() {
     try (Harness h = admin("/admin")) {
-      String layoutPatch = h.click(Harness.clickOn(h.html, "layout clicks 0")).get(0).get("h");
+      String layoutPatch = h.click(Harness.clickOn(h.html, "layout clicks 0")).get(0).get("html");
       assertTrue(layoutPatch.contains("layout clicks 1"), layoutPatch);
 
       List<Map<String, String>> nav = h.nav("/admin/settings");
@@ -200,7 +200,7 @@ class RoutingTest {
 
       List<Map<String, String>> nav = h.nav("/admin/users/2");
       h.awaitPatch(0, p -> p.contains("user 2"));
-      String latest = h.conn.since(0, m -> "patch".equals(m.get("t")) && m.get("h").contains("user 2")).get(0).get("h");
+      String latest = h.conn.since(0, m -> "patch".equals(m.get("type")) && m.get("html").contains("user 2")).get(0).get("html");
       assertTrue(latest.contains("visits 1"), "page State survives a param change: " + latest);
       assertEquals(loadsBefore + 1, userLoads.get());
       assertEquals("/admin/users/2", Harness.last(nav, "url"));
@@ -225,8 +225,8 @@ class RoutingTest {
     try (Harness h = admin("/admin")) {
       int from = h.conn.size();
       h.click(Harness.clickOn(h.html, "go home"));
-      Map<String, String> url = h.conn.await(from, m -> "url".equals(m.get("t")));
-      assertEquals("/", url.get("u"));
+      Map<String, String> url = h.conn.await(from, m -> "url".equals(m.get("type")));
+      assertEquals("/", url.get("url"));
       h.awaitPatch(from, p -> p.contains("<h1>Home</h1>"));
     }
   }
@@ -235,7 +235,7 @@ class RoutingTest {
   void unmatchedUrlsAreLeftToTheBrowser() {
     try (Harness h = admin("/admin")) {
       List<Map<String, String>> nav = h.nav("/api/export.csv");
-      assertEquals("/api/export.csv", nav.stream().filter(m -> "go".equals(m.get("t"))).findFirst().get().get("u"));
+      assertEquals("/api/export.csv", nav.stream().filter(m -> "load".equals(m.get("type"))).findFirst().get().get("url"));
     }
   }
 
@@ -256,10 +256,10 @@ class RoutingTest {
       LOGGED_IN.remove("s1");
       int from = h.conn.size();
       h.click(clickId);
-      Map<String, String> url = h.conn.await(from, m -> "url".equals(m.get("t")));
-      assertEquals("/login", url.get("u"));
-      assertEquals("replace", url.get("m"));
-      assertEquals("0", h.conn.since(from, m -> "ack".equals(m.get("t"))).get(0).get("ok"),
+      Map<String, String> url = h.conn.await(from, m -> "url".equals(m.get("type")));
+      assertEquals("/login", url.get("url"));
+      assertEquals("replace", url.get("mode"));
+      assertEquals("false", h.conn.since(from, m -> "ack".equals(m.get("type"))).get(0).get("ok"),
         "the handler belonged to the admin layout, which no longer renders");
     }
   }
@@ -269,7 +269,7 @@ class RoutingTest {
     try (Harness h = admin("/admin")) {
       h.nav("/admin/settings");
       List<Map<String, String>> back = h.nav("/admin", "pop");
-      assertEquals("pop", back.stream().filter(m -> "url".equals(m.get("t"))).findFirst().get().get("m"));
+      assertEquals("pop", back.stream().filter(m -> "url".equals(m.get("type"))).findFirst().get().get("mode"));
     }
   }
 

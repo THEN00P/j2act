@@ -102,10 +102,10 @@ class TomcatMountTest {
     String html = get("/app/").body();
     Client client = connect(html, null);
     String handler = find(html, "data-j2-click=\"([^\"]+)\">Count 0");
-    client.send("{\"t\":\"ev\",\"h\":\"" + handler + "\",\"a\":\"1\"}");
-    String patch = client.await(m -> m.contains("\"t\":\"patch\""));
-    assertTrue(patch.contains("Count 1") && patch.contains("\"h\":\"<button"), patch);
-    client.await(m -> m.contains("\"t\":\"ack\"") && m.contains("\"ok\":\"1\""));
+    client.send("{\"type\":\"event\",\"handler\":\"" + handler + "\",\"id\":\"1\"}");
+    String patch = client.await(m -> m.contains("\"type\":\"patch\""));
+    assertTrue(patch.contains("Count 1") && patch.contains("\"html\":\"<button"), patch);
+    client.await(m -> m.contains("\"type\":\"ack\"") && m.contains("\"ok\":true"));
     client.socket.sendClose(WebSocket.NORMAL_CLOSURE, "done");
   }
 
@@ -114,7 +114,7 @@ class TomcatMountTest {
     String html = get("/app/").body();
     Client client = connect(html, "https://evil.example");
     client.awaitClosed();
-    assertFalse(client.messages.stream().anyMatch(m -> m.contains("\"t\":\"ok\"")), client.messages.toString());
+    assertFalse(client.messages.stream().anyMatch(m -> m.contains("\"type\":\"ready\"")), client.messages.toString());
   }
 
   @Test
@@ -139,10 +139,10 @@ class TomcatMountTest {
     }
     client.socket = builder.buildAsync(URI.create("ws://localhost:" + port + "/app/_j2act/ws"), client)
       .get(5, TimeUnit.SECONDS);
-    client.send("{\"t\":\"hello\",\"sid\":\"" + find(html, "name=\"j2-session\" content=\"([^\"]+)\"")
-      + "\",\"tok\":\"" + find(html, "name=\"j2-token\" content=\"([^\"]+)\"") + "\"}");
+    client.send("{\"type\":\"hello\",\"session\":\"" + find(html, "name=\"j2-session\" content=\"([^\"]+)\"")
+      + "\",\"token\":\"" + find(html, "name=\"j2-token\" content=\"([^\"]+)\"") + "\"}");
     if (origin == null) {
-      client.await(m -> m.contains("\"t\":\"ok\""));
+      client.await(m -> m.contains("\"type\":\"ready\""));
     }
     return client;
   }

@@ -213,7 +213,7 @@ public final class J2Act implements AutoCloseable {
       if (moved.isEmpty()) {
         return;
       }
-      StringBuilder b = new StringBuilder("{\"t\":\"mods\",\"m\":");
+      StringBuilder b = new StringBuilder("{\"type\":\"modules\",\"modules\":");
       Json.write(moved, b);
       String message = b.append('}').toString();
       for (Session session : sessions.values()) {
@@ -426,60 +426,61 @@ public final class J2Act implements AutoCloseable {
       connection.close();
       return;
     }
-    String type = message.getOrDefault("t", "");
+    String type = message.getOrDefault("type", "");
     if ("hello".equals(type)) {
-      hello(connection, message.get("sid"), message.get("tok"));
+      hello(connection, message.get("session"), message.get("token"));
       return;
     }
     Session session = byConnection.get(connection);
     if (session == null) {
-      connection.send(Json.object("t", "expired"));
+      connection.send(Json.object("type", "expired"));
       connection.close();
       return;
     }
-    boolean client = "cb".equals(type) || "cr".equals(type) || "ce".equals(type) || "lg".equals(type);
-    if (("ev".equals(type) || "nav".equals(type) || client) && !admit(session, connection)) {
-      if ("ev".equals(type)) {
+    boolean client = "callback".equals(type) || "callResult".equals(type) || "clientError".equals(type)
+      || "liveGone".equals(type);
+    if (("event".equals(type) || "navigate".equals(type) || client) && !admit(session, connection)) {
+      if ("event".equals(type)) {
         // The client's pending UI reverts; the event is gone (ADR 0013).
-        connection.send(Json.object("t", "ack", "a", message.get("a"), "ok", "0"));
+        connection.send(Json.object("type", "ack", "id", message.get("id"), "ok", false));
       }
       return;
     }
-    if ("ev".equals(type)) {
-      String ack = message.get("a");
+    if ("event".equals(type)) {
+      String ack = message.get("id");
       boolean[] ok = new boolean[1];
       session.lane.execute(session.task(
         () -> ok[0] = session.dispatch(message),
-        () -> session.send(Json.object("t", "ack", "a", ack, "ok", ok[0] ? "1" : "0"))));
-    } else if ("cb".equals(type)) {
+        () -> session.send(Json.object("type", "ack", "id", ack, "ok", ok[0]))));
+    } else if ("callback".equals(type)) {
       // A client callback into Java: same identity re-check and stale-id rejection as events.
       session.post(() -> session.dispatch(message));
-    } else if ("cr".equals(type)) {
+    } else if ("callResult".equals(type)) {
       session.post(() -> session.clients.onResult(message));
-    } else if ("ce".equals(type)) {
+    } else if ("clientError".equals(type)) {
       session.post(() -> session.clients.onError(message));
-    } else if ("lg".equals(type)) {
-      session.post(() -> session.clients.onLiveGone(message.get("s")));
-    } else if ("pre".equals(type)) {
-      String target = appUrl(message.get("u"));
+    } else if ("liveGone".equals(type)) {
+      session.post(() -> session.clients.onLiveGone(message.get("anchor")));
+    } else if ("preload".equals(type)) {
+      String target = appUrl(message.get("url"));
       if (target != null && admit(session, connection)) {
         session.post(() -> session.preload(target));
       }
-    } else if ("nav".equals(type)) {
-      String target = appUrl(message.get("u"));
+    } else if ("navigate".equals(type)) {
+      String target = appUrl(message.get("url"));
       if (target != null) {
-        String mode = "pop".equals(message.get("m")) ? "pop" : "push";
+        String mode = "pop".equals(message.get("mode")) ? "pop" : "push";
         session.post(() -> session.onNavigate(target, mode));
       }
     } else if ("pause".equals(type)) {
       // j2act.pause() (ADR 0026). An automatic pause gives way while something is in flight, and the client tries again later.
-      boolean automatic = "1".equals(message.get("a"));
+      boolean automatic = "true".equals(message.get("automatic"));
       session.post(() -> {
         if (sessions.get(session.id) != session) {
           return; // already evicted or paused: its farewell is on the way
         }
         if (automatic && (session.clients.busy() || transferring(session))) {
-          session.send(Json.object("t", "pausex"));
+          session.send(Json.object("type", "pauseRefused"));
         } else {
           retire(session, "paused");
         }
@@ -527,7 +528,7 @@ public final class J2Act implements AutoCloseable {
     Session session = sid == null ? null : sessions.get(sid);
     if (session == null || session.disposed || token == null
       || !MessageDigest.isEqual(token.getBytes(StandardCharsets.UTF_8), session.token.getBytes(StandardCharsets.UTF_8))) {
-      connection.send(Json.object("t", "expired"));
+      connection.send(Json.object("type", "expired"));
       connection.close();
       return;
     }
@@ -589,7 +590,7 @@ public final class J2Act implements AutoCloseable {
       byConnection.values().removeIf(s -> s == session);
       // "paused" says whether there was anything to save, so j2act.resume() can tell a page that got nothing back.
       session.dispose(farewell.isEmpty() ? "" : "paused".equals(farewell)
-        ? Json.object("t", farewell, "s", saved ? "1" : "0") : Json.object("t", farewell));
+        ? Json.object("type", farewell, "saved", saved) : Json.object("type", farewell));
       done.complete(null);
     };
     session.lane.execute(() -> {

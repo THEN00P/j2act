@@ -41,9 +41,9 @@ class RetainedRestartTest {
       client.socket = http.newWebSocketBuilder()
         .buildAsync(URI.create("ws://localhost:" + port + "/_j2act/ws"), client)
         .get(5, TimeUnit.SECONDS);
-      client.send("{\"t\":\"hello\",\"sid\":\"" + CounterAppTest.find(html, "name=\"j2-session\" content=\"([^\"]+)\"")
-        + "\",\"tok\":\"" + token + "\"}");
-      client.await(m -> m.contains("\"t\":\"ok\""));
+      client.send("{\"type\":\"hello\",\"session\":\"" + CounterAppTest.find(html, "name=\"j2-session\" content=\"([^\"]+)\"")
+        + "\",\"token\":\"" + token + "\"}");
+      client.await(m -> m.contains("\"type\":\"ready\""));
       client.event(CounterAppTest.find(html, "id=\"draft\"[^>]*data-j2-change=\"([^\"]+)\""), "half-filled");
       client.await(m -> m.contains("Saved draft: half-filled"));
     }

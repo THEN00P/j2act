@@ -115,7 +115,7 @@ class RetainedStateTest {
 
       h.connect();
       type(h, "name", "Grace");
-      assertTrue(h.conn.since(0, m -> "patch".equals(m.get("t"))).stream().anyMatch(m -> m.get("h").contains("name=Grace;")),
+      assertTrue(h.conn.since(0, m -> "patch".equals(m.get("type"))).stream().anyMatch(m -> m.get("html").contains("name=Grace;")),
         "the restored session is live");
     }
   }
@@ -212,7 +212,7 @@ class RetainedStateTest {
       type(h, "name", "Ada");
       String old = h.token;
       int from = h.conn.size();
-      h.conn.await(from, m -> "expired".equals(m.get("t")));
+      h.conn.await(from, m -> "expired".equals(m.get("type")));
       assertTrue(storage.has(old), "the remount that expired triggers must find the snapshot");
       assertTrue(h.load("/", remount(old)).contains("name=Ada;"));
     }

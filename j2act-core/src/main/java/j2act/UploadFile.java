@@ -18,8 +18,12 @@ public final class UploadFile {
     this.contentType = contentType;
   }
 
-  /** From the wire fields a file input's change event carries (fi, fn, fs, ft), or null. */
-  static UploadFile fromWire(String id, String name, String size, String type) {
+  /** From the fields a file input's change event carries (fileId, fileName, fileSize, fileType), or null. */
+  static UploadFile fromWire(java.util.Map<String, String> message) {
+    String id = message.get("fileId");
+    String name = message.get("fileName");
+    String size = message.get("fileSize");
+    String type = message.get("fileType");
     if (id == null || name == null || size == null) {
       return null;
     }

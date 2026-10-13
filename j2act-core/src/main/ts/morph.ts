@@ -16,8 +16,8 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
         return false;
       }
       // Form state the render did not set is the user's: keep it (ADR 0013).
-      if ((name === "value" || name === "checked" || name === "selected") && el.hasAttribute("data-j2-ctl")) {
-        return el.getAttribute("data-j2-ctl")!.split(" ").indexOf(name) >= 0;
+      if ((name === "value" || name === "checked" || name === "selected") && el.hasAttribute("data-j2-controlled")) {
+        return el.getAttribute("data-j2-controlled")!.split(" ").indexOf(name) >= 0;
       }
       return true;
     },
@@ -58,12 +58,12 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
     patch(anchor: string, html: string, isRoot: boolean): boolean {
       if (isRoot) {
         const doc = new DOMParser().parseFromString(html, "text/html");
-        document.documentElement.setAttribute("data-j2s", anchor);
+        document.documentElement.setAttribute("data-j2-scope", anchor);
         head(doc.head.innerHTML);
         body(doc.body);
         return true;
       }
-      const el = document.querySelector('[data-j2s="' + anchor + '"]');
+      const el = document.querySelector('[data-j2-scope="' + anchor + '"]');
       if (!el) {
         return false;
       }

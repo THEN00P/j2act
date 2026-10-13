@@ -316,7 +316,7 @@ final class Session {
     if (disposed || connection == null) {
       return false;
     }
-    send(Json.object("t", "rp"));
+    send(Json.object("type", "pauseRequested"));
     return true;
   }
 
@@ -556,12 +556,12 @@ final class Session {
     Resolution resolution = resolve(url);
     if (resolution.match == null) {
       // No route here: let the browser load it and get the server's 404.
-      send(Json.object("t", "go", "u", engine.contextPath + resolution.url));
+      send(Json.object("type", "load", "url", engine.contextPath + resolution.url));
       return;
     }
     applyRoute(resolution);
     String finalMode = resolution.url.equals(url) ? mode : "pop".equals(mode) ? "replace" : mode;
-    heldUrl = Json.object("t", "url", "u", engine.contextPath + resolution.url, "m", finalMode);
+    heldUrl = Json.object("type", "url", "url", engine.contextPath + resolution.url, "mode", finalMode);
     hold = Hold.AWAITING_DATA;
     int seq = ++holdSeq;
     engine.later(this, engine.pendingMillis, () -> {
@@ -770,7 +770,8 @@ final class Session {
         if (!sending) {
           heldRenders.add(scope);
         } else {
-          send(Json.object("t", "patch", "s", scope.anchor, "r", scope == root ? "1" : null, "h", renderer.out.toString()));
+          send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope == root ? true : null,
+            "html", renderer.out.toString()));
           engine.stats.patches.incrementAndGet();
         }
       }
@@ -782,7 +783,7 @@ final class Session {
     String head = mergedHead();
     if (!head.equals(lastHead)) {
       lastHead = head;
-      send(Json.object("t", "head", "h", head));
+      send(Json.object("type", "head", "html", head));
     }
   }
 
@@ -990,8 +991,8 @@ final class Session {
   @SuppressWarnings("unchecked")
   boolean dispatch(Map<String, String> message) {
     recheckIdentity();
-    String handlerId = message.get("h");
-    String value = message.get("v");
+    String handlerId = message.get("handler");
+    String value = message.get("value");
     HandlerEntry entry = handlerId == null ? null : handlers.get(handlerId);
     if (entry == null || entry.scope.disposed) {
       engine.stats.rejectedEvents.incrementAndGet();
@@ -1011,16 +1012,18 @@ final class Session {
           ((Handler<SubmitEvent>) entry.handler).handle(new SubmitEvent(value));
           break;
         case "keydown":
-          ((Handler<KeyEvent>) entry.handler).handle(new KeyEvent(message.get("k"), value, message.get("m")));
+          ((Handler<KeyEvent>) entry.handler).handle(new KeyEvent(message.get("key"), value,
+            "true".equals(message.get("ctrlKey")), "true".equals(message.get("shiftKey")),
+            "true".equals(message.get("altKey")), "true".equals(message.get("metaKey"))));
           break;
         case "pointerdown":
         case "pointerup":
-          ((Handler<PointerEvent>) entry.handler).handle(new PointerEvent(message.get("pt"),
-            number(message.get("px")), number(message.get("py"))));
+          ((Handler<PointerEvent>) entry.handler).handle(new PointerEvent(message.get("pointerType"),
+            number(message.get("clientX")), number(message.get("clientY"))));
           break;
         default:
           ((Handler<ValueEvent>) entry.handler).handle(new ValueEvent(value,
-            UploadFile.fromWire(message.get("fi"), message.get("fn"), message.get("fs"), message.get("ft"))));
+            UploadFile.fromWire(message)));
       }
       return true;
     } catch (RouteException e) {
@@ -1112,7 +1115,7 @@ final class Session {
     connection = next;
     disconnectedAt = 0;
     lastActivity = engine.clock.millis();
-    send(Json.object("t", "ok"));
+    send(Json.object("type", "ready"));
   }
 
   void detach(Connection closed) {

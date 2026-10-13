@@ -55,7 +55,7 @@ describe("Retained", () => {
 
     release();
     await vi.waitFor(() => expect(retained.phase).toBe("pausing"));
-    expect(t.sent).toEqual([{ t: "pause" }]);
+    expect(t.sent).toEqual([{ type: "pause" }]);
 
     retained.paused(true);
     expect(await paused).toBe(true);
@@ -76,7 +76,7 @@ describe("Retained", () => {
     const remove = retained.onPausing(() => Promise.reject(new Error("never")));
     remove();
     retained.pause();
-    await vi.waitFor(() => expect(t.sent).toEqual([{ t: "pause" }]));
+    await vi.waitFor(() => expect(t.sent).toEqual([{ type: "pause" }]));
   });
 
   it("aborts the handlers' signal when resumed while deferring", async () => {
@@ -99,7 +99,7 @@ describe("Retained", () => {
     expect(t.sent).toEqual([]);
     t.ready = true;
     retained.connected();
-    expect(t.sent).toEqual([{ t: "pause" }]);
+    expect(t.sent).toEqual([{ type: "pause" }]);
   });
 
   it("resumes through a remount and reports whether the state came back", async () => {
@@ -137,12 +137,12 @@ describe("Retained", () => {
     retained.listen(document);
     hidden(true);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(t.sent).toEqual([{ t: "pause", a: "1" }]);
+    expect(t.sent).toEqual([{ type: "pause", automatic: true }]);
 
     retained.refused();
     expect(retained.phase).toBe("running");
     await vi.advanceTimersByTimeAsync(10000);
-    expect(t.sent).toEqual([{ t: "pause", a: "1" }, { t: "pause", a: "1" }]);
+    expect(t.sent).toEqual([{ type: "pause", automatic: true }, { type: "pause", automatic: true }]);
 
     retained.paused(true);
     hidden(false);
@@ -159,7 +159,7 @@ describe("Retained", () => {
     expect(t.sent).toEqual([]);
     t.busy = false;
     await vi.advanceTimersByTimeAsync(10000);
-    expect(t.sent).toEqual([{ t: "pause", a: "1" }]);
+    expect(t.sent).toEqual([{ type: "pause", automatic: true }]);
   });
 
   it("does not give way once pause() was called during an automatic pause", async () => {
@@ -170,6 +170,6 @@ describe("Retained", () => {
     await vi.advanceTimersByTimeAsync(1000);
     retained.pause();
     retained.refused();
-    expect(t.sent).toEqual([{ t: "pause", a: "1" }, { t: "pause" }]);
+    expect(t.sent).toEqual([{ type: "pause", automatic: true }, { type: "pause" }]);
   });
 });

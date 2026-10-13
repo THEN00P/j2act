@@ -98,8 +98,8 @@ class ClientTest {
       h.connect();
       String fn = (String) ((Map<?, ?>) props(h.html).get("onValue")).get("$fn");
       int from = h.conn.size();
-      h.send("t", "cb", "h", fn, "v", "[42]");
-      String patch = h.awaitPatch(from, html -> html.contains("value 42")).get("h");
+      h.send("type", "callback", "handler", fn, "args", "[42]");
+      String patch = h.awaitPatch(from, html -> html.contains("value 42")).get("html");
       assertTrue(patch.contains("legend 42"), "the slot re-renders with its owner: " + patch);
     }
   }
@@ -111,19 +111,19 @@ class ClientTest {
       h.connect();
       int from = h.conn.size();
       h.click(Harness.clickOn(h.html, "read"));
-      Map<String, String> call = h.conn.await(from, m -> "ca".equals(m.get("t")));
-      assertEquals("read", call.get("n"));
-      assertEquals("[]", call.get("a"));
-      assertEquals(Harness.find(h.html, "data-j2-client=\"([^\"]+)\""), call.get("c"));
+      Map<String, String> call = h.conn.await(from, m -> "clientCall".equals(m.get("type")));
+      assertEquals("read", call.get("action"));
+      assertEquals("[]", call.get("args"));
+      assertEquals(Harness.find(h.html, "data-j2-client=\"([^\"]+)\""), call.get("client"));
 
       int answered = h.conn.size();
-      h.send("t", "cr", "i", call.get("i"), "ok", "1", "v", "\"12 V\"");
+      h.send("type", "callResult", "id", call.get("id"), "ok", true, "value", "\"12 V\"");
       h.awaitPatch(answered, html -> html.contains("reading 12 V"));
 
       int again = h.conn.size();
       h.click(Harness.clickOn(h.html, "read"));
-      Map<String, String> second = h.conn.await(again, m -> "ca".equals(m.get("t")));
-      h.send("t", "cr", "i", second.get("i"), "ok", "0", "e", "NotAllowedError: denied");
+      Map<String, String> second = h.conn.await(again, m -> "clientCall".equals(m.get("type")));
+      h.send("type", "callResult", "id", second.get("id"), "ok", false, "error", "NotAllowedError: denied");
       h.awaitPatch(again, html -> html.contains("reading failed NotAllowedError"));
     }
   }
@@ -135,16 +135,16 @@ class ClientTest {
       h.connect();
       int from = h.conn.size();
       h.click(Harness.clickOn(h.html, "reset"));
-      Map<String, String> first = h.conn.await(from, m -> "ca".equals(m.get("t")));
-      String firstFn = Harness.find(first.get("a"), "\\{\"\\$fn\":\"([^\"]+)\"\\}");
+      Map<String, String> first = h.conn.await(from, m -> "clientCall".equals(m.get("type")));
+      String firstFn = Harness.find(first.get("args"), "\\{\"\\$fn\":\"([^\"]+)\"\\}");
       int second = h.conn.size();
       h.click(Harness.clickOn(h.html, "reset"));
-      Map<String, String> next = h.conn.await(second, m -> "ca".equals(m.get("t")));
-      String nextFn = Harness.find(next.get("a"), "\\{\"\\$fn\":\"([^\"]+)\"\\}");
+      Map<String, String> next = h.conn.await(second, m -> "clientCall".equals(m.get("type")));
+      String nextFn = Harness.find(next.get("args"), "\\{\"\\$fn\":\"([^\"]+)\"\\}");
 
-      h.send("t", "cb", "h", firstFn, "v", "[]");
+      h.send("type", "callback", "handler", firstFn, "args", "[]");
       int after = h.conn.size();
-      h.send("t", "cb", "h", nextFn, "v", "[]");
+      h.send("type", "callback", "handler", nextFn, "args", "[]");
       h.awaitPatch(after, html -> html.contains("resets 1"));
       assertEquals(1, h.engine.stats().rejectedEvents.get(), "the replaced callback is gone");
     }
@@ -156,10 +156,10 @@ class ClientTest {
       h.load();
       h.connect();
       String call = Harness.find(h.html, "data-j2-click=\"[^\"]+\" data-j2-call-click=\"([^\"]+)\"[^>]*>snap");
-      assertTrue(call.contains("&quot;n&quot;:&quot;read&quot;"), call);
+      assertTrue(call.contains("&quot;action&quot;:&quot;read&quot;"), call);
       String handler = Harness.clickOn(h.html, "snap");
       List<Map<String, String>> patches = h.fire(handler, "\"9 V\"");
-      assertTrue(patches.stream().anyMatch(p -> p.get("h").contains("reading 9 V")), patches.toString());
+      assertTrue(patches.stream().anyMatch(p -> p.get("html").contains("reading 9 V")), patches.toString());
     }
   }
 
@@ -170,7 +170,7 @@ class ClientTest {
       h.connect();
       String id = Harness.find(h.html, "data-j2-client=\"([^\"]+)\"");
       List<Map<String, String>> patches = h.click(Harness.clickOn(h.html, "relabel"));
-      String html = patches.get(patches.size() - 1).get("h");
+      String html = patches.get(patches.size() - 1).get("html");
       assertTrue(html.contains("data-j2-client=\"" + id + "\""), html);
       assertEquals("amps", props(html).get("label"));
     }
@@ -183,10 +183,10 @@ class ClientTest {
       h.connect();
       String target = (String) ((Map<?, ?>) props(h.html).get("export")).get("$upload");
       int from = h.conn.size();
-      h.send("t", "cb", "h", target, "v", "[]", "fi", "7", "fn", "reading.csv", "fs", "3", "ft", "text/csv");
-      Map<String, String> up = h.conn.await(from, m -> "up".equals(m.get("t")));
-      assertEquals("7", up.get("f"));
-      assertNotNull(up.get("u"));
+      h.send("type", "callback", "handler", target, "args", "[]", "fileId", "7", "fileName", "reading.csv", "fileSize", "3", "fileType", "text/csv");
+      Map<String, String> up = h.conn.await(from, m -> "upload".equals(m.get("type")));
+      assertEquals("7", up.get("file"));
+      assertNotNull(up.get("url"));
     }
   }
 
@@ -233,9 +233,9 @@ class ClientTest {
       h.connect();
       int from = h.conn.size();
       h.click(Harness.clickOn(h.html, "note plain"));
-      Map<String, String> call = h.conn.await(from, m -> "ca".equals(m.get("t")));
-      assertEquals("annotate", call.get("n"));
-      assertEquals("[{\"$html\":\"<span>plain 0</span>\"}]", call.get("a"));
+      Map<String, String> call = h.conn.await(from, m -> "clientCall".equals(m.get("type")));
+      assertEquals("annotate", call.get("action"));
+      assertEquals("[{\"$html\":\"<span>plain 0</span>\"}]", call.get("args"));
     }
   }
 
@@ -246,28 +246,28 @@ class ClientTest {
       h.connect();
       int from = h.conn.size();
       h.click(Harness.clickOn(h.html, "note live"));
-      Map<String, String> call = h.conn.await(from, m -> "ca".equals(m.get("t")));
-      String html = (String) ((Map<?, ?>) ((List<?>) Json.parse(call.get("a"))).get(0)).get("$live");
-      String anchor = Harness.find(html, "data-j2s=\"([^\"]+)\"");
+      Map<String, String> call = h.conn.await(from, m -> "clientCall".equals(m.get("type")));
+      String html = (String) ((Map<?, ?>) ((List<?>) Json.parse(call.get("args"))).get(0)).get("$live");
+      String anchor = Harness.find(html, "data-j2-scope=\"([^\"]+)\"");
       assertTrue(html.contains("badge 0"), html);
 
       // Its own State re-renders it, patched by its own anchor.
       List<Map<String, String>> patches = h.click(Harness.clickOn(html, "badge 0"));
-      assertTrue(patches.stream().anyMatch(p -> anchor.equals(p.get("s")) && p.get("h").contains("badge 1")),
+      assertTrue(patches.stream().anyMatch(p -> anchor.equals(p.get("anchor")) && p.get("html").contains("badge 1")),
         patches.toString());
 
       // The next call of the same action replaces it: the old one's handlers are gone.
       int again = h.conn.size();
       h.click(Harness.clickOn(h.html, "note live"));
-      Map<String, String> next = h.conn.await(again, m -> "ca".equals(m.get("t")));
-      String nextHtml = (String) ((Map<?, ?>) ((List<?>) Json.parse(next.get("a"))).get(0)).get("$live");
+      Map<String, String> next = h.conn.await(again, m -> "clientCall".equals(m.get("type")));
+      String nextHtml = (String) ((Map<?, ?>) ((List<?>) Json.parse(next.get("args"))).get(0)).get("$live");
       long rejected = h.engine.stats().rejectedEvents.get();
       h.click(Harness.clickOn(html, "badge 0"));
       assertEquals(rejected + 1, h.engine.stats().rejectedEvents.get());
 
       // When the browser reports it gone, the server stops patching it.
-      String nextAnchor = Harness.find(nextHtml, "data-j2s=\"([^\"]+)\"");
-      h.send("t", "lg", "s", nextAnchor);
+      String nextAnchor = Harness.find(nextHtml, "data-j2-scope=\"([^\"]+)\"");
+      h.send("type", "liveGone", "anchor", nextAnchor);
       Harness.eventually(() -> {
         long before = h.engine.stats().rejectedEvents.get();
         h.click(Harness.clickOn(nextHtml, "badge 0"));
@@ -285,15 +285,15 @@ class ClientTest {
       assertTrue(h.html.contains("data-j2-call-submit="), h.html);
       assertTrue(h.html.contains("data-j2-call-pointerdown="), h.html);
       String key = Harness.find(h.html, "id=\"key\" data-j2-keydown=\"([^\"]+)\"");
-      assertTrue(h.fire(key, "\"7 V\"", "k", "Enter", "m", "").stream()
-        .anyMatch(p -> p.get("h").contains("reading 7 V")));
+      assertTrue(h.fire(key, "\"7 V\"", "key", "Enter").stream()
+        .anyMatch(p -> p.get("html").contains("reading 7 V")));
       String submit = Harness.find(h.html, "id=\"form\" data-j2-submit=\"([^\"]+)\"");
-      assertTrue(h.fire(submit, "\"8 V\"").stream().anyMatch(p -> p.get("h").contains("reading 8 V")));
+      assertTrue(h.fire(submit, "\"8 V\"").stream().anyMatch(p -> p.get("html").contains("reading 8 V")));
       String press = Harness.find(h.html, "data-j2-pointerdown=\"([^\"]+)\"[^>]*>press");
-      assertTrue(h.fire(press, "\"9 V\"", "pt", "mouse", "px", "40", "py", "8").stream().anyMatch(p -> p.get("h").contains("reading 9 V")));
+      assertTrue(h.fire(press, "\"9 V\"", "pointerType", "mouse", "clientX", "40", "clientY", "8").stream().anyMatch(p -> p.get("html").contains("reading 9 V")));
       String point = Harness.find(h.html, "data-j2-pointerup=\"([^\"]+)\"[^>]*>point");
-      assertTrue(h.fire(point, "", "pt", "touch", "px", "12.5", "py", "3").stream()
-        .anyMatch(p -> p.get("h").contains("reading pointer touch at 12")));
+      assertTrue(h.fire(point, "", "pointerType", "touch", "clientX", "12.5", "clientY", "3").stream()
+        .anyMatch(p -> p.get("html").contains("reading pointer touch at 12")));
     }
   }
 
@@ -304,10 +304,10 @@ class ClientTest {
       h.connect();
       String target = (String) ((Map<?, ?>) props(h.html).get("export")).get("$upload");
       int from = h.conn.size();
-      h.send("t", "cb", "h", target, "v", "[]", "fi", "9", "fn", "big.csv", "fs", "5000", "ft", "text/csv");
-      Map<String, String> refused = h.conn.await(from, m -> "upx".equals(m.get("t")));
-      assertEquals("9", refused.get("f"));
-      assertTrue(refused.get("e").contains("larger than 100 bytes"), refused.toString());
+      h.send("type", "callback", "handler", target, "args", "[]", "fileId", "9", "fileName", "big.csv", "fileSize", "5000", "fileType", "text/csv");
+      Map<String, String> refused = h.conn.await(from, m -> "uploadRefused".equals(m.get("type")));
+      assertEquals("9", refused.get("file"));
+      assertTrue(refused.get("error").contains("larger than 100 bytes"), refused.toString());
     }
   }
 }

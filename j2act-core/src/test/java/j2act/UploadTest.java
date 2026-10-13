@@ -54,14 +54,14 @@ class UploadTest {
   private static String pick(Harness h, String name, long size, String type) {
     int from = h.conn.size();
     h.fire(Harness.handlerOn(h.html, "change", "avatar"), "C:\\fakepath\\" + name,
-      "fi", "f1", "fn", name, "fs", String.valueOf(size), "ft", type);
-    Map<String, String> up = h.conn.since(from, m -> "up".equals(m.get("t"))).stream().findFirst().orElse(null);
+      "fileId", "f1", "fileName", name, "fileSize", String.valueOf(size), "fileType", type);
+    Map<String, String> up = h.conn.since(from, m -> "upload".equals(m.get("type"))).stream().findFirst().orElse(null);
     if (up == null) {
       return null;
     }
-    assertEquals("f1", up.get("f"));
-    assertTrue(up.get("u").startsWith(J2Act.UPLOAD_PATH));
-    return up.get("u").substring(J2Act.UPLOAD_PATH.length());
+    assertEquals("f1", up.get("file"));
+    assertTrue(up.get("url").startsWith(J2Act.UPLOAD_PATH));
+    return up.get("url").substring(J2Act.UPLOAD_PATH.length());
   }
 
   private static Exchange csrf(Harness h, String... headers) {
@@ -182,12 +182,12 @@ class UploadTest {
       int from = h.conn.size();
       String token = pick(h, "notes.txt", 2, "text/plain");
       send(h, token, 0, "hi", csrf(h));
-      String patch = h.awaitPatch(from, p -> p.contains("upload SUCCESS")).get("h");
+      String patch = h.awaitPatch(from, p -> p.contains("upload SUCCESS")).get("html");
       Path stored = Arrays.stream(patch.split(" at ")[1].split("<")[0].split("\\s")).findFirst().map(Path::of).get();
       assertTrue(Files.exists(stored), stored.toString());
       assertTrue(stored.startsWith(dir.resolve("done")));
 
-      h.engine.onMessage(h.conn, Json.object("t", "bye"));
+      h.engine.onMessage(h.conn, Json.object("type", "bye"));
       long end = System.currentTimeMillis() + Harness.TIMEOUT_MS;
       while (Files.exists(stored) && System.currentTimeMillis() < end) {
         Thread.sleep(20);

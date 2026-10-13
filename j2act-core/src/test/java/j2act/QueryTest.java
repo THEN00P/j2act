@@ -82,9 +82,9 @@ class QueryTest {
       releaseFirst.countDown();
 
       h.awaitPatch(from, p -> p.contains("result=rows for ab</span>"));
-      List<Map<String, String>> patches = h.conn.since(from, m -> "patch".equals(m.get("t")));
+      List<Map<String, String>> patches = h.conn.since(from, m -> "patch".equals(m.get("type")));
       for (Map<String, String> patch : patches) {
-        assertFalse(patch.get("h").contains("rows for a<"), "stale result reached the client: " + patch);
+        assertFalse(patch.get("html").contains("rows for a<"), "stale result reached the client: " + patch);
       }
       assertEquals(1, h.engine.stats().supersededRuns.get());
       assertEquals(List.of("a", "ab"), calls);
@@ -144,9 +144,9 @@ class QueryTest {
     try (Harness h = new Harness(Host::new)) {
       assertTrue(h.load().contains("detail 7"));
       h.connect();
-      String hidden = h.click(Harness.clickOn(h.html, "toggle")).get(0).get("h");
+      String hidden = h.click(Harness.clickOn(h.html, "toggle")).get(0).get("html");
       assertFalse(hidden.contains("detail"), hidden);
-      String shown = h.click(Harness.clickOn(hidden, "toggle")).get(0).get("h");
+      String shown = h.click(Harness.clickOn(hidden, "toggle")).get(0).get("html");
       assertTrue(shown.contains("detail 7"), shown);
       assertEquals(1, detailCalls.get());
     }
@@ -158,8 +158,8 @@ class QueryTest {
     try (Harness h = new Harness(Host::new, b -> b.withQueryStaleTime(Duration.ZERO))) {
       h.load();
       h.connect();
-      String hidden = h.click(Harness.clickOn(h.html, "toggle")).get(0).get("h");
-      String shown = h.click(Harness.clickOn(hidden, "toggle")).get(0).get("h");
+      String hidden = h.click(Harness.clickOn(h.html, "toggle")).get(0).get("html");
+      String shown = h.click(Harness.clickOn(hidden, "toggle")).get(0).get("html");
       assertTrue(shown.contains("detail 7"), shown);
       Harness.eventually(() -> detailCalls.get() == 2, "background refetch");
     }
@@ -171,7 +171,7 @@ class QueryTest {
     try (Harness h = new Harness(Host::new)) {
       h.load();
       h.connect();
-      String hidden = h.click(Harness.clickOn(h.html, "toggle")).get(0).get("h");
+      String hidden = h.click(Harness.clickOn(h.html, "toggle")).get(0).get("html");
       // The hidden page does not read `which`, so switching re-renders nothing.
       assertTrue(h.click(Harness.clickOn(hidden, "switch")).isEmpty());
       int from = h.conn.size();

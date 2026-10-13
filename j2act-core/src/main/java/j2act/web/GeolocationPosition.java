@@ -13,7 +13,7 @@ import j2act.WebPath;
 public final class GeolocationPosition {
 
   /** Which attributes the browser copies out, nested for snapshot-typed ones. */
-  static final String SHAPE = "{\"coords\":{\"accuracy\":1,\"latitude\":1,\"longitude\":1,\"altitude\":1,\"altitudeAccuracy\":1,\"heading\":1,\"speed\":1},\"timestamp\":1}";
+  static final String SHAPE = "{\"coords\":{\"accuracy\":true,\"latitude\":true,\"longitude\":true,\"altitude\":true,\"altitudeAccuracy\":true,\"heading\":true,\"speed\":true},\"timestamp\":true}";
 
   private final GeolocationCoordinates coords;
   private final Long timestamp;

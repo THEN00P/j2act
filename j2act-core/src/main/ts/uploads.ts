@@ -43,7 +43,7 @@ export function createUploads(send: Send, token: () => string | null) {
       }
       const id = String(++seq);
       files.set(id, file);
-      return { fi: id, fn: file.name, fs: String(file.size), ft: file.type || "" };
+      return { fileId: id, fileName: file.name, fileSize: file.size, fileType: file.type || "" };
     },
 
     target(handler: string): UploadTarget {
@@ -53,8 +53,8 @@ export function createUploads(send: Send, token: () => string | null) {
             const fileId = String(++seq);
             files.set(fileId, blob);
             waiters.set(fileId, { resolve: resolve, reject: reject });
-            send({ t: "cb", h: handler, v: "[]", fi: fileId, fn: name || (blob as File).name || "blob",
-              fs: String(blob.size), ft: blob.type || "" });
+            send({ type: "callback", handler: handler, args: "[]", fileId: fileId, fileName: name || (blob as File).name || "blob",
+              fileSize: blob.size, fileType: blob.type || "" });
           });
         }
       };
