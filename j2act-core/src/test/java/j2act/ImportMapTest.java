@@ -5,6 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Base64;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -14,6 +17,14 @@ class ImportMapTest {
   static final class Page extends LiveComponent {
     @Override public Tag<?> render() {
       return T.page("t", T.span("hi"));
+    }
+  }
+
+  static final class Titled extends LiveComponent {
+    private final State<Integer> clicks = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("clicks " + clicks.get(), T.button("more").onClick(e -> clicks.set(clicks.get() + 1)));
     }
   }
 
@@ -82,6 +93,37 @@ class ImportMapTest {
       assertNull(h.engine.packageFile("../importmap.json"));
       assertNull(h.engine.packageFile("tiny-lib/1.0.0/missing.js"));
       assertNull(h.engine.packageFile("/etc/passwd"));
+    }
+  }
+
+  @Test
+  void theServedPageGivesTheRequestsNonceToTheImportMapAndRuntimeButHeadPatchesDoNot() {
+    try (Harness h = new Harness(Titled::new, b -> b.withCspNonce(exchange -> exchange.attribute("cspNonce").orElse(null)))) {
+      String html = h.load("/", Exchange.of(Map.of(), Map.of(), Map.of("cspNonce", "n0nce\"x")));
+      assertTrue(html.contains("<script type=\"importmap\" nonce=\"n0nce&quot;x\">"), html);
+      assertTrue(html.contains("runtime.js\" nonce=\"n0nce&quot;x\" defer></script>"), html);
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "more"));
+      Map<String, String> head = h.conn.await(from, m -> "head".equals(m.get("t")));
+      assertTrue(head.get("h").contains("<title>clicks 1</title>"), head.get("h"));
+      assertTrue(!head.get("h").contains("nonce"), "browsers hide a nonce, so a morph would only see it differ: " + head.get("h"));
+    }
+  }
+
+  @Test
+  void withoutANonceTheTagsHaveNone() {
+    try (Harness h = new Harness(Titled::new, b -> b.withCspNonce(exchange -> exchange.attribute("cspNonce").orElse(null)))) {
+      assertTrue(!h.load().contains("nonce"));
+    }
+  }
+
+  @Test
+  void theHashIsTheImportMapContentsSha256() throws Exception {
+    try (Harness h = harness()) {
+      String map = Harness.find(h.load(), "<script type=\"importmap\">(.*?)</script>");
+      byte[] digest = MessageDigest.getInstance("SHA-256").digest(map.getBytes(StandardCharsets.UTF_8));
+      assertEquals("'sha256-" + Base64.getEncoder().encodeToString(digest) + "'", h.engine.importMapHash().orElseThrow());
     }
   }
 }

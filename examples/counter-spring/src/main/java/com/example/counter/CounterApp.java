@@ -61,4 +61,10 @@ public class CounterApp {
       }
     };
   }
+
+  /** The import map and runtime.js tags carry the nonce ContentSecurityPolicy stored for the request. */
+  @Bean
+  public J2ActCustomizer cspNonce() {
+    return builder -> builder.withCspNonce(exchange -> exchange.attribute(ContentSecurityPolicy.NONCE_ATTRIBUTE).orElse(null));
+  }
 }

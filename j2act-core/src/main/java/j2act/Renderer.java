@@ -17,6 +17,8 @@ final class Renderer {
   private final Session session;
   private final long epoch;
   StringBuilder out = new StringBuilder(1024);
+  /** The CSP nonce for the bootstrap tags, set only when rendering the served page. */
+  String nonce;
   /** Queries created under each open loading and error boundary, nearest on top (ADR 0007). */
   private final Deque<List<QueryCell>> loadingOwners = new ArrayDeque<>();
   private final Deque<List<QueryCell>> errorOwners = new ArrayDeque<>();
@@ -175,7 +177,7 @@ final class Renderer {
     for (Map.Entry<String, String> attr : html.attributes.entrySet()) {
       attribute(attr.getKey(), attr.getValue());
     }
-    out.append("><head>").append(session.mergedHead()).append("</head>").append(body).append("</html>");
+    out.append("><head>").append(session.mergedHead(nonce)).append("</head>").append(body).append("</html>");
   }
 
   /**
