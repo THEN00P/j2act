@@ -78,6 +78,7 @@ public final class J2Act implements AutoCloseable {
   final Preload defaultPreload;
   final long preloadHoldMillis;
   final JsonBinding json;
+  final Function<Exchange, String> cspNonce;
   /** Retained State (ADR 0026): where snapshots go, how long they live, and per-type codecs. */
   final RetainedStateStorage retainedStorage;
   final long retainedRetentionMillis;
@@ -131,6 +132,7 @@ public final class J2Act implements AutoCloseable {
     this.defaultPreload = b.defaultPreload;
     this.preloadHoldMillis = b.preloadHold.toMillis();
     this.json = b.json;
+    this.cspNonce = b.cspNonce;
     this.retainedStorage = b.retainedStorage != null ? b.retainedStorage : new MemoryRetainedStateStorage(b.maxRetainedSnapshots);
     Duration retention = b.retainedRetention != null ? b.retainedRetention
       : b.retainedStorage != null ? Duration.ofHours(8) : Duration.ofHours(2);
@@ -739,6 +741,14 @@ public final class J2Act implements AutoCloseable {
     }
   }
 
+  /**
+   * The import map script's CSP hash source ('sha256-...') for a script-src that allows
+   * scripts by hash; empty when no npm package or withImport needs a map (ADR 0022).
+   */
+  public Optional<String> importMapHash() {
+    return importMap.isEmpty() ? Optional.empty() : Optional.of(importMap.hash());
+  }
+
   public int sessionCount() {
     return sessions.size();
   }
@@ -917,6 +927,7 @@ public final class J2Act implements AutoCloseable {
     private Preload defaultPreload = Preload.NONE;
     private Duration preloadHold = Duration.ofSeconds(10);
     private JsonBinding json = JsonBinding.basic();
+    private Function<Exchange, String> cspNonce;
     private RetainedStateStorage retainedStorage;
     private Duration retainedRetention;
     private int maxRetainedSnapshots = 1000;
@@ -947,6 +958,17 @@ public final class J2Act implements AutoCloseable {
      */
     public Builder withIdentity(Function<Exchange, AuthCtx> identity) {
       this.identity = identity;
+      return this;
+    }
+
+    /**
+     * The page-load request's CSP nonce, e.g. exchange -> exchange.attribute("cspNonce").orElse(null),
+     * for a filter that stores one. The page's import map and runtime.js script tags carry it,
+     * so a nonce-based policy ('strict-dynamic' included) lets them run. Without a nonce
+     * policy, allow the import map by importMapHash().
+     */
+    public Builder withCspNonce(Function<Exchange, String> nonce) {
+      this.cspNonce = nonce;
       return this;
     }
 

@@ -49,7 +49,14 @@ public class J2ActHandlerMapping extends AbstractHandlerMapping {
     for (String name : Collections.list(request.getHeaderNames())) {
       headers.put(name, Collections.list(request.getHeaders(name)));
     }
-    return Exchange.of(cookies, headers);
+    // String ones only, such as a filter's CSP nonce: the snapshot lives as long as the page.
+    Map<String, String> attributes = new LinkedHashMap<>();
+    for (String name : Collections.list(request.getAttributeNames())) {
+      if (request.getAttribute(name) instanceof String) {
+        attributes.put(name, (String) request.getAttribute(name));
+      }
+    }
+    return Exchange.of(cookies, headers, attributes);
   }
 
   @Override protected Object getHandlerInternal(HttpServletRequest request) {
