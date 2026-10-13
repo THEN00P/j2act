@@ -23,10 +23,10 @@ class RenderingTest {
   void escapesTextAndAttributesSkipsNullAndNeverRendersKeys() {
     try (Harness h = new Harness(Plain::new)) {
       String html = h.load();
-      assertTrue(html.startsWith("<!DOCTYPE html><html data-j2s=\"s1\">"), html);
+      assertTrue(html.startsWith("<!DOCTYPE html><html data-j2-scope=\"s1\">"), html);
       assertTrue(html.contains("<title>A &amp; B</title>"), html);
       assertTrue(html.contains("<span>&lt;b&gt;x&lt;/b&gt;</span><p>after</p>"), html);
-      assertTrue(html.contains("<input data-j2-ctl=\"value\" value=\"&quot;q&quot;\" disabled>"), html);
+      assertTrue(html.contains("<input data-j2-controlled=\"value\" value=\"&quot;q&quot;\" disabled>"), html);
       assertFalse(html.contains("secret-key"), html);
       assertFalse(html.contains("</input>"), html);
     }
@@ -47,11 +47,11 @@ class RenderingTest {
   void formControlsDeclareWhatTheRenderControls() {
     try (Harness h = new Harness(Fields::new)) {
       String html = h.load();
-      assertTrue(html.contains("<input data-j2-ctl id=\"free\">"), html);
-      assertTrue(html.contains("<input data-j2-ctl=\"value\" id=\"bound\" value=\"x\">"), html);
-      assertTrue(html.contains("<input data-j2-ctl=\"checked\" id=\"unticked\">"), html);
-      assertTrue(html.contains("<textarea data-j2-ctl id=\"empty\"></textarea>"), html);
-      assertTrue(html.contains("<textarea data-j2-ctl=\"value\" id=\"filled\">hi</textarea>"), html);
+      assertTrue(html.contains("<input data-j2-controlled id=\"free\">"), html);
+      assertTrue(html.contains("<input data-j2-controlled=\"value\" id=\"bound\" value=\"x\">"), html);
+      assertTrue(html.contains("<input data-j2-controlled=\"checked\" id=\"unticked\">"), html);
+      assertTrue(html.contains("<textarea data-j2-controlled id=\"empty\"></textarea>"), html);
+      assertTrue(html.contains("<textarea data-j2-controlled=\"value\" id=\"filled\">hi</textarea>"), html);
     }
   }
 

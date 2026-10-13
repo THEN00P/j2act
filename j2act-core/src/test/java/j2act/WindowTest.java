@@ -37,7 +37,7 @@ class WindowTest {
   private static Map<String, String> callAfterClick(Harness h, String label) {
     int from = h.conn.size();
     h.click(Harness.clickOn(h.html, label));
-    return h.conn.await(from, m -> "wa".equals(m.get("t")));
+    return h.conn.await(from, m -> "windowCall".equals(m.get("type")));
   }
 
   @Test
@@ -45,10 +45,10 @@ class WindowTest {
     try (Harness h = new Harness(Page::new)) {
       h.load();
       h.connect();
-      assertEquals("{\"p\":[[\"g\",\"localStorage\"]],\"k\":\"call\",\"n\":\"setItem\",\"a\":[\"k\",\"v\"]}",
-        callAfterClick(h, "save").get("w"));
-      assertEquals("{\"p\":[[\"g\",\"document\"],[\"c\",\"getElementById\",[\"f\"]]],\"k\":\"call\",\"n\":\"focus\",\"a\":[]}",
-        callAfterClick(h, "focus").get("w"), "an interface-typed call only extends the path");
+      assertEquals("{\"path\":[[\"get\",\"localStorage\"]],\"kind\":\"call\",\"name\":\"setItem\",\"args\":[\"k\",\"v\"]}",
+        callAfterClick(h, "save").get("call"));
+      assertEquals("{\"path\":[[\"get\",\"document\"],[\"call\",\"getElementById\",[\"f\"]]],\"kind\":\"call\",\"name\":\"focus\",\"args\":[]}",
+        callAfterClick(h, "focus").get("call"), "an interface-typed call only extends the path");
     }
   }
 
@@ -58,9 +58,9 @@ class WindowTest {
       h.load();
       h.connect();
       Map<String, String> call = callAfterClick(h, "title");
-      assertEquals("{\"p\":[[\"g\",\"document\"]],\"k\":\"get\",\"n\":\"title\",\"a\":[]}", call.get("w"));
+      assertEquals("{\"path\":[[\"get\",\"document\"]],\"kind\":\"get\",\"name\":\"title\",\"args\":[]}", call.get("call"));
       int from = h.conn.size();
-      h.send("t", "cr", "i", call.get("i"), "ok", "1", "v", "\"Inbox\"");
+      h.send("type", "callResult", "id", call.get("id"), "ok", true, "value", "\"Inbox\"");
       h.awaitPatch(from, html -> html.contains("out Inbox"));
     }
   }
@@ -71,10 +71,10 @@ class WindowTest {
       h.load();
       h.connect();
       Map<String, String> call = callAfterClick(h, "perm");
-      assertTrue(call.get("w").contains("\"a\":[{\"name\":\"geolocation\"}]"), call.get("w"));
-      assertTrue(call.get("w").endsWith(",\"r\":{\"state\":1,\"name\":1}}"), call.get("w"));
+      assertTrue(call.get("call").contains("\"args\":[{\"name\":\"geolocation\"}]"), call.get("call"));
+      assertTrue(call.get("call").endsWith(",\"shape\":{\"state\":true,\"name\":true}}"), call.get("call"));
       int from = h.conn.size();
-      h.send("t", "cr", "i", call.get("i"), "ok", "1", "v", "{\"state\":\"granted\",\"name\":\"geolocation\"}");
+      h.send("type", "callResult", "id", call.get("id"), "ok", true, "value", "{\"state\":\"granted\",\"name\":\"geolocation\"}");
       h.awaitPatch(from, html -> html.contains("out granted geolocation"));
     }
   }
@@ -85,14 +85,14 @@ class WindowTest {
       h.load();
       h.connect();
       Map<String, String> call = callAfterClick(h, "where");
-      assertTrue(call.get("w").contains("\"a\":[null,null],\"cb\":[0,1]"), call.get("w"));
+      assertTrue(call.get("call").contains("\"args\":[null,null],\"callbacks\":[0,1]"), call.get("call"));
       int from = h.conn.size();
-      h.send("t", "cr", "i", call.get("i"), "ok", "0", "e", "NotAllowedError: User denied Geolocation");
+      h.send("type", "callResult", "id", call.get("id"), "ok", false, "error", "NotAllowedError: User denied Geolocation");
       h.awaitPatch(from, html -> html.contains("out failed NotAllowedError"));
 
       Map<String, String> again = callAfterClick(h, "where");
       int next = h.conn.size();
-      h.send("t", "cr", "i", again.get("i"), "ok", "1", "v",
+      h.send("type", "callResult", "id", again.get("id"), "ok", true, "value",
         "{\"coords\":{\"latitude\":47.5,\"longitude\":8.5,\"accuracy\":20},\"timestamp\":1700000000000}");
       h.awaitPatch(next, html -> html.contains("out 47.5 at 1700000000000"));
     }
@@ -104,8 +104,8 @@ class WindowTest {
       h.load();
       h.connect();
       String call = Harness.find(h.html, "data-j2-call-click=\"([^\"]+)\"[^>]*>share");
-      assertTrue(call.contains("&quot;w&quot;:{&quot;p&quot;:[[&quot;g&quot;,&quot;navigator&quot;]]"), call);
-      assertTrue(call.contains("&quot;n&quot;:&quot;share&quot;"), call);
+      assertTrue(call.contains("&quot;window&quot;:{&quot;path&quot;:[[&quot;get&quot;,&quot;navigator&quot;]]"), call);
+      assertTrue(call.contains("&quot;name&quot;:&quot;share&quot;"), call);
       List<Map<String, String>> patches = h.fire(Harness.clickOn(h.html, "share"), "null");
       assertEquals(0, h.engine.stats().failedTasks.get(), patches.toString());
     }

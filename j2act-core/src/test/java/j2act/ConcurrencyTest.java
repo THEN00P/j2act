@@ -89,7 +89,7 @@ class ConcurrencyTest {
       h.load();
       h.connect();
       assertEquals(1, bus.listeners.size());
-      h.engine.onMessage(h.conn, Json.object("t", "bye"));
+      h.engine.onMessage(h.conn, Json.object("type", "bye"));
       Harness.eventually(() -> bus.listeners.isEmpty(), "effect cleanup");
       assertEquals(0, h.engine.sessionCount());
       bus.emit("after dispose");
@@ -126,7 +126,7 @@ class ConcurrencyTest {
     try (Harness h = new Harness(Holder::new)) {
       h.load();
       h.connect();
-      h.engine.onMessage(h.conn, Json.object("t", "bye"));
+      h.engine.onMessage(h.conn, Json.object("type", "bye"));
       Harness.eventually(() -> h.engine.sessionCount() == 0, "session discarded");
       Holder.handle.get().set(99);
       Holder.handle.get().update(x -> x + 1);

@@ -62,7 +62,7 @@ class EventsTest {
     try (Harness h = new Harness(Form::new)) {
       h.load();
       h.connect();
-      h.fire(Harness.handlerOn(h.html, "keydown", "name"), "draft", "k", "Enter", "m", "cs");
+      h.fire(Harness.handlerOn(h.html, "keydown", "name"), "draft", "key", "Enter", "ctrlKey", true, "shiftKey", true);
       assertEquals(List.of("key Enter ctrl=true shift=true alt=false meta=false value=draft"), log);
     }
   }
@@ -75,12 +75,12 @@ class EventsTest {
       h.load();
       h.connect();
       int from = h.conn.size();
-      h.engine.onMessage(h.conn, Json.object("t", "ev", "h", Harness.handlerOn(h.html, "keydown", "name"),
-        "v", "Ada", "k", "Enter", "m", "", "a", "k1"));
-      h.engine.onMessage(h.conn, Json.object("t", "ev", "h", Harness.handlerOn(h.html, "submit", "f"),
-        "v", "name=Ada", "a", "s1"));
-      h.conn.await(from, m -> "ack".equals(m.get("t")) && "s1".equals(m.get("a")));
-      assertEquals(List.of("1", "1"), h.conn.since(from, m -> "ack".equals(m.get("t")))
+      h.engine.onMessage(h.conn, Json.object("type", "event", "handler", Harness.handlerOn(h.html, "keydown", "name"),
+        "value", "Ada", "key", "Enter", "id", "k1"));
+      h.engine.onMessage(h.conn, Json.object("type", "event", "handler", Harness.handlerOn(h.html, "submit", "f"),
+        "value", "name=Ada", "id", "s1"));
+      h.conn.await(from, m -> "ack".equals(m.get("type")) && "s1".equals(m.get("id")));
+      assertEquals(List.of("true", "true"), h.conn.since(from, m -> "ack".equals(m.get("type")))
         .stream().map(m -> m.get("ok")).collect(java.util.stream.Collectors.toList()));
       assertTrue(log.get(1).startsWith("submit name=Ada"), log.toString());
     }

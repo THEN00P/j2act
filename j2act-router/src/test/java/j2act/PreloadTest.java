@@ -84,7 +84,7 @@ class PreloadTest {
   }
 
   static void preload(Harness h, String url) {
-    h.engine.onMessage(h.conn, Json.object("t", "pre", "u", url));
+    h.engine.onMessage(h.conn, Json.object("type", "preload", "url", url));
   }
 
   static void eventually(BooleanSupplier condition, String what) throws InterruptedException {
@@ -111,7 +111,7 @@ class PreloadTest {
       release.countDown();
       Thread.sleep(200);
       assertEquals(0, effects.get(), "no Effect before the click");
-      assertTrue(h.conn.since(from, m -> "patch".equals(m.get("t"))).isEmpty(), "nothing reaches the client early");
+      assertTrue(h.conn.since(from, m -> "patch".equals(m.get("type"))).isEmpty(), "nothing reaches the client early");
 
       List<Map<String, String>> nav = h.nav("/items/7");
       String page = Harness.last(nav, "patch");

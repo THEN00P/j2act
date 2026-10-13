@@ -1,85 +1,87 @@
 /*
- * The socket protocol. Keys are one letter and flags are "1", since every message carries them.
- * The server side is J2Act.onMessage and the Json.object(...) calls that answer it.
+ * The socket protocol: flat JSON objects with a type. The server side is J2Act.onMessage and
+ * the Json.object(...) calls that answer it.
  */
 
 export type NavMode = "push" | "replace" | "pop";
 
-/** Shape of a window() result (ADR 0022): 1 copies a value, an object copies the keys it names. */
-export type Shape = 1 | { [key: string]: Shape };
+/** Shape of a window() result (ADR 0022): true copies a value, an object copies the keys it names. */
+export type Shape = true | { [key: string]: Shape };
 
-/** A window() call: follow the path p, then get, set, call or construct. */
+/** A window() call: follow the path, then get, set, call or construct. */
 export interface WebCall {
-  /** Each step gets a property ("g") or calls a method with args. */
-  p: [kind: string, name: string, args?: unknown[]][];
-  k: "get" | "set" | "call" | "new";
-  n?: string;
-  a: unknown[];
+  /** Each step gets a property or calls a method with args. */
+  path: [kind: "get" | "call", name: string, args?: unknown[]][];
+  kind: "get" | "set" | "call" | "new";
+  name?: string;
+  args: unknown[];
   /** Callback-style calls: where resolve goes, then reject. */
-  cb?: number[];
-  r?: Shape;
+  callbacks?: number[];
+  shape?: Shape;
 }
 
 /** A client action Java calls, sent after the patch it came with. */
-export interface ActionCall {
-  t: "ca";
-  i: string;
-  /** Client id. */
-  c: string;
-  /** Action name. */
-  n: string;
-  /** Arguments, a JSON array. */
-  a: string;
+export interface ClientCall {
+  type: "clientCall";
+  id: string;
+  client: string;
+  action: string;
+  /** A JSON array. */
+  args: string;
 }
 
 /** A data-j2-call-* attribute: a window() call, or a client action with its arguments. */
-export type BoundCall = { w: WebCall } | { w?: undefined; c: string; n: string; a: unknown[] };
+export type BoundCall = { window: WebCall } | { window?: undefined; client: string; action: string; args: unknown[] };
 
 export type ServerMessage =
-  | { t: "ok" }
-  | { t: "patch"; s: string; h: string; r?: "1" }
-  | { t: "head"; h: string }
-  | { t: "url"; u: string; m: NavMode }
-  | { t: "go"; u: string }
-  | { t: "dl"; u: string }
-  | { t: "up"; f: string; u: string }
-  | { t: "upx"; f: string; e: string }
-  | { t: "wa"; i: string; w: string }
-  | ActionCall
-  | { t: "ack"; a: string; ok?: "1" | "0" }
-  | { t: "expired"; s?: "1" | "0" }
-  | { t: "paused"; s?: "1" | "0" }
-  | { t: "pausex" }
-  | { t: "rp" }
-  | { t: "mods"; m: Record<string, string> };
+  | { type: "ready" }
+  | { type: "patch"; anchor: string; html: string; root?: true }
+  | { type: "head"; html: string }
+  | { type: "url"; url: string; mode: NavMode }
+  | { type: "load"; url: string }
+  | { type: "download"; url: string }
+  | { type: "upload"; file: string; url: string }
+  | { type: "uploadRefused"; file: string; error: string }
+  | { type: "windowCall"; id: string; call: string }
+  | ClientCall
+  | { type: "ack"; id: string; ok: boolean }
+  | { type: "expired"; saved?: boolean }
+  | { type: "paused"; saved?: boolean }
+  | { type: "pauseRefused" }
+  | { type: "pauseRequested" }
+  | { type: "modules"; modules: Record<string, string> };
 
 /** Fields an event may add: keys, pointer, a picked file, a failed bound action. */
 export interface EventFields {
-  k?: string;
-  m?: string;
-  pt?: string;
-  px?: string;
-  py?: string;
-  fi?: string;
-  fn?: string;
-  fs?: string;
-  ft?: string;
-  x?: string;
+  key?: string;
+  ctrlKey?: boolean;
+  shiftKey?: boolean;
+  altKey?: boolean;
+  metaKey?: boolean;
+  pointerType?: string;
+  clientX?: number;
+  clientY?: number;
+  fileId?: string;
+  fileName?: string;
+  fileSize?: number;
+  fileType?: string;
+  error?: string;
 }
 
-export type FileFields = Pick<EventFields, "fi" | "fn" | "fs" | "ft">;
+export type FileFields = Pick<EventFields, "fileId" | "fileName" | "fileSize" | "fileType">;
 
 export type ClientMessage =
-  | { t: "hello"; sid: string | null; tok: string | null }
-  | ({ t: "ev"; h: string; v: string; a: string } & EventFields)
-  | ({ t: "cb"; h: string; v: string } & FileFields)
-  | { t: "cr"; i: string; ok: "1"; v: string }
-  | { t: "cr"; i: string; ok: "0"; e: string }
-  | { t: "ce"; c: string | null; e: string }
-  | { t: "lg"; s: string }
-  | { t: "nav"; u: string; m: NavMode }
-  | { t: "pre"; u: string }
-  | { t: "pause"; a?: "1" }
-  | { t: "bye" };
+  | { type: "hello"; session: string | null; token: string | null }
+  | ({ type: "event"; id: string; handler: string; value: string } & EventFields)
+  /** args is a JSON array. */
+  | ({ type: "callback"; handler: string; args: string } & FileFields)
+  | { type: "callResult"; id: string; ok: true; value: string }
+  | { type: "callResult"; id: string; ok: false; error: string }
+  | { type: "clientError"; client: string | null; error: string }
+  | { type: "liveGone"; anchor: string }
+  | { type: "navigate"; url: string; mode: NavMode }
+  | { type: "preload"; url: string }
+  | { type: "pause"; automatic?: true }
+  | { type: "bye" };
 
 export type Send = (message: ClientMessage) => void;

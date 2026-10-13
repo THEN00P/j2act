@@ -42,9 +42,9 @@ describe("Events", () => {
     const button = document.querySelector("button")!;
     button.click();
     button.click();
-    expect(sent).toEqual([{ t: "ev", h: "h1", v: "", a: expect.any(String) }]);
+    expect(sent).toEqual([{ type: "event", id: expect.any(String), handler: "h1", value: "" }]);
     expect(button.getAttribute("aria-busy")).toBe("true");
-    pending.ack((sent[0] as { a: string }).a);
+    pending.ack((sent[0] as { id: string }).id);
     button.click();
     expect(sent).toHaveLength(2);
   });
@@ -57,7 +57,7 @@ describe("Events", () => {
     await vi.advanceTimersByTimeAsync(299);
     expect(sent).toEqual([]);
     await vi.advanceTimersByTimeAsync(1);
-    expect(sent).toEqual([expect.objectContaining({ h: "h2", v: "ab" })]);
+    expect(sent).toEqual([expect.objectContaining({ handler: "h2", value: "ab" })]);
   });
 
   it("throttles: the leading value at once, the latest when the interval ends", async () => {
@@ -66,9 +66,9 @@ describe("Events", () => {
     type(el, "a");
     type(el, "ab");
     type(el, "abc");
-    expect(sent.map((m) => (m as { v: string }).v)).toEqual(["a"]);
+    expect(sent.map((m) => (m as { value: string }).value)).toEqual(["a"]);
     await vi.advanceTimersByTimeAsync(100);
-    expect(sent.map((m) => (m as { v: string }).v)).toEqual(["a", "abc"]);
+    expect(sent.map((m) => (m as { value: string }).value)).toEqual(["a", "abc"]);
     await vi.advanceTimersByTimeAsync(100);
     expect(sent).toHaveLength(2);
   });
@@ -88,7 +88,7 @@ describe("Events", () => {
     const el = input('<input data-j2-keydown="h5" data-j2-keys="Enter Escape">');
     el.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
     el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, shiftKey: true, bubbles: true }));
-    expect(sent).toEqual([expect.objectContaining({ h: "h5", k: "Enter", m: "cs" })]);
+    expect(sent).toEqual([expect.objectContaining({ handler: "h5", key: "Enter", ctrlKey: true, shiftKey: true, altKey: false, metaKey: false })]);
   });
 
   it("submits fields URL-encoded with the submitter, never the browser's way", () => {
@@ -98,25 +98,25 @@ describe("Events", () => {
     const event = new SubmitEvent("submit", { bubbles: true, cancelable: true, submitter: form.querySelector("button") });
     form.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
-    expect(sent).toEqual([expect.objectContaining({ h: "h6", v: "q=a%20b%26c&go=1" })]);
+    expect(sent).toEqual([expect.objectContaining({ handler: "h6", value: "q=a%20b%26c&go=1" })]);
   });
 
   it("runs a bound window() call inside the click and sends its result", async () => {
     document.body.innerHTML = '<button data-j2-click="h7">Go</button>';
     const button = document.querySelector("button")!;
-    button.setAttribute("data-j2-call-click", JSON.stringify({ w: { p: [], k: "get", n: "innerWidth", a: [] } }));
+    button.setAttribute("data-j2-call-click", JSON.stringify({ window: { path: [], kind: "get", name: "innerWidth", args: [] } }));
     button.click();
     await vi.waitFor(() => expect(sent).toHaveLength(1));
-    expect(sent[0]).toMatchObject({ h: "h7", v: String(window.innerWidth) });
+    expect(sent[0]).toMatchObject({ handler: "h7", value: String(window.innerWidth) });
   });
 
-  it("sends a bound action's failure as x", async () => {
+  it("sends a bound action's failure as its error", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     document.body.innerHTML = '<button data-j2-click="h8">Go</button>';
     const button = document.querySelector("button")!;
-    button.setAttribute("data-j2-call-click", JSON.stringify({ c: "j2c-none", n: "act", a: [] }));
+    button.setAttribute("data-j2-call-click", JSON.stringify({ client: "j2c-none", action: "act", args: [] }));
     button.click();
-    expect(sent).toEqual([expect.objectContaining({ h: "h8", v: "", x: "InvalidStateError: the client has not mounted yet" })]);
+    expect(sent).toEqual([expect.objectContaining({ handler: "h8", value: "", error: "InvalidStateError: the client has not mounted yet" })]);
     warn.mockRestore();
   });
 });

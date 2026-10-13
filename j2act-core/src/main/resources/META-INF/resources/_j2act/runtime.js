@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-68f5d8e1a72f9136812455993354cc48b15a4b9160ffee1848dad585561cdd28 */
+* sources: sha256-c08533c5096efcba799430ff0141283dc3ab82ed05fa3e5f3c3010ac92d14866 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -56,7 +56,7 @@
 						const template = document.createElement("template");
 						template.innerHTML = value.$live;
 						const root = template.content.firstElementChild;
-						liveAnchors.add(root.getAttribute("data-j2s"));
+						liveAnchors.add(root.getAttribute("data-j2-scope"));
 						return root;
 					}
 				}
@@ -71,16 +71,16 @@
 			if (liveAnchors.delete(anchor)) {
 				console.warn("j2act: live content " + anchor + " passed to a client action left the document (ADR 0022)");
 				send({
-					t: "lg",
-					s: anchor
+					type: "liveGone",
+					anchor
 				});
 			}
 		}
 		/** A call from Java, sent after the patch: queued until its client has mounted. */
 		function call(m) {
-			const c = clients.get(m.c);
-			if (!c) reply(m.i, false, named("AbortError", "the client is not mounted"));
-			else if (c.failure) reply(m.i, false, c.failure.error);
+			const c = clients.get(m.client);
+			if (!c) reply(m.id, false, named("AbortError", "the client is not mounted"));
+			else if (c.failure) reply(m.id, false, c.failure.error);
 			else if (!c.ready) c.waiting.push(m);
 			else run(c, m);
 		}
@@ -91,13 +91,13 @@
 			return invoke(c, name, revive(JSON.stringify(args)));
 		}
 		/** Answers a call from Java, an action's or a window() call's. */
-		function reply(i, ok, value) {
+		function reply(id, ok, value) {
 			if (ok) try {
 				send({
-					t: "cr",
-					i,
-					ok: "1",
-					v: JSON.stringify(value === void 0 ? null : value)
+					type: "callResult",
+					id,
+					ok: true,
+					value: JSON.stringify(value === void 0 ? null : value)
 				});
 				return;
 			} catch (e) {
@@ -105,10 +105,10 @@
 			}
 			console.warn("j2act: client action failed", value);
 			send({
-				t: "cr",
-				i,
-				ok: "0",
-				e: errorText(value)
+				type: "callResult",
+				id,
+				ok: false,
+				error: errorText(value)
 			});
 		}
 		/** Server attributes follow the render; attributes the client added stay; slots morph where they live. */
@@ -128,9 +128,9 @@
 					lostSlots.add(id);
 					console.warn("j2act: slot " + id + " left the document, so it stopped updating (ADR 0022)");
 					send({
-						t: "ce",
-						c: el.getAttribute("data-j2-client"),
-						e: "slot " + id + " left the document, so it stopped updating"
+						type: "clientError",
+						client: el.getAttribute("data-j2-client"),
+						error: "slot " + id + " left the document, so it stopped updating"
 					});
 				}
 			});
@@ -280,7 +280,7 @@
 		function failWaiting(c, e) {
 			const waiting = c.waiting;
 			c.waiting = [];
-			waiting.forEach((m) => reply(m.i, false, e));
+			waiting.forEach((m) => reply(m.id, false, e));
 		}
 		function invoke(c, name, args) {
 			const fn = c.api[name];
@@ -290,19 +290,19 @@
 		function run(c, m) {
 			let result;
 			try {
-				result = invoke(c, m.n, revive(m.a));
+				result = invoke(c, m.action, revive(m.args));
 			} catch (e) {
-				reply(m.i, false, e);
+				reply(m.id, false, e);
 				return;
 			}
-			Promise.resolve(result).then((v) => reply(m.i, true, v), (e) => reply(m.i, false, e));
+			Promise.resolve(result).then((v) => reply(m.id, true, v), (e) => reply(m.id, false, e));
 		}
 		function callback(id) {
 			return (...args) => {
 				send({
-					t: "cb",
-					h: id,
-					v: JSON.stringify(args)
+					type: "callback",
+					handler: id,
+					args: JSON.stringify(args)
 				});
 			};
 		}
@@ -310,9 +310,9 @@
 		function error(c, what, e) {
 			console.error("j2act: client " + c.el.getAttribute("data-j2-export") + " failed in " + what, e);
 			send({
-				t: "ce",
-				c: c.id,
-				e: what + ": " + errorText(e)
+				type: "clientError",
+				client: c.id,
+				error: what + ": " + errorText(e)
 			});
 		}
 		return {
@@ -333,9 +333,9 @@
 	//#region src/main/ts/connection.ts
 	/**
 	* The page's socket (ADR 0010): says hello with the session id and token, queues messages until
-	* the server answers ok, and reconnects with backoff unless the page is leaving or paused.
+	* the server answers ready, and reconnects with backoff unless the page is leaving or paused.
 	*/
-	function createConnection(url, sid, tok, onMessage, reconnects) {
+	function createConnection(url, session, token, onMessage, reconnects) {
 		let ready = false;
 		let ws = null;
 		let queue = [];
@@ -345,9 +345,9 @@
 			ws = socket;
 			socket.onopen = () => {
 				socket.send(JSON.stringify({
-					t: "hello",
-					sid,
-					tok
+					type: "hello",
+					session,
+					token
 				}));
 			};
 			socket.onmessage = (e) => {
@@ -362,8 +362,8 @@
 		return {
 			connect,
 			/** The session's token, which the page's HTTP requests carry too. */
-			get tok() {
-				return tok;
+			get token() {
+				return token;
 			},
 			get ready() {
 				return ready;
@@ -395,9 +395,9 @@
 				} catch {}
 			},
 			/** A new session: what queued for the old one is meaningless to it. */
-			restart(newSid, newTok) {
-				sid = newSid;
-				tok = newTok;
+			restart(newSession, newToken) {
+				session = newSession;
+				token = newToken;
 				retry = 0;
 				queue = [];
 				connect();
@@ -411,31 +411,32 @@
 	* constructs. Everything up to the last call runs synchronously, so a call bound to a gesture
 	* keeps the gesture's user activation.
 	*/
-	function runWeb(w, root = window) {
+	function runWeb(call, root = window) {
 		let target = root;
-		for (const [kind, name, args] of w.p) {
-			target = kind === "g" ? target[name] : target[name](...args || []);
+		for (const [kind, name, args] of call.path) {
+			target = kind === "get" ? target[name] : target[name](...args || []);
 			if (target == null) throw named("TypeError", name + " is " + target);
 		}
 		let value;
-		if (w.k === "get") value = target[w.n];
-		else if (w.k === "set") target[w.n] = w.a[0];
-		else if (w.k === "new") new target(...w.a);
-		else if (w.cb) {
-			const cb = w.cb;
+		if (call.kind === "get") value = target[call.name];
+		else if (call.kind === "set") target[call.name] = call.args[0];
+		else if (call.kind === "new") new target(...call.args);
+		else if (call.callbacks) {
+			const callbacks = call.callbacks;
 			value = new Promise((resolve, reject) => {
-				const args = w.a.slice();
-				args[cb[0]] = resolve;
-				if (cb.length > 1) args[cb[1]] = (error) => reject(error instanceof Error ? error : named(errorName(error), error && error.message));
-				target[w.n](...args);
+				const args = call.args.slice();
+				args[callbacks[0]] = resolve;
+				if (callbacks.length > 1) args[callbacks[1]] = (error) => reject(error instanceof Error ? error : named(errorName(error), error && error.message));
+				target[call.name](...args);
 			});
-		} else value = target[w.n](...w.a);
-		return Promise.resolve(value).then((v) => w.r ? project(v, w.r) : v);
+		} else value = target[call.name](...call.args);
+		const shape = call.shape;
+		return Promise.resolve(value).then((v) => shape ? project(v, shape) : v);
 	}
 	/** Copies what the snapshot's shape names; live objects never cross. */
 	function project(value, shape) {
 		if (value == null) return null;
-		if (shape === 1) return value;
+		if (shape === true) return value;
 		const out = {};
 		for (const key of Object.keys(shape)) out[key] = project(value[key], shape[key]);
 		return out;
@@ -465,13 +466,13 @@
 			if (blocking && pending.has(el)) return;
 			const handlerId = el.getAttribute("data-j2-" + type);
 			if (!handlerId) return;
-			const a = String(++ackSeq);
-			if (blocking) pending.start(el, a, pendingOn || el);
+			const id = String(++ackSeq);
+			if (blocking) pending.start(el, id, pendingOn || el);
 			send({
-				t: "ev",
-				h: handlerId,
-				v: value == null ? "" : value,
-				a,
+				type: "event",
+				id,
+				handler: handlerId,
+				value: value == null ? "" : value,
 				...extra
 			});
 		}
@@ -521,19 +522,19 @@
 		/**
 		* onClick/onSubmit/onKeyDown/onPointerDown/onPointerUp(action, then): the action runs
 		* synchronously inside the event, which grants user activation, so gesture-gated APIs work.
-		* Its result, or its error as x, then goes to the handler like an event's value.
+		* Its result, or its error, then goes to the handler like an event's value.
 		*/
 		function boundAction(el, type, extra) {
 			if (pending.has(el)) return;
 			const call = JSON.parse(el.getAttribute("data-j2-call-" + type));
 			let result;
 			try {
-				result = call.w ? runWeb(call.w) : clients.callNow(call.c, call.n, call.a);
+				result = call.window ? runWeb(call.window) : clients.callNow(call.client, call.action, call.args);
 			} catch (e) {
 				console.warn("j2act: client action failed", e);
 				dispatch(el, type, "", {
 					...extra,
-					x: errorText(e)
+					error: errorText(e)
 				});
 				return;
 			}
@@ -543,7 +544,7 @@
 				console.warn("j2act: client action failed", e);
 				dispatch(el, type, "", {
 					...extra,
-					x: errorText(e)
+					error: errorText(e)
 				});
 			});
 		}
@@ -561,9 +562,9 @@
 			const el = closest(e.target, "[data-j2-" + type + "]");
 			if (!el) return;
 			const extra = {
-				pt: e.pointerType,
-				px: String(e.clientX),
-				py: String(e.clientY)
+				pointerType: e.pointerType,
+				clientX: e.clientX,
+				clientY: e.clientY
 			};
 			if (el.hasAttribute("data-j2-call-" + type)) boundAction(el, type, extra);
 			else dispatch(el, type, "", extra);
@@ -583,18 +584,18 @@
 			if (!el) return;
 			const filter = el.getAttribute("data-j2-keys");
 			if (filter && filter.split(" ").indexOf(e.key) < 0) return;
-			const mods = (e.ctrlKey ? "c" : "") + (e.shiftKey ? "s" : "") + (e.altKey ? "a" : "") + (e.metaKey ? "m" : "");
+			const key = {
+				key: e.key,
+				ctrlKey: e.ctrlKey,
+				shiftKey: e.shiftKey,
+				altKey: e.altKey,
+				metaKey: e.metaKey
+			};
 			if (el.hasAttribute("data-j2-call-keydown")) {
-				boundAction(el, "keydown", {
-					k: e.key,
-					m: mods
-				});
+				boundAction(el, "keydown", key);
 				return;
 			}
-			dispatch(el, "keydown", valueOf(el), {
-				k: e.key,
-				m: mods
-			});
+			dispatch(el, "keydown", valueOf(el), key);
 		});
 		doc.addEventListener("submit", (e) => {
 			const form = bound(e.target, "submit");
@@ -1619,7 +1620,7 @@
 		const callbacks = {
 			beforeAttributeUpdated: (name, el) => {
 				if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) return false;
-				if ((name === "value" || name === "checked" || name === "selected") && el.hasAttribute("data-j2-ctl")) return el.getAttribute("data-j2-ctl").split(" ").indexOf(name) >= 0;
+				if ((name === "value" || name === "checked" || name === "selected") && el.hasAttribute("data-j2-controlled")) return el.getAttribute("data-j2-controlled").split(" ").indexOf(name) >= 0;
 				return true;
 			},
 			beforeNodeMorphed: (oldNode, newNode) => {
@@ -1660,12 +1661,12 @@
 			patch(anchor, html, isRoot) {
 				if (isRoot) {
 					const doc = new DOMParser().parseFromString(html, "text/html");
-					document.documentElement.setAttribute("data-j2s", anchor);
+					document.documentElement.setAttribute("data-j2-scope", anchor);
 					head(doc.head.innerHTML);
 					body(doc.body);
 					return true;
 				}
-				const el = document.querySelector("[data-j2s=\"" + anchor + "\"]");
+				const el = document.querySelector("[data-j2-scope=\"" + anchor + "\"]");
 				if (!el) return false;
 				Idiomorph.morph(el, html, config);
 				return true;
@@ -1693,9 +1694,9 @@
 			}, "");
 			pendingHash = url.hash;
 			send({
-				t: "nav",
-				u: url.pathname + url.search,
-				m: mode
+				type: "navigate",
+				url: url.pathname + url.search,
+				mode
 			});
 		}
 		function inApp(url) {
@@ -1715,8 +1716,8 @@
 			if (at && Date.now() - at < 5e3) return;
 			preloadedAt.set(u, Date.now());
 			send({
-				t: "pre",
-				u
+				type: "preload",
+				url: u
 			});
 		}
 		return {
@@ -1748,9 +1749,9 @@
 				window.addEventListener("popstate", () => {
 					pendingHash = location.hash;
 					send({
-						t: "nav",
-						u: location.pathname + location.search,
-						m: "pop"
+						type: "navigate",
+						url: location.pathname + location.search,
+						mode: "pop"
 					});
 				});
 			},
@@ -1912,9 +1913,9 @@
 		}
 		function send() {
 			options.sendIfReady(byHiding ? {
-				t: "pause",
-				a: "1"
-			} : { t: "pause" });
+				type: "pause",
+				automatic: true
+			} : { type: "pause" });
 		}
 		function cancel(reason) {
 			stopDeferral(reason);
@@ -2040,10 +2041,10 @@
 				const id = String(++seq);
 				files.set(id, file);
 				return {
-					fi: id,
-					fn: file.name,
-					fs: String(file.size),
-					ft: file.type || ""
+					fileId: id,
+					fileName: file.name,
+					fileSize: file.size,
+					fileType: file.type || ""
 				};
 			},
 			target(handler) {
@@ -2056,13 +2057,13 @@
 							reject
 						});
 						send({
-							t: "cb",
-							h: handler,
-							v: "[]",
-							fi: fileId,
-							fn: name || blob.name || "blob",
-							fs: String(blob.size),
-							ft: blob.type || ""
+							type: "callback",
+							handler,
+							args: "[]",
+							fileId,
+							fileName: name || blob.name || "blob",
+							fileSize: blob.size,
+							fileType: blob.type || ""
 						});
 					});
 				} };
@@ -2134,7 +2135,7 @@
 		const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath, sid, meta(document, "j2-token"), onMessage, () => !leaving && !remounting && retained.phase !== "paused");
 		const send = (message) => connection.send(message);
 		const pending = createPending();
-		const uploads = createUploads(send, () => connection.tok);
+		const uploads = createUploads(send, () => connection.token);
 		const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
 		const clients = createClients({
 			send,
@@ -2151,48 +2152,48 @@
 			autoPauseAfter: Number(meta(document, "j2-autopause") || 0)
 		});
 		const handlers = {
-			ok: () => {
+			ready: () => {
 				connection.opened();
 				retained.connected();
 			},
 			patch: (m) => {
-				if (!morpher.patch(m.s, m.h, m.r === "1")) clients.anchorGone(m.s);
+				if (!morpher.patch(m.anchor, m.html, m.root === true)) clients.anchorGone(m.anchor);
 				clients.scan();
 			},
-			head: (m) => morpher.head(m.h),
-			url: (m) => navigation.landed(m.u, m.m),
-			go: (m) => location.assign(m.u),
-			dl: (m) => download(m.u),
-			up: (m) => uploads.upload(m.f, m.u),
-			upx: (m) => uploads.refused(m.f, m.e),
-			wa: (m) => {
+			head: (m) => morpher.head(m.html),
+			url: (m) => navigation.landed(m.url, m.mode),
+			load: (m) => location.assign(m.url),
+			download: (m) => download(m.url),
+			upload: (m) => uploads.upload(m.file, m.url),
+			uploadRefused: (m) => uploads.refused(m.file, m.error),
+			windowCall: (m) => {
 				let result;
 				try {
-					result = runWeb(JSON.parse(m.w));
+					result = runWeb(JSON.parse(m.call));
 				} catch (e) {
-					clients.reply(m.i, false, e);
+					clients.reply(m.id, false, e);
 					return;
 				}
-				result.then((v) => clients.reply(m.i, true, v), (e) => clients.reply(m.i, false, e));
+				result.then((v) => clients.reply(m.id, true, v), (e) => clients.reply(m.id, false, e));
 			},
-			ca: (m) => clients.call(m),
-			ack: (m) => pending.ack(m.a),
+			clientCall: (m) => clients.call(m),
+			ack: (m) => pending.ack(m.id),
 			expired: () => {
 				if (retained.expired()) remount();
 			},
-			paused: (m) => retained.paused(m.s === "1"),
-			pausex: () => retained.refused(),
-			rp: () => retained.requested(),
-			mods: (m) => clients.reimport(m.m)
+			paused: (m) => retained.paused(m.saved === true),
+			pauseRefused: () => retained.refused(),
+			pauseRequested: () => retained.requested(),
+			modules: (m) => clients.reimport(m.modules)
 		};
 		function onMessage(m) {
-			handlers[m.t]?.(m);
+			handlers[m.type]?.(m);
 		}
 		function remount() {
 			if (remounting) return;
 			remounting = true;
 			connection.close();
-			const tok = connection.tok;
+			const tok = connection.token;
 			fetch(location.href, {
 				credentials: "same-origin",
 				headers: tok ? { "X-J2-Restore": tok } : {}
@@ -2202,7 +2203,7 @@
 				const tok = meta(doc, "j2-token");
 				document.querySelector("meta[name=\"j2-session\"]").content = sid;
 				document.querySelector("meta[name=\"j2-token\"]").content = tok;
-				document.documentElement.setAttribute("data-j2s", doc.documentElement.getAttribute("data-j2s"));
+				document.documentElement.setAttribute("data-j2-scope", doc.documentElement.getAttribute("data-j2-scope"));
 				document.title = doc.title;
 				pending.clear();
 				morpher.body(doc.body);
@@ -2222,7 +2223,7 @@
 		window.addEventListener("pagehide", () => {
 			if (connection.ready) {
 				leaving = true;
-				connection.sendIfReady({ t: "bye" });
+				connection.sendIfReady({ type: "bye" });
 			}
 		});
 		window.addEventListener("pageshow", (e) => {

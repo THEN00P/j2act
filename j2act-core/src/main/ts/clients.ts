@@ -1,4 +1,4 @@
-import type { ActionCall, Send } from "./protocol.ts";
+import type { ClientCall, Send } from "./protocol.ts";
 import type { Uploads } from "./uploads.ts";
 import { errorText, named } from "./util.ts";
 
@@ -26,7 +26,7 @@ interface Client {
   ready: boolean;
   failure: { error: unknown } | null;
   /** Actions Java called before the module mounted. */
-  waiting: ActionCall[];
+  waiting: ClientCall[];
 }
 
 export interface ClientsOptions {
@@ -80,7 +80,7 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
           const template = document.createElement("template");
           template.innerHTML = value.$live;
           const root = template.content.firstElementChild!;
-          liveAnchors.add(root.getAttribute("data-j2s")!);
+          liveAnchors.add(root.getAttribute("data-j2-scope")!);
           return root;
         }
       }
@@ -95,17 +95,17 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
   function anchorGone(anchor: string): void {
     if (liveAnchors.delete(anchor)) {
       console.warn("j2act: live content " + anchor + " passed to a client action left the document (ADR 0022)");
-      send({ t: "lg", s: anchor });
+      send({ type: "liveGone", anchor: anchor });
     }
   }
 
   /** A call from Java, sent after the patch: queued until its client has mounted. */
-  function call(m: ActionCall): void {
-    const c = clients.get(m.c);
+  function call(m: ClientCall): void {
+    const c = clients.get(m.client);
     if (!c) {
-      reply(m.i, false, named("AbortError", "the client is not mounted"));
+      reply(m.id, false, named("AbortError", "the client is not mounted"));
     } else if (c.failure) {
-      reply(m.i, false, c.failure.error);
+      reply(m.id, false, c.failure.error);
     } else if (!c.ready) {
       c.waiting.push(m);
     } else {
@@ -123,17 +123,17 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
   }
 
   /** Answers a call from Java, an action's or a window() call's. */
-  function reply(i: string, ok: boolean, value: unknown): void {
+  function reply(id: string, ok: boolean, value: unknown): void {
     if (ok) {
       try {
-        send({ t: "cr", i: i, ok: "1", v: JSON.stringify(value === undefined ? null : value) });
+        send({ type: "callResult", id: id, ok: true, value: JSON.stringify(value === undefined ? null : value) });
         return;
       } catch (e) {
         value = e;
       }
     }
     console.warn("j2act: client action failed", value);
-    send({ t: "cr", i: i, ok: "0", e: errorText(value) });
+    send({ type: "callResult", id: id, ok: false, error: errorText(value) });
   }
 
   /** Server attributes follow the render; attributes the client added stay; slots morph where they live. */
@@ -159,7 +159,8 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
       } else if (!lostSlots.has(id)) {
         lostSlots.add(id);
         console.warn("j2act: slot " + id + " left the document, so it stopped updating (ADR 0022)");
-        send({ t: "ce", c: el.getAttribute("data-j2-client"), e: "slot " + id + " left the document, so it stopped updating" });
+        send({ type: "clientError", client: el.getAttribute("data-j2-client"),
+          error: "slot " + id + " left the document, so it stopped updating" });
       }
     });
   }
@@ -323,7 +324,7 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
   function failWaiting(c: Client, e: unknown): void {
     const waiting = c.waiting;
     c.waiting = [];
-    waiting.forEach((m) => reply(m.i, false, e));
+    waiting.forEach((m) => reply(m.id, false, e));
   }
 
   function invoke(c: Client, name: string, args: unknown[]): unknown {
@@ -334,27 +335,27 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
     return fn.apply(c.api, [c.el, ...args]);
   }
 
-  function run(c: Client, m: ActionCall): void {
+  function run(c: Client, m: ClientCall): void {
     let result;
     try {
-      result = invoke(c, m.n, revive(m.a) as unknown[]);
+      result = invoke(c, m.action, revive(m.args) as unknown[]);
     } catch (e) {
-      reply(m.i, false, e);
+      reply(m.id, false, e);
       return;
     }
-    Promise.resolve(result).then((v) => reply(m.i, true, v), (e) => reply(m.i, false, e));
+    Promise.resolve(result).then((v) => reply(m.id, true, v), (e) => reply(m.id, false, e));
   }
 
   function callback(id: string): (...args: unknown[]) => void {
     return (...args) => {
-      send({ t: "cb", h: id, v: JSON.stringify(args) });
+      send({ type: "callback", handler: id, args: JSON.stringify(args) });
     };
   }
 
   /** Mount, update and cleanup failures and missing exports: the console here, the log on the server. */
   function error(c: Client, what: string, e: unknown): void {
     console.error("j2act: client " + c.el.getAttribute("data-j2-export") + " failed in " + what, e);
-    send({ t: "ce", c: c.id, e: what + ": " + errorText(e) });
+    send({ type: "clientError", client: c.id, error: what + ": " + errorText(e) });
   }
 
   return { scan, revive, anchorGone, call, callNow, reply, sync, reimport };

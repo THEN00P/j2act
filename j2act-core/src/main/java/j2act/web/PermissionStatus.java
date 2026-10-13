@@ -13,7 +13,7 @@ import j2act.WebPath;
 public final class PermissionStatus {
 
   /** Which attributes the browser copies out, nested for snapshot-typed ones. */
-  static final String SHAPE = "{\"state\":1,\"name\":1}";
+  static final String SHAPE = "{\"state\":true,\"name\":true}";
 
   private final String state;
   private final String name;

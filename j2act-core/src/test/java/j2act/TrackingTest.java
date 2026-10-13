@@ -54,7 +54,7 @@ class TrackingTest {
 
       List<Map<String, String>> patches = h.click(Harness.clickOn(h.html, "first 0"));
       assertEquals(1, patches.size());
-      assertTrue(patches.get(0).get("h").startsWith("<button"), patches.get(0).get("h"));
+      assertTrue(patches.get(0).get("html").startsWith("<button"), patches.get(0).get("html"));
       assertEquals(parentBefore, parentRenders.get());
       assertEquals(childBefore + 1, childRenders.get());
     }
@@ -66,7 +66,7 @@ class TrackingTest {
       h.load();
       h.connect();
       h.click(Harness.clickOn(h.html, "first 0"));
-      String page = h.click(Harness.clickOn(h.html, "rename")).get(0).get("h");
+      String page = h.click(Harness.clickOn(h.html, "rename")).get(0).get("html");
       assertTrue(page.contains("second 1"), page);
       assertFalse(page.contains("first"), page);
     }

@@ -14,36 +14,37 @@ type Dynamic = any;
  * constructs. Everything up to the last call runs synchronously, so a call bound to a gesture
  * keeps the gesture's user activation.
  */
-export function runWeb(w: WebCall, root: object = window): Promise<unknown> {
+export function runWeb(call: WebCall, root: object = window): Promise<unknown> {
   let target: Dynamic = root;
-  for (const [kind, name, args] of w.p) {
-    target = kind === "g" ? target[name] : target[name](...(args || []));
+  for (const [kind, name, args] of call.path) {
+    target = kind === "get" ? target[name] : target[name](...(args || []));
     if (target == null) {
       throw named("TypeError", name + " is " + target);
     }
   }
   let value: unknown;
-  if (w.k === "get") {
-    value = target[w.n!];
-  } else if (w.k === "set") {
-    target[w.n!] = w.a[0];
-  } else if (w.k === "new") {
-    new target(...w.a);
-  } else if (w.cb) {
+  if (call.kind === "get") {
+    value = target[call.name!];
+  } else if (call.kind === "set") {
+    target[call.name!] = call.args[0];
+  } else if (call.kind === "new") {
+    new target(...call.args);
+  } else if (call.callbacks) {
     // Callback style (getCurrentPosition): resolve and reject go where the callbacks were.
-    const cb = w.cb;
+    const callbacks = call.callbacks;
     value = new Promise((resolve, reject) => {
-      const args = w.a.slice();
-      args[cb[0]] = resolve;
-      if (cb.length > 1) {
-        args[cb[1]] = (error: Dynamic) => reject(error instanceof Error ? error : named(errorName(error), error && error.message));
+      const args = call.args.slice();
+      args[callbacks[0]] = resolve;
+      if (callbacks.length > 1) {
+        args[callbacks[1]] = (error: Dynamic) => reject(error instanceof Error ? error : named(errorName(error), error && error.message));
       }
-      target[w.n!](...args);
+      target[call.name!](...args);
     });
   } else {
-    value = target[w.n!](...w.a);
+    value = target[call.name!](...call.args);
   }
-  return Promise.resolve(value).then((v) => (w.r ? project(v, w.r) : v));
+  const shape = call.shape;
+  return Promise.resolve(value).then((v) => (shape ? project(v, shape) : v));
 }
 
 /** Copies what the snapshot's shape names; live objects never cross. */
@@ -51,7 +52,7 @@ export function project(value: unknown, shape: Shape): unknown {
   if (value == null) {
     return null;
   }
-  if (shape === 1) {
+  if (shape === true) {
     return value;
   }
   const out: Record<string, unknown> = {};

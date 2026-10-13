@@ -75,7 +75,7 @@ class RetainedCheckpointTest {
       h.connect();
       type(h, "name", "Ada");
       Harness.eventually(() -> storage.has(h.token), "a checkpoint");
-      h.send("t", "bye");
+      h.send("type", "bye");
       Harness.eventually(() -> !storage.has(h.token) && h.engine.sessionCount() == 0, "bye deleting it");
     }
   }

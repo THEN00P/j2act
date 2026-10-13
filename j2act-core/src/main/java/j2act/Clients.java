@@ -124,7 +124,7 @@ final class Clients {
       String handlerId = session.registerHandler(scope, path, event, (Session.RawHandler) message ->
         onBoundResult(message, "window call " + web.name, event, scope, then,
           json -> web.decoder.decode(Json.parse(json))));
-      return new String[] {handlerId, "{\"w\":" + web.json + "}"};
+      return new String[] {handlerId, "{\"window\":" + web.json + "}"};
     }
     ClientCall call = (ClientCall) recorded;
     ClientCell cell = call.handle.clientCell();
@@ -133,11 +133,11 @@ final class Clients {
     String handlerId = session.registerHandler(scope, path, event, (Session.RawHandler) message ->
       onBoundResult(message, "client action " + name, event, scope, then,
         json -> session.engine.json.read(json, valueType)));
-    StringBuilder json = new StringBuilder("{\"c\":");
+    StringBuilder json = new StringBuilder("{\"client\":");
     Json.string(cell.id, json);
-    json.append(",\"n\":");
+    json.append(",\"action\":");
     Json.string(call.method.getName(), json);
-    json.append(",\"a\":[");
+    json.append(",\"args\":[");
     Class<?>[] classes = call.method.getParameterTypes();
     Type[] types = call.method.getGenericParameterTypes();
     for (int i = 0; i < call.args.length; i++) {
@@ -150,12 +150,12 @@ final class Clients {
 
   private void onBoundResult(Map<String, String> message, String what, String event, Scope scope,
                              Consumer<Object> then, Function<String, Object> decode) {
-    String error = message.get("x");
+    String error = message.get("error");
     if (error != null) {
       warn(what + " failed in its " + event + " in " + scope.instance.getClass().getName() + ": " + error);
       return;
     }
-    String json = message.get("v");
+    String json = message.get("value");
     then.accept(decode.apply(json == null || json.isEmpty() ? "null" : json));
   }
 
@@ -173,7 +173,8 @@ final class Clients {
         handler -> session.registerActionHandler(cell.owner, key, handler),
         component -> live(cell, key, component), name));
     }
-    outbox.add(Json.object("t", "ca", "i", id, "c", cell.id, "n", method.getName(), "a", json.append(']').toString()));
+    outbox.add(Json.object("type", "clientCall", "id", id, "client", cell.id, "action", method.getName(),
+      "args", json.append(']').toString()));
     CompletableFuture<Object> future = new CompletableFuture<>();
     Function<String, Object> decode = method.getReturnType() == void.class ? result -> null
       : result -> session.engine.json.read(result, ClientCall.valueType(method));
@@ -214,7 +215,7 @@ final class Clients {
 
   private CompletableFuture<Object> window(Scope scope, String name, String json, WebPath.Decoder<Object> decoder) {
     String id = String.valueOf(++callSeq);
-    outbox.add(Json.object("t", "wa", "i", id, "w", json));
+    outbox.add(Json.object("type", "windowCall", "id", id, "call", json));
     CompletableFuture<Object> future = new CompletableFuture<>();
     calls.put(id, new PendingCall(null, scope, "window call " + name, text -> decoder.decode(Json.parse(text)), true,
       future));
@@ -267,20 +268,20 @@ final class Clients {
     outbox.clear();
   }
 
-  /** The browser's reply to a call: {t:"cr", i, ok, v or e}. */
+  /** The browser's reply to a call: {type: "callResult", id, ok, value or error}. */
   void onResult(Map<String, String> message) {
-    String id = message.get("i");
+    String id = message.get("id");
     PendingCall call = id == null ? null : calls.get(id);
     if (call == null) {
       return;
     }
-    if (!"1".equals(message.get("ok"))) {
-      settle(id, null, error(message.get("e"), call.browser));
+    if (!"true".equals(message.get("ok"))) {
+      settle(id, null, error(message.get("error"), call.browser));
       return;
     }
     Object value;
     try {
-      String json = message.get("v");
+      String json = message.get("value");
       value = call.decode.apply(json == null || json.isEmpty() ? "null" : json);
     } catch (RuntimeException e) {
       settle(id, null, error("TypeError: the result of " + call.name + " does not bind: " + e.getMessage(), call.browser));
@@ -291,10 +292,10 @@ final class Clients {
 
   /** A client failed outside a call: its mount, update or cleanup threw, or its export is missing. */
   void onError(Map<String, String> message) {
-    ClientCell cell = byId.get(message.get("c"));
-    String who = cell == null ? "client " + message.get("c")
+    ClientCell cell = byId.get(message.get("client"));
+    String who = cell == null ? "client " + message.get("client")
       : "client module " + Modules.exportName(cell.type) + " (" + cell.type.getName() + ")";
-    warn(who + " failed: " + message.get("e"));
+    warn(who + " failed: " + message.get("error"));
   }
 
   private void settle(String id, Object value, ClientException error) {
@@ -349,7 +350,7 @@ final class Clients {
     if (value instanceof Upload) {
       Upload upload = (Upload) value;
       String id = register.apply(message -> {
-        UploadFile file = UploadFile.fromWire(message.get("fi"), message.get("fn"), message.get("fs"), message.get("ft"));
+        UploadFile file = UploadFile.fromWire(message);
         if (file == null) {
           throw new IllegalArgumentException("an UploadTarget send without a file");
         }
@@ -359,7 +360,7 @@ final class Clients {
     }
     Type[] parameters = callbackParameters(declared, generic);
     if (parameters != null) {
-      String id = register.apply(message -> invoke(value, parameters, message.get("v")));
+      String id = register.apply(message -> invoke(value, parameters, message.get("args")));
       return "{\"$fn\":" + quote(id) + "}";
     }
     if (value instanceof DomContent) {

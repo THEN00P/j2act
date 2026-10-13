@@ -47,16 +47,16 @@ class IdentityTest {
       h.connect();
       List<Map<String, String>> patches = h.click(Harness.clickOn(h.html, "A:0"));
       assertEquals(1, patches.size());
-      String a1 = patches.get(0).get("h");
-      assertTrue(a1.startsWith("<button data-j2s="), a1);
+      String a1 = patches.get(0).get("html");
+      assertTrue(a1.startsWith("<button data-j2-scope="), a1);
       assertTrue(a1.contains("A:1"), a1);
 
       patches = h.click(Harness.clickOn(a1, "A:1"));
-      assertTrue(patches.get(0).get("h").contains("A:2"));
+      assertTrue(patches.get(0).get("html").contains("A:2"));
 
       patches = h.click(Harness.clickOn(h.html, "B:0"));
       assertEquals(1, patches.size());
-      assertTrue(patches.get(0).get("h").contains("B:1"));
+      assertTrue(patches.get(0).get("html").contains("B:1"));
     }
   }
 
@@ -76,14 +76,14 @@ class IdentityTest {
     try (Harness h = new Harness(Toggle::new)) {
       h.load();
       h.connect();
-      String y = h.click(Harness.clickOn(h.html, "Y:0")).get(0).get("h");
+      String y = h.click(Harness.clickOn(h.html, "Y:0")).get(0).get("html");
       assertTrue(y.contains("Y:1"));
 
-      String page = h.click(Harness.clickOn(h.html, "toggle")).get(0).get("h");
+      String page = h.click(Harness.clickOn(h.html, "toggle")).get(0).get("html");
       assertTrue(page.contains("X:0"), page);
       assertTrue(page.contains("Y:1"), page);
 
-      page = h.click(Harness.clickOn(page, "toggle")).get(0).get("h");
+      page = h.click(Harness.clickOn(page, "toggle")).get(0).get("html");
       assertFalse(page.contains("X:"), page);
       assertTrue(page.contains("Y:1"), page);
     }
@@ -129,7 +129,7 @@ class IdentityTest {
       h.load();
       h.connect();
       h.click(Harness.clickOn(h.html, "ann"));
-      String page = h.click(Harness.clickOn(h.html, "reverse")).get(0).get("h");
+      String page = h.click(Harness.clickOn(h.html, "reverse")).get(0).get("html");
       assertTrue(page.contains("ann [open]"), page);
       assertFalse(page.contains("cid [open]"), page);
       assertTrue(page.indexOf("cid") < page.indexOf("ann [open]"), page);
@@ -142,7 +142,7 @@ class IdentityTest {
       h.load();
       h.connect();
       h.click(Harness.clickOn(h.html, "ann"));
-      String page = h.click(Harness.clickOn(h.html, "reverse")).get(0).get("h");
+      String page = h.click(Harness.clickOn(h.html, "reverse")).get(0).get("html");
       assertTrue(page.contains("cid [open]"), page);
       assertFalse(page.contains("ann [open]"), page);
     }
@@ -166,7 +166,7 @@ class IdentityTest {
       h.load();
       h.connect();
       h.click(Harness.clickOn(h.html, "H:0"));
-      String page = h.click(Harness.clickOn(h.html, "bump")).get(0).get("h");
+      String page = h.click(Harness.clickOn(h.html, "bump")).get(0).get("html");
       assertTrue(page.contains("bump 1"), page);
       assertTrue(page.contains("H:1"), page);
     }

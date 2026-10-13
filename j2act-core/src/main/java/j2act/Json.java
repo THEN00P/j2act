@@ -14,8 +14,8 @@ final class Json {
   private Json() {
   }
 
-  /** {"k1":"v1","k2":"v2"} from alternating keys and values; null values are skipped. */
-  static String object(String... keysAndValues) {
+  /** {"k1":"v1","k2":true} from alternating keys and values, strings or booleans; null values are skipped. */
+  static String object(Object... keysAndValues) {
     StringBuilder b = new StringBuilder("{");
     boolean first = true;
     for (int i = 0; i + 1 < keysAndValues.length; i += 2) {
@@ -26,9 +26,14 @@ final class Json {
         b.append(',');
       }
       first = false;
-      string(keysAndValues[i], b);
+      string((String) keysAndValues[i], b);
       b.append(':');
-      string(keysAndValues[i + 1], b);
+      Object value = keysAndValues[i + 1];
+      if (value instanceof Boolean) {
+        b.append(value);
+      } else {
+        string((String) value, b);
+      }
     }
     return b.append('}').toString();
   }

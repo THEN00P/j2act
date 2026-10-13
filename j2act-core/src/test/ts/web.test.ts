@@ -18,23 +18,23 @@ describe("runWeb", () => {
 
   it("follows the path, then calls", async () => {
     const r = root();
-    await runWeb({ p: [["g", "storage"]], k: "call", n: "setItem", a: ["b", "2"] }, r);
-    expect(await runWeb({ p: [["g", "storage"]], k: "call", n: "getItem", a: ["b"] }, r)).toBe("2");
+    await runWeb({ path: [["get", "storage"]], kind: "call", name: "setItem", args: ["b", "2"] }, r);
+    expect(await runWeb({ path: [["get", "storage"]], kind: "call", name: "getItem", args: ["b"] }, r)).toBe("2");
   });
 
   it("gets and sets", async () => {
     const r = root();
-    await runWeb({ p: [], k: "set", n: "title", a: ["new"] }, r);
-    expect(await runWeb({ p: [], k: "get", n: "title", a: [] }, r)).toBe("new");
+    await runWeb({ path: [], kind: "set", name: "title", args: ["new"] }, r);
+    expect(await runWeb({ path: [], kind: "get", name: "title", args: [] }, r)).toBe("new");
   });
 
   it("awaits a promise and copies only what the shape names", async () => {
-    const value = await runWeb({ p: [], k: "call", n: "later", a: [], r: { x: 1, deep: { z: 1 } } }, root());
+    const value = await runWeb({ path: [], kind: "call", name: "later", args: [], shape: { x: true, deep: { z: true } } }, root());
     expect(value).toEqual({ x: 1, deep: { z: 3 } });
   });
 
   it("throws synchronously when the path breaks, so the caller can reply at once", () => {
-    expect(() => runWeb({ p: [["g", "missing"]], k: "get", n: "x", a: [] }, root())).toThrow("missing is undefined");
+    expect(() => runWeb({ path: [["get", "missing"]], kind: "get", name: "x", args: [] }, root())).toThrow("missing is undefined");
   });
 
   it("puts resolve and reject where the callbacks go", async () => {
@@ -48,24 +48,24 @@ describe("runWeb", () => {
         }
       }
     };
-    expect(await runWeb({ p: [["g", "geo"]], k: "call", n: "locate", a: [null, null, { high: true }], cb: [0, 1] }, r))
+    expect(await runWeb({ path: [["get", "geo"]], kind: "call", name: "locate", args: [null, null, { high: true }], callbacks: [0, 1] }, r))
       .toEqual({ options: { high: true } });
-    await expect(runWeb({ p: [["g", "geo"]], k: "call", n: "deny", a: [null, null], cb: [0, 1] }, r))
+    await expect(runWeb({ path: [["get", "geo"]], kind: "call", name: "deny", args: [null, null], callbacks: [0, 1] }, r))
       .rejects.toMatchObject({ name: "NotAllowedError", message: "denied" });
   });
 
   it("constructs without returning the object", async () => {
     const made: unknown[] = [];
     const r = { Thing: class { constructor(a: unknown) { made.push(a); } } };
-    expect(await runWeb({ p: [["g", "Thing"]], k: "new", a: [7] }, r)).toBeUndefined();
+    expect(await runWeb({ path: [["get", "Thing"]], kind: "new", args: [7] }, r)).toBeUndefined();
     expect(made).toEqual([7]);
   });
 });
 
 describe("project", () => {
   it("turns missing values into null", () => {
-    expect(project(undefined, 1)).toBeNull();
-    expect(project({ a: null }, { a: { b: 1 } })).toEqual({ a: null });
+    expect(project(undefined, true)).toBeNull();
+    expect(project({ a: null }, { a: { b: true } })).toEqual({ a: null });
   });
 });
 

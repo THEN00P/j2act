@@ -69,16 +69,16 @@ final class Harness implements AutoCloseable {
 
   List<Map<String, String>> nav(String url, String mode) {
     int from = conn.size();
-    engine.onMessage(conn, Json.object("t", "nav", "u", url, "m", mode));
-    conn.await(from, m -> "url".equals(m.get("t")) || "go".equals(m.get("t")));
+    engine.onMessage(conn, Json.object("type", "navigate", "url", url, "mode", mode));
+    conn.await(from, m -> "url".equals(m.get("type")) || "load".equals(m.get("type")));
     return conn.since(from, m -> true);
   }
 
   static String last(List<Map<String, String>> messages, String type) {
     String found = null;
     for (Map<String, String> m : messages) {
-      if (type.equals(m.get("t"))) {
-        found = "patch".equals(type) || "head".equals(type) ? m.get("h") : m.get("u");
+      if (type.equals(m.get("type"))) {
+        found = "patch".equals(type) || "head".equals(type) ? m.get("html") : m.get("url");
       }
     }
     return found;
@@ -86,22 +86,22 @@ final class Harness implements AutoCloseable {
 
   Harness connect() {
     int from = conn.size();
-    engine.onMessage(conn, Json.object("t", "hello", "sid", sid, "tok", token));
-    conn.await(from, m -> "ok".equals(m.get("t")));
+    engine.onMessage(conn, Json.object("type", "hello", "session", sid, "token", token));
+    conn.await(from, m -> "ready".equals(m.get("type")));
     return this;
   }
 
-  /** Sends an event with extra wire fields (k, m for keys) and waits for its ack. */
-  List<Map<String, String>> fire(String handlerId, String value, String... extra) {
-    String[] fields = new String[8 + extra.length];
+  /** Sends an event with extra fields (key, ctrlKey, ... for keys) and waits for its ack. */
+  List<Map<String, String>> fire(String handlerId, String value, Object... extra) {
+    Object[] fields = new Object[8 + extra.length];
     String ack = String.valueOf(++ackSeq);
-    String[] base = {"t", "ev", "h", handlerId, "v", value, "a", ack};
+    Object[] base = {"type", "event", "id", ack, "handler", handlerId, "value", value};
     System.arraycopy(base, 0, fields, 0, base.length);
     System.arraycopy(extra, 0, fields, base.length, extra.length);
     int from = conn.size();
     engine.onMessage(conn, Json.object(fields));
-    conn.await(from, m -> "ack".equals(m.get("t")) && ack.equals(m.get("a")));
-    return conn.since(from, m -> "patch".equals(m.get("t")));
+    conn.await(from, m -> "ack".equals(m.get("type")) && ack.equals(m.get("id")));
+    return conn.since(from, m -> "patch".equals(m.get("type")));
   }
 
   List<Map<String, String>> click(String handlerId) {
@@ -109,13 +109,13 @@ final class Harness implements AutoCloseable {
   }
 
   /** Sends a message as runtime.js would, e.g. a client callback or action result (ADR 0022). */
-  void send(String... fields) {
+  void send(Object... fields) {
     engine.onMessage(conn, Json.object(fields));
   }
 
   /** Waits until a patch whose HTML matches arrives after message index {@code from}. */
   Map<String, String> awaitPatch(int from, Predicate<String> htmlMatches) {
-    return conn.await(from, m -> "patch".equals(m.get("t")) && htmlMatches.test(m.get("h")));
+    return conn.await(from, m -> "patch".equals(m.get("type")) && htmlMatches.test(m.get("html")));
   }
 
   /** The click handler id on the element whose text starts with {@code label}. */

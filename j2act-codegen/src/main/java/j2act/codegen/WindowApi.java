@@ -390,7 +390,7 @@ final class WindowApi {
         continue;
       }
       out.append(out.length() == 1 ? "" : ",").append('"').append(member.name).append("\":")
-        .append(!type.isUnion() && snapshots.contains(type.name) ? shape(type.name) : "1");
+        .append(!type.isUnion() && snapshots.contains(type.name) ? shape(type.name) : "true");
     }
     return out.append('}').toString();
   }

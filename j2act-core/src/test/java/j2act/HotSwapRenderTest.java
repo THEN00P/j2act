@@ -71,9 +71,9 @@ class HotSwapRenderTest {
       int from = h.conn.size();
       h.engine.hotSwapped();
       Map<String, String> patch = h.awaitPatch(from, html -> html.contains("new:1"));
-      assertTrue(patch.get("h").contains("child:1"), patch.get("h"));
+      assertTrue(patch.get("html").contains("child:1"), patch.get("html"));
       // The handlers are the new render's: they work.
-      List<Map<String, String>> after = h.click(Harness.clickOn(patch.get("h"), "new:1"));
+      List<Map<String, String>> after = h.click(Harness.clickOn(patch.get("html"), "new:1"));
       assertTrue(Harness.last(after, "patch").contains("new:2"));
     }
   }
@@ -83,7 +83,7 @@ class HotSwapRenderTest {
       extraPrimitive = true;
       int from = h.conn.size();
       h.engine.hotSwapped();
-      String html = h.awaitPatch(from, s -> s.contains("child:0 fresh")).get("h");
+      String html = h.awaitPatch(from, s -> s.contains("child:0 fresh")).get("html");
       assertTrue(html.contains("old:1"), "the page kept its state: " + html);
     }
   }
@@ -100,7 +100,7 @@ class HotSwapRenderTest {
         return null;
       }).get();
       Thread.sleep(200);
-      assertFalse(h.conn.since(from, m -> "patch".equals(m.get("t")) && m.get("h").contains("fresh")).size() > 0);
+      assertFalse(h.conn.since(from, m -> "patch".equals(m.get("type")) && m.get("html").contains("fresh")).size() > 0);
     }
   }
 
@@ -110,7 +110,7 @@ class HotSwapRenderTest {
       session(h).call(() -> child.shape = "an older class").get();
       int from = h.conn.size();
       h.engine.hotSwapped();
-      String html = h.awaitPatch(from, s -> s.contains("child:0")).get("h");
+      String html = h.awaitPatch(from, s -> s.contains("child:0")).get("html");
       assertTrue(html.contains("old:1"), html);
     }
   }
@@ -122,7 +122,7 @@ class HotSwapRenderTest {
       session.call(() -> before.shape = "an older class").get();
       int from = h.conn.size();
       h.engine.hotSwapped();
-      String html = h.awaitPatch(from, s -> s.contains("old:0")).get("h");
+      String html = h.awaitPatch(from, s -> s.contains("old:0")).get("html");
       assertTrue(html.contains("child:0"), "a new page object, so fresh state throughout: " + html);
       assertTrue(before.disposed);
     }

@@ -105,9 +105,9 @@ class ImportMapTest {
       h.connect();
       int from = h.conn.size();
       h.click(Harness.clickOn(html, "more"));
-      Map<String, String> head = h.conn.await(from, m -> "head".equals(m.get("t")));
-      assertTrue(head.get("h").contains("<title>clicks 1</title>"), head.get("h"));
-      assertTrue(!head.get("h").contains("nonce"), "browsers hide a nonce, so a morph would only see it differ: " + head.get("h"));
+      Map<String, String> head = h.conn.await(from, m -> "head".equals(m.get("type")));
+      assertTrue(head.get("html").contains("<title>clicks 1</title>"), head.get("html"));
+      assertTrue(!head.get("html").contains("nonce"), "browsers hide a nonce, so a morph would only see it differ: " + head.get("html"));
     }
   }
 

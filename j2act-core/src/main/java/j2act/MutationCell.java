@@ -127,7 +127,7 @@ final class MutationCell extends Cell {
     J2Act engine = session.engine;
     String token = engine.newSecret(24);
     engine.downloads.put(token, new DownloadStream(session, this, run, variables, mySeq));
-    session.send(Json.object("t", "dl", "u", engine.contextPath + J2Act.DOWNLOAD_PATH + token));
+    session.send(Json.object("type", "download", "url", engine.contextPath + J2Act.DOWNLOAD_PATH + token));
     engine.later(session, engine.downloadTtlMillis, () -> {
       if (engine.downloads.remove(token) != null) {
         finish(run, variables, mySeq, null, new IllegalStateException("download was not fetched in time"));
@@ -159,7 +159,7 @@ final class MutationCell extends Cell {
     }
     String token = engine.newSecret(24);
     engine.uploads.put(token, new UploadSink(token, session, this, run, file, mySeq, temp));
-    session.send(Json.object("t", "up", "f", file.id, "u", engine.contextPath + J2Act.UPLOAD_PATH + token));
+    session.send(Json.object("type", "upload", "file", file.id, "url", engine.contextPath + J2Act.UPLOAD_PATH + token));
   }
 
   /**
@@ -168,7 +168,7 @@ final class MutationCell extends Cell {
    */
   private void refuse(Upload run, UploadFile file, long mySeq, Throwable reason) {
     if (file != null) {
-      session.send(Json.object("t", "upx", "f", file.id, "e", String.valueOf(reason.getMessage())));
+      session.send(Json.object("type", "uploadRefused", "file", file.id, "error", String.valueOf(reason.getMessage())));
     }
     finish(run, file, mySeq, null, reason);
   }
