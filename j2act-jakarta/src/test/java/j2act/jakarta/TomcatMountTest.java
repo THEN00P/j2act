@@ -15,6 +15,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.nio.file.Files;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -22,6 +23,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import jakarta.servlet.DispatcherType;
+import jakarta.servlet.Filter;
+import jakarta.servlet.ServletContextEvent;
 
 import org.apache.catalina.Context;
 import org.apache.catalina.servlets.DefaultServlet;
@@ -32,6 +37,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import j2act.ComponentTag;
+import j2act.J2Act;
 import j2act.LiveComponent;
 import j2act.Page;
 import j2act.PageResolver;
@@ -58,6 +64,21 @@ class TomcatMountTest {
   public static final class App extends J2ActListener {
     @Override protected PageResolver router() {
       return routes(page("/", Home.class));
+    }
+
+    @Override protected void customize(J2Act.Builder builder) {
+      builder.withCspNonce(exchange -> exchange.attribute("cspNonce").orElse(null));
+    }
+
+    /** A CSP filter in front of j2act's, as an app would have, storing the request's nonce. */
+    @Override public void contextInitialized(ServletContextEvent event) {
+      Filter nonce = (request, response, chain) -> {
+        request.setAttribute("cspNonce", "tomcat-nonce");
+        chain.doFilter(request, response);
+      };
+      event.getServletContext().addFilter("csp", nonce)
+        .addMappingForUrlPatterns(EnumSet.of(DispatcherType.REQUEST), true, "/*");
+      super.contextInitialized(event);
     }
   }
 
@@ -93,7 +114,8 @@ class TomcatMountTest {
     HttpResponse<String> page = get("/app/");
     assertEquals(200, page.statusCode());
     assertTrue(page.body().contains("<meta name=\"j2-ws\" content=\"/app/_j2act/ws\">"), page.body());
-    assertTrue(page.body().contains("<script src=\"/app/_j2act/runtime.js\" defer>"), page.body());
+    assertTrue(page.body().contains("<script src=\"/app/_j2act/runtime.js\" nonce=\"tomcat-nonce\" defer>"),
+      "the request attribute reaches withCspNonce: " + page.body());
     assertEquals(404, get("/app/not-a-route").statusCode());
   }
 

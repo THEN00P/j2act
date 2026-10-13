@@ -4,6 +4,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -115,8 +118,29 @@ final class ImportMap {
     return imports.isEmpty();
   }
 
-  /** The script element, for the head before any module loads. */
-  String html() {
+  /** The script element, for the head before any module loads; nonce is the page's CSP nonce or null. */
+  String html(String nonce) {
+    StringBuilder b = new StringBuilder("<script type=\"importmap\"");
+    if (nonce != null) {
+      b.append(" nonce=\"");
+      Html.escape(nonce, b);
+      b.append('"');
+    }
+    return b.append('>').append(content()).append("</script>").toString();
+  }
+
+  /** The CSP hash source of the script's content, e.g. 'sha256-...', which stays the same for the engine's life. */
+  String hash() {
+    try {
+      byte[] digest = MessageDigest.getInstance("SHA-256")
+        .digest(content().getBytes(StandardCharsets.UTF_8));
+      return "'sha256-" + Base64.getEncoder().encodeToString(digest) + "'";
+    } catch (NoSuchAlgorithmException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  private String content() {
     Map<String, String> rendered = new LinkedHashMap<>();
     for (Map.Entry<String, String> entry : imports.entrySet()) {
       String target = entry.getValue();
@@ -125,6 +149,6 @@ final class ImportMap {
     StringBuilder json = new StringBuilder();
     Json.write(Map.of("imports", rendered), json);
     // Inside a script element only "</" could end it early.
-    return "<script type=\"importmap\">" + json.toString().replace("</", "<\\/") + "</script>";
+    return json.toString().replace("</", "<\\/");
   }
 }

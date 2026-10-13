@@ -32,6 +32,8 @@ final class Session {
   final String token;
   final Lane lane;
   final Exchange exchange;
+  /** The page-load request's CSP nonce, or null; only the served page carries it, never a patch. */
+  private final String nonce;
 
   /** Concurrent: store cells may be created from query loader threads. */
   final Map<String, Cell> cells = new java.util.concurrent.ConcurrentHashMap<>();
@@ -92,6 +94,7 @@ final class Session {
     this.token = token;
     this.lane = new Lane(engine.executor);
     this.exchange = exchange;
+    this.nonce = engine.cspNonce == null ? null : engine.cspNonce.apply(exchange);
     this.routeCell = new ValueCell(this, "route", new RouteInfo(url, new HashMap<>()));
     this.authCell = new ValueCell(this, "auth", UNRESOLVED);
     cells.put(routeCell.address, routeCell);
@@ -649,6 +652,7 @@ final class Session {
 
   String renderFull() {
     Renderer renderer = new Renderer(this, ++epoch);
+    renderer.nonce = nonce;
     try {
       renderer.renderScope(root);
     } catch (RouteException e) {
@@ -844,6 +848,14 @@ final class Session {
   }
 
   String mergedHead() {
+    return mergedHead(null);
+  }
+
+  /**
+   * The head with the bootstrap tags; the nonce goes only into the served page. Browsers hide
+   * a nonce once the element is in the document, so a head morph would only see it differ.
+   */
+  String mergedHead(String nonce) {
     Map<String, String> merged = new LinkedHashMap<>();
     Set<Scope> seen = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
     for (ComponentTag frame : frames) {
@@ -859,7 +871,7 @@ final class Session {
     }
     StringBuilder b = new StringBuilder();
     merged.values().forEach(b::append);
-    return b.append(bootstrap()).toString();
+    return b.append(bootstrap(nonce)).toString();
   }
 
   private static String headKey(DomContent node, String unique) {
@@ -895,11 +907,11 @@ final class Session {
     }
   }
 
-  private String bootstrap() {
+  private String bootstrap(String nonce) {
     StringBuilder b = new StringBuilder();
     if (!engine.importMap.isEmpty()) {
       // Before any module loads, so client modules can import packages by bare name (ADR 0022).
-      b.append(engine.importMap.html());
+      b.append(engine.importMap.html(nonce));
     }
     b.append("<meta name=\"j2-session\" content=\"").append(id).append("\">");
     b.append("<meta name=\"j2-token\" content=\"").append(token).append("\">");
@@ -918,7 +930,13 @@ final class Session {
     Html.escape(engine.contextPath + "/_j2act/ws", b);
     b.append("\"><script src=\"");
     Html.escape(engine.contextPath + "/_j2act/runtime.js", b);
-    b.append("\" defer></script>");
+    b.append('"');
+    if (nonce != null) {
+      b.append(" nonce=\"");
+      Html.escape(nonce, b);
+      b.append('"');
+    }
+    b.append(" defer></script>");
     return b.toString();
   }
 
