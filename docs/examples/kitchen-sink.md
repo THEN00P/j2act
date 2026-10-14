@@ -155,7 +155,7 @@ nav(a("Users").withHref("/admin").withPreload(INTENT)) // plain a(); no link() f
 ## Router (nested, index, guard, outlet)
 
 ```java
-import static j2act.Routes.*;
+import static j2act.router.Routes.*;
 
 Router app = routes(
   page("/", HomePage.class),

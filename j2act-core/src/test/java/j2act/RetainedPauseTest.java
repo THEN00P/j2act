@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 
 import j2act.RetainedStateTest.CountingStorage;
 import j2act.RetainedStateTest.Form;
+import j2act.internal.json.Json;
 
 /** ADR 0026: j2act.pause() and resume(), automatic pauses, onPersisting and onRestored. */
 class RetainedPauseTest {

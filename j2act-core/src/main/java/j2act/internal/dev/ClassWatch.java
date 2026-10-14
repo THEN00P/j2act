@@ -1,4 +1,4 @@
-package j2act;
+package j2act.internal.dev;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,15 +17,15 @@ import java.util.stream.Stream;
  * loaded folder too: code that runs into a class the class loader cannot find yet fails, and the
  * JVM keeps that failure for that reference until the class is swapped again.
  */
-final class ClassWatch {
+public final class ClassWatch {
 
   /** What one poll saw. */
-  static final class Change {
+  public static final class Change {
     static final Change NONE = new Change(false, null);
     /** Classes the app can load changed: re-render. */
-    final boolean ready;
+    public final boolean ready;
     /** A new class the loaded folder lacks, when one is waiting for the deployment. */
-    final String waiting;
+    public final String waiting;
 
     Change(boolean ready, String waiting) {
       this.ready = ready;
@@ -38,7 +38,7 @@ final class ClassWatch {
   private final Map<Path, Map<String, Long>> seen = new HashMap<>();
   private String lastWaiting;
 
-  ClassWatch(Path loaded, List<Path> editorOutputs) {
+  public ClassWatch(Path loaded, List<Path> editorOutputs) {
     this.loaded = loaded;
     for (Path output : editorOutputs) {
       if (!same(output, loaded)) {
@@ -49,7 +49,7 @@ final class ClassWatch {
     poll();
   }
 
-  Change poll() {
+  public Change poll() {
     boolean ready = !changed(loaded).isEmpty();
     String waiting = null;
     for (Path output : editorOutputs) {

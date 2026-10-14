@@ -188,7 +188,7 @@ final class Scope implements Observer {
     cells.add(cell);
     session.cells.put(cell.address, cell);
     if (primitive instanceof State && ((State<?>) primitive).retained) {
-      session.retain(this, (State<?>) primitive, (ValueCell) cell, index);
+      session.snapshot.retain(this, (State<?>) primitive, (ValueCell) cell, index);
     }
     primitive.attach(cell, true);
   }
@@ -242,8 +242,8 @@ final class Scope implements Observer {
     }
     actionScopes.clear();
     unsubscribeAll();
-    session.removeHandlers(this);
-    session.forgetHead(this);
+    session.handlers.remove(this);
+    session.heads.forget(this);
     for (Cell cell : cells) {
       cell.dispose();
       session.cells.remove(cell.address);

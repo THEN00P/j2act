@@ -1,6 +1,6 @@
 package com.example.team;
 
-import static j2act.Routes.*;
+import static j2act.router.Routes.*;
 
 import com.example.team.auth.AppIdentity;
 import com.example.team.auth.Auth;

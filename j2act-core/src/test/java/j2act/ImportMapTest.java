@@ -11,6 +11,15 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import j2act.Asset;
+import j2act.Exchange;
+import j2act.Harness;
+import j2act.LiveComponent;
+import j2act.Page;
+import j2act.State;
+import j2act.T;
+import j2act.Tag;
+
 /** npm packages from mvnpm jars: the import map, and the files served as ES modules (ADR 0022). */
 class ImportMapTest {
 

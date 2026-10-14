@@ -1,4 +1,4 @@
-package j2act;
+package j2act.internal.modules;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -13,6 +13,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import j2act.Asset;
+import j2act.J2Act;
+import j2act.internal.json.Json;
+
 /**
  * npm packages from mvnpm jars (META-INF/resources/_static), served by the runtime at
  * PACKAGE_PATH so plain JavaScript loads them with no build step (ADR 0022). ES module
@@ -20,22 +24,26 @@ import java.util.concurrent.ConcurrentHashMap;
  * resolved as Node does: relative paths with .js, .json and index.js tried, bare names
  * through the import map. Files are read once and cached; the URLs carry the version.
  */
-final class Packages {
+public final class Packages {
 
   private static final String ROOT = "META-INF/resources/_static/";
   private static final Set<String> NODE_BUILTINS = new HashSet<>(Arrays.asList(
     "assert", "buffer", "child_process", "crypto", "events", "fs", "http", "https", "net", "os", "path",
     "process", "querystring", "stream", "string_decoder", "timers", "tls", "tty", "url", "util", "vm", "zlib"));
 
-  private final J2Act engine;
+  private final String contextPath;
+  private final ClassLoader resourceLoader;
+  private final ImportMap importMap;
   private final ConcurrentHashMap<String, Asset> cache = new ConcurrentHashMap<>();
 
-  Packages(J2Act engine) {
-    this.engine = engine;
+  public Packages(String contextPath, ClassLoader resourceLoader, ImportMap importMap) {
+    this.contextPath = contextPath;
+    this.resourceLoader = resourceLoader;
+    this.importMap = importMap;
   }
 
   /** The file at PACKAGE_PATH + path, or null; only files under _static are reachable. */
-  Asset file(String path) {
+  public Asset file(String path) {
     if (path == null || path.isEmpty() || path.startsWith("/") || Arrays.asList(path.split("/")).contains("..")) {
       return null;
     }
@@ -47,7 +55,7 @@ final class Packages {
     if (bytes == null) {
       return null;
     }
-    String type = Asset.contentType(path);
+    String type = ContentTypes.of(path);
     if (type.startsWith("text/javascript")) {
       String code = new String(bytes, StandardCharsets.UTF_8);
       if (CommonJs.isCommonJs(code)) {
@@ -77,7 +85,7 @@ final class Packages {
       return null;
     }
     String[] parts = split(specifier);
-    String root = engine.importMap.exact(parts[0] + "/");
+    String root = importMap.exact(parts[0] + "/");
     if (root != null && root.startsWith(J2Act.PACKAGE_PATH)) {
       String base = root.substring(J2Act.PACKAGE_PATH.length());
       String entry = entry(base, parts[1], REQUIRE);
@@ -88,7 +96,7 @@ final class Packages {
         return target(entry);
       }
     }
-    String mapped = engine.importMap.resolve(specifier);
+    String mapped = importMap.resolve(specifier);
     if (mapped == null) {
       return null;
     }
@@ -106,7 +114,7 @@ final class Packages {
     if (found.endsWith(".json")) {
       return CommonJs.Target.json(new String(read(found), StandardCharsets.UTF_8));
     }
-    return CommonJs.Target.module(engine.contextPath + J2Act.PACKAGE_PATH + found);
+    return CommonJs.Target.module(contextPath + J2Act.PACKAGE_PATH + found);
   }
 
   /** Conditions in package.json exports, as a browser import and as Node's require resolve them. */
@@ -207,18 +215,15 @@ final class Packages {
   }
 
   private boolean exists(String path) {
-    return loader().getResource(ROOT + path) != null;
+    return resourceLoader.getResource(ROOT + path) != null;
   }
 
   private byte[] read(String path) {
-    try (InputStream in = loader().getResourceAsStream(ROOT + path)) {
+    try (InputStream in = resourceLoader.getResourceAsStream(ROOT + path)) {
       return in == null ? null : in.readAllBytes();
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
   }
 
-  private ClassLoader loader() {
-    return engine.resourceLoader;
-  }
 }

@@ -1,6 +1,6 @@
 package com.example.vite;
 
-import static j2act.Routes.*;
+import static j2act.router.Routes.*;
 
 import jakarta.servlet.annotation.WebListener;
 

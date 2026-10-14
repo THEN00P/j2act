@@ -14,6 +14,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import j2act.internal.json.Json;
+
 /** Retained State plumbing (ADR 0026): field names, snapshot ids and the snapshot format. */
 final class Retained {
 

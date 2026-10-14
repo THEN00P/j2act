@@ -1,6 +1,6 @@
 package com.example.counter.pages;
 
-import static j2act.Routes.notFound;
+import static j2act.router.Routes.notFound;
 import static j2act.html.TagCreator.*;
 
 import j2act.LiveComponent;

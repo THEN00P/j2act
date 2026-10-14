@@ -8,6 +8,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.junit.jupiter.api.Test;
 
+import j2act.internal.json.Json;
+
 /** Server side of submit, keydown, focus and blur (ADR 0013). */
 class EventsTest {
 

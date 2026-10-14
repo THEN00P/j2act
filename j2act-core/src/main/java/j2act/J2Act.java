@@ -12,7 +12,6 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Base64;
-import java.lang.reflect.Type;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
@@ -31,6 +30,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
+
+import j2act.internal.dev.ClassWatch;
+import j2act.internal.dev.DevMode;
+import j2act.internal.dev.HotSwap;
+import j2act.internal.json.Json;
+import j2act.internal.modules.ImportMap;
+import j2act.internal.modules.Modules;
+import j2act.internal.modules.Packages;
 
 /**
  * The runtime a transport adapter drives: serve() for full-page loads, onMessage()
@@ -80,9 +87,7 @@ public final class J2Act implements AutoCloseable {
   final JsonBinding json;
   final Function<Exchange, String> cspNonce;
   /** Retained State (ADR 0026): where snapshots go, how long they live, and per-type codecs. */
-  final RetainedStateStorage retainedStorage;
-  final long retainedRetentionMillis;
-  private final Map<Class<?>, RetainedCodec<?>> retainedCodecs;
+  final Snapshots snapshots;
   /** How long a tab stays hidden before its page pauses; 0 when auto-pause is off. */
   final long autoPauseMillis;
   /** What components reach with application() (ADR 0027). */
@@ -95,8 +100,8 @@ public final class J2Act implements AutoCloseable {
   final ImportMap importMap;
   /** Where client modules and package files are read from: the application's class loader. */
   final ClassLoader resourceLoader;
-  final Packages packages = new Packages(this);
-  final Modules modules = new Modules(this);
+  final Packages packages;
+  final Modules modules;
   private final DevMode dev;
   /** Bumped when dev mode sees swapped classes; scopes behind it re-check their shape (Scope.swapped). */
   volatile long codeEpoch;
@@ -133,17 +138,19 @@ public final class J2Act implements AutoCloseable {
     this.preloadHoldMillis = b.preloadHold.toMillis();
     this.json = b.json;
     this.cspNonce = b.cspNonce;
-    this.retainedStorage = b.retainedStorage != null ? b.retainedStorage : new MemoryRetainedStateStorage(b.maxRetainedSnapshots);
     Duration retention = b.retainedRetention != null ? b.retainedRetention
       : b.retainedStorage != null ? Duration.ofHours(8) : Duration.ofHours(2);
-    this.retainedRetentionMillis = retention.toMillis();
-    this.retainedCodecs = new java.util.HashMap<>(b.retainedCodecs);
+    this.snapshots = new Snapshots(this,
+      b.retainedStorage != null ? b.retainedStorage : new MemoryRetainedStateStorage(b.maxRetainedSnapshots),
+      retention.toMillis(), new java.util.HashMap<>(b.retainedCodecs));
     this.autoPauseMillis = b.autoPause == null ? 0 : b.autoPause.toMillis();
     this.shutdownSaveMillis = b.shutdownSave == null ? 0 : b.shutdownSave.toMillis();
     this.checkpointMillis = b.checkpointInterval == null ? 0 : b.checkpointInterval.toMillis();
     ClassLoader loader = Thread.currentThread().getContextClassLoader();
     this.resourceLoader = loader != null ? loader : J2Act.class.getClassLoader();
-    this.importMap = ImportMap.build(resourceLoader, b.contextPath, this);
+    this.importMap = ImportMap.build(resourceLoader, b.contextPath);
+    this.packages = new Packages(b.contextPath, resourceLoader, importMap);
+    this.modules = new Modules(b.contextPath, resourceLoader, packages);
     importMap.preferModules(packages);
     importMap.addManual(b.imports);
     if (b.executor != null) {
@@ -159,10 +166,10 @@ public final class J2Act implements AutoCloseable {
     if (checkpointMillis > 0) {
       sweeper.scheduleWithFixedDelay(this::checkpoint, checkpointMillis, checkpointMillis, TimeUnit.MILLISECONDS);
     }
-    this.dev = DevMode.detect(this);
+    this.dev = DevMode.detect(resourceLoader);
     if (dev != null) {
       modules.viteDisk = dev.viteDir();
-      dev.start(this);
+      dev.start();
       sweeper.scheduleWithFixedDelay(this::devRefresh, 300, 300, TimeUnit.MILLISECONDS);
       if (HotSwap.debugging() && dev.classRoot != null) {
         classWatch = new ClassWatch(dev.classRoot, dev.editorOutputs());
@@ -245,7 +252,7 @@ public final class J2Act implements AutoCloseable {
    */
   public ServeResult serve(String url, Exchange exchange) {
     Session session = new Session(this, newSecret(18), newSecret(18), exchange, url);
-    session.restore(restore(exchange));
+    session.snapshot.restore(snapshots.restore(exchange));
     sessions.put(session.id, session);
     try {
       Session.Resolution resolution = await(session.call(() -> session.resolve(url)));
@@ -340,7 +347,7 @@ public final class J2Act implements AutoCloseable {
       sink.fail(new SecurityException("upload sent with a different identity"));
       return ChunkResult.error(403, "forbidden");
     }
-    if (!sink.session.admit(true)) {
+    if (!sink.session.limits.admit(true)) {
       stats.rateLimited.incrementAndGet();
       return ChunkResult.error(429, "slow down");
     }
@@ -490,23 +497,18 @@ public final class J2Act implements AutoCloseable {
     } else if ("bye".equals(type)) {
       byConnection.remove(connection);
       // The page is gone for good, so its checkpoint can never be restored (ADR 0026).
-      session.lane.execute(() -> {
-        if (session.stored) {
-          session.stored = false;
-          write(session, () -> delete(session));
-        }
-      });
+      session.lane.execute(() -> snapshots.forget(session));
       discard(session, false);
     }
   }
 
   /** Rate limit and queue bound for one socket message; sustained overflow closes the socket. */
   private boolean admit(Session session, Connection connection) {
-    if (session.admit(false) && session.lane.backlog() < maxQueuedEvents) {
+    if (session.limits.admit(false) && session.lane.backlog() < maxQueuedEvents) {
       return true;
     }
     stats.rateLimited.incrementAndGet();
-    if (session.overflowed()) {
+    if (session.limits.overflowed()) {
       log(System.Logger.Level.WARNING, "session " + session.id + " kept exceeding its rate limit; closing its socket", null);
       onClose(connection);
       connection.close();
@@ -546,7 +548,7 @@ public final class J2Act implements AutoCloseable {
       lastStorageSweep = now;
       executor.execute(() -> {
         try {
-          retainedStorage.sweep(Instant.ofEpochMilli(now));
+          snapshots.storage.sweep(Instant.ofEpochMilli(now));
         } catch (RuntimeException e) {
           log(System.Logger.Level.WARNING, "sweeping retained state storage failed", e);
         }
@@ -600,8 +602,8 @@ public final class J2Act implements AutoCloseable {
         end.accept(false);
         return;
       }
-      session.persisting();
-      persist(session).thenAccept(saved -> session.lane.execute(() -> end.accept(saved)));
+      session.snapshot.persisting();
+      snapshots.persist(session).thenAccept(saved -> session.lane.execute(() -> end.accept(saved)));
     });
     return done;
   }
@@ -616,9 +618,9 @@ public final class J2Act implements AutoCloseable {
         if (sessions.get(session.id) != session) {
           return; // being evicted or paused, which saves it anyway
         }
-        session.persisting();
-        if (session.retainedDirty) {
-          persist(session);
+        session.snapshot.persisting();
+        if (session.snapshot.dirty) {
+          snapshots.persist(session);
         }
       });
     }
@@ -628,110 +630,6 @@ public final class J2Act implements AutoCloseable {
   boolean transferring(Session session) {
     return uploads.values().stream().anyMatch(sink -> sink.session == session)
       || downloads.values().stream().anyMatch(download -> download.session == session);
-  }
-
-  // ---- Retained State (ADR 0026)
-
-  /**
-   * Lane-only. Takes the session's snapshot and queues it for storage; with nothing to save, it
-   * deletes the checkpoint the snapshot would have replaced. Completes with whether it saved one.
-   */
-  private CompletableFuture<Boolean> persist(Session session) {
-    session.retainedDirty = false;
-    String snapshot = snapshot(session);
-    if (snapshot != null) {
-      session.stored = true;
-      return write(session, () -> save(session, snapshot)).thenApply(v -> true);
-    }
-    if (session.stored) {
-      session.stored = false;
-      return write(session, () -> delete(session)).thenApply(v -> false);
-    }
-    return CompletableFuture.completedFuture(false);
-  }
-
-  /** Lane-only. Runs a storage write after the session's earlier ones, on the executor. */
-  private CompletableFuture<Void> write(Session session, Runnable write) {
-    return session.storageWrites = session.storageWrites.thenRunAsync(write, executor);
-  }
-
-  /** Lane-only. The session's snapshot, or null when it has no retained values. */
-  private String snapshot(Session session) {
-    Map<String, String> entries;
-    String principal;
-    try {
-      entries = session.retainedEntries();
-      if (entries.isEmpty()) {
-        return null;
-      }
-      AuthCtx auth = session.currentAuth();
-      principal = auth.isAnonymous() ? null : auth.name();
-    } catch (RuntimeException e) {
-      log(System.Logger.Level.WARNING, "retained state of session " + session.id + " could not be saved", e);
-      return null;
-    }
-    return Retained.encode(clock.millis() + retainedRetentionMillis, principal, entries);
-  }
-
-  private void save(Session session, String snapshot) {
-    try {
-      retainedStorage.save(Retained.id(session.token), snapshot, Instant.ofEpochMilli(clock.millis() + retainedRetentionMillis));
-    } catch (RuntimeException e) {
-      log(System.Logger.Level.WARNING, "retained state of session " + session.id + " could not be saved", e);
-    }
-  }
-
-  private void delete(Session session) {
-    try {
-      retainedStorage.delete(Retained.id(session.token));
-    } catch (RuntimeException e) {
-      log(System.Logger.Level.WARNING, "retained state of session " + session.id + " could not be deleted", e);
-    }
-  }
-
-  /**
-   * The entries to restore into a remount that names its old page's token, or null. A
-   * snapshot is used at most once, and only for the identity that saved it: anonymous
-   * only for anonymous.
-   */
-  private Map<String, String> restore(Exchange exchange) {
-    String token = exchange.header(Retained.RESTORE_HEADER).orElse("");
-    if (token.isEmpty()) {
-      return null;
-    }
-    String id = Retained.id(token);
-    Retained.Snapshot snapshot;
-    try {
-      Optional<String> stored = retainedStorage.load(id);
-      if (!stored.isPresent()) {
-        return null;
-      }
-      retainedStorage.delete(id);
-      snapshot = Retained.decode(stored.get());
-    } catch (RuntimeException e) {
-      log(System.Logger.Level.WARNING, "retained state could not be restored", e);
-      return null;
-    }
-    if (snapshot.expiresAt <= clock.millis()) {
-      return null;
-    }
-    AuthCtx auth = resolveIdentity(exchange);
-    String principal = auth.isAnonymous() ? null : auth.name();
-    if (!Objects.equals(principal, snapshot.principal)) {
-      return null;
-    }
-    return new ConcurrentHashMap<>(snapshot.entries);
-  }
-
-  @SuppressWarnings({"unchecked", "rawtypes"})
-  String writeRetained(Object value, Type type) {
-    RetainedCodec codec = retainedCodecs.get(Retained.rawType(type));
-    return codec != null ? codec.write(value) : json.write(value);
-  }
-
-  Object readRetained(String text, Type type) {
-    RetainedCodec<?> codec = retainedCodecs.get(Retained.rawType(type));
-    return codec != null ? codec.read(text) : json.read(text, type);
   }
 
   /** Logs a warning the first time this key comes up. */

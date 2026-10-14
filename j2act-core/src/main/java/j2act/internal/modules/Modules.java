@@ -1,4 +1,4 @@
-package j2act;
+package j2act.internal.modules;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -19,6 +19,10 @@ import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import j2act.Asset;
+import j2act.J2Act;
+import j2act.internal.json.Json;
+
 /**
  * Client module files. Two sources: Webcam.client.js on the classpath next to Webcam.class,
  * put there by the build's resources configuration, with no build step (ADR 0022); or a Vite
@@ -27,7 +31,7 @@ import java.util.regex.Pattern;
  * them all, since a WAR serves META-INF/resources only from jars. Nothing else on the
  * classpath is reachable.
  */
-final class Modules {
+public final class Modules {
 
   /** import ... from "x", import "x", export ... from "x". */
   private static final Pattern STATIC_IMPORT =
@@ -40,10 +44,13 @@ final class Modules {
   private static final Pattern SOURCE_MAP = Pattern.compile("[#@]\\s*sourceMappingURL=([^\\s*'\"]+)");
 
   /** Where @j2act/vite puts its build on the classpath, with .vite/manifest.json in it (ADR 0023). */
-  static final String VITE_DIR = "META-INF/j2act/vite/";
+  public static final String VITE_DIR = "META-INF/j2act/vite/";
   private static final String VITE_MANIFEST = VITE_DIR + ".vite/manifest.json";
+  private static final System.Logger LOG = System.getLogger("j2act");
 
-  private final J2Act engine;
+  private final String contextPath;
+  private final ClassLoader resourceLoader;
+  private final Packages packages;
   private final ConcurrentHashMap<Class<?>, Loaded> loaded = new ConcurrentHashMap<>();
   /** Page-level Vite entries by source path, e.g. src/main/frontend/app.css. */
   private final ConcurrentHashMap<String, Loaded> pages = new ConcurrentHashMap<>();
@@ -54,7 +61,7 @@ final class Modules {
    * Dev mode: the Vite output folder in the project, read directly. The IDE's classpath
    * may not hold it (Buildship leaves it out), and an exploded deployment holds only a copy.
    */
-  volatile java.nio.file.Path viteDisk;
+  public volatile java.nio.file.Path viteDisk;
 
   /** A module's served paths: its script (null for a CSS-only page entry), and its stylesheets. */
   static final class Loaded {
@@ -86,38 +93,40 @@ final class Modules {
     }
   }
 
-  Modules(J2Act engine) {
-    this.engine = engine;
+  public Modules(String contextPath, ClassLoader resourceLoader, Packages packages) {
+    this.contextPath = contextPath;
+    this.resourceLoader = resourceLoader;
+    this.packages = packages;
   }
 
   /** The module URL for a client interface: its top-level class's Vite entry or sibling .client.js. */
-  String url(Class<?> clientType) {
-    return engine.contextPath + J2Act.MODULE_PATH + loaded(clientType).script;
+  public String url(Class<?> clientType) {
+    return contextPath + J2Act.MODULE_PATH + loaded(clientType).script;
   }
 
   /**
    * The stylesheets a build emitted for the module (from its CSS imports and CSS modules),
    * space-separated, or null. The runtime loads them before mounting.
    */
-  String styleUrl(Class<?> clientType) {
+  public String styleUrl(Class<?> clientType) {
     List<String> styles = loaded(clientType).styles;
     if (styles.isEmpty()) {
       return null;
     }
     StringBuilder b = new StringBuilder();
     for (String style : styles) {
-      b.append(b.length() == 0 ? "" : " ").append(engine.contextPath).append(J2Act.MODULE_PATH).append(style);
+      b.append(b.length() == 0 ? "" : " ").append(contextPath).append(J2Act.MODULE_PATH).append(style);
     }
     return b.toString();
   }
 
   /** A page entry's URLs (ADR 0023): its script or null, then its stylesheets. */
-  List<String> pageEntry(String source) {
+  public List<String> pageEntry(String source) {
     Loaded page = pages.computeIfAbsent(source, this::loadPage);
     List<String> urls = new ArrayList<>();
-    urls.add(page.script == null ? null : engine.contextPath + J2Act.MODULE_PATH + page.script);
+    urls.add(page.script == null ? null : contextPath + J2Act.MODULE_PATH + page.script);
     for (String style : page.styles) {
-      urls.add(engine.contextPath + J2Act.MODULE_PATH + style);
+      urls.add(contextPath + J2Act.MODULE_PATH + style);
     }
     return urls;
   }
@@ -153,7 +162,7 @@ final class Modules {
   private byte[] readVite(String path) {
     java.nio.file.Path disk = viteDisk;
     if (disk == null) {
-      return readResource(engine.resourceLoader, VITE_DIR + path);
+      return readResource(resourceLoader, VITE_DIR + path);
     }
     try {
       return java.nio.file.Files.readAllBytes(disk.resolve(path));
@@ -177,7 +186,7 @@ final class Modules {
    * the new build. Returns every changed served URL, old to new, for the pages to re-import;
    * the old files stay served for pages that still hold them.
    */
-  Map<String, String> refresh() {
+  public Map<String, String> refresh() {
     ViteBuild current = vite;
     byte[] raw = readVite(".vite/manifest.json");
     if (current == null || raw == null || java.util.Arrays.equals(raw, current.raw)) {
@@ -197,21 +206,21 @@ final class Modules {
       try {
         moved(moved, old.getValue(), loaded.computeIfAbsent(old.getKey(), this::load));
       } catch (RuntimeException e) {
-        engine.log(System.Logger.Level.WARNING, "j2act dev: reloading " + old.getKey().getName() + " failed", e);
+        LOG.log(System.Logger.Level.WARNING, "j2act dev: reloading " + old.getKey().getName() + " failed", e);
       }
     }
     for (Map.Entry<String, Loaded> old : oldPages.entrySet()) {
       try {
         moved(moved, old.getValue(), pages.computeIfAbsent(old.getKey(), this::loadPage));
       } catch (RuntimeException e) {
-        engine.log(System.Logger.Level.WARNING, "j2act dev: reloading " + old.getKey() + " failed", e);
+        LOG.log(System.Logger.Level.WARNING, "j2act dev: reloading " + old.getKey() + " failed", e);
       }
     }
     return moved;
   }
 
   private void moved(Map<String, String> moved, Loaded before, Loaded after) {
-    String base = engine.contextPath + J2Act.MODULE_PATH;
+    String base = contextPath + J2Act.MODULE_PATH;
     if (before.script != null && after.script != null && !before.script.equals(after.script)) {
       moved.put(base + before.script, base + after.script);
     }
@@ -224,7 +233,7 @@ final class Modules {
   }
 
   /** A registered file for MODULE_PATH + path, or null; nothing else on the classpath is reachable. */
-  Asset file(String path) {
+  public Asset file(String path) {
     return path == null ? null : files.get(path);
   }
 
@@ -304,7 +313,7 @@ final class Modules {
   private void register(Graph graph) {
     for (Map.Entry<String, byte[]> file : graph.files.entrySet()) {
       files.put(graph.hash + "/" + file.getKey(),
-        new Asset(serve(graph, file.getKey(), file.getValue()), Asset.contentType(file.getKey())));
+        new Asset(serve(graph, file.getKey(), file.getValue()), ContentTypes.of(file.getKey())));
     }
   }
 
@@ -316,14 +325,14 @@ final class Modules {
     }
     String wrapped = CommonJs.wrap(code, specifier -> {
       if (!isRelative(specifier)) {
-        return engine.packages.resolveBare(specifier);
+        return packages.resolveBare(specifier);
       }
       String found = requireTarget(resolve(path, specifier), graph.files::containsKey);
       if (found == null) {
         return null;
       }
       return found.endsWith(".json") ? CommonJs.Target.json(new String(graph.files.get(found), StandardCharsets.UTF_8))
-        : CommonJs.Target.module(engine.contextPath + J2Act.MODULE_PATH + graph.hash + "/" + found);
+        : CommonJs.Target.module(contextPath + J2Act.MODULE_PATH + graph.hash + "/" + found);
     });
     return wrapped.getBytes(StandardCharsets.UTF_8);
   }
@@ -470,7 +479,7 @@ final class Modules {
   }
 
   /** The prop names of a mount(...), from j2act-processor's .mount-params file or -parameters. */
-  String[] mountParams(Method mount) {
+  public String[] mountParams(Method mount) {
     return mountParams.computeIfAbsent(mount, method -> {
       Class<?> type = method.getDeclaringClass();
       String binary = type.getName().substring(type.getName().lastIndexOf('.') + 1);
@@ -498,7 +507,7 @@ final class Modules {
     });
   }
 
-  static String exportName(Class<?> clientType) {
+  public static String exportName(Class<?> clientType) {
     String name = clientType.getSimpleName();
     return Character.toLowerCase(name.charAt(0)) + name.substring(1);
   }

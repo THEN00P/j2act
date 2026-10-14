@@ -1,4 +1,4 @@
-package j2act;
+package j2act.internal.dev;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -14,6 +14,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import j2act.internal.json.Json;
+import j2act.internal.modules.Modules;
+
 /**
  * Dev mode (ADR 0024). On when the class output carries META-INF/j2act/dev.json (the annotation
  * processor writes it), the project folder it names exists on this machine, and the token is a
@@ -21,7 +24,7 @@ import java.util.Map;
  * to re-import what changed, and runs `vite build --watch` in the project, unless another app
  * already does. Off under test runners, and with -Dj2act.dev=false.
  */
-final class DevMode implements AutoCloseable {
+public final class DevMode implements AutoCloseable {
 
   private static final String[] TEST_RUNNERS = {
     "org.junit.", "org.testng.", "org.springframework.boot.test.", "io.cucumber.", "org.spockframework."
@@ -31,11 +34,11 @@ final class DevMode implements AutoCloseable {
   static final int RESTART = 75;
   /** Terminal colours in Vite's output, dropped from the log. */
   private static final String ANSI = "\u001B\\[[0-9;]*m";
+  private static final System.Logger LOG = System.getLogger("j2act");
 
   final File project;
   /** The class folder the app loads from, the one holding the token: an exploded WAR's WEB-INF/classes, say. */
-  java.nio.file.Path classRoot;
-  private J2Act engine;
+  public java.nio.file.Path classRoot;
   private String node;
   private Process vite;
   private FileLock lock;
@@ -49,12 +52,12 @@ final class DevMode implements AutoCloseable {
     this.project = project;
   }
 
-  /** Dev mode for this engine, or null. */
-  static DevMode detect(J2Act engine) {
+  /** Dev mode for an app that loads its classes and resources through this loader, or null. */
+  public static DevMode detect(ClassLoader loader) {
     if ("false".equals(System.getProperty("j2act.dev"))) {
       return null;
     }
-    URL token = engine.resourceLoader.getResource("META-INF/j2act/dev.json");
+    URL token = loader.getResource("META-INF/j2act/dev.json");
     if (token == null || !onDisk(token)) {
       return null;
     }
@@ -88,7 +91,7 @@ final class DevMode implements AutoCloseable {
   }
 
   /** Where editors and builds compile this project's classes to; the app may load from another copy. */
-  List<java.nio.file.Path> editorOutputs() {
+  public List<java.nio.file.Path> editorOutputs() {
     List<java.nio.file.Path> outputs = new ArrayList<>();
     for (String dir : new String[] {"bin/main", "target/classes", "build/classes/java/main"}) {
       outputs.add(project.toPath().resolve(dir));
@@ -124,27 +127,26 @@ final class DevMode implements AutoCloseable {
   }
 
   /** Where @j2act/vite writes in this project: build/j2act for Gradle, target/classes for Maven. */
-  java.nio.file.Path viteDir() {
+  public java.nio.file.Path viteDir() {
     boolean gradle = new File(project, "build.gradle").isFile() || new File(project, "build.gradle.kts").isFile()
       || new File(project, "settings.gradle").isFile() || new File(project, "settings.gradle.kts").isFile();
     return project.toPath().resolve(gradle ? "build/j2act" : "target/classes").resolve(Modules.VITE_DIR);
   }
 
   /** Starts `vite build --watch` unless another process holds the project's watch lock. */
-  void start(J2Act engine) {
-    this.engine = engine;
-    HotSwap.check(engine);
+  public void start() {
+    HotSwap.check();
     // @j2act/vite's runner ends with this JVM, since it watches its stdin pipe.
     File runner = runner();
     if (!runner.isFile()) {
-      engine.log(System.Logger.Level.WARNING, "j2act dev: " + runner + " is missing; run the build once"
-        + " (gradle build, mvn package or npm install), then restart", null);
+      LOG.log(System.Logger.Level.WARNING, "j2act dev: " + runner + " is missing; run the build once"
+        + " (gradle build, mvn package or npm install), then restart");
       return;
     }
     node = findNode();
     if (node == null) {
-      engine.log(System.Logger.Level.WARNING, "j2act dev: no Node found in the project or on the PATH;"
-        + " serving the last build", null);
+      LOG.log(System.Logger.Level.WARNING, "j2act dev: no Node found in the project or on the PATH;"
+        + " serving the last build");
       return;
     }
     try {
@@ -155,13 +157,13 @@ final class DevMode implements AutoCloseable {
       lockChannel = new RandomAccessFile(lockFile.toFile(), "rw").getChannel();
       lock = lockChannel.tryLock();
       if (lock == null) {
-        engine.log(System.Logger.Level.INFO, "j2act dev: another process already watches " + project, null);
+        LOG.log(System.Logger.Level.INFO, "j2act dev: another process already watches " + project);
         lockChannel.close();
         lockChannel = null;
         return;
       }
     } catch (IOException e) {
-      engine.log(System.Logger.Level.WARNING, "j2act dev: could not start vite", e);
+      LOG.log(System.Logger.Level.WARNING, "j2act dev: could not start vite", e);
       return;
     }
     registerStopHook();
@@ -182,16 +184,16 @@ final class DevMode implements AutoCloseable {
       // stdin stays a pipe the JVM holds open: the runner exits when it closes.
       process = new ProcessBuilder(node, runner().getAbsolutePath()).directory(project).redirectErrorStream(true).start();
     } catch (IOException e) {
-      engine.log(System.Logger.Level.WARNING, "j2act dev: could not start vite", e);
+      LOG.log(System.Logger.Level.WARNING, "j2act dev: could not start vite", e);
       return;
     }
     vite = process;
     long startedAt = System.currentTimeMillis();
-    engine.log(System.Logger.Level.INFO, "j2act dev: vite build --watch in " + project, null);
+    LOG.log(System.Logger.Level.INFO, "j2act dev: vite build --watch in " + project);
     Thread pump = new Thread(() -> {
       try (BufferedReader out = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
         for (String line; (line = out.readLine()) != null; ) {
-          engine.log(System.Logger.Level.INFO, "vite: " + line.replaceAll(ANSI, ""), null);
+          LOG.log(System.Logger.Level.INFO, "vite: " + line.replaceAll(ANSI, ""));
         }
       } catch (IOException e) {
         // The process ended.
@@ -223,16 +225,16 @@ final class DevMode implements AutoCloseable {
       }
       vite = null;
       if (code == RESTART) {
-        engine.log(System.Logger.Level.INFO, "j2act dev: node_modules changed, starting vite again", null);
+        LOG.log(System.Logger.Level.INFO, "j2act dev: node_modules changed, starting vite again");
         crashes = 0;
       } else {
         crashes = System.currentTimeMillis() - startedAt < 30_000 ? crashes + 1 : 1;
         if (crashes > 3) {
-          engine.log(System.Logger.Level.WARNING, "j2act dev: vite keeps exiting (code " + code + "); serving the last"
-            + " build. Fix the error above, then redeploy.", null);
+          LOG.log(System.Logger.Level.WARNING, "j2act dev: vite keeps exiting (code " + code + "); serving the last"
+            + " build. Fix the error above, then redeploy.");
           return;
         }
-        engine.log(System.Logger.Level.WARNING, "j2act dev: vite exited with code " + code + ", starting it again", null);
+        LOG.log(System.Logger.Level.WARNING, "j2act dev: vite exited with code " + code + ", starting it again");
       }
     }
     try {
@@ -246,8 +248,8 @@ final class DevMode implements AutoCloseable {
 
   /**
    * Stops the runner when the JVM exits without closing the engine. The hook is removed on close:
-   * a registered hook stays reachable until the JVM exits, and through it this DevMode, its engine
-   * and the class loader of an application that was redeployed long ago.
+   * a registered hook stays reachable until the JVM exits, and through it this DevMode and the
+   * class loader of an application that was redeployed long ago.
    */
   void registerStopHook() {
     Thread hook = new Thread(this::close, "j2act-vite-stop");
