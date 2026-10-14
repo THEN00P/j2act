@@ -55,14 +55,14 @@ class ValueCell extends Cell {
     }
     value = next;
     if (retainedName != null) {
-      session.retainedDirty = true;
+      session.snapshot.dirty = true;
     }
     notifyObservers();
   }
 
   @Override void dispose() {
     if (retainedName != null && !disposed) {
-      session.retainedDirty = true; // an unmounted component's value leaves the snapshot
+      session.snapshot.dirty = true; // an unmounted component's value leaves the snapshot
     }
     super.dispose();
   }

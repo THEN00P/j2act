@@ -1,4 +1,4 @@
-package j2act;
+package j2act.internal.modules;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -11,6 +11,9 @@ import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import j2act.J2Act;
+import j2act.internal.json.Json;
+
 /**
  * The page's import map (ADR 0022), so client modules import packages by bare name,
  * as plain JavaScript with no build step, like importmap-rails and Quarkus. Every mvnpm
@@ -19,10 +22,11 @@ import java.util.Map;
  * the same files and wraps CommonJS ones as ES modules. J2Act.Builder.withImport adds
  * manual entries such as CDN URLs. App paths get the context path when the map renders.
  */
-final class ImportMap {
+public final class ImportMap {
 
   private static final String RESOURCE = "META-INF/importmap.json";
   private static final String STATIC = "/_static/";
+  private static final System.Logger LOG = System.getLogger("j2act");
 
   /** Specifier to target: an app path (no context path) or a URL. */
   private final Map<String, String> imports = new LinkedHashMap<>();
@@ -32,7 +36,7 @@ final class ImportMap {
     this.contextPath = contextPath;
   }
 
-  static ImportMap build(ClassLoader loader, String contextPath, J2Act engine) {
+  public static ImportMap build(ClassLoader loader, String contextPath) {
     ImportMap map = new ImportMap(contextPath);
     try {
       Enumeration<URL> found = loader.getResources(RESOURCE);
@@ -52,16 +56,16 @@ final class ImportMap {
             }
             String previous = map.imports.putIfAbsent(specifier, target);
             if (previous != null && !previous.equals(target)) {
-              engine.log(System.Logger.Level.WARNING, "import map: " + specifier + " is " + previous + " and also "
-                + target + " (from " + url + "); the first one wins, so align the mvnpm versions (ADR 0022)", null);
+              LOG.log(System.Logger.Level.WARNING, "import map: " + specifier + " is " + previous + " and also "
+                + target + " (from " + url + "); the first one wins, so align the mvnpm versions (ADR 0022)");
             }
           }
         } catch (IllegalArgumentException e) {
-          engine.log(System.Logger.Level.WARNING, "import map: cannot read " + url + ": " + e.getMessage(), null);
+          LOG.log(System.Logger.Level.WARNING, "import map: cannot read " + url + ": " + e.getMessage());
         }
       }
     } catch (IOException e) {
-      engine.log(System.Logger.Level.WARNING, "import map: cannot list " + RESOURCE, e);
+      LOG.log(System.Logger.Level.WARNING, "import map: cannot list " + RESOURCE, e);
     }
     return map;
   }
@@ -71,7 +75,7 @@ final class ImportMap {
    * exports under the browser, import, module and default conditions, else its module
    * field. mvnpm's own map names main, which is CommonJS in packages that also ship ESM.
    */
-  void preferModules(Packages packages) {
+  public void preferModules(Packages packages) {
     for (Map.Entry<String, String> entry : imports.entrySet()) {
       String specifier = entry.getKey();
       if (specifier.endsWith("/") || !entry.getValue().startsWith(J2Act.PACKAGE_PATH)) {
@@ -90,7 +94,7 @@ final class ImportMap {
   }
 
   /** J2Act.Builder.withImport entries, which win over the jars'. */
-  void addManual(Map<String, String> manual) {
+  public void addManual(Map<String, String> manual) {
     imports.putAll(manual);
   }
 
@@ -114,23 +118,12 @@ final class ImportMap {
     return best == null ? null : imports.get(best) + specifier.substring(best.length());
   }
 
-  boolean isEmpty() {
+  public boolean isEmpty() {
     return imports.isEmpty();
   }
 
-  /** The script element, for the head before any module loads; nonce is the page's CSP nonce or null. */
-  String html(String nonce) {
-    StringBuilder b = new StringBuilder("<script type=\"importmap\"");
-    if (nonce != null) {
-      b.append(" nonce=\"");
-      Html.escape(nonce, b);
-      b.append('"');
-    }
-    return b.append('>').append(content()).append("</script>").toString();
-  }
-
   /** The CSP hash source of the script's content, e.g. 'sha256-...', which stays the same for the engine's life. */
-  String hash() {
+  public String hash() {
     try {
       byte[] digest = MessageDigest.getInstance("SHA-256")
         .digest(content().getBytes(StandardCharsets.UTF_8));
@@ -140,7 +133,8 @@ final class ImportMap {
     }
   }
 
-  private String content() {
+  /** The import map's JSON, the content of its script element. */
+  public String content() {
     Map<String, String> rendered = new LinkedHashMap<>();
     for (Map.Entry<String, String> entry : imports.entrySet()) {
       String target = entry.getValue();

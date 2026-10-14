@@ -1,4 +1,4 @@
-package j2act;
+package j2act.internal.json;
 
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -10,10 +10,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
-/** JsonBinding.basic(): plain JSON values only, so core needs no JSON library. */
-final class BasicJsonBinding implements JsonBinding {
+import j2act.JsonBinding;
 
-  static final BasicJsonBinding INSTANCE = new BasicJsonBinding();
+/** JsonBinding.basic(): plain JSON values only, so core needs no JSON library. */
+public final class BasicJsonBinding implements JsonBinding {
+
+  public static final BasicJsonBinding INSTANCE = new BasicJsonBinding();
 
   private BasicJsonBinding() {
   }

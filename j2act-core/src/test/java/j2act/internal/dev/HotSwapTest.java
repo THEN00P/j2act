@@ -1,4 +1,4 @@
-package j2act;
+package j2act.internal.dev;
 
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;

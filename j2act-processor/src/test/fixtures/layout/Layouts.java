@@ -1,10 +1,10 @@
 package layout;
 
-import static j2act.Routes.*;
+import static j2act.router.Routes.*;
 import static j2act.html.TagCreator.*;
 
 import j2act.LiveComponent;
-import j2act.Routes.Router;
+import j2act.router.Routes.Router;
 import j2act.Tag;
 
 /** A non-Layout class in layout() position: the generic bound makes it a compile error. */

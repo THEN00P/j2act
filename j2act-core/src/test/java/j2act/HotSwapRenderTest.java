@@ -14,6 +14,8 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import j2act.internal.dev.ClassWatch;
+
 /**
  * Dev mode after a debugger swapped classes: every page re-renders with the new code and keeps its
  * state, and a component whose primitives or fields no longer line up starts over instead of

@@ -8,6 +8,8 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
+import j2act.internal.json.Json;
+
 /**
  * A path into the browser's window, built locally and run remotely: what the generated
  * j2act.web facade is made of (ADR 0022). Getters of interfaces only add a step. A

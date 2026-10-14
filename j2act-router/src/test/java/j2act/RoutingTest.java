@@ -1,6 +1,6 @@
 package j2act;
 
-import static j2act.Routes.*;
+import static j2act.router.Routes.*;
 import static j2act.html.TagCreator.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;

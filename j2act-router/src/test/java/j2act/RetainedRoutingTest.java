@@ -1,6 +1,6 @@
 package j2act;
 
-import static j2act.Routes.*;
+import static j2act.router.Routes.*;
 import static j2act.html.TagCreator.*;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -11,6 +11,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import j2act.html.tags.HtmlTag;
+import j2act.internal.json.Json;
 
 /**
  * ADR 0026 with layouts: a page reached by soft navigation, preloaded or not, keys its

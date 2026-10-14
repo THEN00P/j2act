@@ -1,4 +1,4 @@
-package j2act;
+package j2act.internal.dev;
 
 import java.lang.management.ManagementFactory;
 import java.util.List;
@@ -12,22 +12,24 @@ import javax.management.openmbean.CompositeData;
  * then refuses. JetBrains Runtime with -XX:+AllowEnhancedClassRedefinition takes those edits too.
  * Logged once in dev mode while a debugger is attached, since only a debugger swaps classes.
  */
-final class HotSwap {
+public final class HotSwap {
 
   static final String FLAG = "AllowEnhancedClassRedefinition";
   /** JetBrains Runtime 11 had enhanced redefinition only in its DCEVM build, and this is its last release. */
   static final String JBR_11 = "https://github.com/JetBrains/JetBrainsRuntime/releases/tag/jbr11_0_16b2043.64";
 
+  private static final System.Logger LOG = System.getLogger("j2act");
+
   private HotSwap() {
   }
 
-  static void check(J2Act engine) {
+  static void check() {
     if (!debugging()) {
       return;
     }
     String hint = hint(System.getProperty("java.vm.vendor", ""), Runtime.version().feature(), enhanced());
     if (hint != null) {
-      engine.log(System.Logger.Level.WARNING, hint, null);
+      LOG.log(System.Logger.Level.WARNING, hint);
     }
   }
 
@@ -60,7 +62,7 @@ final class HotSwap {
   }
 
   /** A JDWP agent in the JVM's options: a debugger can attach and swap classes. */
-  static boolean debugging() {
+  public static boolean debugging() {
     try {
       List<String> arguments = ManagementFactory.getRuntimeMXBean().getInputArguments();
       for (String argument : arguments) {

@@ -1,6 +1,6 @@
 package com.example.counter;
 
-import static j2act.Routes.*;
+import static j2act.router.Routes.*;
 
 import java.time.Duration;
 

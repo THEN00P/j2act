@@ -1,4 +1,4 @@
-package j2act;
+package j2act.internal.modules;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -10,6 +10,8 @@ import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import j2act.internal.json.Json;
+
 /**
  * CommonJS served as an ES module, so plain JavaScript never needs a build step (ADR 0022).
  * The file runs unchanged inside a function that supplies module, exports and require;
@@ -17,7 +19,7 @@ import java.util.regex.Pattern;
  * named exports are found the way Node's cjs-module-lexer finds them. It is a text
  * transform with no parser: a require with a computed argument cannot be followed.
  */
-final class CommonJs {
+public final class CommonJs {
 
   private static final Pattern COMMENTS = Pattern.compile("/\\*.*?\\*/|(?<![:\"'\\\\])//[^\\n]*", Pattern.DOTALL);
   private static final Pattern ESM = Pattern.compile(

@@ -1,6 +1,6 @@
 package com.example.team.pages;
 
-import static j2act.Routes.*;
+import static j2act.router.Routes.*;
 import static j2act.html.TagCreator.*;
 import static j2act.ui.Ui.*;
 
