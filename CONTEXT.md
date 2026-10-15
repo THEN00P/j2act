@@ -5,20 +5,28 @@ Server-driven reactive UI in pure Java. No IDE plugins, no templating language â
 ## Language
 
 **State**:
-Server-side reactive value owned by one browser connection/island session. Mutations for a session are serialized on one logical thread.
+Server-side reactive value owned by a component, a tab or a browser (ADR 0030). Writes to it are serialized on its owner's lane: a component's and a tab's on the tab's, a browser's on the browser hub's.
 _Avoid_: Signal, Atom, SharedVar
 
+**Tab**:
+The server side of one page load, reached with tab(): created when the page's HTML renders, kept across socket drops and reconnects, ended by unload, idle timeout or pause. A reload starts a new tab. Blazor calls it a circuit and Vaadin a UI (ADR 0030).
+_Avoid_: Session, Circuit, Connection, Page load
+
+**Browser**:
+Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with browser(). Its state lives in a per-browser hub while any of its tabs lives, and every tab sees a write at once. A logout or another user starts a new browser (ADR 0030).
+_Avoid_: Session, Device, Visitor, User
+
 **Retained State**:
-A State created with retainedState() whose value goes into its session's Snapshot, so it outlives the in-memory session for the same page load: grace expiry, pause, restart, redeploy, another node. Keyed by its component's slot path and field name. A reload still starts empty. Unsaved work only; anything worth keeping still belongs in the app's database (ADR 0026).
+A State created with retainedState() whose value goes into its owner's Snapshot, so it outlives the in-memory tab or browser: grace expiry, pause, restart, redeploy, another node, and a closed tab reopened within 15 minutes. Keyed by its component's slot path and field name, or by its store's class and field name. A reload still starts empty. Unsaved work only; anything worth keeping still belongs in the app's database (ADR 0026).
 _Avoid_: Persisted State, PersistentState, Saved State, Draft
 
 **Snapshot**:
-The Retained State of one session, saved to retained state storage with an absolute expiry and used at most once to restore that page's session.
-_Avoid_: Checkpoint (that is the opt-in trigger that saves one while the session is live), Backup
+The Retained State of one tab or one browser, saved to retained state storage with an absolute expiry and used at most once to restore it.
+_Avoid_: Checkpoint (that is the opt-in trigger that saves one while the tab is live), Backup
 
 **Store**:
-Shared state created once via createStore() (current user, theme, locale); each session holds an isolated copy. Components read via select() on the handle, tracked per-selector so scopes re-render only when their slice changes. No middleware. createRetainedStore() makes it Retained State, keyed by its declaring class and field.
-_Avoid_: GlobalState, Context, Singleton, Session
+A class annotated @TabScoped or @BrowserScoped that extends Store: one instance per tab or per browser, a bean of the app's container that components @Inject, or reach with tab(X.class) and browser(X.class) without one. It holds State, Retained State, Computeds, Queries and Mutations as fields, never plain values, and its methods are the actions. No middleware (ADR 0030).
+_Avoid_: GlobalState, Context, Singleton, Session, createStore
 
 **LiveComponent**:
 A Java class with a `render()` method returning J2HTML tags. Reactive state lives in State; events are Java lambdas.
@@ -27,6 +35,10 @@ _Avoid_: Controller, BackingBean, ViewModel
 **Island**:
 A LiveComponent subtree mounted inside an existing non-J2ACT app, receiving outer auth/cookies/props at mount.
 _Avoid_: Portlet, Fragment, Widget
+
+**Query state**:
+A State created with queryState(name, initial) whose value lives in the page's query string, so it survives a reload and can be shared (ADR 0030).
+_Avoid_: URL state, Search param, Route param
 
 **Prop**:
 Tracked component input. A with* builder writes it, render(), computed(), effect() and query loaders read it, and reads are tracked like State.
@@ -81,11 +93,11 @@ Reusable LiveComponent taking props (values/State) via with* builders that write
 _Avoid_: Widget, Partial
 
 **Application**:
-The deployment's j2act as components see it, reached with application(): what spans every page, such as asking them all to pause. Never called session, which readers take for the HTTP session shared by every tab (ADR 0027).
+The deployment's j2act as components see it, reached with application(): what spans every tab of every browser, such as asking them all to pause. Never called session, which readers take for the HTTP session shared by every tab (ADR 0027).
 _Avoid_: Session, Context
 
 **AuthCtx**:
-Resolved identity for a session (principal, roles, claims). Supplied by the host via any `Exchange -> AuthCtx` function. Empty when anonymous.
+Resolved identity for a tab (principal, roles, claims). Supplied by the host via any `Exchange -> AuthCtx` function. Empty when anonymous.
 _Avoid_: Principal, Session, User
 
 **Guard**:
@@ -97,5 +109,5 @@ Declared via page(path, Page), scope(path, ...), layout(path, Page, ...) static 
 _Avoid_: Endpoint, Handler, FileRoute
 
 **Layout**:
-A LiveComponent subclass used in layout() route positions, rendering via render(DomContent) with the matched child as a plain child node. No named slots: sidebars and panels are ordinary compound components plus store() state (the Shadcn pattern), parallel route regions stay deferred.
+A LiveComponent subclass used in layout() route positions, rendering via render(DomContent) with the matched child as a plain child node. No named slots: sidebars and panels are ordinary compound components plus a tab Store (the Shadcn pattern), parallel route regions stay deferred.
 _Avoid_: Template, Frame, Outlet, Slots
