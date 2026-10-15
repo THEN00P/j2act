@@ -43,6 +43,7 @@ class RetainedStateTest {
     final MemoryRetainedStateStorage inner = new MemoryRetainedStateStorage(1000);
     final AtomicInteger saves = new AtomicInteger();
     final AtomicInteger loads = new AtomicInteger();
+    volatile Instant lastExpiry;
 
     @Override public Optional<String> load(String id) {
       loads.incrementAndGet();
@@ -51,6 +52,7 @@ class RetainedStateTest {
 
     @Override public void save(String id, String snapshot, Instant expiresAt) {
       saves.incrementAndGet();
+      lastExpiry = expiresAt;
       inner.save(id, snapshot, expiresAt);
     }
 

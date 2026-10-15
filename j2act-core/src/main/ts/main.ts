@@ -5,6 +5,7 @@ import { createMorpher } from "./morph.ts";
 import { createNavigation } from "./navigation.ts";
 import { createPending } from "./pending.ts";
 import type { ClientMessage, ServerMessage } from "./protocol.ts";
+import { navigationType, remember, takePrevious } from "./reopen.ts";
 import { createRetained } from "./retained.ts";
 import { createUploads } from "./uploads.ts";
 import { meta } from "./util.ts";
@@ -30,6 +31,8 @@ function start(): void {
 
   let leaving = false;
   let remounting = false;
+  const here = () => location.pathname + location.search;
+  const previous = takePrevious(here(), meta(document, "j2-token"), navigationType());
 
   const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath,
     sid, meta(document, "j2-token"), onMessage,
@@ -96,14 +99,15 @@ function start(): void {
 
   // ---- tab lifetime (ADR 0010)
 
-  function remount(): void {
+  /** Starts over on a new server-side tab; restoring names a closed page's token instead of this one's (ADR 0030). */
+  function remount(restoring?: string): void {
     if (remounting) {
       return;
     }
     remounting = true;
     connection.close();
     // The old page's token lets the server restore its Retained State, if it kept a snapshot (ADR 0026).
-    const tok = connection.token;
+    const tok = restoring ?? connection.token;
     fetch(location.href, { credentials: "same-origin", headers: tok ? { "X-J2-Restore": tok } : {} })
       .then((r) => r.text())
       .then((html) => {
@@ -123,7 +127,7 @@ function start(): void {
       })
       .catch(() => {
         remounting = false;
-        setTimeout(remount, 2000);
+        setTimeout(() => remount(restoring), 2000);
       });
   }
 
@@ -136,6 +140,9 @@ function start(): void {
   }
 
   window.addEventListener("pagehide", () => {
+    if (connection.token) {
+      remember(here(), connection.token);
+    }
     if (connection.ready) {
       leaving = true;
       connection.sendIfReady({ type: "bye" });
@@ -156,7 +163,15 @@ function start(): void {
 
   // Clients mount from the props in the HTML at once; their calls into Java queue until the socket is up.
   clients.scan();
-  connection.connect();
+  if (previous.restore) {
+    // A reopened tab, or Back from another site: ask for what the closed page kept.
+    remount(previous.restore);
+  } else {
+    connection.connect();
+    if (previous.forget) {
+      send({ type: "forget", token: previous.forget });
+    }
+  }
 }
 
 /** A download link: the browser saves the response and the page stays (ADR 0012). */

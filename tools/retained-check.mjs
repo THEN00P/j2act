@@ -5,7 +5,8 @@
 //   java -jar examples/counter-spring/target/counter-spring-*.jar --server.port=8089 --demo.idle-timeout=PT3S --demo.auto-pause=PT1S
 //   node tools/retained-check.mjs http://localhost:8089/
 // With --restart "<command>" it also runs that command mid-check, such as a WildFly reload, and
-// expects the draft back from the next deployment (the demos save tabs on shutdown). A demo
+// expects the draft back from the next deployment (the demos save tabs on shutdown). Last, it
+// leaves the page and comes back with Back, which restores the closed page's draft. A demo
 // started with --demo.checkpoint-interval=PT1S keeps it even when the command kills the server.
 import { execSync } from "node:child_process";
 import { openBrowser } from "./cdp.mjs";
@@ -113,4 +114,16 @@ b.run(async () => {
   await js(`location.reload(); true`);
   await until("document.readyState === 'complete' && typeof j2act !== 'undefined'");
   check("a reload starts empty", await until(`${echo} === 'Saved draft: none' && ${signer} === 'Signer: none'`));
+
+  // Closed tabs come back (ADR 0030): Back from another page loads it as back_forward, as Ctrl+Shift+T does.
+  await fill();
+  check("the draft is typed again before leaving", await until(`${echo} === 'Saved draft: half-filled' && ${signer} === 'Signer: Ada'`));
+  await js(`location.href = 'about:blank'; true`);
+  await until(`location.href === 'about:blank'`);
+  await js(`history.back(); true`);
+  await until("document.readyState === 'complete' && typeof j2act !== 'undefined'");
+  check("coming back with Back restores what the closed page kept", await until(restored));
+  await js(`location.reload(); true`);
+  await until("document.readyState === 'complete' && typeof j2act !== 'undefined'");
+  check("and a reload after that starts empty", await until(`${echo} === 'Saved draft: none' && ${signer} === 'Signer: none'`));
 });

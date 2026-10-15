@@ -85,6 +85,8 @@ public final class J2Act implements AutoCloseable {
   /** Retained State (ADR 0026): where snapshots go, how long they live, and per-type codecs. */
   final RetainedStateStorage retainedStorage;
   final long retainedRetentionMillis;
+  /** How long a closed tab's snapshot waits to be reopened; 0 deletes it at once (ADR 0030). */
+  final long closedTabRetentionMillis;
   private final Map<Class<?>, RetainedCodec<?>> retainedCodecs;
   /** How long a tab stays hidden before its page pauses; 0 when auto-pause is off. */
   final long autoPauseMillis;
@@ -175,6 +177,7 @@ public final class J2Act implements AutoCloseable {
     Duration retention = b.retainedRetention != null ? b.retainedRetention
       : b.retainedStorage != null ? Duration.ofHours(8) : Duration.ofHours(2);
     this.retainedRetentionMillis = retention.toMillis();
+    this.closedTabRetentionMillis = b.closedTabRetention.toMillis();
     this.retainedCodecs = new java.util.HashMap<>(b.retainedCodecs);
     this.autoPauseMillis = b.autoPause == null ? 0 : b.autoPause.toMillis();
     this.shutdownSaveMillis = b.shutdownSave == null ? 0 : b.shutdownSave.toMillis();
@@ -527,14 +530,30 @@ public final class J2Act implements AutoCloseable {
       });
     } else if ("bye".equals(type)) {
       byConnection.remove(connection);
-      // The page is gone for good, so its checkpoint can never be restored (ADR 0026).
       tab.lane.execute(() -> {
-        if (tab.stored) {
+        if (closedTabRetentionMillis > 0) {
+          // A closed tab may be reopened, or its page come back with Back: keep its snapshot a while (ADR 0030).
+          tab.persisting();
+          persist(tab, closedTabRetentionMillis);
+        } else if (tab.stored) {
+          // The page is gone for good, so its checkpoint can never be restored (ADR 0026).
           tab.stored = false;
           write(tab, () -> delete(tab));
         }
       });
       discard(tab, false);
+    } else if ("forget".equals(type)) {
+      // A reload of a page whose closed tab kept a snapshot: a reload starts empty (ADR 0030).
+      String old = message.get("token");
+      if (old != null && !old.isEmpty() && !old.equals(tab.token)) {
+        executor.execute(() -> {
+          try {
+            retainedStorage.delete(Retained.id(old));
+          } catch (RuntimeException e) {
+            log(System.Logger.Level.WARNING, "a reloaded page's old snapshot could not be deleted", e);
+          }
+        });
+      }
     }
   }
 
@@ -675,11 +694,16 @@ public final class J2Act implements AutoCloseable {
    * deletes the checkpoint the snapshot would have replaced. Completes with whether it saved one.
    */
   private CompletableFuture<Boolean> persist(Tab tab) {
+    return persist(tab, retainedRetentionMillis);
+  }
+
+  /** As persist(tab), with the snapshot kept for this long. */
+  private CompletableFuture<Boolean> persist(Tab tab, long retentionMillis) {
     tab.retainedDirty = false;
-    String snapshot = snapshot(tab);
+    String snapshot = snapshot(tab, retentionMillis);
     if (snapshot != null) {
       tab.stored = true;
-      return write(tab, () -> save(tab, snapshot)).thenApply(v -> true);
+      return write(tab, () -> save(tab, snapshot, retentionMillis)).thenApply(v -> true);
     }
     if (tab.stored) {
       tab.stored = false;
@@ -694,7 +718,7 @@ public final class J2Act implements AutoCloseable {
   }
 
   /** Lane-only. The tab's snapshot, or null when it has no retained values. */
-  private String snapshot(Tab tab) {
+  private String snapshot(Tab tab, long retentionMillis) {
     Map<String, String> entries;
     String principal;
     try {
@@ -708,12 +732,12 @@ public final class J2Act implements AutoCloseable {
       log(System.Logger.Level.WARNING, "retained state of tab " + tab.id + " could not be saved", e);
       return null;
     }
-    return Retained.encode(clock.millis() + retainedRetentionMillis, principal, entries);
+    return Retained.encode(clock.millis() + retentionMillis, principal, entries);
   }
 
-  private void save(Tab tab, String snapshot) {
+  private void save(Tab tab, String snapshot, long retentionMillis) {
     try {
-      retainedStorage.save(Retained.id(tab.token), snapshot, Instant.ofEpochMilli(clock.millis() + retainedRetentionMillis));
+      retainedStorage.save(Retained.id(tab.token), snapshot, Instant.ofEpochMilli(clock.millis() + retentionMillis));
     } catch (RuntimeException e) {
       log(System.Logger.Level.WARNING, "retained state of tab " + tab.id + " could not be saved", e);
     }
@@ -970,6 +994,7 @@ public final class J2Act implements AutoCloseable {
     private Function<Exchange, String> cspNonce;
     private RetainedStateStorage retainedStorage;
     private Duration retainedRetention;
+    private Duration closedTabRetention = Duration.ofMinutes(15);
     private int maxRetainedSnapshots = 1000;
     private Duration autoPause;
     private Duration shutdownSave;
@@ -1164,6 +1189,19 @@ public final class J2Act implements AutoCloseable {
     /** How long a snapshot lives after it is saved: 2 hours in memory and 8 hours in storage by default, as in .NET. */
     public Builder withRetainedStateRetention(Duration retention) {
       this.retainedRetention = retention;
+      return this;
+    }
+
+    /**
+     * How long the Retained State of a closed tab is kept for reopening it (ADR 0030), as browsers
+     * bring back a plain form's text on Ctrl+Shift+T or Back: 15 minutes by default, and
+     * Duration.ZERO deletes it when the page goes. A reload never restores it.
+     */
+    public Builder withClosedTabRetention(Duration retention) {
+      if (retention.isNegative()) {
+        throw new IllegalArgumentException("a retention cannot be negative");
+      }
+      this.closedTabRetention = retention;
       return this;
     }
 

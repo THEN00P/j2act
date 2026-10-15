@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-864e938e0a70195fa574e8cc6540e450fbd98b7f3fffb312d5e4a37f9a1e1390 */
+* sources: sha256-e60b706c8641a25829ecbda1418419455be183ad5148f3ce0531f2f3f4f27c9d */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1836,6 +1836,46 @@
 		};
 	}
 	//#endregion
+	//#region src/main/ts/reopen.ts
+	var KEY = "j2act:tabs";
+	/** URLs remembered per browser tab, oldest dropped first. */
+	var MAX = 20;
+	function read() {
+		try {
+			const tokens = JSON.parse(sessionStorage.getItem(KEY) || "{}");
+			return tokens && typeof tokens === "object" ? tokens : {};
+		} catch {
+			return {};
+		}
+	}
+	function write(tokens) {
+		try {
+			sessionStorage.setItem(KEY, JSON.stringify(tokens));
+		} catch {}
+	}
+	/** How this page load came about, as the browser reports it. */
+	function navigationType() {
+		return (performance.getEntriesByType?.("navigation")[0])?.type ?? "navigate";
+	}
+	/** The token a closed page left for this URL: to restore when going back or forward, else to forget. */
+	function takePrevious(url, current, type) {
+		const tokens = read();
+		const previous = tokens[url];
+		if (!previous || previous === current) return {};
+		delete tokens[url];
+		write(tokens);
+		return type === "back_forward" ? { restore: previous } : { forget: previous };
+	}
+	/** On pagehide: this URL was last shown by the server-side tab with this token. */
+	function remember(url, token) {
+		const tokens = read();
+		for (const key of Object.keys(tokens)) if (tokens[key] === token) delete tokens[key];
+		tokens[url] = token;
+		const keys = Object.keys(tokens);
+		for (let i = 0; i < keys.length - MAX; i++) delete tokens[keys[i]];
+		write(tokens);
+	}
+	//#endregion
 	//#region src/main/ts/retained.ts
 	/** How long a hidden tab waits before trying again, after the server or the page was busy. */
 	var RETRY_MS = 1e4;
@@ -2132,6 +2172,8 @@
 		if (!sid || !wsPath) return;
 		let leaving = false;
 		let remounting = false;
+		const here = () => location.pathname + location.search;
+		const previous = takePrevious(here(), meta(document, "j2-token"), navigationType());
 		const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath, sid, meta(document, "j2-token"), onMessage, () => !leaving && !remounting && retained.phase !== "paused");
 		const send = (message) => connection.send(message);
 		const pending = createPending();
@@ -2189,11 +2231,12 @@
 		function onMessage(m) {
 			handlers[m.type]?.(m);
 		}
-		function remount() {
+		/** Starts over on a new server-side tab; restoring names a closed page's token instead of this one's (ADR 0030). */
+		function remount(restoring) {
 			if (remounting) return;
 			remounting = true;
 			connection.close();
-			const tok = connection.token;
+			const tok = restoring ?? connection.token;
 			fetch(location.href, {
 				credentials: "same-origin",
 				headers: tok ? { "X-J2-Restore": tok } : {}
@@ -2213,7 +2256,7 @@
 				retained.resumed(meta(doc, "j2-restored") === "1");
 			}).catch(() => {
 				remounting = false;
-				setTimeout(remount, 2e3);
+				setTimeout(() => remount(restoring), 2e3);
 			});
 		}
 		function busy() {
@@ -2221,6 +2264,7 @@
 			return pending.size > 0 || uploads.size > 0 || !!a && a !== document.body && (a.matches("input, textarea, select") || a.isContentEditable) || Array.prototype.some.call(document.querySelectorAll("audio, video"), (m) => !m.paused && !m.ended);
 		}
 		window.addEventListener("pagehide", () => {
+			if (connection.token) remember(here(), connection.token);
 			if (connection.ready) {
 				leaving = true;
 				connection.sendIfReady({ type: "bye" });
@@ -2242,7 +2286,14 @@
 		retained.listen(document);
 		window.j2act = retained.api();
 		clients.scan();
-		connection.connect();
+		if (previous.restore) remount(previous.restore);
+		else {
+			connection.connect();
+			if (previous.forget) send({
+				type: "forget",
+				token: previous.forget
+			});
+		}
 	}
 	/** A download link: the browser saves the response and the page stays (ADR 0012). */
 	function download(url) {

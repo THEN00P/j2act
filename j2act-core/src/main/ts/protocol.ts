@@ -82,6 +82,8 @@ export type ClientMessage =
   | { type: "navigate"; url: string; mode: NavMode }
   | { type: "preload"; url: string }
   | { type: "pause"; automatic?: true }
-  | { type: "bye" };
+  | { type: "bye" }
+  /** A reload of a page whose closed tab kept a snapshot: the server deletes it (ADR 0030). */
+  | { type: "forget"; token: string };
 
 export type Send = (message: ClientMessage) => void;

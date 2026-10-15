@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 import j2act.RetainedStateTest.CountingStorage;
 import j2act.RetainedStateTest.Form;
 
-/** ADR 0026: withCheckpointInterval saves live tabs that changed; bye deletes their checkpoint. */
+/** ADR 0026: withCheckpointInterval saves live tabs that changed; without closed-tab retention, bye deletes their checkpoint. */
 class RetainedCheckpointTest {
 
   static Harness checkpointing(CountingStorage storage) {
@@ -68,9 +68,10 @@ class RetainedCheckpointTest {
   }
 
   @Test
-  void byeDeletesTheCheckpointOfAPageThatIsGoneForGood() {
+  void withoutClosedTabRetentionByeDeletesTheCheckpointOfAPageThatIsGoneForGood() {
     CountingStorage storage = new CountingStorage();
-    try (Harness h = checkpointing(storage)) {
+    try (Harness h = harness(Form::new, storage,
+        b -> b.withCheckpointInterval(Duration.ofMillis(100)).withClosedTabRetention(Duration.ZERO))) {
       h.load();
       h.connect();
       type(h, "name", "Ada");
