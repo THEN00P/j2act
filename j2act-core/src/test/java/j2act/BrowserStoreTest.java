@@ -382,6 +382,38 @@ class BrowserStoreTest {
     }
   }
 
+  @Test
+  void aFailedCookieClaimGetsAFreshOffer() {
+    try (Harness h = harness(LazyPage::new)) {
+      Page page = new Page(h.engine, "/", Exchange.empty()).connect();
+      int from = page.conn.size();
+      page.click("use");
+      String first = page.conn.await(from, m -> "browserCookie".equals(m.get("type"))).get("url");
+      int again = page.conn.size();
+      h.engine.onMessage(page.conn, Json.object("type", "browserCookieRetry"));
+      String second = page.conn.await(again, m -> "browserCookie".equals(m.get("type"))).get("url");
+      assertNotEquals(first, second, "a fresh one-time URL");
+      assertNotNull(h.engine.claimBrowserCookie(second.substring(J2Act.BROWSER_PATH.length())));
+    }
+  }
+
+  static volatile String seenOnClose;
+
+  @Test
+  void onCloseATabsCleanupStillReachesItsBrowserStore() {
+    seenOnClose = null;
+    Harness h = new Harness(() -> new LiveComponent() {
+      @Override public Tag<?> render() {
+        Player player = browser(Player.class);
+        effect(() -> () -> seenOnClose = player.track.get());
+        return T.page("c", T.div(T.span("c")));
+      }
+    });
+    new Page(h.engine, "/", Exchange.empty()).connect();
+    h.close();
+    assertEquals("none", seenOnClose, "the tab's cleanup ran before its browser ended");
+  }
+
   private static void sleep(long millis) {
     try {
       Thread.sleep(millis);

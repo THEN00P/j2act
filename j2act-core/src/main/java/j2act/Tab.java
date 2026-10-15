@@ -109,6 +109,8 @@ public final class Tab {
   volatile Browser browser;
   /** A Set-Cookie value this tab still has to hand the browser: on the page response, or by fetch. */
   volatile String pendingBrowserCookie;
+  /** The Set-Cookie value of the browser this tab minted, offered again when the page's claim failed. */
+  volatile String mintedBrowserCookie;
   /** Mirrors of browser cells this tab read, by source. */
   private final Map<Cell, MirrorCell> mirrors = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -136,6 +138,7 @@ public final class Tab {
       old = browser;
       browser = null;
       browserCookie = null;
+      mintedBrowserCookie = null;
     }
     if (old == null) {
       return;

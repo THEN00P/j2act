@@ -92,9 +92,7 @@ function start(): void {
     pauseRequested: () => retained.requested(),
     modules: (m) => clients.reimport(m.modules),
     // First use of browser state over the socket: a socket cannot set the HttpOnly cookie, a fetch can (ADR 0030).
-    browserCookie: (m) => {
-      fetch(m.url, { method: "POST", credentials: "same-origin" }).catch(() => undefined);
-    }
+    browserCookie: (m) => claimBrowserCookie(m.url)
   };
 
   function onMessage(m: ServerMessage): void {
@@ -132,6 +130,24 @@ function start(): void {
       .catch(() => {
         remounting = false;
         setTimeout(() => remount(restoring), 2000);
+      });
+  }
+
+  /** Failed claims of the browser cookie so far; the server offers a fresh URL after each, a few times. */
+  let cookieClaimFailures = 0;
+
+  function claimBrowserCookie(url: string): void {
+    fetch(url, { method: "POST", credentials: "same-origin" })
+      .then((r) => {
+        if (!r.ok) {
+          throw new Error("browser cookie claim answered " + r.status);
+        }
+        cookieClaimFailures = 0;
+      })
+      .catch(() => {
+        if (cookieClaimFailures < 5) {
+          setTimeout(() => send({ type: "browserCookieRetry" }), 1000 * 2 ** cookieClaimFailures++);
+        }
       });
   }
 

@@ -226,7 +226,7 @@ public final class J2Act implements AutoCloseable {
       tab.browser = joined;
       if (minted) {
         tab.browserCookie = cookie;
-        tab.pendingBrowserCookie = browserCookieHeader(cookie);
+        tab.mintedBrowserCookie = tab.pendingBrowserCookie = browserCookieHeader(cookie);
         if (tab.connection != null) {
           tab.post(() -> offerBrowserCookie(tab));
         }
@@ -836,6 +836,16 @@ public final class J2Act implements AutoCloseable {
         }
       });
       discard(tab, false);
+    } else if ("browserCookieRetry".equals(type)) {
+      // The page's claim of its new browser cookie failed: offer it again, with a fresh token (ADR 0030).
+      if (admit(tab, connection)) {
+        tab.post(() -> {
+          if (tab.mintedBrowserCookie != null) {
+            tab.pendingBrowserCookie = tab.mintedBrowserCookie;
+            offerBrowserCookie(tab);
+          }
+        });
+      }
     } else if ("forget".equals(type)) {
       // A reload of a page whose closed tab kept a snapshot: a reload starts empty (ADR 0030).
       String old = message.get("token");
@@ -1069,8 +1079,18 @@ public final class J2Act implements AutoCloseable {
         Thread.currentThread().interrupt();
       }
     }
+    java.util.List<CompletableFuture<Void>> ended = new java.util.ArrayList<>();
     for (Tab tab : tabs.values()) {
+      ended.add(tab.ended);
       discard(tab, false);
+    }
+    // Tabs end first, so their effects' cleanups and @PreDestroy can still use browser stores.
+    try {
+      CompletableFuture.allOf(ended.toArray(new CompletableFuture<?>[0])).get(5, TimeUnit.SECONDS);
+    } catch (TimeoutException | ExecutionException e) {
+      log(System.Logger.Level.WARNING, "tabs did not end within 5 s of close(); ending their browsers anyway", e);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
     }
     // Saved above if asked; either way their effects' cleanups and @PreDestroy run now.
     for (Browser browser : browsers.values()) {

@@ -85,6 +85,8 @@ export type ClientMessage =
   | { type: "preload"; url: string }
   | { type: "pause"; automatic?: true }
   | { type: "bye" }
+  /** The page's claim of its new browser cookie failed: the server offers it again (ADR 0030). */
+  | { type: "browserCookieRetry" }
   /** A reload of a page whose closed tab kept a snapshot: the server deletes it (ADR 0030). */
   | { type: "forget"; token: string };
 

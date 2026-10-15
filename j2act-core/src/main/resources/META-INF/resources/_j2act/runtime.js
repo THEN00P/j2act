@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-9e89055ad67179ba2cf8c5b1009601fed35efa187e83f691b6ec45ce3ec3edd4 */
+* sources: sha256-eccc1ed0f815cb44a64c3603740e364b878ccef23d745637f00ab1d2c97a5e13 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -2227,12 +2227,7 @@
 			pauseRefused: () => retained.refused(),
 			pauseRequested: () => retained.requested(),
 			modules: (m) => clients.reimport(m.modules),
-			browserCookie: (m) => {
-				fetch(m.url, {
-					method: "POST",
-					credentials: "same-origin"
-				}).catch(() => void 0);
-			}
+			browserCookie: (m) => claimBrowserCookie(m.url)
 		};
 		function onMessage(m) {
 			handlers[m.type]?.(m);
@@ -2263,6 +2258,19 @@
 			}).catch(() => {
 				remounting = false;
 				setTimeout(() => remount(restoring), 2e3);
+			});
+		}
+		/** Failed claims of the browser cookie so far; the server offers a fresh URL after each, a few times. */
+		let cookieClaimFailures = 0;
+		function claimBrowserCookie(url) {
+			fetch(url, {
+				method: "POST",
+				credentials: "same-origin"
+			}).then((r) => {
+				if (!r.ok) throw new Error("browser cookie claim answered " + r.status);
+				cookieClaimFailures = 0;
+			}).catch(() => {
+				if (cookieClaimFailures < 5) setTimeout(() => send({ type: "browserCookieRetry" }), 1e3 * 2 ** cookieClaimFailures++);
 			});
 		}
 		function busy() {
