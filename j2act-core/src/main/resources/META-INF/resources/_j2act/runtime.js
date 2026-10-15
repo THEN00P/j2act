@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-e60b706c8641a25829ecbda1418419455be183ad5148f3ce0531f2f3f4f27c9d */
+* sources: sha256-ad3cc2ed2c75c9211b1a24b845f63e79d14a7ed5100372f3f7e3dbfc0610a6f1 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -2226,7 +2226,13 @@
 			paused: (m) => retained.paused(m.saved === true),
 			pauseRefused: () => retained.refused(),
 			pauseRequested: () => retained.requested(),
-			modules: (m) => clients.reimport(m.modules)
+			modules: (m) => clients.reimport(m.modules),
+			browserCookie: (m) => {
+				fetch(m.url, {
+					method: "POST",
+					credentials: "same-origin"
+				}).catch(() => void 0);
+			}
 		};
 		function onMessage(m) {
 			handlers[m.type]?.(m);

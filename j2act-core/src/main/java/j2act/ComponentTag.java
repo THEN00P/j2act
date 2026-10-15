@@ -206,6 +206,25 @@ public abstract class ComponentTag implements DomContent {
   }
 
   /**
+   * Every tab of this browser (ADR 0030): its id, and requestPause() to ask all its tabs to
+   * pause. Its first use joins the tab to its browser, which sets the j2-browser cookie when the
+   * browser has none yet.
+   */
+  protected final Browser browser() {
+    Tab tab = mountedTab("browser()");
+    return tab.engine.browserOf(tab);
+  }
+
+  /**
+   * This browser's instance of a @BrowserScoped store (ADR 0030), shared live by all its tabs.
+   * With Spring or CDI, inject it instead; this returns the container's instance either way.
+   */
+  protected final <S extends Store> S browser(Class<S> store) {
+    Tab tab = mountedTab("browser(" + store.getSimpleName() + ".class)");
+    return tab.engine.browserStore(tab, store);
+  }
+
+  /**
    * The deployment this component runs in (ADR 0027): what spans every page, such as asking
    * them all to pause. What the component owns is on this class; what its page shares is too,
    * since a component can be a page.

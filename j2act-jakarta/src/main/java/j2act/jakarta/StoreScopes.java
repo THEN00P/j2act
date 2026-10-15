@@ -9,41 +9,50 @@ import jakarta.enterprise.event.Observes;
 import jakarta.enterprise.inject.spi.AfterBeanDiscovery;
 import jakarta.enterprise.inject.spi.Extension;
 
+import j2act.BrowserScoped;
 import j2act.StoreScope;
 import j2act.TabScoped;
 
 /**
- * Adds the context behind @TabScoped (ADR 0030): one bean per tab, the tab current on the
- * calling thread. The annotation carries @NormalScope itself, so CDI discovers stores in any
- * bean archive; this only supplies the context. Components get a client proxy.
+ * Adds the contexts behind @TabScoped and @BrowserScoped (ADR 0030): one bean per tab, or per
+ * browser, of the tab current on the calling thread. The annotations carry @NormalScope
+ * themselves, so CDI discovers stores in any bean archive; this only supplies the contexts.
+ * Components get a client proxy.
  */
 public final class StoreScopes implements Extension {
 
   void addContexts(@Observes AfterBeanDiscovery event) {
-    event.addContext(new TabContext());
+    event.addContext(new StoreContext(TabScoped.class));
+    event.addContext(new StoreContext(BrowserScoped.class));
   }
 
-  static final class TabContext implements AlterableContext {
+  static final class StoreContext implements AlterableContext {
+
+    private final Class<? extends Annotation> scope;
+
+    StoreContext(Class<? extends Annotation> scope) {
+      this.scope = scope;
+    }
 
     @Override public Class<? extends Annotation> getScope() {
-      return TabScoped.class;
+      return scope;
     }
 
     @Override public <T> T get(Contextual<T> bean, CreationalContext<T> context) {
-      return StoreScope.get(TabScoped.class, bean, () -> bean.create(context), instance -> bean.destroy(instance, context));
+      return StoreScope.get(scope, bean, () -> bean.create(context), instance -> bean.destroy(instance, context));
     }
 
     @Override @SuppressWarnings("unchecked")
     public <T> T get(Contextual<T> bean) {
-      return (T) StoreScope.getIfExists(TabScoped.class, bean);
+      return (T) StoreScope.getIfExists(scope, bean);
     }
 
     @Override public boolean isActive() {
-      return StoreScope.isActive(TabScoped.class);
+      return StoreScope.isActive(scope);
     }
 
     @Override public void destroy(Contextual<?> bean) {
-      StoreScope.remove(TabScoped.class, bean);
+      StoreScope.remove(scope, bean);
     }
   }
 }

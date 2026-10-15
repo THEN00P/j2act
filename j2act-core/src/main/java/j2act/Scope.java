@@ -93,7 +93,7 @@ final class Scope implements Observer {
   /** The class carrying the scope annotation, under any subclass a container made of it. */
   static Class<?> storeClass(Class<?> type) {
     for (Class<?> c = type; c != null && c != Store.class; c = c.getSuperclass()) {
-      if (c.getDeclaredAnnotation(TabScoped.class) != null) {
+      if (c.getDeclaredAnnotation(TabScoped.class) != null || c.getDeclaredAnnotation(BrowserScoped.class) != null) {
         return c;
       }
     }

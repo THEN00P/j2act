@@ -27,6 +27,7 @@ import j2act.J2Act;
 import j2act.JsonBinding;
 import j2act.PageResolver;
 import j2act.RetainedStateStorage;
+import j2act.BrowserScoped;
 import j2act.TabScoped;
 import j2act.jdbc.JdbcRetainedStateStorage;
 
@@ -35,8 +36,9 @@ import j2act.jdbc.JdbcRetainedStateStorage;
  * DI goes through autowireBean, so @Autowired, @Inject and @PersistenceContext work in
  * components; lanes and query runs use the app's task executor (ADR 0004, 0017). Retained State
  * goes to a RetainedStateStorage bean if there is one, and with j2act-retained-jdbc on the
- * classpath to the app's DataSource (ADR 0026). @TabScoped stores are beans in the j2act-tab
- * scope, which component scanning finds in the app's packages (ADR 0030).
+ * classpath to the app's DataSource (ADR 0026). @TabScoped and @BrowserScoped stores are beans
+ * in the j2act-tab and j2act-browser scopes, which component scanning finds in the app's
+ * packages (ADR 0030).
  */
 @AutoConfiguration(afterName = {
   // Boot 3, then Boot 4, which moved it.
@@ -79,10 +81,13 @@ public class J2ActAutoConfiguration {
     return builder.build();
   }
 
-  /** The scope @TabScoped names, so a store bean has one instance per tab (ADR 0030). */
+  /** The scopes @TabScoped and @BrowserScoped name: one store bean per tab, or per browser (ADR 0030). */
   @Bean
   static BeanFactoryPostProcessor j2ActStoreScopes() {
-    return factory -> factory.registerScope(TabScoped.SPRING_SCOPE, new TabStoreScope());
+    return factory -> {
+      factory.registerScope(TabScoped.SPRING_SCOPE, new StoreBeanScope(TabScoped.class));
+      factory.registerScope(BrowserScoped.SPRING_SCOPE, new StoreBeanScope(BrowserScoped.class));
+    };
   }
 
   /**

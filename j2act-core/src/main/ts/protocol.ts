@@ -49,7 +49,9 @@ export type ServerMessage =
   | { type: "paused"; saved?: boolean }
   | { type: "pauseRefused" }
   | { type: "pauseRequested" }
-  | { type: "modules"; modules: Record<string, string> };
+  | { type: "modules"; modules: Record<string, string> }
+  /** POST here to receive the browser cookie, first used over the socket (ADR 0030). */
+  | { type: "browserCookie"; url: string };
 
 /** Fields an event may add: keys, pointer, a picked file, a failed bound action. */
 export interface EventFields {

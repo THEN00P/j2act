@@ -13,7 +13,7 @@ The server side of one page load, reached with tab(): created when the page's HT
 _Avoid_: Session, Circuit, Connection, Page load
 
 **Browser**:
-Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with browser(). Its state lives in a per-browser hub while any of its tabs lives, and every tab sees a write at once. A logout or another user starts a new browser (ADR 0030).
+Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with browser(). Its @BrowserScoped stores live on a hub with its own lane while any of its tabs lives, plus a grace window, and every tab that read a value re-renders when it changes. A logout or another user starts a new browser (ADR 0030).
 _Avoid_: Session, Device, Visitor, User
 
 **Retained State**:
@@ -25,7 +25,7 @@ The Retained State of one tab or one browser, saved to retained state storage wi
 _Avoid_: Checkpoint (that is the opt-in trigger that saves one while the tab is live), Backup
 
 **Store**:
-A class annotated @TabScoped or @BrowserScoped that extends Store: one instance per tab or per browser, a bean of the app's container that components @Inject, or reach with tab(X.class) and browser(X.class) without one. It holds State, Retained State, Computeds, Queries and Mutations as fields, never plain values, and its methods are the actions. No middleware (ADR 0030).
+A class annotated @TabScoped or @BrowserScoped that extends Store: one instance per tab or per browser, a bean of the app's container that components @Inject, or reach with tab(X.class) and browser(X.class) without one. A browser store's computeds, queries and effects run once per browser and cannot use tab stores. It holds State, Retained State, Computeds, Queries and Mutations as fields, never plain values, and its methods are the actions. No middleware (ADR 0030).
 _Avoid_: GlobalState, Context, Singleton, Session, createStore
 
 **LiveComponent**:

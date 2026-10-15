@@ -7,7 +7,7 @@ import java.util.function.Supplier;
 /**
  * What the container adapters build their store scopes on (ADR 0030): a Spring Scope and a CDI
  * context hand j2act the bean's key and how to create and destroy it, and j2act keeps one
- * instance per current tab. An app never calls this; it injects its stores or looks them up
+ * instance per current tab, or per its browser for @BrowserScoped. An app never calls this; it injects its stores or looks them up
  * with tab(Type.class).
  */
 public final class StoreScope {
@@ -18,7 +18,8 @@ public final class StoreScope {
   /** Whether a tab is current on this thread: a lane task, a query run or a mutation run. */
   public static boolean isActive(Class<? extends Annotation> scope) {
     requireKnown(scope);
-    return Tab.ambient() != null;
+    Tab tab = Tab.ambient();
+    return tab != null && (scope == BrowserScoped.class || tab.hubFor == null);
   }
 
   /**
@@ -33,8 +34,7 @@ public final class StoreScope {
 
   /** The current tab's instance for this key, or null when it has none yet or no tab is current. */
   public static Object getIfExists(Class<? extends Annotation> scope, Object key) {
-    requireKnown(scope);
-    Tab tab = Tab.ambient();
+    Tab tab = owner(scope, false);
     return tab == null ? null : tab.existingStore(key);
   }
 
@@ -48,21 +48,18 @@ public final class StoreScope {
 
   /** Forgets the current tab's instance for this key without destroying it; returns it, or null. */
   public static Object remove(Class<? extends Annotation> scope, Object key) {
-    requireKnown(scope);
-    Tab tab = Tab.ambient();
+    Tab tab = owner(scope, false);
     return tab == null ? null : tab.removeStore(key);
   }
 
-  /** The current tab's id, or null when no tab is current. */
+  /** The current tab's id, or its browser's, or null when no tab is current. */
   public static String id(Class<? extends Annotation> scope) {
-    requireKnown(scope);
-    Tab tab = Tab.ambient();
-    return tab == null ? null : tab.id;
+    Tab tab = owner(scope, false);
+    return tab == null ? null : scope == BrowserScoped.class ? tab.hubFor.id() : tab.id;
   }
 
   private static Tab current(Class<? extends Annotation> scope) {
-    requireKnown(scope);
-    Tab tab = Tab.ambient();
+    Tab tab = owner(scope, true);
     if (tab == null) {
       throw new IllegalStateException("@" + scope.getSimpleName() + " stores live in a tab: use them from a"
         + " component, handler, effect, query loader or mutation (ADR 0030)");
@@ -70,8 +67,33 @@ public final class StoreScope {
     return tab;
   }
 
+  /**
+   * Whose stores a key names: the current tab's, or for @BrowserScoped its browser's hub, joined
+   * when join is set. A browser store's own primitives cannot reach tab stores, since every tab
+   * has its own.
+   */
+  private static Tab owner(Class<? extends Annotation> scope, boolean join) {
+    requireKnown(scope);
+    Tab tab = Tab.ambient();
+    if (tab == null) {
+      return null;
+    }
+    if (scope == BrowserScoped.class) {
+      if (tab.hubFor != null) {
+        return tab;
+      }
+      Browser browser = join ? tab.engine.browserOf(tab) : tab.browser;
+      return browser == null ? null : browser.hub;
+    }
+    if (tab.hubFor != null) {
+      throw new IllegalStateException("a browser store's computed, query, effect or mutation runs once for"
+        + " every tab of the browser, so it cannot use a @TabScoped store (ADR 0030)");
+    }
+    return tab;
+  }
+
   private static void requireKnown(Class<? extends Annotation> scope) {
-    if (scope != TabScoped.class) {
+    if (scope != TabScoped.class && scope != BrowserScoped.class) {
       throw new IllegalArgumentException("not a j2act store scope: " + scope.getName());
     }
   }

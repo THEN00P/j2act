@@ -90,6 +90,37 @@ public final class Tab {
   private final Object settleLock = new Object();
   private long settleCount;
 
+  // ---- browser (ADR 0030)
+
+  /** Set when this tab is a browser's hub: no page, no socket, only its stores. */
+  volatile Browser hubFor;
+  /** The j2-browser cookie this page load sent, or the one minted for it on first use. */
+  volatile String browserCookie;
+  /** The browser this tab joined on first use of browser state, or null. */
+  volatile Browser browser;
+  /** A Set-Cookie value this tab still has to hand the browser: on the page response, or by fetch. */
+  volatile String pendingBrowserCookie;
+  /** Mirrors of browser cells this tab read, by source. */
+  private final Map<Cell, MirrorCell> mirrors = new java.util.concurrent.ConcurrentHashMap<>();
+
+  /** This tab's mirror of a browser cell, made and subscribed on first read. */
+  MirrorCell mirror(Cell source, Object seen) {
+    MirrorCell mirror = mirrors.get(source);
+    if (mirror == null) {
+      MirrorCell made = new MirrorCell(this, source);
+      mirror = mirrors.putIfAbsent(source, made);
+      if (mirror == null) {
+        mirror = made;
+        made.subscribe(seen);
+      }
+    }
+    return mirror;
+  }
+
+  void forgetMirror(MirrorCell mirror) {
+    mirrors.remove(mirror.source, mirror);
+  }
+
   Tab(J2Act engine, String id, String token, Exchange exchange, String url) {
     this.engine = engine;
     this.id = id;
@@ -104,6 +135,7 @@ public final class Tab {
     long now = engine.clock.millis();
     this.lastActivity = now;
     this.disconnectedAt = now;
+    this.browserCookie = J2Act.browserCookie(exchange);
   }
 
   /** The tab a mutation body runs for, on its executor thread; only stores read it (ADR 0030). */
@@ -1258,7 +1290,14 @@ public final class Tab {
       root.dispose();
     }
     disposeStores();
+    for (MirrorCell mirror : mirrors.values()) {
+      mirror.dispose();
+    }
+    mirrors.clear();
     disposed = true;
+    if (browser != null) {
+      engine.leaveBrowser(this);
+    }
     clients.dispose();
     handlers.clear();
     cells.clear();

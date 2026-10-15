@@ -8,6 +8,7 @@ import static com.example.jakarta.components.SalesChart.salesChart;
 import static com.example.jakarta.components.Countdown.countdown;
 import static com.example.jakarta.components.Counter.counter;
 import static com.example.jakarta.components.DraftNote.draftNote;
+import static com.example.jakarta.components.PlayerBar.playerBar;
 import static com.example.jakarta.components.GreetingForm.greetingForm;
 import static com.example.jakarta.components.PeopleCount.peopleCount;
 import static com.example.jakarta.components.SearchBox.searchBox;
@@ -65,6 +66,10 @@ public class HomePage extends LiveComponent implements Page {
         section(
           h2("Retained State: a draft that outlives the in-memory tab"),
           draftNote()
+        ),
+        section(
+          h2("Browser state: shared live by every tab of this browser"),
+          playerBar()
         )
       )
     );

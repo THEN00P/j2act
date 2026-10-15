@@ -43,6 +43,13 @@ public final class J2Act implements AutoCloseable {
 
   /** Where adapters serve download tokens, next to the socket mount (ADR 0012). */
   public static final String DOWNLOAD_PATH = "/_j2act/dl/";
+  /**
+   * Where a page fetches its browser cookie when it first used browser state over its socket
+   * (ADR 0030): POST BROWSER_PATH + token; the adapter sets claimBrowserCookie's header.
+   */
+  public static final String BROWSER_PATH = "/_j2act/browser/";
+  /** The HttpOnly cookie that is the browser (ADR 0030). */
+  public static final String BROWSER_COOKIE = "j2-browser";
   /** Where adapters accept upload chunks: POST UPLOAD_PATH + token + "?o=" + offset (ADR 0006). */
   public static final String UPLOAD_PATH = "/_j2act/up/";
   /** Where adapters serve client modules: GET MODULE_PATH + hash/package/Name.client.js (ADR 0022). */
@@ -96,7 +103,10 @@ public final class J2Act implements AutoCloseable {
    */
   <S extends Store> S store(Tab tab, Class<S> type) {
     if (Scope.storeClass(type).getDeclaredAnnotation(TabScoped.class) == null) {
-      throw new IllegalArgumentException(type.getName() + " is not a store: annotate it @TabScoped (ADR 0030)");
+      throw new IllegalArgumentException(type.getName()
+        + (Scope.storeClass(type).getDeclaredAnnotation(BrowserScoped.class) != null
+          ? " is a browser store: reach it with browser(" + type.getSimpleName() + ".class)"
+          : " is not a store: annotate it @TabScoped") + " (ADR 0030)");
     }
     if (storeLookup != null) {
       return type.cast(storeLookup.apply(type));
@@ -123,6 +133,219 @@ public final class J2Act implements AutoCloseable {
     return store;
   }
 
+  // ---- browsers (ADR 0030)
+
+  /** The j2-browser cookie a request carries, when it looks like one j2act minted. */
+  static String browserCookie(Exchange exchange) {
+    String value = exchange.cookie(BROWSER_COOKIE).orElse(null);
+    return value != null && value.matches("[A-Za-z0-9_-]{32}") ? value : null;
+  }
+
+  private String browserCookieHeader(String cookie) {
+    return BROWSER_COOKIE + "=" + cookie + "; Path=" + (contextPath.isEmpty() ? "/" : contextPath)
+      + "; Max-Age=34560000; HttpOnly; SameSite=Lax";
+  }
+
+  /**
+   * The browser a tab belongs to, joined on first use of browser state. The identity rules
+   * follow Spring Security's defaults: an anonymous browser that logs in keeps its state and
+   * records the user; a logout or another user starts a new browser with a new cookie.
+   */
+  Browser browserOf(Tab tab) {
+    if (tab.hubFor != null) {
+      return tab.hubFor;
+    }
+    Browser joined = tab.browser;
+    if (joined != null) {
+      return joined;
+    }
+    synchronized (tab) {
+      if (tab.browser != null) {
+        return tab.browser;
+      }
+      if (tab.disposed) {
+        throw new IllegalStateException("tab " + tab.id + " has ended");
+      }
+      AuthCtx auth = tab.currentAuth();
+      String principal = auth.isAnonymous() ? null : auth.name();
+      String cookie = tab.browserCookie;
+      boolean minted = false;
+      while (true) {
+        if (cookie == null) {
+          cookie = newSecret(24);
+          minted = true;
+        }
+        joined = join(cookie, tab, principal);
+        if (joined != null) {
+          break;
+        }
+        cookie = null; // logged out, or another user: a browser of its own
+      }
+      tab.browser = joined;
+      if (minted) {
+        tab.browserCookie = cookie;
+        tab.pendingBrowserCookie = browserCookieHeader(cookie);
+        if (tab.connection != null) {
+          tab.post(() -> offerBrowserCookie(tab));
+        }
+      }
+      return joined;
+    }
+  }
+
+  /** Joins the browser with this cookie, made or restored if need be; null when it belongs to someone else. */
+  private Browser join(String cookie, Tab tab, String principal) {
+    while (true) {
+      Browser browser = browsers.get(cookie);
+      if (browser == null) {
+        browser = newBrowser(cookie, tab, principal);
+        if (browser == null) {
+          return null;
+        }
+        Browser raced = browsers.putIfAbsent(cookie, browser);
+        if (raced != null) {
+          Tab unused = browser.hub;
+          unused.post(() -> unused.dispose(null));
+          continue;
+        }
+      }
+      synchronized (browser) {
+        if (browser.retired) {
+          browsers.remove(cookie, browser);
+        } else if (browser.principal != null && !browser.principal.equals(principal)) {
+          return null;
+        } else {
+          if (browser.principal == null) {
+            browser.principal = principal;
+          }
+          browser.tabs.add(tab);
+          return browser;
+        }
+      }
+      // Its last tab just went: wait for its snapshot, which the next one restores.
+      try {
+        browser.saved.get(5, TimeUnit.SECONDS);
+      } catch (TimeoutException | ExecutionException e) {
+        log(System.Logger.Level.WARNING, "a retiring browser's snapshot did not land in time", e);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return null;
+      }
+    }
+  }
+
+  /** A new hub, with its retained values back if it saved some for this identity; null when they belong to another user. */
+  private Browser newBrowser(String cookie, Tab tab, String principal) {
+    Map<String, String> entries = null;
+    String id = Retained.id("browser:" + cookie);
+    try {
+      Optional<String> stored = retainedStorage.load(id);
+      if (stored.isPresent()) {
+        retainedStorage.delete(id);
+        Retained.Snapshot snapshot = Retained.decode(stored.get());
+        if (snapshot.expiresAt > clock.millis()) {
+          if (snapshot.principal != null && !snapshot.principal.equals(principal)) {
+            return null;
+          }
+          entries = new ConcurrentHashMap<>(snapshot.entries);
+        }
+      }
+    } catch (RuntimeException e) {
+      log(System.Logger.Level.WARNING, "a browser's retained state could not be restored", e);
+    }
+    Tab hub = new Tab(this, "browser:" + newSecret(9), newSecret(18), tab.exchange, "/");
+    Browser browser = new Browser(this, cookie, hub, principal);
+    hub.hubFor = browser;
+    hub.restore(entries);
+    return browser;
+  }
+
+  /** A tab of this browser ended; the last one gives the browser the grace window a tab has. */
+  void leaveBrowser(Tab tab) {
+    Browser browser = tab.browser;
+    boolean empty;
+    synchronized (browser) {
+      browser.tabs.remove(tab);
+      empty = browser.tabs.isEmpty() && !browser.retired;
+    }
+    if (empty) {
+      later(browser.hub, reconnectGraceMillis, () -> retireBrowser(browser, false));
+    }
+  }
+
+  /** Saves the retained values of a browser left without tabs, on its hub's lane, and ends it. */
+  private CompletableFuture<Void> retireBrowser(Browser browser, boolean closing) {
+    synchronized (browser) {
+      if (browser.retired || !closing && !browser.tabs.isEmpty()) {
+        return browser.saved;
+      }
+      browser.retired = true;
+      browsers.remove(browser.cookie, browser);
+    }
+    Tab hub = browser.hub;
+    hub.post(() -> {
+      hub.persisting();
+      String snapshot = null;
+      try {
+        Map<String, String> entries = hub.retainedEntries();
+        if (!entries.isEmpty()) {
+          snapshot = Retained.encode(clock.millis() + retainedRetentionMillis, browser.principal, entries);
+        }
+      } catch (RuntimeException e) {
+        log(System.Logger.Level.WARNING, "a browser's retained state could not be saved", e);
+      }
+      String taken = snapshot;
+      hub.dispose(null);
+      executor.execute(() -> {
+        try {
+          if (taken != null) {
+            retainedStorage.save(Retained.id("browser:" + browser.cookie), taken,
+              Instant.ofEpochMilli(clock.millis() + retainedRetentionMillis));
+          }
+        } catch (RuntimeException e) {
+          log(System.Logger.Level.WARNING, "a browser's retained state could not be saved", e);
+        } finally {
+          browser.saved.complete(null);
+        }
+      });
+    });
+    return browser.saved;
+  }
+
+  /** Lane-only. Hands a connected page the URL that sets its new browser cookie. */
+  private void offerBrowserCookie(Tab tab) {
+    String cookie = tab.pendingBrowserCookie;
+    if (cookie == null || tab.connection == null) {
+      return;
+    }
+    tab.pendingBrowserCookie = null;
+    String token = newSecret(24);
+    browserCookieOffers.put(token,
+      new java.util.AbstractMap.SimpleImmutableEntry<>(cookie, clock.millis() + downloadTtlMillis));
+    tab.send(Json.object("type", "browserCookie", "url", contextPath + BROWSER_PATH + token));
+  }
+
+  /**
+   * The Set-Cookie value for a POST to BROWSER_PATH + token, once; null (answer 404) for an
+   * unknown or used token. The adapter adds "; Secure" on HTTPS.
+   */
+  public String claimBrowserCookie(String token) {
+    Map.Entry<String, Long> offer = token == null ? null : browserCookieOffers.remove(token);
+    return offer == null || offer.getValue() < clock.millis() ? null : offer.getKey();
+  }
+
+  /** The browser's instance of a @BrowserScoped store: the container's, else made on first use in the browser. */
+  <S extends Store> S browserStore(Tab tab, Class<S> type) {
+    if (Scope.storeClass(type).getDeclaredAnnotation(BrowserScoped.class) == null) {
+      throw new IllegalArgumentException(type.getName()
+        + " is not a browser store: annotate it @BrowserScoped (ADR 0030)");
+    }
+    if (storeLookup != null) {
+      return type.cast(storeLookup.apply(type));
+    }
+    return browserOf(tab).hub.store(type, () -> newStore(type), null);
+  }
+
   /** What components reach with application() (ADR 0027). */
   final Application application = new Application(this);
   /** How long close() waits for tabs' snapshots; 0 when they are not saved on shutdown. */
@@ -143,6 +366,10 @@ public final class J2Act implements AutoCloseable {
   private ClassWatch classWatch;
 
   private final ConcurrentHashMap<String, Tab> tabs = new ConcurrentHashMap<>();
+  /** Browsers with a live tab on this node, by cookie (ADR 0030). */
+  private final ConcurrentHashMap<String, Browser> browsers = new ConcurrentHashMap<>();
+  /** One-time tokens a page trades for its browser cookie, with their Set-Cookie value and expiry. */
+  private final ConcurrentHashMap<String, Map.Entry<String, Long>> browserCookieOffers = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Connection, Tab> byConnection = new ConcurrentHashMap<>();
   private final ScheduledExecutorService sweeper;
   private final ExecutorService ownedExecutor;
@@ -333,6 +560,12 @@ public final class J2Act implements AutoCloseable {
         }
         tab.awaitSettleAfter(pass.settleCount, left);
         pass = await(tab.call(() -> SsrPass.of(tab)));
+      }
+      String cookie = tab.pendingBrowserCookie;
+      if (cookie != null) {
+        // The page used browser state while rendering: its response sets the cookie (ADR 0030).
+        tab.pendingBrowserCookie = null;
+        return new ServeResult(status, pass.html, null, java.util.Collections.singletonList(cookie));
       }
       return new ServeResult(status, pass.html);
     } catch (Exception e) {
@@ -592,7 +825,10 @@ public final class J2Act implements AutoCloseable {
       return;
     }
     byConnection.put(connection, tab);
-    tab.post(() -> tab.attach(connection));
+    tab.post(() -> {
+      tab.attach(connection);
+      offerBrowserCookie(tab);
+    });
   }
 
   // ---- lifecycle
@@ -614,6 +850,7 @@ public final class J2Act implements AutoCloseable {
         sink.fail(new IllegalStateException("upload stalled: no bytes for " + uploadIdleMillis + " ms"));
       }
     }
+    browserCookieOffers.values().removeIf(offer -> offer.getValue() < now);
     for (Tab tab : tabs.values()) {
       if (tab.disposed) {
         tabs.remove(tab.id);
@@ -860,6 +1097,17 @@ public final class J2Act implements AutoCloseable {
       } catch (ExecutionException e) {
         log(System.Logger.Level.WARNING, "saving tabs on shutdown failed", e);
       }
+      java.util.List<CompletableFuture<Void>> browserSaves = new java.util.ArrayList<>();
+      for (Browser browser : browsers.values()) {
+        browserSaves.add(retireBrowser(browser, true));
+      }
+      try {
+        CompletableFuture.allOf(browserSaves.toArray(new CompletableFuture<?>[0])).get(shutdownSaveMillis, TimeUnit.MILLISECONDS);
+      } catch (TimeoutException | ExecutionException e) {
+        log(System.Logger.Level.WARNING, "saving browsers on shutdown failed; their Retained State is lost", e);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
     }
     for (Tab tab : tabs.values()) {
       discard(tab, false);
@@ -899,7 +1147,11 @@ public final class J2Act implements AutoCloseable {
 
   /** Runs a lane task for the tab after a delay, on the sweeper thread's clock. */
   void later(Tab tab, long millis, Runnable task) {
-    sweeper.schedule(() -> tab.post(task), millis, TimeUnit.MILLISECONDS);
+    try {
+      sweeper.schedule(() -> tab.post(task), millis, TimeUnit.MILLISECONDS);
+    } catch (java.util.concurrent.RejectedExecutionException e) {
+      // closing: nothing runs later any more
+    }
   }
 
   String newSecret(int bytes) {

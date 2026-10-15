@@ -90,7 +90,11 @@ function start(): void {
     paused: (m) => retained.paused(m.saved === true),
     pauseRefused: () => retained.refused(),
     pauseRequested: () => retained.requested(),
-    modules: (m) => clients.reimport(m.modules)
+    modules: (m) => clients.reimport(m.modules),
+    // First use of browser state over the socket: a socket cannot set the HttpOnly cookie, a fetch can (ADR 0030).
+    browserCookie: (m) => {
+      fetch(m.url, { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+    }
   };
 
   function onMessage(m: ServerMessage): void {
