@@ -9,6 +9,8 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import j2act.internal.json.Json;
+
 /** ADR 0010 and 0013: grace window, token check, handler validity. */
 class TabLifecycleTest {
 

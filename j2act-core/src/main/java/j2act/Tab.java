@@ -15,6 +15,8 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 
+import j2act.internal.json.Json;
+
 /**
  * The server side of one page load (ADR 0030), reached with tab() in a component: created when
  * the page's HTML renders, kept across socket drops and reconnects, ended by unload, idle
@@ -46,7 +48,12 @@ public final class Tab {
   private PreloadedRoute preload;
   final Set<QueryCell> inFlight = new HashSet<>();
   private final Map<String, InactiveQuery> inactive = new LinkedHashMap<>();
-  private final Map<String, HandlerEntry> handlers = new HashMap<>();
+  /** Event handlers of the elements on the page, by id (ADR 0013). */
+  final Handlers handlers = new Handlers(this);
+  /** Rate limits on its socket's events and upload chunks (ADR 0013). */
+  final SocketLimits limits = new SocketLimits(this);
+  /** What this tab restored from and saves next (ADR 0026). */
+  final TabSnapshot snapshot = new TabSnapshot(this);
   /** Client modules mounted in this tab and their calls in flight (ADR 0022). */
   final Clients clients = new Clients(this);
 
@@ -61,7 +68,7 @@ public final class Tab {
   private final List<String> frameIds = new ArrayList<>();
   private List<Middleware> guards = new ArrayList<>();
   /** Head children each frame rendered last, keyed for the merge (ADR 0007). */
-  private final Map<Scope, Map<String, String>> heads = new IdentityHashMap<>();
+  final Heads heads = new Heads();
   private String lastHead;
   /**
    * Soft-navigation hold (ADR 0011): patches are rendered but not sent while the new page's
@@ -271,93 +278,6 @@ public final class Tab {
 
   // ---- Retained State (ADR 0026)
 
-  /**
-   * Snapshot entries by key, waiting for their fields while a restored page mounts. Kept until
-   * the first soft navigation, so a form that renders once its query loads still finds its value.
-   */
-  volatile Map<String, String> restoring;
-  /**
-   * Snapshot entries of retained stores, waiting for their first use in this tab. Kept
-   * across navigations, since a store outlives pages, and saved again if never used.
-   */
-  final Map<String, String> restoringStores = new java.util.concurrent.ConcurrentHashMap<>();
-  /** This page load came with a snapshot that was restored; the page hears it in a meta tag. */
-  boolean restored;
-  /** Lane-only. A retained value changed since the last snapshot; checkpoints save only such tabs. */
-  boolean retainedDirty;
-  /** Lane-only. Storage holds a checkpoint of this live tab, which bye deletes. */
-  boolean stored;
-  /** This tab's storage writes, in the order the lane took their snapshots, so an older one never lands last. */
-  java.util.concurrent.CompletableFuture<Void> storageWrites = java.util.concurrent.CompletableFuture.completedFuture(null);
-
-  /** Before the first render. The entries of a restored snapshot, or null on a fresh page load. */
-  void restore(Map<String, String> entries) {
-    restored = entries != null;
-    // A restored snapshot was deleted from storage, so the next checkpoint saves it again.
-    retainedDirty = restored;
-    if (entries != null) {
-      for (java.util.Iterator<Map.Entry<String, String>> i = entries.entrySet().iterator(); i.hasNext(); ) {
-        Map.Entry<String, String> entry = i.next();
-        if (entry.getKey().startsWith(Retained.STORE_PREFIX)) {
-          restoringStores.put(entry.getKey(), entry.getValue());
-          i.remove();
-        }
-      }
-    }
-    restoring = entries;
-  }
-
-  /** Lane-only. Names a new retained cell after its field, and fills it from the snapshot being restored. */
-  void retain(Scope scope, State<?> state, ValueCell cell, int index) {
-    Object instance = scope.owner();
-    String component = scope.ownerClass().getName();
-    java.lang.reflect.Field field = Retained.fieldOf(instance, state);
-    String name = state.retainedName != null ? state.retainedName : field != null ? field.getName() : null;
-    if (name == null) {
-      name = "@" + index;
-      engine.warnOnce("local " + component + name, component + " creates retainedState #" + index
-        + " outside a field, so it is keyed by creation order and a state added above it takes its value;"
-        + " declare it as a field (ADR 0026)");
-    }
-    for (Cell other : scope.cells) {
-      if (other != cell && other instanceof ValueCell && name.equals(((ValueCell) other).retainedName)) {
-        engine.warnOnce("name " + component + "#" + name, component + " has two retained states named \""
-          + name + "\"; the second one is not retained (ADR 0026)");
-        return;
-      }
-    }
-    if (scope.instance != null && scope.instance.key == null && scope.parent != null) {
-      for (Scope sibling : scope.parent.children.values()) {
-        if (sibling != scope && sibling.instance != null && sibling.instance.getClass() == instance.getClass()
-          && sibling.instance.key == null) {
-          engine.warnOnce("keyless " + scope.parent.address + "@" + component, component
-            + " has retained state and repeats without withKey under " + scope.parent.instance.getClass().getName()
-            + ", so a restore puts values back by position; give each row a stable withKey (ADR 0026)");
-          break;
-        }
-      }
-    }
-    java.lang.reflect.Type type = field == null ? null : Retained.valueType(field);
-    if (type == null) {
-      Object initial = state.initial();
-      type = initial == null ? Object.class : initial.getClass();
-    }
-    cell.retainedName = name;
-    cell.retainedType = type;
-    // A store outlives pages, so its entries wait for its first use in the tab (ADR 0030).
-    Map<String, String> entries = scope.store != null ? restoringStores : restoring;
-    String json = entries == null ? null : entries.remove(scope.slotPath() + "#" + name);
-    if (json != null) {
-      try {
-        cell.initialize(engine.readRetained(json, type));
-        scope.restored = true;
-      } catch (RuntimeException e) {
-        engine.log(System.Logger.Level.WARNING, "retained " + component + "#" + name
-          + " no longer reads as " + type.getTypeName() + "; it starts from its initial value (ADR 0026)", e);
-      }
-    }
-  }
-
   /** This tab's id, as the page's j2-tab meta tag carries it. Routing, not a secret. */
   public String id() {
     return id;
@@ -381,48 +301,6 @@ public final class Tab {
     }
     send(Json.object("type", "pauseRequested"));
     return true;
-  }
-
-  /** Lane-only. Runs the onPersisting callbacks of mounted components, before their values are taken. */
-  void persisting() {
-    for (Cell c : new ArrayList<>(cells.values())) {
-      if (!(c instanceof PersistCell) || c.disposed || c.owner == null || c.owner.disposed || c.owner.preloading()) {
-        continue;
-      }
-      Observer previous = Tracking.swap(null);
-      try {
-        ((PersistCell) c).callback.run();
-      } catch (RuntimeException e) {
-        engine.log(System.Logger.Level.WARNING, "onPersisting failed at " + c.address + " (ADR 0026)", e);
-      } finally {
-        Tracking.swap(previous);
-      }
-    }
-  }
-
-  /** Lane-only. The retained values of mounted components, by key; null values are left out, as in .NET. */
-  Map<String, String> retainedEntries() {
-    Map<String, String> entries = new LinkedHashMap<>();
-    for (Cell c : cells.values()) {
-      if (!(c instanceof ValueCell) || ((ValueCell) c).retainedName == null) {
-        continue;
-      }
-      ValueCell cell = (ValueCell) c;
-      Scope owner = cell.owner;
-      Object value = cell.peek();
-      if (value == null || cell.disposed || owner == null || owner.disposed || owner.preloading()) {
-        continue;
-      }
-      String key = owner.slotPath() + "#" + cell.retainedName;
-      try {
-        entries.put(key, engine.writeRetained(value, cell.retainedType));
-      } catch (RuntimeException e) {
-        engine.warnOnce("write " + key, "retained " + key + " could not be written to its snapshot (ADR 0026): " + e);
-      }
-    }
-    // A restored store this tab never used keeps its value.
-    restoringStores.forEach(entries::putIfAbsent);
-    return entries;
   }
 
   // ---- stores (ADR 0030)
@@ -669,7 +547,7 @@ public final class Tab {
 
   /** Lane-only soft navigation. Mode is push, replace or pop; the client gets the final URL after the patches. */
   void navigate(String url, String mode) {
-    restoring = null;
+    snapshot.restoring = null;
     Resolution resolution = resolve(url);
     if (resolution.match == null) {
       // No route here: let the browser load it and get the server's 404.
@@ -934,33 +812,7 @@ public final class Tab {
     return "s" + (++anchorSeq);
   }
 
-  // ---- head merge (ADR 0007): title and meta child-wins, link and script deduplicated
-
-  void recordHead(Scope scope, ContainerTag<?> head) {
-    if (head == null) {
-      heads.remove(scope);
-      return;
-    }
-    Map<String, String> items = new LinkedHashMap<>();
-    int seq = 0;
-    for (DomContent child : head.children) {
-      if (child == null) {
-        continue;
-      }
-      StringBuilder html = new StringBuilder();
-      try {
-        StaticRenderer.render(child, html, false);
-      } catch (java.io.IOException e) {
-        throw new IllegalStateException(e);
-      }
-      items.put(headKey(child, scope.anchor + "#" + seq++), html.toString());
-    }
-    heads.put(scope, items);
-  }
-
-  void forgetHead(Scope scope) {
-    heads.remove(scope);
-  }
+  // ---- head (ADR 0007)
 
   String mergedHead() {
     return mergedHead(null);
@@ -971,66 +823,24 @@ public final class Tab {
    * a nonce once the element is in the document, so a head morph would only see it differ.
    */
   String mergedHead(String nonce) {
-    Map<String, String> merged = new LinkedHashMap<>();
-    Set<Scope> seen = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
-    for (ComponentTag frame : frames) {
-      if (frame.scope != null && heads.containsKey(frame.scope)) {
-        merged.putAll(heads.get(frame.scope));
-        seen.add(frame.scope);
-      }
-    }
-    for (Map.Entry<Scope, Map<String, String>> entry : heads.entrySet()) {
-      if (!seen.contains(entry.getKey())) {
-        merged.putAll(entry.getValue());
-      }
-    }
-    StringBuilder b = new StringBuilder();
-    merged.values().forEach(b::append);
-    return b.append(bootstrap(nonce)).toString();
-  }
-
-  private static String headKey(DomContent node, String unique) {
-    if (!(node instanceof Tag)) {
-      return unique;
-    }
-    Tag<?> tag = (Tag<?>) node;
-    Map<String, String> a = tag.attributes;
-    switch (tag.name) {
-      case "title":
-      case "base":
-        return tag.name;
-      case "meta":
-        if (a.containsKey("charset")) {
-          return "meta:charset";
-        }
-        if (a.containsKey("name")) {
-          return "meta:name:" + a.get("name");
-        }
-        if (a.containsKey("property")) {
-          return "meta:property:" + a.get("property");
-        }
-        if (a.containsKey("http-equiv")) {
-          return "meta:http-equiv:" + a.get("http-equiv");
-        }
-        return unique;
-      case "link":
-        return a.containsKey("href") ? "link:" + a.get("rel") + ":" + a.get("href") : unique;
-      case "script":
-        return a.containsKey("src") ? "script:" + a.get("src") : unique;
-      default:
-        return unique;
-    }
+    return heads.merged(frames) + bootstrap(nonce);
   }
 
   private String bootstrap(String nonce) {
     StringBuilder b = new StringBuilder();
     if (!engine.importMap.isEmpty()) {
       // Before any module loads, so client modules can import packages by bare name (ADR 0022).
-      b.append(engine.importMap.html(nonce));
+      b.append("<script type=\"importmap\"");
+      if (nonce != null) {
+        b.append(" nonce=\"");
+        Html.escape(nonce, b);
+        b.append('"');
+      }
+      b.append('>').append(engine.importMap.content()).append("</script>");
     }
     b.append("<meta name=\"j2-tab\" content=\"").append(id).append("\">");
     b.append("<meta name=\"j2-token\" content=\"").append(token).append("\">");
-    if (restored) {
+    if (snapshot.restored) {
       b.append("<meta name=\"j2-restored\" content=\"1\">");
     }
     if (engine.autoPauseMillis > 0) {
@@ -1055,108 +865,20 @@ public final class Tab {
     return b.toString();
   }
 
-  // ---- handlers
-
-  /**
-   * Binds a handler for the element at {@code path}. The id stays the same while that
-   * element keeps rendering there, so an event sent against the previous render still
-   * lands; it is dropped when the element stops rendering (ADR 0013).
-   */
-  String registerHandler(Scope scope, String path, String event, Object handler) {
-    String slot = path + "|" + event;
-    String handlerId = scope.previousHandlerIds.remove(slot);
-    if (handlerId == null) {
-      handlerId = engine.newSecret(12);
-    }
-    handlers.put(handlerId, new HandlerEntry(scope, event, handler));
-    scope.handlerIds.put(slot, handlerId);
-    return handlerId;
-  }
-
-  /** Called at the start of a scope's render: its current ids become reusable candidates. */
-  void beginHandlers(Scope scope) {
-    scope.previousHandlerIds = scope.handlerIds;
-    scope.handlerIds = new LinkedHashMap<>();
-  }
-
-  /** Called at the end of a scope's render: ids of elements that did not render again are dropped. */
-  void endHandlers(Scope scope) {
-    for (String handlerId : scope.previousHandlerIds.values()) {
-      handlers.remove(handlerId);
-    }
-    scope.previousHandlerIds.clear();
-  }
-
-  void removeHandlers(Scope scope) {
-    for (String handlerId : scope.handlerIds.values()) {
-      handlers.remove(handlerId);
-    }
-    scope.handlerIds.clear();
-    for (String handlerId : scope.actionHandlerIds.values()) {
-      handlers.remove(handlerId);
-    }
-    scope.actionHandlerIds.clear();
-    endHandlers(scope);
-  }
-
-  /**
-   * A callback passed to a client action called outside render (ADR 0022). It lives until
-   * the component unmounts or the next call of the same action replaces it.
-   */
-  String registerActionHandler(Scope scope, String key, Object handler) {
-    String handlerId = engine.newSecret(12);
-    String previous = scope.actionHandlerIds.put(key, handlerId);
-    if (previous != null) {
-      handlers.remove(previous);
-    }
-    handlers.put(handlerId, new HandlerEntry(scope, "callback", handler));
-    return handlerId;
-  }
-
-  /** A handler that reads the raw wire message: client callbacks and onClick(action, then) results. */
-  @FunctionalInterface
-  interface RawHandler {
-    void handle(Map<String, String> message) throws Exception;
-  }
+  // ---- events
 
   /** Runs a handler from the latest render. Unknown or stale ids are rejected (ADR 0013). */
-  @SuppressWarnings("unchecked")
   boolean dispatch(Map<String, String> message) {
     recheckIdentity();
     String handlerId = message.get("handler");
-    String value = message.get("value");
-    HandlerEntry entry = handlerId == null ? null : handlers.get(handlerId);
+    Handlers.Entry entry = handlerId == null ? null : handlers.get(handlerId);
     if (entry == null || entry.scope.disposed) {
       engine.stats.rejectedEvents.incrementAndGet();
       return false;
     }
     lastActivity = engine.clock.millis();
     try {
-      if (entry.handler instanceof RawHandler) {
-        ((RawHandler) entry.handler).handle(message);
-        return true;
-      }
-      switch (entry.event) {
-        case "click":
-          ((Handler<ClickEvent>) entry.handler).handle(new ClickEvent());
-          break;
-        case "submit":
-          ((Handler<SubmitEvent>) entry.handler).handle(new SubmitEvent(value));
-          break;
-        case "keydown":
-          ((Handler<KeyEvent>) entry.handler).handle(new KeyEvent(message.get("key"), value,
-            "true".equals(message.get("ctrlKey")), "true".equals(message.get("shiftKey")),
-            "true".equals(message.get("altKey")), "true".equals(message.get("metaKey"))));
-          break;
-        case "pointerdown":
-        case "pointerup":
-          ((Handler<PointerEvent>) entry.handler).handle(new PointerEvent(message.get("pointerType"),
-            number(message.get("clientX")), number(message.get("clientY"))));
-          break;
-        default:
-          ((Handler<ValueEvent>) entry.handler).handle(new ValueEvent(value,
-            UploadFile.fromWire(message)));
-      }
+      Handlers.invoke(entry, message);
       return true;
     } catch (RouteException e) {
       onRouteException(e);
@@ -1168,24 +890,11 @@ public final class Tab {
     }
   }
 
-  private static double number(String value) {
-    try {
-      return value == null ? 0 : Double.parseDouble(value);
-    } catch (NumberFormatException e) {
-      return 0;
-    }
-  }
-
   /** Lane-only. A soft navigation requested by the client: a link click or back/forward. */
   void onNavigate(String url, String mode) {
     lastActivity = engine.clock.millis();
     recheckIdentity();
     navigate(url, mode);
-  }
-
-  /** Test and diagnostics hook: number of handlers currently invokable. */
-  int handlerCount() {
-    return handlers.size();
   }
 
   // ---- query cache and SSR waiting
@@ -1425,8 +1134,8 @@ public final class Tab {
   }
 
   private void forget(Scope scope) {
-    removeHandlers(scope);
-    forgetHead(scope);
+    handlers.remove(scope);
+    heads.forget(scope);
     for (Scope child : scope.children.values()) {
       forget(child);
     }
@@ -1480,45 +1189,6 @@ public final class Tab {
     parkedEffects.removeIf(effect -> effect.disposed);
   }
 
-  // ---- socket abuse limits (ADR 0013)
-
-  private static final long OVERFLOW_WINDOW_MILLIS = 10_000;
-  private final Object limitLock = new Object();
-  private AuthCtx limitedAs;
-  private RateLimit.Bucket eventBucket;
-  private RateLimit.Bucket chunkBucket;
-  private long overflowWindowStart;
-  private int overflowCount;
-
-  /** Any thread. Takes a token for an event or upload chunk; the limit follows identity changes. */
-  boolean admit(boolean chunk) {
-    AuthCtx auth = currentAuth();
-    long now = engine.clock.millis();
-    synchronized (limitLock) {
-      if (eventBucket == null || !auth.equals(limitedAs)) {
-        RateLimit limit = engine.rateLimit.apply(auth);
-        limitedAs = auth;
-        eventBucket = new RateLimit.Bucket(limit, now);
-        chunkBucket = new RateLimit.Bucket(limit, now);
-      }
-      return (chunk ? chunkBucket : eventBucket).tryTake(now);
-    }
-  }
-
-  /** Any thread. Records a dropped message; true once drops are sustained enough to close the socket. */
-  boolean overflowed() {
-    long now = engine.clock.millis();
-    synchronized (limitLock) {
-      if (now - overflowWindowStart > OVERFLOW_WINDOW_MILLIS) {
-        overflowWindowStart = now;
-        overflowCount = 0;
-        engine.log(System.Logger.Level.WARNING, "tab " + id + " is over its rate limit; dropping events", null);
-      }
-      overflowCount++;
-      return overflowCount > Math.max(50, eventBucket == null ? 0 : Math.min(eventBucket.limit.burst, 1000));
-    }
-  }
-
   // ---- framework-owned upload files (ADR 0006)
 
   private final List<java.nio.file.Path> ownedFiles = new ArrayList<>();
@@ -1550,19 +1220,6 @@ public final class Tab {
       java.nio.file.Files.deleteIfExists(file);
     } catch (java.io.IOException e) {
       engine.log(System.Logger.Level.WARNING, "could not delete upload " + file, e);
-    }
-  }
-
-  static final class HandlerEntry {
-    final Scope scope;
-    final String event;
-    /** A Handler, or a RawHandler for client callbacks and results. */
-    final Object handler;
-
-    HandlerEntry(Scope scope, String event, Object handler) {
-      this.scope = scope;
-      this.event = event;
-      this.handler = handler;
     }
   }
 

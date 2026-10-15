@@ -18,6 +18,8 @@ import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
 
+import j2act.internal.json.Json;
+
 /** ADR 0001 and 0014: one lane per tab, foreign writes queued onto it, context never leaks. */
 class ConcurrencyTest {
 

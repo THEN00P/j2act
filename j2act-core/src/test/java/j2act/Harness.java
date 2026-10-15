@@ -16,6 +16,8 @@ import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import j2act.internal.json.Json;
+
 /** Headless tab driver: serve, connect a fake socket, fire events, await patches. */
 final class Harness implements AutoCloseable {
 

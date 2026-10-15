@@ -1,5 +1,7 @@
 package j2act;
 
+import j2act.internal.json.Json;
+
 /** The answer to one upload chunk: an HTTP status and a small JSON body for the client runtime. */
 public final class ChunkResult {
 

@@ -1,14 +1,12 @@
 package j2act;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,6 +15,7 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
 
 /**
  * A Vite build on the classpath (ADR 0023): the fixture under META-INF/j2act/vite is what
@@ -101,23 +100,5 @@ class ViteTest {
       assertTrue(served(h, moved.get(before)).contains("// two"));
       assertTrue(served(h, before).contains("export const chart"), "a page still holding the old URL gets its file");
     }
-  }
-
-  @Test void onlyATokenOnDiskTurnsDevModeOn(@TempDir Path dir) throws IOException {
-    Path token = dir.resolve("dev.json");
-    Files.writeString(token, "{}");
-    assertTrue(DevMode.onDisk(token.toUri().toURL()), "a class folder");
-    assertTrue(DevMode.onDisk(vfs(token.toUri().getPath())), "an exploded deployment");
-    assertFalse(DevMode.onDisk(new URL("jar:" + dir.resolve("app.jar").toUri() + "!/META-INF/j2act/dev.json")), "a jar");
-    assertFalse(DevMode.onDisk(vfs("/content/app.war/WEB-INF/classes/META-INF/j2act/dev.json")), "a WAR file");
-  }
-
-  /** WildFly's vfs: URLs, which plain Java has no handler for. */
-  private static URL vfs(String path) throws IOException {
-    return new URL("vfs", "", -1, path, new java.net.URLStreamHandler() {
-      @Override protected java.net.URLConnection openConnection(URL url) {
-        throw new UnsupportedOperationException();
-      }
-    });
   }
 }

@@ -2,6 +2,8 @@ package j2act;
 
 import java.lang.reflect.Type;
 
+import j2act.internal.json.BasicJsonBinding;
+
 /**
  * How client module values cross the wire (ADR 0022): mount props, action arguments and
  * results, callback arguments. It is the host's own JSON library, so values serialize as

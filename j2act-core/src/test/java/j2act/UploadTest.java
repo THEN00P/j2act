@@ -19,6 +19,8 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import j2act.internal.json.Json;
+
 /** upload(): metadata checked up front, bytes in resumable chunks, files owned and cleaned (ADR 0006, 0008). */
 class UploadTest {
 

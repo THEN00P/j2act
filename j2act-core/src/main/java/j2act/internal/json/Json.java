@@ -1,4 +1,4 @@
-package j2act;
+package j2act.internal.json;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -9,13 +9,13 @@ import java.util.Map;
  * Just enough JSON for the wire protocol, flat objects of string values, and for the
  * basic client binding, plain JSON values. Keeps core dependency-free.
  */
-final class Json {
+public final class Json {
 
   private Json() {
   }
 
   /** {"k1":"v1","k2":true} from alternating keys and values, strings or booleans; null values are skipped. */
-  static String object(Object... keysAndValues) {
+  public static String object(Object... keysAndValues) {
     StringBuilder b = new StringBuilder("{");
     boolean first = true;
     for (int i = 0; i + 1 < keysAndValues.length; i += 2) {
@@ -38,7 +38,7 @@ final class Json {
     return b.append('}').toString();
   }
 
-  static void string(String s, StringBuilder b) {
+  public static void string(String s, StringBuilder b) {
     b.append('"');
     for (int i = 0; i < s.length(); i++) {
       char c = s.charAt(i);
@@ -62,7 +62,7 @@ final class Json {
   }
 
   /** Any JSON value as String, Long, Double, Boolean, null, List or Map, for the basic client binding. */
-  static Object parse(String json) {
+  public static Object parse(String json) {
     Parser p = new Parser(json);
     p.skipWs();
     Object value = p.any(0);
@@ -74,7 +74,7 @@ final class Json {
   }
 
   /** Writes what parse() returns, plus numbers, enums, arrays, collections and string-keyed maps. */
-  static void write(Object value, StringBuilder b) {
+  public static void write(Object value, StringBuilder b) {
     if (value == null) {
       b.append("null");
     } else if (value instanceof String || value instanceof Character) {
@@ -130,7 +130,7 @@ final class Json {
   }
 
   /** Parses a flat object whose values are strings, numbers, booleans or null; values come back as strings. */
-  static Map<String, String> parseFlat(String json) {
+  public static Map<String, String> parseFlat(String json) {
     Parser p = new Parser(json);
     Map<String, String> out = new LinkedHashMap<>();
     p.skipWs();

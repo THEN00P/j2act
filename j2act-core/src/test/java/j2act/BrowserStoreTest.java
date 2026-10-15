@@ -15,6 +15,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
+import j2act.internal.json.Json;
+
 /** ADR 0030: @BrowserScoped stores, shared live by every tab of one browser. */
 class BrowserStoreTest {
 

@@ -37,7 +37,7 @@ final class Renderer {
     tab.dirty.remove(scope);
     scope.dirty = false;
     scope.unsubscribeAll();
-    tab.beginHandlers(scope);
+    tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
     scope.children = new java.util.LinkedHashMap<>();
 
@@ -116,7 +116,7 @@ final class Renderer {
         scope.dependsOn(query);
       }
     }
-    tab.endHandlers(scope);
+    tab.handlers.end(scope);
     scope.codeEpoch = tab.engine.codeEpoch;
 
     Map<Scope, Boolean> kept = new IdentityHashMap<>();
@@ -171,7 +171,7 @@ final class Renderer {
     }
     String body = out.toString();
     out = document;
-    tab.recordHead(scope, head);
+    tab.heads.record(scope, head);
     out.append("<html");
     attribute("data-j2-scope", scope.anchor);
     for (Map.Entry<String, String> attr : html.attributes.entrySet()) {
@@ -202,7 +202,7 @@ final class Renderer {
         renderNode(scope, "/" + i, child, false);
       }
     }
-    tab.recordHead(scope, head);
+    tab.heads.record(scope, head);
     out.append("</div>");
   }
 
@@ -219,7 +219,7 @@ final class Renderer {
       attribute(attr.getKey(), attr.getValue());
     }
     for (Map.Entry<String, Handler<?>> event : tag.events.entrySet()) {
-      String id = tab.registerHandler(scope, path, event.getKey(), event.getValue());
+      String id = tab.handlers.register(scope, path, event.getKey(), event.getValue());
       attribute("data-j2-" + event.getKey(), id);
     }
     if (tag.debounceMillis >= 0) {

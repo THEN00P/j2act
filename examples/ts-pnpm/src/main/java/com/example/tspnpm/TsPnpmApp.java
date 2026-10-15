@@ -1,6 +1,6 @@
 package com.example.tspnpm;
 
-import static j2act.Routes.*;
+import static j2act.router.Routes.*;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

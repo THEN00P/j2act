@@ -3,6 +3,8 @@ package j2act;
 import java.util.List;
 import java.util.concurrent.RejectedExecutionException;
 
+import j2act.internal.json.Json;
+
 /**
  * Backs Mutation. Runs go to the executor; outcomes commit on the lane. The latest run
  * owns the visible state; callbacks and invalidations fire for every successful run.

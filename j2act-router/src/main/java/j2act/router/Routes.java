@@ -1,4 +1,4 @@
-package j2act;
+package j2act.router;
 
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
@@ -8,6 +8,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
+
+import j2act.ComponentTag;
+import j2act.Layout;
+import j2act.LiveComponent;
+import j2act.Middleware;
+import j2act.PageMatch;
+import j2act.PageResolver;
+import j2act.RouteException;
 
 /**
  * Route DSL home (ADR 0005). Path and page ride positionally; everything else nests:

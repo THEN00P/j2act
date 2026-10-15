@@ -12,6 +12,8 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import j2act.internal.json.Json;
+
 /** Socket abuse limits: token buckets per tab chosen from identity, queue and frame bounds (ADR 0013). */
 class RateLimitTest {
 

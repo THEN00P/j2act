@@ -12,6 +12,8 @@ import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
 
+import j2act.internal.json.Json;
+
 /** Client modules on the server side (ADR 0022); the tests answer as runtime.js would. */
 class ClientTest {
 

@@ -13,6 +13,9 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
+import j2act.internal.json.Json;
+import j2act.internal.modules.Modules;
+
 /**
  * A tab's client modules (ADR 0022): what an element with withClient renders, action
  * calls waiting for the patch or for their reply, and callbacks into Java. Lane-only.
@@ -104,7 +107,7 @@ final class Clients {
         props.append('}');
       } else {
         props.append(encode(value, classes[i], types[i],
-          handler -> tab.registerHandler(scope, path + "/client:" + name, "callback", handler), null,
+          handler -> tab.handlers.register(scope, path + "/client:" + name, "callback", handler), null,
           handle.type.getSimpleName() + ".mount " + name));
       }
     }
@@ -121,7 +124,7 @@ final class Clients {
     Consumer<Object> then = binding.then;
     if (recorded instanceof WebPath.WebCall) {
       WebPath.WebCall web = (WebPath.WebCall) recorded;
-      String handlerId = tab.registerHandler(scope, path, event, (Tab.RawHandler) message ->
+      String handlerId = tab.handlers.register(scope, path, event, (Handlers.RawHandler) message ->
         onBoundResult(message, "window call " + web.name, event, scope, then,
           json -> web.decoder.decode(Json.parse(json))));
       return new String[] {handlerId, "{\"window\":" + web.json + "}"};
@@ -130,7 +133,7 @@ final class Clients {
     ClientCell cell = call.handle.clientCell();
     String name = call.handle.type.getSimpleName() + "." + call.method.getName();
     Type valueType = ClientCall.valueType(call.method);
-    String handlerId = tab.registerHandler(scope, path, event, (Tab.RawHandler) message ->
+    String handlerId = tab.handlers.register(scope, path, event, (Handlers.RawHandler) message ->
       onBoundResult(message, "client action " + name, event, scope, then,
         json -> tab.engine.json.read(json, valueType)));
     StringBuilder json = new StringBuilder("{\"client\":");
@@ -143,7 +146,7 @@ final class Clients {
     for (int i = 0; i < call.args.length; i++) {
       int index = i;
       json.append(i == 0 ? "" : ",").append(encode(call.args[i], classes[i], types[i],
-        handler -> tab.registerHandler(scope, path + "/" + event + ":" + index, "callback", handler), null, name));
+        handler -> tab.handlers.register(scope, path + "/" + event + ":" + index, "callback", handler), null, name));
     }
     return new String[] {handlerId, json.append("]}").toString()};
   }
@@ -170,7 +173,7 @@ final class Clients {
     for (int i = 0; i < args.length; i++) {
       String key = cell.id + "." + method.getName() + "#" + i;
       json.append(i == 0 ? "" : ",").append(encode(args[i], classes[i], types[i],
-        handler -> tab.registerActionHandler(cell.owner, key, handler),
+        handler -> tab.handlers.registerAction(cell.owner, key, handler),
         component -> live(cell, key, component), name));
     }
     outbox.add(Json.object("type", "clientCall", "id", id, "client", cell.id, "action", method.getName(),
@@ -342,7 +345,7 @@ final class Clients {
   // ---- values
 
   /** Callbacks and upload targets become ids the browser calls back with; the rest is the host's JSON. */
-  private String encode(Object value, Class<?> declared, Type generic, Function<Tab.RawHandler, String> register,
+  private String encode(Object value, Class<?> declared, Type generic, Function<Handlers.RawHandler, String> register,
                         Function<ComponentTag, String> live, String where) {
     if (value == null) {
       return "null";

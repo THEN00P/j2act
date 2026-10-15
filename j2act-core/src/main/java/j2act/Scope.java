@@ -222,7 +222,7 @@ final class Scope implements Observer {
     cells.add(cell);
     tab.cells.put(cell.address, cell);
     if (primitive instanceof State && ((State<?>) primitive).retained) {
-      tab.retain(this, (State<?>) primitive, (ValueCell) cell, index);
+      tab.snapshot.retain(this, (State<?>) primitive, (ValueCell) cell, index);
     }
     primitive.attach(cell, true);
   }
@@ -276,8 +276,8 @@ final class Scope implements Observer {
     }
     actionScopes.clear();
     unsubscribeAll();
-    tab.removeHandlers(this);
-    tab.forgetHead(this);
+    tab.handlers.remove(this);
+    tab.heads.forget(this);
     for (Cell cell : cells) {
       cell.dispose();
       tab.cells.remove(cell.address);

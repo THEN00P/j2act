@@ -1,6 +1,6 @@
 package j2act;
 
-import static j2act.Routes.*;
+import static j2act.router.Routes.*;
 import static j2act.html.TagCreator.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -16,6 +16,7 @@ import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 
 import j2act.html.tags.HtmlTag;
+import j2act.internal.json.Json;
 
 /** withPreload: guards and queries run ahead of the click, Effects only after it (ADR 0011). */
 class PreloadTest {

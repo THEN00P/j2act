@@ -1,7 +1,7 @@
 package j2act.jakarta;
 
-import static j2act.Routes.page;
-import static j2act.Routes.routes;
+import static j2act.router.Routes.page;
+import static j2act.router.Routes.routes;
 import static j2act.html.TagCreator.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
