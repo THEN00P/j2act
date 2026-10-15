@@ -67,6 +67,18 @@ public class Orders {
 
     private final int level = 3;
 
+    @Transactional
+    public void file(String name) {
+    }
+
+    public void file(Object anything) {
+    }
+
+    public void sort(String name, Object anything) {
+      file("x"); // expect: file() is transactional
+      file(anything);
+    }
+
     final Mutation<String, String> viaReference = mutation((String note) -> {
       java.util.function.Consumer<String> later = this::keep;
       later.accept(note);

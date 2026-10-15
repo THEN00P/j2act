@@ -137,7 +137,7 @@ function start(): void {
   let cookieClaimFailures = 0;
 
   function claimBrowserCookie(url: string): void {
-    fetch(url, { method: "POST", credentials: "same-origin" })
+    fetch(url, { credentials: "same-origin", cache: "no-store" })
       .then((r) => {
         if (!r.ok) {
           throw new Error("browser cookie claim answered " + r.status);

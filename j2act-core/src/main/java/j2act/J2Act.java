@@ -52,7 +52,9 @@ public final class J2Act implements AutoCloseable {
   public static final String DOWNLOAD_PATH = "/_j2act/dl/";
   /**
    * Where a page fetches its browser cookie when it first used browser state over its socket
-   * (ADR 0030): POST BROWSER_PATH + token; the adapter sets claimBrowserCookie's header.
+   * (ADR 0030): GET BROWSER_PATH + token; the adapter sets claimBrowserCookie's header. A GET, so
+   * a host's CSRF filter lets it through: the one-time token, sent only over the page's socket,
+   * is what guards it.
    */
   public static final String BROWSER_PATH = "/_j2act/browser/";
   /** The HttpOnly cookie that is the browser (ADR 0030). */
@@ -386,7 +388,7 @@ public final class J2Act implements AutoCloseable {
   }
 
   /**
-   * The Set-Cookie value for a POST to BROWSER_PATH + token, once; null (answer 404) for an
+   * The Set-Cookie value for a GET of BROWSER_PATH + token, once; null (answer 404) for an
    * unknown or used token. The adapter adds "; Secure" on HTTPS.
    */
   public String claimBrowserCookie(String token) {
@@ -1052,6 +1054,16 @@ public final class J2Act implements AutoCloseable {
     if (dev != null) {
       dev.close();
     }
+    // One budget for every wait below: the shutdown save's timeout, or 5 s without one.
+    long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(shutdownSaveMillis > 0 ? shutdownSaveMillis : 5000);
+    // Every tab's end, taken before retiring any: a save that times out leaves its tab out of tabs.
+    java.util.List<CompletableFuture<Void>> ended = new java.util.ArrayList<>();
+    for (Tab tab : tabs.values()) {
+      ended.add(tab.ended);
+    }
+    for (Tab tab : closingTabs.values()) {
+      ended.add(tab.ended);
+    }
     if (shutdownSaveMillis > 0) {
       java.util.List<CompletableFuture<Void>> saves = new java.util.ArrayList<>();
       for (Tab tab : tabs.values()) {
@@ -1067,6 +1079,8 @@ public final class J2Act implements AutoCloseable {
       } catch (ExecutionException e) {
         log(System.Logger.Level.WARNING, "saving tabs on shutdown failed", e);
       }
+      // Tabs end first, so their effects' cleanups and @PreDestroy can still use browser stores.
+      awaitEnded(ended, deadline);
       java.util.List<CompletableFuture<Void>> browserSaves = new java.util.ArrayList<>();
       for (Browser browser : browsers.values()) {
         browserSaves.add(retireBrowser(browser, true));
@@ -1079,19 +1093,12 @@ public final class J2Act implements AutoCloseable {
         Thread.currentThread().interrupt();
       }
     }
-    java.util.List<CompletableFuture<Void>> ended = new java.util.ArrayList<>();
     for (Tab tab : tabs.values()) {
       ended.add(tab.ended);
       discard(tab, false);
     }
     // Tabs end first, so their effects' cleanups and @PreDestroy can still use browser stores.
-    try {
-      CompletableFuture.allOf(ended.toArray(new CompletableFuture<?>[0])).get(5, TimeUnit.SECONDS);
-    } catch (TimeoutException | ExecutionException e) {
-      log(System.Logger.Level.WARNING, "tabs did not end within 5 s of close(); ending their browsers anyway", e);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-    }
+    awaitEnded(ended, deadline);
     // Saved above if asked; either way their effects' cleanups and @PreDestroy run now.
     for (Browser browser : browsers.values()) {
       synchronized (browser) {
@@ -1106,6 +1113,18 @@ public final class J2Act implements AutoCloseable {
   }
 
   // ---- internals
+
+  /** Waits, until close()'s deadline, for these tabs to end before their browsers do. */
+  private void awaitEnded(java.util.List<CompletableFuture<Void>> ended, long deadline) {
+    try {
+      CompletableFuture.allOf(ended.toArray(new CompletableFuture<?>[0]))
+        .get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+    } catch (TimeoutException | ExecutionException e) {
+      log(System.Logger.Level.WARNING, "tabs did not end within close()'s time; ending their browsers anyway", null);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+  }
 
   /** A client-sent URL made app-relative; null if it is not a path inside this app. */
   String appUrl(String url) {

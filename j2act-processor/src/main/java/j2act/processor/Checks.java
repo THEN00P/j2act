@@ -321,7 +321,42 @@ final class Checks {
         byType.add(method);
       }
     }
-    return byType;
+    return mostSpecific(byType);
+  }
+
+  /**
+   * The one overload Java selects among applicable ones, the one whose parameters all fit the
+   * others' (JLS 15.12.2.5); all of them when none is more specific than the rest.
+   */
+  private List<ExecutableElement> mostSpecific(List<ExecutableElement> applicable) {
+    for (ExecutableElement candidate : applicable) {
+      boolean specific = true;
+      for (ExecutableElement other : applicable) {
+        if (other != candidate && !parametersFit(candidate, other)) {
+          specific = false;
+          break;
+        }
+      }
+      if (specific) {
+        return java.util.Collections.singletonList(candidate);
+      }
+    }
+    return applicable;
+  }
+
+  /** Whether every parameter of a is assignable to the matching parameter of b. */
+  private boolean parametersFit(ExecutableElement a, ExecutableElement b) {
+    List<? extends VariableElement> left = a.getParameters();
+    List<? extends VariableElement> right = b.getParameters();
+    if (left.size() != right.size()) {
+      return false;
+    }
+    for (int i = 0; i < left.size(); i++) {
+      if (!types.isAssignable(types.erasure(left.get(i).asType()), types.erasure(right.get(i).asType()))) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private boolean argumentsFit(ExecutableElement method, List<TypeMirror> arguments) {

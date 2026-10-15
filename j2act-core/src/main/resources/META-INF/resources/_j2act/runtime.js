@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-eccc1ed0f815cb44a64c3603740e364b878ccef23d745637f00ab1d2c97a5e13 */
+* sources: sha256-6fad340b5e7017877cfbc409803c3c0da7fd8528205ba43e77261b59fd64d153 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -2264,8 +2264,8 @@
 		let cookieClaimFailures = 0;
 		function claimBrowserCookie(url) {
 			fetch(url, {
-				method: "POST",
-				credentials: "same-origin"
+				credentials: "same-origin",
+				cache: "no-store"
 			}).then((r) => {
 				if (!r.ok) throw new Error("browser cookie claim answered " + r.status);
 				cookieClaimFailures = 0;

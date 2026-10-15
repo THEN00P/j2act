@@ -46,7 +46,7 @@ final class J2ActFilter implements Filter {
       chunk(j2Act, path.substring(J2Act.UPLOAD_PATH.length()), request, (HttpServletResponse) res);
       return;
     }
-    if ("POST".equals(request.getMethod()) && path.startsWith(J2Act.BROWSER_PATH)) {
+    if ("GET".equals(request.getMethod()) && path.startsWith(J2Act.BROWSER_PATH)) {
       browserCookie(j2Act, path.substring(J2Act.BROWSER_PATH.length()), request, (HttpServletResponse) res);
       return;
     }

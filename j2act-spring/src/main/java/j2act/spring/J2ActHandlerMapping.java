@@ -77,7 +77,7 @@ public class J2ActHandlerMapping extends AbstractHandlerMapping {
         res.getOutputStream().write(result.json().getBytes(StandardCharsets.UTF_8));
       };
     }
-    if ("POST".equals(request.getMethod()) && initLookupPath(request).startsWith(J2Act.BROWSER_PATH)) {
+    if ("GET".equals(request.getMethod()) && initLookupPath(request).startsWith(J2Act.BROWSER_PATH)) {
       // The browser cookie a page was offered over its socket (ADR 0030).
       String token = initLookupPath(request).substring(J2Act.BROWSER_PATH.length());
       return (HttpRequestHandler) (req, res) -> {
