@@ -139,10 +139,14 @@ final class Snapshots {
     return new ConcurrentHashMap<>(snapshot.entries);
   }
 
-  /** Waits for the page with this token to end and its save to land; false when that took too long. */
+  /**
+   * Waits for a page with this token that is closing to end and its save to land; false when that
+   * took too long. A live page is not waited for: another server restores from its checkpoint
+   * after a crash, while this one still holds it.
+   */
   private boolean awaitClosing(String token, String id) {
     long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(RESTORE_WAIT_MILLIS);
-    Tab live = engine.liveTab(token);
+    Tab live = engine.closingTab(token);
     try {
       if (live != null) {
         live.ended.get(left(deadline), java.util.concurrent.TimeUnit.NANOSECONDS);

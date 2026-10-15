@@ -158,6 +158,11 @@ public final class J2Act implements AutoCloseable {
     }
   }
 
+  /** The tab whose page carries this token while it is closing: out of tabs, not disposed yet. */
+  Tab closingTab(String token) {
+    return closingTabs.get(token);
+  }
+
   /** The tab whose page carries this token while it lives or is still closing, or null. */
   Tab liveTab(String token) {
     Tab closing = closingTabs.get(token);
