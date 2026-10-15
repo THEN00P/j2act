@@ -309,12 +309,11 @@ final class Checks {
     }
     List<TypeMirror> arguments = new ArrayList<>();
     for (Node argument : call.args) {
-      TypeElement type = argument.kind == Node.Kind.STRING || argument.kind == Node.Kind.CONCAT
-        ? elements.getTypeElement("java.lang.String") : scope.typeOf(argument);
+      TypeMirror type = scope.mirrorOf(argument);
       if (type == null) {
         return fits;
       }
-      arguments.add(types.erasure(type.asType()));
+      arguments.add(types.erasure(type));
     }
     List<ExecutableElement> byType = new ArrayList<>();
     for (ExecutableElement method : fits) {
@@ -599,6 +598,51 @@ final class Checks {
     /** This type's own methods of that name, declared here or inherited, not those of an enclosing type. */
     List<ExecutableElement> ownMethods(String name) {
       return methods(type, name);
+    }
+
+    /**
+     * The static type of an argument when it is plain to see, primitives included: literals, and
+     * locals or fields declared with a primitive or a class. Null otherwise.
+     */
+    TypeMirror mirrorOf(Node node) {
+      switch (node.kind) {
+        case STRING:
+        case CONCAT:
+          return elements.getTypeElement("java.lang.String").asType();
+        case LITERAL:
+          return primitive(node.type);
+        case IDENT: {
+          Node local = local(node, node.name);
+          if (local != null && local.type != null && !local.type.equals("var") && primitive(local.type) != null) {
+            return primitive(local.type);
+          }
+          if (local == null && !node.name.equals("this")) {
+            Element field = field(type, node.name);
+            if (field != null && field.asType().getKind().isPrimitive()) {
+              return field.asType();
+            }
+          }
+          break;
+        }
+        default:
+          break;
+      }
+      TypeElement declared = typeOf(node);
+      return declared == null ? null : declared.asType();
+    }
+
+    private TypeMirror primitive(String keyword) {
+      switch (keyword == null ? "" : keyword) {
+        case "int": return types.getPrimitiveType(TypeKind.INT);
+        case "long": return types.getPrimitiveType(TypeKind.LONG);
+        case "float": return types.getPrimitiveType(TypeKind.FLOAT);
+        case "double": return types.getPrimitiveType(TypeKind.DOUBLE);
+        case "boolean": return types.getPrimitiveType(TypeKind.BOOLEAN);
+        case "char": return types.getPrimitiveType(TypeKind.CHAR);
+        case "byte": return types.getPrimitiveType(TypeKind.BYTE);
+        case "short": return types.getPrimitiveType(TypeKind.SHORT);
+        default: return null;
+      }
     }
 
     /** The superclass's methods of that name, as super.name() selects them. */

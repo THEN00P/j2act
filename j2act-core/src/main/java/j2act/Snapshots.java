@@ -48,17 +48,22 @@ final class Snapshots {
     String snapshot = snapshot(tab, keepMillis);
     if (snapshot != null) {
       tab.snapshot.stored = true;
-      String id = Retained.id(tab.token);
-      CompletableFuture<Void> saved = write(tab, () -> save(tab, snapshot, keepMillis));
-      inFlight.put(id, saved);
-      saved.whenComplete((v, e) -> inFlight.remove(id, saved));
-      return saved.thenApply(v -> true);
+      return tracked(tab, write(tab, () -> save(tab, snapshot, keepMillis))).thenApply(v -> true);
     }
     if (tab.snapshot.stored) {
+      // Nothing left to keep: the checkpoint goes, and a reopen waits for that as for a save.
       tab.snapshot.stored = false;
-      return write(tab, () -> delete(tab)).thenApply(v -> false);
+      return tracked(tab, write(tab, () -> delete(tab))).thenApply(v -> false);
     }
     return CompletableFuture.completedFuture(false);
+  }
+
+  /** A write a restore naming this tab's token waits for while it is on its way (ADR 0030). */
+  private CompletableFuture<Void> tracked(Tab tab, CompletableFuture<Void> write) {
+    String id = Retained.id(tab.token);
+    inFlight.put(id, write);
+    write.whenComplete((v, e) -> inFlight.remove(id, write));
+    return write;
   }
 
   /** Lane-only. Runs a storage write after the tab's earlier ones, on the executor. */
@@ -257,7 +262,7 @@ final class Snapshots {
   void forget(Tab tab) {
     if (tab.snapshot.stored) {
       tab.snapshot.stored = false;
-      write(tab, () -> delete(tab));
+      tracked(tab, write(tab, () -> delete(tab)));
     }
   }
 }

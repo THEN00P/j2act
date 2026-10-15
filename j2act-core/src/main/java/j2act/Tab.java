@@ -275,6 +275,27 @@ public final class Tab {
     return value;
   }
 
+  /**
+   * Queues body on the lane with this tab bound, as post() does, but without the flush after it:
+   * for its last tasks, the goodbye and retirement, whose onPersisting callbacks and effect cleanups
+   * may still call injected scoped stores (ADR 0030).
+   */
+  void postBound(Runnable body) {
+    lane.execute(() -> {
+      Tab previous = CURRENT.get();
+      CURRENT.set(this);
+      try {
+        body.run();
+      } finally {
+        if (previous == null) {
+          CURRENT.remove();
+        } else {
+          CURRENT.set(previous);
+        }
+      }
+    });
+  }
+
   void post(Runnable body) {
     lane.execute(task(body));
   }

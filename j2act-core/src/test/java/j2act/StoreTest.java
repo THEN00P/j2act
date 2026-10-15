@@ -239,6 +239,30 @@ class StoreTest {
     }
   }
 
+  static volatile Boolean scopeActiveWhilePersisting;
+
+  @Test
+  void onPersistingDuringAnEvictionCanStillReachScopedStores() {
+    scopeActiveWhilePersisting = null;
+    CountingStorage storage = new CountingStorage();
+    try (Harness h = new Harness(() -> new LiveComponent() {
+      private final State<String> note = retainedState("kept");
+
+      {
+        onPersisting(() -> scopeActiveWhilePersisting = StoreScope.isActive(TabScoped.class));
+      }
+
+      @Override public Tag<?> render() {
+        return T.page("p", T.div(T.span("note=" + note.get() + ";")));
+      }
+    }, b -> b.withReconnectGrace(Duration.ofMillis(100)).withRetainedStateStorage(storage))) {
+      h.load();
+      h.connect();
+      evict(h, storage);
+      assertEquals(Boolean.TRUE, scopeActiveWhilePersisting, "the evicted tab is bound while it persists");
+    }
+  }
+
   public static class NotAStore extends Store {
   }
 

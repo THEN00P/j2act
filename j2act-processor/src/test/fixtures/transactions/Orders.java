@@ -59,7 +59,13 @@ public class Orders {
       keep(); // expect: keep() is transactional
       tag("urgent");
       tag(note);
+      tag(1); // expect: tag() is transactional
+      int priority = 2;
+      tag(priority); // expect: tag() is transactional
+      tag(level); // expect: tag() is transactional
     }
+
+    private final int level = 3;
 
     final Mutation<String, String> viaReference = mutation((String note) -> {
       java.util.function.Consumer<String> later = this::keep;

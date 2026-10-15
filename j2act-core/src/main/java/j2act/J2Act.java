@@ -825,7 +825,7 @@ public final class J2Act implements AutoCloseable {
       });
     } else if ("bye".equals(type)) {
       byConnection.remove(connection);
-      tab.lane.execute(() -> {
+      tab.postBound(() -> {
         if (closedTabRetentionMillis > 0) {
           // A closed tab may be reopened, or its page come back with Back: keep its snapshot a while (ADR 0030).
           tab.snapshot.persisting();
@@ -927,7 +927,7 @@ public final class J2Act implements AutoCloseable {
     closing(tab);
     tabs.remove(tab.id);
     byConnection.values().removeIf(s -> s == tab);
-    tab.lane.execute(() -> tab.dispose(null));
+    tab.postBound(() -> tab.dispose(null));
   }
 
   /**
@@ -946,13 +946,13 @@ public final class J2Act implements AutoCloseable {
         ? Json.object("type", farewell, "saved", saved) : Json.object("type", farewell));
       done.complete(null);
     };
-    tab.lane.execute(() -> {
+    tab.postBound(() -> {
       if (tab.disposed) {
         end.accept(false);
         return;
       }
       tab.snapshot.persisting();
-      snapshots.persist(tab).thenAccept(saved -> tab.lane.execute(() -> end.accept(saved)));
+      snapshots.persist(tab).thenAccept(saved -> tab.postBound(() -> end.accept(saved)));
     });
     return done;
   }

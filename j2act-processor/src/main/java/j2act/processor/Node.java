@@ -27,6 +27,8 @@ final class Node {
     REF,
     /** A string literal, adjacent literals folded. */
     STRING,
+    /** A primitive literal; type is its primitive type's keyword, such as int or boolean. */
+    LITERAL,
     /** a + b. */
     CONCAT,
     /** A local variable or parameter, with its initializer as the only child. */
@@ -47,7 +49,7 @@ final class Node {
 
   /** CALL and REF method name, IDENT, SELECT and VAR name. */
   String name;
-  /** NEW created type or VAR declared type, dotted without type arguments; "var" when inferred. */
+  /** NEW created type, VAR declared type (dotted, no type arguments; "var" when inferred), or LITERAL's primitive. */
   String type;
   /** STRING value. */
   String value;
