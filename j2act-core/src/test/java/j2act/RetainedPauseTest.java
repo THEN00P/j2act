@@ -43,7 +43,8 @@ class RetainedPauseTest {
       String old = h.token;
       assertEquals("paused", pause(h, false).get("type"));
       assertTrue(storage.has(old), "saved before the client hears paused");
-      assertTrue(h.conn.closed);
+      // The lane closes the socket right after sending "paused", while this thread already woke on it.
+      Harness.eventually(() -> h.conn.closed, "the socket closes after the farewell");
       Harness.eventually(() -> h.engine.tabCount() == 0, "the tab is freed");
 
       String html = h.load("/", remount(old));
