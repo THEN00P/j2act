@@ -53,6 +53,9 @@ public final class J2Act implements AutoCloseable {
   final PageResolver resolver;
   final Executor executor;
   final MembersInjector injector;
+  /** The container's lookup by type, or null without one (ADR 0030). */
+  private final Function<Class<?>, Object> storeLookup;
+  private final Map<Class<?>, java.util.function.Supplier<?>> storeFactories;
   private final Function<Exchange, AuthCtx> identity;
   final String contextPath;
   final Clock clock;
@@ -85,6 +88,39 @@ public final class J2Act implements AutoCloseable {
   private final Map<Class<?>, RetainedCodec<?>> retainedCodecs;
   /** How long a tab stays hidden before its page pauses; 0 when auto-pause is off. */
   final long autoPauseMillis;
+  /**
+   * The tab's instance of a store (ADR 0030): the container's, when there is one, else made
+   * on first use in the tab with its registered factory or its no-argument constructor.
+   */
+  <S extends Store> S store(Tab tab, Class<S> type) {
+    if (Scope.storeClass(type).getDeclaredAnnotation(TabScoped.class) == null) {
+      throw new IllegalArgumentException(type.getName() + " is not a store: annotate it @TabScoped (ADR 0030)");
+    }
+    if (storeLookup != null) {
+      return type.cast(storeLookup.apply(type));
+    }
+    return tab.store(type, () -> newStore(type), null);
+  }
+
+  private <S extends Store> S newStore(Class<S> type) {
+    java.util.function.Supplier<?> factory = storeFactories.get(type);
+    S store;
+    if (factory != null) {
+      store = type.cast(factory.get());
+    } else {
+      try {
+        java.lang.reflect.Constructor<S> constructor = type.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        store = constructor.newInstance();
+      } catch (ReflectiveOperationException | RuntimeException e) {
+        throw new IllegalStateException(type.getName() + " needs a no-argument constructor, or register it"
+          + " with withStore(" + type.getSimpleName() + ".class, ...) (ADR 0030)", e);
+      }
+    }
+    injector.inject(store);
+    return store;
+  }
+
   /** What components reach with application() (ADR 0027). */
   final Application application = new Application(this);
   /** How long close() waits for tabs' snapshots; 0 when they are not saved on shutdown. */
@@ -113,6 +149,8 @@ public final class J2Act implements AutoCloseable {
   private J2Act(Builder b) {
     this.resolver = b.resolver;
     this.injector = b.injector;
+    this.storeLookup = b.storeLookup;
+    this.storeFactories = new java.util.HashMap<>(b.storeFactories);
     this.identity = b.identity;
     this.contextPath = b.contextPath;
     this.clock = b.clock;
@@ -907,6 +945,8 @@ public final class J2Act implements AutoCloseable {
     private final PageResolver resolver;
     private Executor executor;
     private MembersInjector injector = MembersInjector.NONE;
+    private Function<Class<?>, Object> storeLookup;
+    private final Map<Class<?>, java.util.function.Supplier<?>> storeFactories = new java.util.HashMap<>();
     private Function<Exchange, AuthCtx> identity;
     private String contextPath = "";
     private Clock clock = Clock.systemUTC();
@@ -949,6 +989,25 @@ public final class J2Act implements AutoCloseable {
 
     public Builder withMembersInjector(MembersInjector injector) {
       this.injector = injector;
+      return this;
+    }
+
+    /**
+     * The host container's lookup by type, such as Spring's getBean or CDI's select (ADR 0030):
+     * tab(Type.class) then returns the container's store instead of making one. j2act-spring
+     * and j2act-jakarta set it.
+     */
+    public Builder withStoreLookup(Function<Class<?>, Object> lookup) {
+      this.storeLookup = java.util.Objects.requireNonNull(lookup, "lookup");
+      return this;
+    }
+
+    /**
+     * How tab(type) makes this store without a container, instead of calling its no-argument
+     * constructor (ADR 0030), e.g. withStore(Playback.class, () -> new Playback(repository)).
+     */
+    public <S extends Store> Builder withStore(Class<S> type, java.util.function.Supplier<? extends S> factory) {
+      storeFactories.put(java.util.Objects.requireNonNull(type, "type"), java.util.Objects.requireNonNull(factory, "factory"));
       return this;
     }
 

@@ -100,10 +100,13 @@ final class MutationCell extends Cell {
       tab.engine.executor.execute(() -> {
         Object result = null;
         Throwable error = null;
+        Tab.RUNNING_FOR.set(tab);
         try {
           result = invoke(run, variables);
         } catch (Throwable t) {
           error = t;
+        } finally {
+          Tab.RUNNING_FOR.remove();
         }
         if (error != null && attempt < run.retries) {
           long delay = run.backoff.toMillis() << attempt;

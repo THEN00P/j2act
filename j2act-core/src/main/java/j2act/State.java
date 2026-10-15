@@ -4,8 +4,9 @@ import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 /**
- * Server-side reactive value owned by one tab. get() inside render() subscribes
- * the component; set() from any thread is queued onto the tab's lane (ADR 0014).
+ * Server-side reactive value owned by a component or a store (ADR 0030). get() inside
+ * render() subscribes the component; set() from any thread is queued onto the tab's lane
+ * (ADR 0014).
  */
 public final class State<T> extends Primitive implements Supplier<T> {
 
@@ -23,20 +24,6 @@ public final class State<T> extends Primitive implements Supplier<T> {
     this.initial = initial;
     this.retained = retained;
     this.retainedName = retainedName;
-  }
-
-  /** Declares shared state with a per-tab copy; see {@link Store}. Usually a static field. */
-  public static <T> Store<T> createStore(T initial) {
-    return new Store<>(initial, null);
-  }
-
-  /**
-   * A Store whose per-tab value outlives the in-memory tab for the page load (ADR
-   * 0026), as .NET persists a scoped service registered with RegisterPersistentService. Keyed
-   * by the declaring class and the static field holding it, so declare it as a static field.
-   */
-  public static <T> Store<T> createRetainedStore(T initial) {
-    return new Store<>(initial, StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).getCallerClass());
   }
 
   @Override

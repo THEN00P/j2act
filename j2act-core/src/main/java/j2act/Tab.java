@@ -106,6 +106,15 @@ public final class Tab {
     this.disconnectedAt = now;
   }
 
+  /** The tab a mutation body runs for, on its executor thread; only stores read it (ADR 0030). */
+  static final ThreadLocal<Tab> RUNNING_FOR = new ThreadLocal<>();
+
+  /** The tab whose lane task, query run or mutation run is executing on this thread, if any. */
+  static Tab ambient() {
+    Tab tab = current();
+    return tab != null ? tab : RUNNING_FOR.get();
+  }
+
   /** The tab whose lane task or query run is executing on this thread, if any. */
   static Tab current() {
     Tab tab = CURRENT.get();
@@ -268,8 +277,8 @@ public final class Tab {
 
   /** Lane-only. Names a new retained cell after its field, and fills it from the snapshot being restored. */
   void retain(Scope scope, State<?> state, ValueCell cell, int index) {
-    ComponentTag instance = scope.instance;
-    String component = instance.getClass().getName();
+    Object instance = scope.owner();
+    String component = scope.ownerClass().getName();
     java.lang.reflect.Field field = Retained.fieldOf(instance, state);
     String name = state.retainedName != null ? state.retainedName : field != null ? field.getName() : null;
     if (name == null) {
@@ -285,7 +294,7 @@ public final class Tab {
         return;
       }
     }
-    if (instance.key == null && scope.parent != null) {
+    if (scope.instance != null && scope.instance.key == null && scope.parent != null) {
       for (Scope sibling : scope.parent.children.values()) {
         if (sibling != scope && sibling.instance != null && sibling.instance.getClass() == instance.getClass()
           && sibling.instance.key == null) {
@@ -303,7 +312,8 @@ public final class Tab {
     }
     cell.retainedName = name;
     cell.retainedType = type;
-    Map<String, String> entries = restoring;
+    // A store outlives pages, so its entries wait for its first use in the tab (ADR 0030).
+    Map<String, String> entries = scope.store != null ? restoringStores : restoring;
     String json = entries == null ? null : entries.remove(scope.slotPath() + "#" + name);
     if (json != null) {
       try {
@@ -368,11 +378,10 @@ public final class Tab {
       ValueCell cell = (ValueCell) c;
       Scope owner = cell.owner;
       Object value = cell.peek();
-      if (value == null || cell.disposed || owner != null && (owner.disposed || owner.preloading())) {
+      if (value == null || cell.disposed || owner == null || owner.disposed || owner.preloading()) {
         continue;
       }
-      // A retained store has no owner and is named by its whole key.
-      String key = owner == null ? cell.retainedName : owner.slotPath() + "#" + cell.retainedName;
+      String key = owner.slotPath() + "#" + cell.retainedName;
       try {
         entries.put(key, engine.writeRetained(value, cell.retainedType));
       } catch (RuntimeException e) {
@@ -384,38 +393,93 @@ public final class Tab {
     return entries;
   }
 
-  // ---- stores
+  // ---- stores (ADR 0030)
 
-  /** This tab's cell for a store, created on first use with the store's initial value. */
-  ValueCell storeCell(Store<?> store) {
-    return (ValueCell) cells.computeIfAbsent(store.address, address -> {
-      ValueCell cell = new ValueCell(this, address, store.initial);
-      if (store.declaring != null) {
-        retainStore(store, cell);
-      }
-      return cell;
-    });
+  /** A store instance and what ends it, by the key its scope adapter gave. */
+  private static final class StoreEntry {
+    final Object instance;
+    final Runnable destroy;
+    final Scope scope;
+
+    StoreEntry(Object instance, Runnable destroy, Scope scope) {
+      this.instance = instance;
+      this.destroy = destroy;
+      this.scope = scope;
+    }
   }
 
-  /** Names a retained store's cell after its static field, and fills it from the snapshot being restored. */
-  private void retainStore(Store<?> store, ValueCell cell) {
-    Retained.StoreField field = store.retainedField();
-    if (field == null) {
-      engine.warnOnce("store " + store.address, store.declaring.getName() + " creates a retained store that no"
-        + " static field of it holds, so it has no key and is not retained; declare it as a static field (ADR 0026)");
-      return;
+  /** Written on the lane only; read from loader and mutation threads too. */
+  private final Map<Object, StoreEntry> stores = new java.util.concurrent.ConcurrentHashMap<>();
+
+  /** Callbacks a container registered for a store, run when this tab ends. */
+  private final Map<Object, List<Runnable>> storeDestructions = new java.util.concurrent.ConcurrentHashMap<>();
+
+  void onStoreDestroyed(Object key, Runnable callback) {
+    storeDestructions.computeIfAbsent(key, k -> new java.util.concurrent.CopyOnWriteArrayList<>()).add(callback);
+  }
+
+  Object removeStore(Object key) {
+    storeDestructions.remove(key);
+    StoreEntry entry = stores.remove(key);
+    return entry == null ? null : entry.instance;
+  }
+
+  Object existingStore(Object key) {
+    StoreEntry entry = stores.get(key);
+    return entry == null ? null : entry.instance;
+  }
+
+  /**
+   * This tab's instance for the key, made on first use. A Store gets a scope of its own whose
+   * cells live in this tab. Made on the lane, so off it the caller waits for the lane.
+   */
+  @SuppressWarnings("unchecked")
+  <T> T store(Object key, java.util.function.Supplier<T> create, java.util.function.Consumer<? super T> destroy) {
+    StoreEntry entry = stores.get(key);
+    if (entry != null) {
+      return (T) entry.instance;
     }
-    cell.retainedName = field.key;
-    cell.retainedType = field.type;
-    String json = restoringStores.remove(field.key);
-    if (json != null) {
-      try {
-        cell.initialize(engine.readRetained(json, field.type));
-      } catch (RuntimeException e) {
-        engine.log(System.Logger.Level.WARNING, "retained " + field.key + " no longer reads as "
-          + field.type.getTypeName() + "; it starts from its initial value (ADR 0026)", e);
+    if (disposed) {
+      throw new IllegalStateException("tab " + id + " has ended; its stores are gone");
+    }
+    if (!lane.isCurrent()) {
+      return call(() -> store(key, create, destroy)).join();
+    }
+    T instance = create.get();
+    Scope scope = instance instanceof Store ? bindStore((Store) instance) : null;
+    stores.put(key, new StoreEntry(instance, destroy == null ? null : () -> destroy.accept(instance), scope));
+    return instance;
+  }
+
+  /** Lane-only. Binds a store's field primitives to a scope of its own, keyed by its class. */
+  private Scope bindStore(Store store) {
+    Scope scope = new Scope(this, null, Retained.STORE_PREFIX + Scope.storeClass(store.getClass()).getName());
+    scope.bindStore(store);
+    return scope;
+  }
+
+  /** Lane-only. Ends this tab's stores: their effects' cleanups, then the container's destroy. */
+  private void disposeStores() {
+    for (Map.Entry<Object, StoreEntry> e : stores.entrySet()) {
+      StoreEntry entry = e.getValue();
+      if (entry.scope != null) {
+        entry.scope.dispose();
+      }
+      List<Runnable> callbacks = new ArrayList<>();
+      if (entry.destroy != null) {
+        callbacks.add(entry.destroy);
+      }
+      callbacks.addAll(storeDestructions.getOrDefault(e.getKey(), java.util.Collections.emptyList()));
+      for (Runnable callback : callbacks) {
+        try {
+          callback.run();
+        } catch (RuntimeException ex) {
+          engine.log(System.Logger.Level.WARNING, "destroying store " + entry.instance.getClass().getName() + " failed", ex);
+        }
       }
     }
+    stores.clear();
+    storeDestructions.clear();
   }
 
   // ---- identity (ADR 0004, 0008)
@@ -1193,6 +1257,7 @@ public final class Tab {
     if (root != null) {
       root.dispose();
     }
+    disposeStores();
     disposed = true;
     clients.dispose();
     handlers.clear();

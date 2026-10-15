@@ -12,11 +12,11 @@
 
   <artifactId>j2act-core</artifactId>
   <name>j2act-core</name>
-  <description>Reactive primitives, sessions, rendering and the client runtime. No dependencies.</description>
+  <description>Reactive primitives, tabs, rendering and the client runtime. No dependencies.</description>
 
   <build>
     <plugins>
-      <!-- The headless session harness is shared with other modules' tests. -->
+      <!-- The headless tab harness is shared with other modules' tests. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
@@ -33,6 +33,23 @@
   </build>
 
   <dependencies>
+    <!--
+      Compile-time only, never at runtime: @TabScoped and @BrowserScoped carry CDI's and Spring's
+      meta-annotations, which the JVM drops where their classes are missing (ADR 0030). Spring 5.3,
+      since its class files load at release 11 and its annotations are the ones Spring 6 and 7 read.
+    -->
+    <dependency>
+      <groupId>jakarta.enterprise</groupId>
+      <artifactId>jakarta.enterprise.cdi-api</artifactId>
+      <version>4.0.1</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-context</artifactId>
+      <version>5.3.31</version>
+      <scope>provided</scope>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

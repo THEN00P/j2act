@@ -20,7 +20,7 @@ const { js, until, open, check } = b;
 const tab = `document.querySelector('meta[name="j2-tab"]').content`;
 const echo = `document.getElementById('draft-echo')?.textContent`;
 const signer = `document.getElementById('signer-echo')?.textContent`;
-// The draft is a retained State, the signer a retained Store.
+// The draft is a retained State, the signer a retained field of a @TabScoped store.
 const fill = () => js(`for (const [id, value] of [['draft', 'half-filled'], ['signer', 'Ada']]) {
   const i = document.getElementById(id); i.value = value; i.dispatchEvent(new Event('change', { bubbles: true })); } true`);
 

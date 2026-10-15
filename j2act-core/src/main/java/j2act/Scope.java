@@ -8,7 +8,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * One mounted component: its tree slot, its cells in creation order, the cells its
+ * One mounted component, or one store of a tab (ADR 0030), which has no parent and never
+ * renders: its tree slot, its cells in creation order, the cells its
  * last render read, and the child scopes it placed. Lane-only.
  */
 final class Scope implements Observer {
@@ -26,6 +27,8 @@ final class Scope implements Observer {
   boolean restored;
   final String anchor;
   ComponentTag instance;
+  /** The store this scope holds instead of a component. */
+  Store store;
   final List<Cell> cells = new ArrayList<>();
   final Set<Cell> deps = new HashSet<>();
   Map<String, Scope> children = new LinkedHashMap<>();
@@ -76,6 +79,37 @@ final class Scope implements Observer {
   /** The slot path a page mounted from its URL would give this scope; keys Retained State (ADR 0026). */
   String slotPath() {
     return parent == null || localPath == null ? address : parent.slotPath() + localPath;
+  }
+
+  /** The component or store whose primitives this scope holds. */
+  Object owner() {
+    return instance != null ? instance : store;
+  }
+
+  Class<?> ownerClass() {
+    return instance != null ? instance.getClass() : storeClass(store.getClass());
+  }
+
+  /** The class carrying the scope annotation, under any subclass a container made of it. */
+  static Class<?> storeClass(Class<?> type) {
+    for (Class<?> c = type; c != null && c != Store.class; c = c.getSuperclass()) {
+      if (c.getDeclaredAnnotation(TabScoped.class) != null) {
+        return c;
+      }
+    }
+    return type;
+  }
+
+  /** Lane-only. Binds a store's field primitives; a store never renders, so they settle at once. */
+  void bindStore(Store s) {
+    store = s;
+    s.scope = this;
+    List<Primitive> primitives = s.primitives;
+    for (int i = 0; i < primitives.size(); i++) {
+      bindPrimitive(primitives.get(i), i);
+    }
+    settledCount = cells.size();
+    activatePending();
   }
 
   IllegalStateException orderViolation(String message) {
@@ -173,14 +207,14 @@ final class Scope implements Observer {
     if (index < cells.size()) {
       Cell cell = cells.get(index);
       if (!primitive.accepts(cell)) {
-        throw orderViolation(instance.getClass().getName() + " primitive #" + index
+        throw orderViolation(ownerClass().getName() + " primitive #" + index
           + " changed kind between renders; primitives must be created in the same order every time (ADR 0019)");
       }
       primitive.attach(cell, false);
       return;
     }
     if (settledCount >= 0) {
-      throw orderViolation(instance.getClass().getName() + " created primitive #" + index
+      throw orderViolation(ownerClass().getName() + " created primitive #" + index
         + " that earlier renders did not; primitives must not be created conditionally (ADR 0019)");
     }
     Cell cell = primitive.createCell(tab, address + "#" + index);
