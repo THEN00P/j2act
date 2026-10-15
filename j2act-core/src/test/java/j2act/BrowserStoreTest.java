@@ -333,6 +333,55 @@ class BrowserStoreTest {
     Harness.eventually(() -> cleanups.get() == 1, "the browser store's effect cleanup on close");
   }
 
+  static final java.util.concurrent.atomic.AtomicReference<String> signedIn = new java.util.concurrent.atomic.AtomicReference<>();
+
+  static final class TrackPage extends LiveComponent {
+    @Override public Tag<?> render() {
+      Player player = browser(Player.class);
+      return T.page("t", T.div(
+        T.span("track=" + player.track.get() + ";"),
+        T.input().withId("track").onChange(e -> player.track.set(e.value())),
+        T.button("noop").onClick(e -> { })));
+    }
+  }
+
+  @Test
+  void aLiveTabThatLogsOutLeavesItsBrowserAndGetsANewCookie() {
+    signedIn.set("ada");
+    try (Harness h = new Harness(TrackPage::new, b -> b
+        .withIdentity(ex -> signedIn.get() == null ? AuthCtx.anonymous() : AuthCtx.of(signedIn.get(), Collections.emptySet())))) {
+      Page page = new Page(h.engine, "/", Exchange.empty());
+      cookieValue(page.result.setCookies());
+      page.connect();
+      page.change("track", "intro");
+      page.awaitPatch(0, "track=intro;");
+
+      signedIn.set(null); // logged out on the server; the next event sees it
+      int from = page.conn.size();
+      page.click("noop");
+      page.conn.await(from, m -> "browserCookie".equals(m.get("type")));
+      page.awaitPatch(from, "track=none;");
+    } finally {
+      signedIn.set(null);
+    }
+  }
+
+  static final class RedirectingPage extends LiveComponent {
+    @Override public Tag<?> render() {
+      browser(Player.class).track.get();
+      throw RouteException.redirect("/elsewhere");
+    }
+  }
+
+  @Test
+  void aRedirectKeepsTheCookieItsRenderMinted() {
+    try (Harness h = new Harness(RedirectingPage::new)) {
+      ServeResult result = h.engine.serve("/", Exchange.empty());
+      assertEquals(303, result.status());
+      cookieValue(result.setCookies());
+    }
+  }
+
   private static void sleep(long millis) {
     try {
       Thread.sleep(millis);

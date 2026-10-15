@@ -79,6 +79,17 @@ public class Orders {
     }
   }
 
+  /** A subclass reaching its parent's transactional method through super skips the proxy too. */
+  @TabScoped
+  public static class Archive extends Cart {
+    @Override
+    public String save(String item) {
+      return super.save(item); // expect: save() is transactional
+    }
+
+    final Mutation<String, String> viaSuperReference = mutation(super::save); // expect: save() is transactional
+  }
+
   /** A component is never proxied, so its own transactional methods never start one either. */
   public static class Checkout extends ComponentTag {
     @Transactional

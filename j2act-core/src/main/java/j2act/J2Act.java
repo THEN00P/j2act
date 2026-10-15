@@ -296,9 +296,38 @@ public final class J2Act implements AutoCloseable {
     return browser;
   }
 
-  /** A tab of this browser ended; the last one gives the browser the grace window a tab has. */
-  void leaveBrowser(Tab tab) {
+  /** A 303 for a page load, carrying the browser cookie its render minted, so the next page joins the same browser. */
+  private static ServeResult redirect(Tab tab, String location) {
+    String cookie = tab.pendingBrowserCookie;
+    tab.pendingBrowserCookie = null;
+    return new ServeResult(303, "", location,
+      cookie == null ? java.util.Collections.emptyList() : java.util.Collections.singletonList(cookie));
+  }
+
+  /**
+   * Lane-only. A live tab's identity changed (ADR 0004): the same rules as on mount. Anonymous to
+   * a user keeps the browser and records the user; a logout or another user detaches the tab,
+   * whose readers re-render and join a new browser, with a new cookie, on their next use.
+   */
+  void identityChanged(Tab tab, AuthCtx auth) {
     Browser browser = tab.browser;
+    if (browser == null) {
+      return;
+    }
+    String principal = auth.isAnonymous() ? null : auth.name();
+    synchronized (browser) {
+      if (browser.principal == null || browser.principal.equals(principal)) {
+        if (browser.principal == null) {
+          browser.principal = principal;
+        }
+        return;
+      }
+    }
+    tab.detachBrowser();
+  }
+
+  /** A tab of this browser ended or left it; the last one gives the browser the grace window a tab has. */
+  void leaveBrowser(Tab tab, Browser browser) {
     boolean empty;
     synchronized (browser) {
       browser.tabs.remove(tab);
@@ -552,7 +581,7 @@ public final class J2Act implements AutoCloseable {
       Tab.Resolution resolution = await(tab.call(() -> tab.resolve(url)));
       if (!resolution.url.equals(url)) {
         discard(tab, false);
-        return new ServeResult(303, "", contextPath + resolution.url);
+        return redirect(tab, contextPath + resolution.url);
       }
       if (resolution.match == null && resolver.fallback() == null) {
         // No route and no fallback page: a static 404, no tab for a stray URL to hold.
@@ -577,7 +606,7 @@ public final class J2Act implements AutoCloseable {
         if (route != null) {
           if (!route.isNotFound()) {
             discard(tab, false);
-            return new ServeResult(303, "", contextPath + route.redirect);
+            return redirect(tab, contextPath + route.redirect);
           }
           status = 404;
           pass = await(tab.call(() -> {

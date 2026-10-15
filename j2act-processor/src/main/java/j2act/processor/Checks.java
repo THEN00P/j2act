@@ -263,11 +263,13 @@ final class Checks {
    * container's proxy, so no transaction starts: on Spring in proxy mode, and on Weld too.
    */
   private void transactionalSelfCall(Node call, Scope scope) {
-    boolean self = call.receiver == null ? call.kind == Node.Kind.CALL : call.receiver.is(Node.Kind.IDENT, "this");
+    boolean viaSuper = call.receiver != null && call.receiver.is(Node.Kind.IDENT, "super");
+    boolean self = call.receiver == null ? call.kind == Node.Kind.CALL : viaSuper || call.receiver.is(Node.Kind.IDENT, "this");
     if (!self || !scope.isType(scope.type, COMPONENT) && !scope.isType(scope.type, STORE)) {
       return;
     }
-    List<ExecutableElement> methods = scope.ownMethods(call.name);
+    // super.save() and super::save skip the proxy as this.save() does, and name the superclass's method.
+    List<ExecutableElement> methods = viaSuper ? scope.superMethods(call.name) : scope.ownMethods(call.name);
     if (call.kind == Node.Kind.REF) {
       // A method reference's overload depends on its target type: only report what every overload shares.
       for (ExecutableElement method : methods) {
@@ -597,6 +599,12 @@ final class Checks {
     /** This type's own methods of that name, declared here or inherited, not those of an enclosing type. */
     List<ExecutableElement> ownMethods(String name) {
       return methods(type, name);
+    }
+
+    /** The superclass's methods of that name, as super.name() selects them. */
+    List<ExecutableElement> superMethods(String name) {
+      TypeMirror superclass = type.getSuperclass();
+      return superclass.getKind() == TypeKind.DECLARED ? methods((TypeElement) types.asElement(superclass), name) : new ArrayList<>();
     }
 
     boolean isOwnedBy(List<ExecutableElement> methods, String owner) {

@@ -126,6 +126,29 @@ public final class Tab {
     return mirror;
   }
 
+  /**
+   * Lane-only. Leaves a browser joined under another identity (ADR 0030): whatever read its state
+   * re-renders, and its next use joins the browser of the identity this tab has now.
+   */
+  void detachBrowser() {
+    Browser old;
+    synchronized (this) {
+      old = browser;
+      browser = null;
+      browserCookie = null;
+    }
+    if (old == null) {
+      return;
+    }
+    List<MirrorCell> readers = new ArrayList<>(mirrors.values());
+    mirrors.clear();
+    engine.leaveBrowser(this, old);
+    for (MirrorCell mirror : readers) {
+      mirror.notifyObservers();
+      mirror.dispose();
+    }
+  }
+
   void forgetMirror(MirrorCell mirror) {
     mirrors.remove(mirror.source, mirror);
   }
@@ -503,6 +526,7 @@ public final class Tab {
       return;
     }
     authCell.setOnLane(fresh);
+    engine.identityChanged(this, fresh);
     Verdict verdict = checkGuards(guards, fresh);
     if (verdict.kind == Verdict.Kind.REDIRECT) {
       navigate(verdict.target, "replace");
@@ -1078,7 +1102,7 @@ public final class Tab {
     mirrors.clear();
     disposed = true;
     if (browser != null) {
-      engine.leaveBrowser(this);
+      engine.leaveBrowser(this, browser);
     }
     clients.dispose();
     handlers.clear();
