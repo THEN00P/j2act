@@ -28,6 +28,35 @@ final class RouteInfo {
     return query.isEmpty() ? path : path + "?" + query;
   }
 
+  /** This URL with the parameter set to value, or removed when value is null; other parameters keep their order. */
+  String withQueryParam(String name, String value) {
+    StringBuilder b = new StringBuilder();
+    boolean replaced = false;
+    if (!query.isEmpty()) {
+      for (String pair : query.split("&")) {
+        int eq = pair.indexOf('=');
+        if (!decode(eq < 0 ? pair : pair.substring(0, eq)).equals(name)) {
+          b.append(b.length() == 0 ? "" : "&").append(pair);
+        } else if (value != null && !replaced) {
+          b.append(b.length() == 0 ? "" : "&").append(encode(name)).append('=').append(encode(value));
+          replaced = true;
+        }
+      }
+    }
+    if (value != null && !replaced) {
+      b.append(b.length() == 0 ? "" : "&").append(encode(name)).append('=').append(encode(value));
+    }
+    return b.length() == 0 ? path : path + "?" + b;
+  }
+
+  private static String encode(String s) {
+    try {
+      return java.net.URLEncoder.encode(s, StandardCharsets.UTF_8.name());
+    } catch (UnsupportedEncodingException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
   static String pathOf(String url) {
     int q = url.indexOf('?');
     return q < 0 ? url : url.substring(0, q);

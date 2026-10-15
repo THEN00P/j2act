@@ -119,7 +119,7 @@ Browsers bring back typed text in a top-level form when a closed tab is reopened
 
 ## URL state
 
-`State<String> q = queryState("q", "")` keeps a component's value in the page's query string, as nuqs's `useQueryState` and Livewire's `#[Url]` do. It survives a reload, belongs to its tab, works with the back button and can be shared, which makes it the better home for filters than tab state.
+`QueryState<String> q = queryState("q", "")` keeps a component's value in the page's query string, as nuqs's `useQueryState` and Livewire's `#[Url]` do. It survives a reload, belongs to its tab, works with the back button and can be shared, which makes it the better home for filters than tab state. It is its own primitive rather than a State, because the URL holds the value: `get()` reads the tab's route and is tracked like `queryParam()`, and `set()` replaces the URL by a soft navigation after the current event, so typing adds no history entries. The initial value's type picks the parsing (String, Integer, Long, Double, Boolean or an enum, or a parser and formatter of the app's own); the initial value itself leaves the parameter out, as nuqs's `clearOnDefault` does, and a value that does not parse reads as the initial one.
 
 ## Pausing
 

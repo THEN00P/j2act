@@ -92,6 +92,22 @@ public abstract class ComponentTag implements DomContent {
     }));
   }
 
+  /**
+   * A value kept in the page's query string under name (ADR 0030): it survives a reload and can
+   * be shared, which suits filters and tabs within a page. initial's type picks the parsing
+   * (String, Integer, Long, Double, Boolean or an enum), and initial itself leaves the parameter
+   * out. Writes replace the URL after the current event.
+   */
+  protected final <T> QueryState<T> queryState(String name, T initial) {
+    return register(QueryState.of(name, initial));
+  }
+
+  /** A query state of any type, read with parse and written with format; parse may return null for the initial value. */
+  protected final <T> QueryState<T> queryState(String name, T initial, java.util.function.Function<String, T> parse,
+      java.util.function.Function<? super T, String> format) {
+    return register(new QueryState<>(name, initial, parse, format));
+  }
+
   protected final <T> Prop<T> prop() {
     return register(new Prop<>(null));
   }

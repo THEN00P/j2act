@@ -37,7 +37,7 @@ A LiveComponent subtree mounted inside an existing non-J2ACT app, receiving oute
 _Avoid_: Portlet, Fragment, Widget
 
 **Query state**:
-A State created with queryState(name, initial) whose value lives in the page's query string, so it survives a reload and can be shared (ADR 0030).
+A QueryState created with queryState(name, initial): a component's value that lives in the page's query string, so it survives a reload and can be shared. Reads are tracked; writes replace the URL (ADR 0030).
 _Avoid_: URL state, Search param, Route param
 
 **Prop**:
