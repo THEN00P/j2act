@@ -10,11 +10,11 @@ describe("reopen", () => {
     expect(takePrevious("/orders?id=1", "fresh", "back_forward")).toEqual({});
   });
 
-  it("forgets it on a reload or any other load", () => {
+  it("forgets it on a reload, and leaves it alone on any other load, such as a duplicated tab", () => {
     remember("/", "old");
     expect(takePrevious("/", "fresh", "reload")).toEqual({ forget: "old" });
     remember("/", "old");
-    expect(takePrevious("/", "fresh", "navigate")).toEqual({ forget: "old" });
+    expect(takePrevious("/", "fresh", "navigate")).toEqual({});
   });
 
   it("keys by URL, so Back across pages finds each page's own tab", () => {

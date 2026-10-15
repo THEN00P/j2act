@@ -267,7 +267,19 @@ final class Checks {
     if (!self || !scope.isType(scope.type, COMPONENT) && !scope.isType(scope.type, STORE)) {
       return;
     }
-    for (ExecutableElement method : scope.ownMethods(call.name)) {
+    List<ExecutableElement> methods = scope.ownMethods(call.name);
+    if (call.kind == Node.Kind.REF) {
+      // A method reference's overload depends on its target type: only report what every overload shares.
+      for (ExecutableElement method : methods) {
+        if (!isTransactional(method)) {
+          return;
+        }
+      }
+    }
+    for (ExecutableElement method : methods) {
+      if (call.kind == Node.Kind.CALL && !accepts(method, call.args.size())) {
+        continue; // another overload is the one called
+      }
       if (isTransactional(method)) {
         source.report(Diagnostic.Kind.ERROR, "j2act: " + call.name + "() is transactional, but a call from inside "
           + scope.type.getSimpleName() + " skips the container's proxy, so no transaction starts; call it through the"
@@ -276,6 +288,12 @@ final class Checks {
         return;
       }
     }
+  }
+
+  /** Whether a call with this many arguments can select the method. */
+  private static boolean accepts(ExecutableElement method, int arguments) {
+    int parameters = method.getParameters().size();
+    return method.isVarArgs() ? arguments >= parameters - 1 : arguments == parameters;
   }
 
   private static boolean isTransactional(ExecutableElement method) {

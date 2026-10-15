@@ -140,6 +140,38 @@ public final class J2Act implements AutoCloseable {
 
   // ---- browsers (ADR 0030)
 
+  private static final Object[] BROWSER_LOCKS = new Object[64];
+
+  static {
+    for (int i = 0; i < BROWSER_LOCKS.length; i++) {
+      BROWSER_LOCKS[i] = new Object();
+    }
+  }
+
+  /** Tabs taken out of tabs but not disposed yet, by token, so a restore can wait for their save (ADR 0030). */
+  private final ConcurrentHashMap<String, Tab> closingTabs = new ConcurrentHashMap<>();
+
+  private void closing(Tab tab) {
+    if (!tab.ended.isDone()) {
+      closingTabs.put(tab.token, tab);
+      tab.ended.whenComplete((v, e) -> closingTabs.remove(tab.token, tab));
+    }
+  }
+
+  /** The tab whose page carries this token while it lives or is still closing, or null. */
+  Tab liveTab(String token) {
+    Tab closing = closingTabs.get(token);
+    if (closing != null) {
+      return closing;
+    }
+    for (Tab tab : tabs.values()) {
+      if (!tab.disposed && tab.token.equals(token)) {
+        return tab;
+      }
+    }
+    return null;
+  }
+
   /** The j2-browser cookie a request carries, when it looks like one j2act minted. */
   static String browserCookie(Exchange exchange) {
     String value = exchange.cookie(BROWSER_COOKIE).orElse(null);
@@ -203,15 +235,16 @@ public final class J2Act implements AutoCloseable {
     while (true) {
       Browser browser = browsers.get(cookie);
       if (browser == null) {
-        browser = newBrowser(cookie, tab, principal);
-        if (browser == null) {
-          return null;
-        }
-        Browser raced = browsers.putIfAbsent(cookie, browser);
-        if (raced != null) {
-          Tab unused = browser.hub;
-          unused.post(() -> unused.dispose(null));
-          continue;
+        // One maker per cookie, so the hub that consumes the snapshot is the one that stays.
+        synchronized (BROWSER_LOCKS[Math.floorMod(cookie.hashCode(), BROWSER_LOCKS.length)]) {
+          browser = browsers.get(cookie);
+          if (browser == null) {
+            browser = newBrowser(cookie, tab, principal);
+            if (browser == null) {
+              return null;
+            }
+            browsers.put(cookie, browser);
+          }
         }
       }
       synchronized (browser) {
@@ -290,29 +323,11 @@ public final class J2Act implements AutoCloseable {
     Tab hub = browser.hub;
     hub.post(() -> {
       hub.snapshot.persisting();
-      String snapshot = null;
-      try {
-        Map<String, String> entries = hub.snapshot.values();
-        if (!entries.isEmpty()) {
-          snapshot = Retained.encode(clock.millis() + snapshots.retentionMillis, browser.principal, entries);
-        }
-      } catch (RuntimeException e) {
-        log(System.Logger.Level.WARNING, "a browser's retained state could not be saved", e);
-      }
-      String taken = snapshot;
+      // Saved even when unchanged since a checkpoint; with nothing left to keep, a stale save is deleted.
+      hub.snapshot.stored = true;
+      CompletableFuture<Void> written = snapshots.persistBrowser(browser);
       hub.dispose(null);
-      executor.execute(() -> {
-        try {
-          if (taken != null) {
-            snapshots.storage.save(Retained.id("browser:" + browser.cookie), taken,
-              Instant.ofEpochMilli(clock.millis() + snapshots.retentionMillis));
-          }
-        } catch (RuntimeException e) {
-          log(System.Logger.Level.WARNING, "a browser's retained state could not be saved", e);
-        } finally {
-          browser.saved.complete(null);
-        }
-      });
+      written.whenComplete((v, e) -> browser.saved.complete(null));
     });
     return browser.saved;
   }
@@ -869,6 +884,7 @@ public final class J2Act implements AutoCloseable {
       retire(tab, "expired");
       return;
     }
+    closing(tab);
     tabs.remove(tab.id);
     byConnection.values().removeIf(s -> s == tab);
     tab.lane.execute(() -> tab.dispose(null));
@@ -879,6 +895,7 @@ public final class J2Act implements AutoCloseable {
    * ("expired" or "paused"), so the remount that follows finds it (ADR 0026).
    */
   private CompletableFuture<Void> retire(Tab tab, String farewell) {
+    closing(tab);
     tabs.remove(tab.id);
     CompletableFuture<Void> done = new CompletableFuture<>();
     // The socket stays mapped until the farewell, so a message sent meanwhile cannot bring an "expired" before the save ends.
@@ -905,6 +922,18 @@ public final class J2Act implements AutoCloseable {
    * (ADR 0026), so a crash loses at most one interval. onPersisting runs first in each.
    */
   private void checkpoint() {
+    for (Browser browser : browsers.values()) {
+      Tab hub = browser.hub;
+      hub.post(() -> {
+        if (hub.disposed) {
+          return;
+        }
+        hub.snapshot.persisting();
+        if (hub.snapshot.dirty) {
+          snapshots.persistBrowser(browser);
+        }
+      });
+    }
     for (Tab tab : tabs.values()) {
       tab.post(() -> {
         if (tabs.get(tab.id) != tab) {
@@ -1003,6 +1032,14 @@ public final class J2Act implements AutoCloseable {
     for (Tab tab : tabs.values()) {
       discard(tab, false);
     }
+    // Saved above if asked; either way their effects' cleanups and @PreDestroy run now.
+    for (Browser browser : browsers.values()) {
+      synchronized (browser) {
+        browser.retired = true;
+      }
+      browser.hub.post(() -> browser.hub.dispose(null));
+    }
+    browsers.clear();
     if (ownedExecutor != null) {
       ownedExecutor.shutdown();
     }

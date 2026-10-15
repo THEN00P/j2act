@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-ad3cc2ed2c75c9211b1a24b845f63e79d14a7ed5100372f3f7e3dbfc0610a6f1 */
+* sources: sha256-9e89055ad67179ba2cf8c5b1009601fed35efa187e83f691b6ec45ce3ec3edd4 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1857,14 +1857,14 @@
 	function navigationType() {
 		return (performance.getEntriesByType?.("navigation")[0])?.type ?? "navigate";
 	}
-	/** The token a closed page left for this URL: to restore when going back or forward, else to forget. */
+	/** The token a closed page left for this URL: to restore when going back or forward, to forget on a reload. */
 	function takePrevious(url, current, type) {
 		const tokens = read();
 		const previous = tokens[url];
 		if (!previous || previous === current) return {};
 		delete tokens[url];
 		write(tokens);
-		return type === "back_forward" ? { restore: previous } : { forget: previous };
+		return type === "back_forward" ? { restore: previous } : type === "reload" ? { forget: previous } : {};
 	}
 	/** On pagehide: this URL was last shown by the server-side tab with this token. */
 	function remember(url, token) {

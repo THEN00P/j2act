@@ -29,12 +29,12 @@ final class ComputedCell extends Cell implements Observer {
       }
       if (stale && tab.hubFor != null) {
         // A browser store's computed a tab reads first: its value is made on the browser's lane (ADR 0030).
-        tab.call(() -> {
+        tab.inline(() -> {
           if (stale) {
             recompute();
           }
           return null;
-        }).join();
+        });
       }
       Object v = value;
       onRead(v);

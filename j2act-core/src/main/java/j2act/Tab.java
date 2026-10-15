@@ -90,6 +90,8 @@ public final class Tab {
   volatile long lastActivity;
   volatile long disconnectedAt;
   volatile boolean disposed;
+  /** Completes once this tab is disposed, so a restore can wait for a tab that is closing (ADR 0030). */
+  final CompletableFuture<Void> ended = new CompletableFuture<>();
   private int anchorSeq;
   private long epoch;
   private boolean foreignReadWarned;
@@ -199,6 +201,55 @@ public final class Tab {
         CURRENT.remove();
       }
     };
+  }
+
+  /**
+   * Runs body as a task of this tab's lane on the calling thread, then flushes, instead of posting
+   * it and waiting: a tab using its browser's hub, or a query loader using a store, never waits
+   * for a pool thread that may be the one it holds (ADR 0030). Reads inside are not tracked for
+   * the caller.
+   */
+  <T> T inline(Callable<T> body) {
+    Object[] result = new Object[1];
+    Throwable[] failure = new Throwable[1];
+    lane.runInline(() -> {
+      Tab previous = CURRENT.get();
+      Observer observer = Tracking.swap(null);
+      QueryRun run = Tracking.run();
+      Tracking.clearRun();
+      CURRENT.set(this);
+      try {
+        if (disposed) {
+          throw new IllegalStateException("tab " + id + " has ended");
+        }
+        result[0] = body.call();
+        flush();
+      } catch (Throwable t) {
+        failure[0] = t;
+      } finally {
+        if (previous == null) {
+          CURRENT.remove();
+        } else {
+          CURRENT.set(previous);
+        }
+        Tracking.swap(observer);
+        if (run != null) {
+          Tracking.setRun(run);
+        }
+      }
+    });
+    if (failure[0] instanceof RuntimeException) {
+      throw (RuntimeException) failure[0];
+    }
+    if (failure[0] instanceof Error) {
+      throw (Error) failure[0];
+    }
+    if (failure[0] != null) {
+      throw new IllegalStateException(failure[0]);
+    }
+    @SuppressWarnings("unchecked")
+    T value = (T) result[0];
+    return value;
   }
 
   void post(Runnable body) {
@@ -353,7 +404,7 @@ public final class Tab {
       throw new IllegalStateException("tab " + id + " has ended; its stores are gone");
     }
     if (!lane.isCurrent()) {
-      return call(() -> store(key, create, destroy)).join();
+      return inline(() -> store(key, create, destroy));
     }
     T instance = create.get();
     Scope scope = instance instanceof Store ? bindStore((Store) instance) : null;
@@ -1031,6 +1082,7 @@ public final class Tab {
       }
       c.close();
     }
+    ended.complete(null);
   }
 
   // ---- preload (ADR 0011)

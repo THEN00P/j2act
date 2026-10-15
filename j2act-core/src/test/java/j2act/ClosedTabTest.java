@@ -37,6 +37,50 @@ class ClosedTabTest {
   }
 
   @Test
+  void aReopenRightAfterTheGoodbyeWaitsForTheClosingPagesSave() {
+    CountingStorage storage = new CountingStorage();
+    try (Harness h = harness(Form::new, storage, b -> { })) {
+      h.load();
+      h.connect();
+      type(h, "name", "Ada");
+      String old = h.token;
+      h.send("type", "bye");
+      String html = h.load("/", remount(old));
+      assertTrue(html.contains("name=Ada;"), "the restore waited for the save: " + html);
+    }
+  }
+
+  @Test
+  void aLiveTabsSnapshotIsNotForgotten() {
+    CountingStorage storage = new CountingStorage();
+    try (Harness h = harness(Form::new, storage, b -> b.withCheckpointInterval(Duration.ofMillis(100)))) {
+      h.load();
+      h.connect();
+      type(h, "name", "Ada");
+      String source = h.token;
+      Harness.eventually(() -> storage.has(source), "a checkpoint of the live tab");
+      // A duplicated tab, carrying a copy of sessionStorage, asks to forget it.
+      String copyHtml = h.engine.serve("/", Exchange.empty()).html();
+      Harness.FakeConnection copy = new Harness.FakeConnection();
+      h.engine.onMessage(copy, j2act.internal.json.Json.object("type", "hello",
+        "tab", Harness.find(copyHtml, "name=\"j2-tab\" content=\"([^\"]+)\""),
+        "token", Harness.find(copyHtml, "name=\"j2-token\" content=\"([^\"]+)\"")));
+      copy.await(0, m -> "ready".equals(m.get("type")));
+      h.engine.onMessage(copy, j2act.internal.json.Json.object("type", "forget", "token", source));
+      sleep(2500);
+      assertTrue(storage.has(source), "the live tab keeps its checkpoint");
+    }
+  }
+
+  private static void sleep(long millis) {
+    try {
+      Thread.sleep(millis);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
+  @Test
   void aTabWithoutRetainedValuesSavesNothingOnBye() {
     CountingStorage storage = new CountingStorage();
     try (Harness h = harness(() -> new LiveComponent() {

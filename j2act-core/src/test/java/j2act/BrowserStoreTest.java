@@ -286,6 +286,53 @@ class BrowserStoreTest {
     }
   }
 
+  @Test
+  void aSingleThreadedExecutorRendersBrowserStateWithoutWaitingOnItself() {
+    java.util.concurrent.ExecutorService single = java.util.concurrent.Executors.newSingleThreadExecutor();
+    try (Harness h = new Harness(PlayerPage::new, b -> b.withExecutor(single))) {
+      Page page = new Page(h.engine, "/", Exchange.empty());
+      assertTrue(page.html.contains("track=none;label=NONE;"), page.html);
+    } finally {
+      single.shutdownNow();
+    }
+  }
+
+  @Test
+  void checkpointsSaveALiveBrowsersRetainedValues() {
+    RetainedStateTest.CountingStorage storage = new RetainedStateTest.CountingStorage();
+    try (Harness h = new Harness(PlayerPage::new, b -> b
+        .withRetainedStateStorage(storage).withCheckpointInterval(Duration.ofMillis(100)))) {
+      Page page = new Page(h.engine, "/", Exchange.empty());
+      String cookie = cookieValue(page.result.setCookies());
+      page.connect();
+      page.change("volume", "8");
+      Harness.eventually(() -> storage.inner.load(Retained.id("browser:" + cookie)).isPresent(), "a checkpoint of the browser");
+    }
+  }
+
+  static final AtomicInteger cleanups = new AtomicInteger();
+
+  @BrowserScoped
+  public static class Cleaned extends Store {
+    public Cleaned() {
+      effect(() -> cleanups::incrementAndGet);
+    }
+  }
+
+  @Test
+  void closingWithoutSavingStillEndsBrowserStores() {
+    cleanups.set(0);
+    Harness h = new Harness(() -> new LiveComponent() {
+      @Override public Tag<?> render() {
+        browser(Cleaned.class);
+        return T.page("c", T.div(T.span("c")));
+      }
+    });
+    new Page(h.engine, "/", Exchange.empty());
+    h.close();
+    Harness.eventually(() -> cleanups.get() == 1, "the browser store's effect cleanup on close");
+  }
+
   private static void sleep(long millis) {
     try {
       Thread.sleep(millis);

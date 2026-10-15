@@ -37,6 +37,28 @@ public class Orders {
     }
   }
 
+  /** Overloads: only the one a call selects counts. */
+  @TabScoped
+  public static class Drafts extends Store {
+    @Transactional
+    public void keep() {
+    }
+
+    public void keep(String note) {
+    }
+
+    public void edit(String note) {
+      keep(note);
+      keep(); // expect: keep() is transactional
+    }
+
+    final Mutation<String, String> viaReference = mutation((String note) -> {
+      java.util.function.Consumer<String> later = this::keep;
+      later.accept(note);
+      return note;
+    });
+  }
+
   @TabScoped
   @org.springframework.transaction.annotation.Transactional
   public static class Ledger extends Store {
