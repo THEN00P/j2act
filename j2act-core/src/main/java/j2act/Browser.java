@@ -18,10 +18,12 @@ public final class Browser {
   final Set<Tab> tabs = java.util.concurrent.ConcurrentHashMap.newKeySet();
   /** The principal recorded for this browser, or null while anonymous. Guarded by this. */
   String principal;
-  /** No tab is left and the browser is being saved; a tab arriving now starts a new one. Guarded by this. */
+  /** No tab is left and the browser is being saved; a tab arriving meanwhile revives it. Guarded by this. */
   boolean retired;
-  /** Completes once a retired browser's snapshot reached storage. */
-  final CompletableFuture<Void> saved = new CompletableFuture<>();
+  /** Its snapshot landed and its hub is ending: out of browsers, so the next tab restores. Guarded by this. */
+  boolean ended;
+  /** Completes once the latest retirement's snapshot reached storage. Guarded by this. */
+  CompletableFuture<Void> saved = CompletableFuture.completedFuture(null);
 
   Browser(J2Act engine, String cookie, Tab hub, String principal) {
     this.engine = engine;

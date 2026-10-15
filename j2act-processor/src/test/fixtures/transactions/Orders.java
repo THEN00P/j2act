@@ -47,9 +47,18 @@ public class Orders {
     public void keep(String note) {
     }
 
+    @Transactional
+    public void tag(int priority) {
+    }
+
+    public void tag(String label) {
+    }
+
     public void edit(String note) {
       keep(note);
       keep(); // expect: keep() is transactional
+      tag("urgent");
+      tag(note);
     }
 
     final Mutation<String, String> viaReference = mutation((String note) -> {

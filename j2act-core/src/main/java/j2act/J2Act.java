@@ -253,27 +253,20 @@ public final class J2Act implements AutoCloseable {
         }
       }
       synchronized (browser) {
-        if (!browser.retired) {
+        if (!browser.ended) {
           if (browser.principal != null && !browser.principal.equals(principal)) {
             return null;
           }
           if (browser.principal == null) {
             browser.principal = principal;
           }
+          // A browser still saving after its last tab comes back as it was: its values are all here.
+          browser.retired = false;
           browser.tabs.add(tab);
           return browser;
         }
       }
-      // Its last tab just went: wait for its snapshot, which the next one restores.
-      try {
-        browser.saved.get(5, TimeUnit.SECONDS);
-      } catch (TimeoutException | ExecutionException e) {
-        log(System.Logger.Level.WARNING, "a retiring browser's snapshot did not land in time", e);
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        return null;
-      }
-      browsers.remove(cookie, browser);
+      // It ended between the lookup and the lock, after its snapshot landed: the next one restores it.
     }
   }
 
@@ -318,26 +311,36 @@ public final class J2Act implements AutoCloseable {
 
   /** Saves the retained values of a browser left without tabs, on its hub's lane, and ends it. */
   private CompletableFuture<Void> retireBrowser(Browser browser, boolean closing) {
+    CompletableFuture<Void> saved;
     synchronized (browser) {
-      if (browser.retired || !closing && !browser.tabs.isEmpty()) {
+      if (browser.ended || browser.retired || !closing && !browser.tabs.isEmpty()) {
         return browser.saved;
       }
-      // Stays in browsers until its snapshot landed: a tab arriving meanwhile waits for it in join().
+      // Stays in browsers until its snapshot landed: a tab arriving meanwhile revives it, and none waits.
       browser.retired = true;
+      saved = browser.saved = new CompletableFuture<>();
     }
     Tab hub = browser.hub;
     hub.post(() -> {
       hub.snapshot.persisting();
       // Saved even when unchanged since a checkpoint; with nothing left to keep, a stale save is deleted.
       hub.snapshot.stored = true;
-      CompletableFuture<Void> written = snapshots.persistBrowser(browser);
-      hub.dispose(null);
-      written.whenComplete((v, e) -> {
-        browsers.remove(browser.cookie, browser);
-        browser.saved.complete(null);
+      snapshots.persistBrowser(browser).whenComplete((v, e) -> {
+        boolean end;
+        synchronized (browser) {
+          end = closing || browser.retired;
+          if (end) {
+            browser.ended = true;
+            browsers.remove(browser.cookie, browser);
+          }
+        }
+        if (end) {
+          hub.post(() -> hub.dispose(null));
+        }
+        saved.complete(null);
       });
     });
-    return browser.saved;
+    return saved;
   }
 
   /** Lane-only. Hands a connected page the URL that sets its new browser cookie. */
@@ -1043,7 +1046,7 @@ public final class J2Act implements AutoCloseable {
     // Saved above if asked; either way their effects' cleanups and @PreDestroy run now.
     for (Browser browser : browsers.values()) {
       synchronized (browser) {
-        browser.retired = true;
+        browser.ended = true;
       }
       browser.hub.post(() -> browser.hub.dispose(null));
     }

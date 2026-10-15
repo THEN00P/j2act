@@ -276,18 +276,66 @@ final class Checks {
         }
       }
     }
-    for (ExecutableElement method : methods) {
-      if (call.kind == Node.Kind.CALL && !accepts(method, call.args.size())) {
-        continue; // another overload is the one called
-      }
-      if (isTransactional(method)) {
-        source.report(Diagnostic.Kind.ERROR, "j2act: " + call.name + "() is transactional, but a call from inside "
-          + scope.type.getSimpleName() + " skips the container's proxy, so no transaction starts; call it through the"
-          + " bean injected into itself (@Inject " + scope.type.getSimpleName() + " self) or move it to a service"
-          + " (ADR 0030)", call.kind == Node.Kind.REF ? call.receiver : call, scope.type);
-        return;
+    List<ExecutableElement> selected = call.kind == Node.Kind.REF ? methods : selectedOverloads(methods, call, scope);
+    if (selected.isEmpty()) {
+      return;
+    }
+    for (ExecutableElement method : selected) {
+      if (!isTransactional(method)) {
+        return; // the call may select a plain overload: report only what is certain
       }
     }
+    source.report(Diagnostic.Kind.ERROR, "j2act: " + call.name + "() is transactional, but a call from inside "
+      + scope.type.getSimpleName() + " skips the container's proxy, so no transaction starts; call it through the"
+      + " bean injected into itself (@Inject " + scope.type.getSimpleName() + " self) or move it to a service"
+      + " (ADR 0030)", call.kind == Node.Kind.REF ? call.receiver : call, scope.type);
+  }
+
+  /**
+   * The overloads a call can select: those its argument count fits, narrowed by the argument types
+   * when every one is plain to see. Unknown types keep every overload of the right arity.
+   */
+  private List<ExecutableElement> selectedOverloads(List<ExecutableElement> methods, Node call, Scope scope) {
+    List<ExecutableElement> fits = new ArrayList<>();
+    for (ExecutableElement method : methods) {
+      if (accepts(method, call.args.size())) {
+        fits.add(method);
+      }
+    }
+    if (fits.size() < 2) {
+      return fits;
+    }
+    List<TypeMirror> arguments = new ArrayList<>();
+    for (Node argument : call.args) {
+      TypeElement type = argument.kind == Node.Kind.STRING || argument.kind == Node.Kind.CONCAT
+        ? elements.getTypeElement("java.lang.String") : scope.typeOf(argument);
+      if (type == null) {
+        return fits;
+      }
+      arguments.add(types.erasure(type.asType()));
+    }
+    List<ExecutableElement> byType = new ArrayList<>();
+    for (ExecutableElement method : fits) {
+      if (argumentsFit(method, arguments)) {
+        byType.add(method);
+      }
+    }
+    return byType;
+  }
+
+  private boolean argumentsFit(ExecutableElement method, List<TypeMirror> arguments) {
+    List<? extends VariableElement> parameters = method.getParameters();
+    for (int i = 0; i < arguments.size(); i++) {
+      TypeMirror parameter = parameters.get(Math.min(i, parameters.size() - 1)).asType();
+      if (method.isVarArgs() && i >= parameters.size() - 1 && parameter.getKind() == TypeKind.ARRAY
+          && !(arguments.size() == parameters.size() && types.isAssignable(arguments.get(i), types.erasure(parameter)))) {
+        parameter = ((javax.lang.model.type.ArrayType) parameter).getComponentType();
+      }
+      if (!types.isAssignable(arguments.get(i), types.erasure(parameter))) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /** Whether a call with this many arguments can select the method. */
