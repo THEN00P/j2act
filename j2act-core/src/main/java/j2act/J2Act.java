@@ -248,11 +248,10 @@ public final class J2Act implements AutoCloseable {
         }
       }
       synchronized (browser) {
-        if (browser.retired) {
-          browsers.remove(cookie, browser);
-        } else if (browser.principal != null && !browser.principal.equals(principal)) {
-          return null;
-        } else {
+        if (!browser.retired) {
+          if (browser.principal != null && !browser.principal.equals(principal)) {
+            return null;
+          }
           if (browser.principal == null) {
             browser.principal = principal;
           }
@@ -269,6 +268,7 @@ public final class J2Act implements AutoCloseable {
         Thread.currentThread().interrupt();
         return null;
       }
+      browsers.remove(cookie, browser);
     }
   }
 
@@ -317,8 +317,8 @@ public final class J2Act implements AutoCloseable {
       if (browser.retired || !closing && !browser.tabs.isEmpty()) {
         return browser.saved;
       }
+      // Stays in browsers until its snapshot landed: a tab arriving meanwhile waits for it in join().
       browser.retired = true;
-      browsers.remove(browser.cookie, browser);
     }
     Tab hub = browser.hub;
     hub.post(() -> {
@@ -327,7 +327,10 @@ public final class J2Act implements AutoCloseable {
       hub.snapshot.stored = true;
       CompletableFuture<Void> written = snapshots.persistBrowser(browser);
       hub.dispose(null);
-      written.whenComplete((v, e) -> browser.saved.complete(null));
+      written.whenComplete((v, e) -> {
+        browsers.remove(browser.cookie, browser);
+        browser.saved.complete(null);
+      });
     });
     return browser.saved;
   }

@@ -221,6 +221,24 @@ class StoreTest {
     }
   }
 
+  @Test
+  void aContainerThatDestroysAStoreEndsItsEffectsAndRunsItsDestroy() {
+    effectRuns.set(0);
+    cleanups.set(0);
+    AtomicInteger destroyed = new AtomicInteger();
+    try (Harness h = new Harness(() -> new LiveComponent() {
+      @Override public Tag<?> render() {
+        StoreScope.get(TabScoped.class, "feed", () -> new Feed("bean"), feed -> destroyed.incrementAndGet());
+        return T.page("d", T.div(T.button("destroy").onClick(e -> StoreScope.destroy(TabScoped.class, "feed"))));
+      }
+    })) {
+      h.load();
+      h.connect();
+      h.click(Harness.clickOn(h.html, "destroy"));
+      Harness.eventually(() -> cleanups.get() >= 1 && destroyed.get() >= 1, "the store's cleanup and destroy ran");
+    }
+  }
+
   public static class NotAStore extends Store {
   }
 

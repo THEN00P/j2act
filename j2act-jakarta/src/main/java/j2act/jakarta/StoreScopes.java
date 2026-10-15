@@ -52,7 +52,7 @@ public final class StoreScopes implements Extension {
     }
 
     @Override public void destroy(Contextual<?> bean) {
-      StoreScope.remove(scope, bean);
+      StoreScope.destroy(scope, bean);
     }
   }
 }

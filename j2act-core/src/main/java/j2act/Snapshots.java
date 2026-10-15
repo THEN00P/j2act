@@ -22,8 +22,10 @@ final class Snapshots {
   private final Map<Class<?>, RetainedCodec<?>> codecs;
   /** Saves on their way to storage, by snapshot id, so a restore that names one waits for it (ADR 0030). */
   private final Map<String, CompletableFuture<Void>> inFlight = new ConcurrentHashMap<>();
-  /** How long a restore or forget waits for a page that is closing and for its save. */
-  private static final long CLOSING_WAIT_MILLIS = 2000;
+  /** How long a restore waits for a page that is closing and for its save to land. */
+  private static final long RESTORE_WAIT_MILLIS = 10_000;
+  /** How long a forget waits to tell a closing page from a live one, such as the tab it was duplicated from. */
+  private static final long FORGET_WAIT_MILLIS = 2000;
 
   Snapshots(J2Act engine, RetainedStateStorage storage, long retentionMillis, Map<Class<?>, RetainedCodec<?>> codecs) {
     this.engine = engine;
@@ -110,7 +112,10 @@ final class Snapshots {
     }
     String id = Retained.id(token);
     // Back right after leaving, or a reopen at once: the old page may still be saying goodbye.
-    awaitClosing(token, id);
+    if (!awaitClosing(token, id)) {
+      engine.log(System.Logger.Level.WARNING, "a reopened page's closing tab did not save within "
+        + RESTORE_WAIT_MILLIS + " ms; it starts without its Retained State (ADR 0030)", null);
+    }
     Retained.Snapshot snapshot;
     try {
       Optional<String> stored = storage.load(id);
@@ -134,26 +139,31 @@ final class Snapshots {
     return new ConcurrentHashMap<>(snapshot.entries);
   }
 
-  /** Waits briefly for the page with this token to end and its save to land; false if it is still live. */
+  /** Waits for the page with this token to end and its save to land; false when that took too long. */
   private boolean awaitClosing(String token, String id) {
+    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(RESTORE_WAIT_MILLIS);
     Tab live = engine.liveTab(token);
     try {
       if (live != null) {
-        live.ended.get(CLOSING_WAIT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        live.ended.get(left(deadline), java.util.concurrent.TimeUnit.NANOSECONDS);
       }
       CompletableFuture<Void> saving = inFlight.get(id);
       if (saving != null) {
-        saving.get(CLOSING_WAIT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        saving.get(left(deadline), java.util.concurrent.TimeUnit.NANOSECONDS);
       }
       return true;
     } catch (java.util.concurrent.TimeoutException e) {
-      return live == null || live.disposed;
+      return false;
     } catch (java.util.concurrent.ExecutionException e) {
-      return true;
+      return true; // the save failed and was logged; there is nothing more to wait for
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       return false;
     }
+  }
+
+  private static long left(long deadline) {
+    return Math.max(0, deadline - System.nanoTime());
   }
 
   /**
@@ -209,9 +219,29 @@ final class Snapshots {
    */
   void forgetToken(String token) {
     String id = Retained.id(token);
-    if (!awaitClosing(token, id)) {
-      return;
+    Tab live = engine.liveTab(token);
+    if (live != null) {
+      try {
+        live.ended.get(FORGET_WAIT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS);
+      } catch (java.util.concurrent.TimeoutException e) {
+        return; // still live: a duplicated tab asked, and the source keeps its checkpoint
+      } catch (java.util.concurrent.ExecutionException e) {
+        // ended anyway
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return;
+      }
     }
+    // A closing save still on its way is deleted once it lands, so it cannot come back later.
+    CompletableFuture<Void> saving = inFlight.get(id);
+    if (saving != null) {
+      saving.whenComplete((v, e) -> delete(id));
+    } else {
+      delete(id);
+    }
+  }
+
+  private void delete(String id) {
     try {
       storage.delete(id);
     } catch (RuntimeException e) {

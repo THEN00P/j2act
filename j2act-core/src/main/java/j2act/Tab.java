@@ -379,6 +379,22 @@ public final class Tab {
     storeDestructions.computeIfAbsent(key, k -> new java.util.concurrent.CopyOnWriteArrayList<>()).add(callback);
   }
 
+  /** Ends one store now, as its container asks; on the lane, so a caller elsewhere waits for it. */
+  void destroyStore(Object key) {
+    if (!lane.isCurrent()) {
+      inline(() -> {
+        destroyStore(key);
+        return null;
+      });
+      return;
+    }
+    StoreEntry entry = stores.remove(key);
+    List<Runnable> callbacks = storeDestructions.remove(key);
+    if (entry != null) {
+      endStore(entry, callbacks);
+    }
+  }
+
   Object removeStore(Object key) {
     storeDestructions.remove(key);
     StoreEntry entry = stores.remove(key);
@@ -422,25 +438,31 @@ public final class Tab {
   /** Lane-only. Ends this tab's stores: their effects' cleanups, then the container's destroy. */
   private void disposeStores() {
     for (Map.Entry<Object, StoreEntry> e : stores.entrySet()) {
-      StoreEntry entry = e.getValue();
-      if (entry.scope != null) {
-        entry.scope.dispose();
-      }
-      List<Runnable> callbacks = new ArrayList<>();
-      if (entry.destroy != null) {
-        callbacks.add(entry.destroy);
-      }
-      callbacks.addAll(storeDestructions.getOrDefault(e.getKey(), java.util.Collections.emptyList()));
-      for (Runnable callback : callbacks) {
-        try {
-          callback.run();
-        } catch (RuntimeException ex) {
-          engine.log(System.Logger.Level.WARNING, "destroying store " + entry.instance.getClass().getName() + " failed", ex);
-        }
-      }
+      endStore(e.getValue(), storeDestructions.get(e.getKey()));
     }
     stores.clear();
     storeDestructions.clear();
+  }
+
+  /** Lane-only. A store's effects' cleanups, then its own destroy and the callbacks registered for it. */
+  private void endStore(StoreEntry entry, List<Runnable> registered) {
+    if (entry.scope != null) {
+      entry.scope.dispose();
+    }
+    List<Runnable> callbacks = new ArrayList<>();
+    if (entry.destroy != null) {
+      callbacks.add(entry.destroy);
+    }
+    if (registered != null) {
+      callbacks.addAll(registered);
+    }
+    for (Runnable callback : callbacks) {
+      try {
+        callback.run();
+      } catch (RuntimeException ex) {
+        engine.log(System.Logger.Level.WARNING, "destroying store " + entry.instance.getClass().getName() + " failed", ex);
+      }
+    }
   }
 
   // ---- identity (ADR 0004, 0008)

@@ -46,6 +46,17 @@ public final class StoreScope {
     current(scope).onStoreDestroyed(key, callback);
   }
 
+  /**
+   * Ends the current tab's instance for this key now, as CDI's Instance.destroy() asks: its
+   * effects' cleanups, then its destroy and the callbacks registered for it. Nothing when there is none.
+   */
+  public static void destroy(Class<? extends Annotation> scope, Object key) {
+    Tab tab = owner(scope, false);
+    if (tab != null) {
+      tab.destroyStore(key);
+    }
+  }
+
   /** Forgets the current tab's instance for this key without destroying it; returns it, or null. */
   public static Object remove(Class<? extends Annotation> scope, Object key) {
     Tab tab = owner(scope, false);
