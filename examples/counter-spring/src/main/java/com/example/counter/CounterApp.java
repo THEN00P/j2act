@@ -42,7 +42,7 @@ public class CounterApp {
 
   /**
    * tools/retained-check.mjs starts the demo with --demo.idle-timeout=PT3S to see an evicted
-   * session restore, and --demo.auto-pause=PT1S to see a hidden tab pause and resume. With
+   * tab restore, and --demo.auto-pause=PT1S to see a hidden tab pause and resume. With
    * --demo.checkpoint-interval=PT1S, drafts also survive the process being killed.
    */
   @Bean

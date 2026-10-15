@@ -19,7 +19,7 @@ public final class UploadCtx {
     this.id = id;
   }
 
-  /** The session's identity. */
+  /** The tab's identity. */
   public AuthCtx auth() {
     return auth;
   }

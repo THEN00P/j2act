@@ -16,13 +16,13 @@ final class ComputedCell extends Cell implements Observer {
   private boolean stale = true;
   private final Set<Cell> deps = new HashSet<>();
 
-  ComputedCell(Session session, String address, Supplier<?> body) {
-    super(session, address);
+  ComputedCell(Tab tab, String address, Supplier<?> body) {
+    super(tab, address);
     this.body = body;
   }
 
   Object read() {
-    if (!session.lane.isCurrent()) {
+    if (!tab.lane.isCurrent()) {
       // A query loader reading a computed: evaluate directly so the underlying reads are recorded.
       if (Tracking.run() != null) {
         return body.get();

@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 
 import j2act.RetainedStateTest.CountingStorage;
 
-/** ADR 0026: createRetainedStore keeps a store's per-session value, keyed by its static field. */
+/** ADR 0026: createRetainedStore keeps a store's per-tab value, keyed by its static field. */
 class RetainedStoreTest {
 
   static final class Filters {

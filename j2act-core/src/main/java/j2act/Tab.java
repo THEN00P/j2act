@@ -16,13 +16,15 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * One browser session: its route, component tree, cells, handlers and query cache.
+ * The server side of one page load (ADR 0030), reached with tab() in a component: created when
+ * the page's HTML renders, kept across socket drops and reconnects, ended by unload, idle
+ * timeout or pause. A reload starts a new one. Internally: its route, component tree, cells, handlers and query cache.
  * Every mutation runs as a task on its lane; a task ends with a flush that re-renders
  * dirty components and sends one patch per dirty subtree (ADR 0001, 0003).
  */
-final class Session {
+public final class Tab {
 
-  private static final ThreadLocal<Session> CURRENT = new ThreadLocal<>();
+  private static final ThreadLocal<Tab> CURRENT = new ThreadLocal<>();
   private static final int MAX_INACTIVE = 256;
   private static final int MAX_REDIRECTS = 10;
   static final Object UNRESOLVED = new Object();
@@ -45,7 +47,7 @@ final class Session {
   final Set<QueryCell> inFlight = new HashSet<>();
   private final Map<String, InactiveQuery> inactive = new LinkedHashMap<>();
   private final Map<String, HandlerEntry> handlers = new HashMap<>();
-  /** Client modules mounted in this session and their calls in flight (ADR 0022). */
+  /** Client modules mounted in this tab and their calls in flight (ADR 0022). */
   final Clients clients = new Clients(this);
 
   /** Current URL; reads of pathParam/queryParam are tracked through it (ADR 0020). */
@@ -88,7 +90,7 @@ final class Session {
   private final Object settleLock = new Object();
   private long settleCount;
 
-  Session(J2Act engine, String id, String token, Exchange exchange, String url) {
+  Tab(J2Act engine, String id, String token, Exchange exchange, String url) {
     this.engine = engine;
     this.id = id;
     this.token = token;
@@ -104,14 +106,14 @@ final class Session {
     this.disconnectedAt = now;
   }
 
-  /** The session whose lane task or query run is executing on this thread, if any. */
-  static Session current() {
-    Session session = CURRENT.get();
-    if (session != null) {
-      return session;
+  /** The tab whose lane task or query run is executing on this thread, if any. */
+  static Tab current() {
+    Tab tab = CURRENT.get();
+    if (tab != null) {
+      return tab;
     }
     QueryRun run = Tracking.run();
-    return run == null ? null : run.session;
+    return run == null ? null : run.tab;
   }
 
   // ---- lane tasks
@@ -140,7 +142,7 @@ final class Session {
           }
         } catch (Throwable t) {
           engine.stats.failedTasks.incrementAndGet();
-          engine.log(System.Logger.Level.ERROR, "session task failed", t);
+          engine.log(System.Logger.Level.ERROR, "tab task failed", t);
         }
         if (afterFlush != null) {
           afterFlush.run();
@@ -159,7 +161,7 @@ final class Session {
     CompletableFuture<T> result = new CompletableFuture<>();
     lane.execute(() -> {
       if (disposed) {
-        result.completeExceptionally(new IllegalStateException("session disposed"));
+        result.completeExceptionally(new IllegalStateException("tab disposed"));
         return;
       }
       CURRENT.set(this);
@@ -234,17 +236,17 @@ final class Session {
    */
   volatile Map<String, String> restoring;
   /**
-   * Snapshot entries of retained stores, waiting for their first use in this session. Kept
+   * Snapshot entries of retained stores, waiting for their first use in this tab. Kept
    * across navigations, since a store outlives pages, and saved again if never used.
    */
   final Map<String, String> restoringStores = new java.util.concurrent.ConcurrentHashMap<>();
   /** This page load came with a snapshot that was restored; the page hears it in a meta tag. */
   boolean restored;
-  /** Lane-only. A retained value changed since the last snapshot; checkpoints save only such sessions. */
+  /** Lane-only. A retained value changed since the last snapshot; checkpoints save only such tabs. */
   boolean retainedDirty;
-  /** Lane-only. Storage holds a checkpoint of this live session, which bye deletes. */
+  /** Lane-only. Storage holds a checkpoint of this live tab, which bye deletes. */
   boolean stored;
-  /** This session's storage writes, in the order the lane took their snapshots, so an older one never lands last. */
+  /** This tab's storage writes, in the order the lane took their snapshots, so an older one never lands last. */
   java.util.concurrent.CompletableFuture<Void> storageWrites = java.util.concurrent.CompletableFuture.completedFuture(null);
 
   /** Before the first render. The entries of a restored snapshot, or null on a fresh page load. */
@@ -314,8 +316,24 @@ final class Session {
     }
   }
 
+  /** This tab's id, as the page's j2-tab meta tag carries it. Routing, not a secret. */
+  public String id() {
+    return id;
+  }
+
+  /**
+   * Asks this browser tab, and only this one, to pause (ADR 0026), as .NET's
+   * Circuit.RequestCircuitPauseAsync asks one circuit: the page runs its j2act.onPausing
+   * handlers, then pauses, saving its Retained State and freeing this tab.
+   * application().requestPause() asks every tab. Completes with false when the tab is not
+   * connected or already gone.
+   */
+  public java.util.concurrent.CompletionStage<Boolean> requestPause() {
+    return call(this::askToPause).handle((asked, error) -> error == null && asked);
+  }
+
   /** Lane-only. Asks the page to pause (ADR 0026); false when it is not connected, as in .NET. */
-  boolean requestPause() {
+  boolean askToPause() {
     if (disposed || connection == null) {
       return false;
     }
@@ -361,14 +379,14 @@ final class Session {
         engine.warnOnce("write " + key, "retained " + key + " could not be written to its snapshot (ADR 0026): " + e);
       }
     }
-    // A restored store this session never used keeps its value.
+    // A restored store this tab never used keeps its value.
     restoringStores.forEach(entries::putIfAbsent);
     return entries;
   }
 
   // ---- stores
 
-  /** This session's cell for a store, created on first use with the store's initial value. */
+  /** This tab's cell for a store, created on first use with the store's initial value. */
   ValueCell storeCell(Store<?> store) {
     return (ValueCell) cells.computeIfAbsent(store.address, address -> {
       ValueCell cell = new ValueCell(this, address, store.initial);
@@ -402,7 +420,7 @@ final class Session {
 
   // ---- identity (ADR 0004, 0008)
 
-  /** The session's identity, resolving it on first use. Safe from loader threads. */
+  /** The tab's identity, resolving it on first use. Safe from loader threads. */
   AuthCtx currentAuth() {
     Object value = authCell.peek();
     if (value != UNRESOLVED) {
@@ -914,7 +932,7 @@ final class Session {
       // Before any module loads, so client modules can import packages by bare name (ADR 0022).
       b.append(engine.importMap.html(nonce));
     }
-    b.append("<meta name=\"j2-session\" content=\"").append(id).append("\">");
+    b.append("<meta name=\"j2-tab\" content=\"").append(id).append("\">");
     b.append("<meta name=\"j2-token\" content=\"").append(token).append("\">");
     if (restored) {
       b.append("<meta name=\"j2-restored\" content=\"1\">");
@@ -1390,7 +1408,7 @@ final class Session {
       if (now - overflowWindowStart > OVERFLOW_WINDOW_MILLIS) {
         overflowWindowStart = now;
         overflowCount = 0;
-        engine.log(System.Logger.Level.WARNING, "session " + id + " is over its rate limit; dropping events", null);
+        engine.log(System.Logger.Level.WARNING, "tab " + id + " is over its rate limit; dropping events", null);
       }
       overflowCount++;
       return overflowCount > Math.max(50, eventBucket == null ? 0 : Math.min(eventBucket.limit.burst, 1000));
@@ -1401,7 +1419,7 @@ final class Session {
 
   private final List<java.nio.file.Path> ownedFiles = new ArrayList<>();
 
-  /** An upload stored without a target: deleted when the session ends. */
+  /** An upload stored without a target: deleted when the tab ends. */
   void ownFile(java.nio.file.Path file) {
     synchronized (ownedFiles) {
       if (!disposed) {

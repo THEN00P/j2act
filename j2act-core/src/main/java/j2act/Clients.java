@@ -14,7 +14,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
- * A session's client modules (ADR 0022): what an element with withClient renders, action
+ * A tab's client modules (ADR 0022): what an element with withClient renders, action
  * calls waiting for the patch or for their reply, and callbacks into Java. Lane-only.
  * Failures are loud: a rejected action nobody handles, a thrown mount and a missing
  * export are logged with their component.
@@ -23,7 +23,7 @@ final class Clients {
 
   static final long TIMEOUT_MILLIS = 30_000;
 
-  private final Session session;
+  private final Tab tab;
   private final Map<String, ClientCell> byId = new HashMap<>();
   private final Map<String, PendingCall> calls = new HashMap<>();
   private final List<String> outbox = new ArrayList<>();
@@ -31,8 +31,8 @@ final class Clients {
   private final Map<String, Scope> live = new HashMap<>();
   private long callSeq;
 
-  Clients(Session session) {
-    this.session = session;
+  Clients(Tab tab) {
+    this.tab = tab;
   }
 
   /** What an element carrying withClient renders. */
@@ -81,12 +81,12 @@ final class Clients {
     }
     cell.mountedEpoch = epoch;
     byId.put(cell.id, cell);
-    Binding binding = new Binding(cell.id, session.engine.modules.url(handle.type), Modules.exportName(handle.type));
-    binding.style = session.engine.modules.styleUrl(handle.type);
+    Binding binding = new Binding(cell.id, tab.engine.modules.url(handle.type), Modules.exportName(handle.type));
+    binding.style = tab.engine.modules.styleUrl(handle.type);
     if (mount == null) {
       return binding;
     }
-    String[] names = session.engine.modules.mountParams(mount.method);
+    String[] names = tab.engine.modules.mountParams(mount.method);
     Class<?>[] classes = mount.method.getParameterTypes();
     Type[] types = mount.method.getGenericParameterTypes();
     StringBuilder props = new StringBuilder("{");
@@ -104,7 +104,7 @@ final class Clients {
         props.append('}');
       } else {
         props.append(encode(value, classes[i], types[i],
-          handler -> session.registerHandler(scope, path + "/client:" + name, "callback", handler), null,
+          handler -> tab.registerHandler(scope, path + "/client:" + name, "callback", handler), null,
           handle.type.getSimpleName() + ".mount " + name));
       }
     }
@@ -121,7 +121,7 @@ final class Clients {
     Consumer<Object> then = binding.then;
     if (recorded instanceof WebPath.WebCall) {
       WebPath.WebCall web = (WebPath.WebCall) recorded;
-      String handlerId = session.registerHandler(scope, path, event, (Session.RawHandler) message ->
+      String handlerId = tab.registerHandler(scope, path, event, (Tab.RawHandler) message ->
         onBoundResult(message, "window call " + web.name, event, scope, then,
           json -> web.decoder.decode(Json.parse(json))));
       return new String[] {handlerId, "{\"window\":" + web.json + "}"};
@@ -130,9 +130,9 @@ final class Clients {
     ClientCell cell = call.handle.clientCell();
     String name = call.handle.type.getSimpleName() + "." + call.method.getName();
     Type valueType = ClientCall.valueType(call.method);
-    String handlerId = session.registerHandler(scope, path, event, (Session.RawHandler) message ->
+    String handlerId = tab.registerHandler(scope, path, event, (Tab.RawHandler) message ->
       onBoundResult(message, "client action " + name, event, scope, then,
-        json -> session.engine.json.read(json, valueType)));
+        json -> tab.engine.json.read(json, valueType)));
     StringBuilder json = new StringBuilder("{\"client\":");
     Json.string(cell.id, json);
     json.append(",\"action\":");
@@ -143,7 +143,7 @@ final class Clients {
     for (int i = 0; i < call.args.length; i++) {
       int index = i;
       json.append(i == 0 ? "" : ",").append(encode(call.args[i], classes[i], types[i],
-        handler -> session.registerHandler(scope, path + "/" + event + ":" + index, "callback", handler), null, name));
+        handler -> tab.registerHandler(scope, path + "/" + event + ":" + index, "callback", handler), null, name));
     }
     return new String[] {handlerId, json.append("]}").toString()};
   }
@@ -170,16 +170,16 @@ final class Clients {
     for (int i = 0; i < args.length; i++) {
       String key = cell.id + "." + method.getName() + "#" + i;
       json.append(i == 0 ? "" : ",").append(encode(args[i], classes[i], types[i],
-        handler -> session.registerActionHandler(cell.owner, key, handler),
+        handler -> tab.registerActionHandler(cell.owner, key, handler),
         component -> live(cell, key, component), name));
     }
     outbox.add(Json.object("type", "clientCall", "id", id, "client", cell.id, "action", method.getName(),
       "args", json.append(']').toString()));
     CompletableFuture<Object> future = new CompletableFuture<>();
     Function<String, Object> decode = method.getReturnType() == void.class ? result -> null
-      : result -> session.engine.json.read(result, ClientCall.valueType(method));
+      : result -> tab.engine.json.read(result, ClientCall.valueType(method));
     calls.put(id, new PendingCall(cell, cell.owner, "client action " + name, decode, false, future));
-    session.engine.later(session, TIMEOUT_MILLIS, () -> settle(id, null,
+    tab.engine.later(tab, TIMEOUT_MILLIS, () -> settle(id, null,
       new ClientException("TimeoutError", name + " did not settle within 30 seconds")));
     return method.getReturnType() == void.class ? null : future;
   }
@@ -191,19 +191,19 @@ final class Clients {
   static CompletableFuture<Object> callWindow(ComponentTag owner, String name, String json,
                                               WebPath.Decoder<Object> decoder) {
     Scope scope = owner.scope;
-    Session session = scope != null ? scope.session : Session.current();
-    if (session == null) {
+    Tab tab = scope != null ? scope.tab : Tab.current();
+    if (tab == null) {
       throw new IllegalStateException(name + " needs a mounted component (ADR 0022)");
     }
     if (scope != null && scope.rendering) {
       throw new IllegalStateException(name + " runs in the browser; call it from a handler or effect, or bind it"
         + " with onClick, not in render() (ADR 0022)");
     }
-    if (session.lane.isCurrent()) {
-      return session.clients.window(scope, name, json, decoder);
+    if (tab.lane.isCurrent()) {
+      return tab.clients.window(scope, name, json, decoder);
     }
     CompletableFuture<Object> relay = new CompletableFuture<>();
-    session.post(() -> session.clients.window(scope, name, json, decoder).whenComplete((value, error) -> {
+    tab.post(() -> tab.clients.window(scope, name, json, decoder).whenComplete((value, error) -> {
       if (error != null) {
         relay.completeExceptionally(error);
       } else {
@@ -219,7 +219,7 @@ final class Clients {
     CompletableFuture<Object> future = new CompletableFuture<>();
     calls.put(id, new PendingCall(null, scope, "window call " + name, text -> decoder.decode(Json.parse(text)), true,
       future));
-    session.engine.later(session, TIMEOUT_MILLIS, () -> settle(id, null,
+    tab.engine.later(tab, TIMEOUT_MILLIS, () -> settle(id, null,
       new BrowserException("TimeoutError", name + " did not settle within 30 seconds")));
     return future;
   }
@@ -240,12 +240,12 @@ final class Clients {
       previous.dispose();
     }
     live.values().removeIf(scope -> scope.disposed);
-    Scope scope = new Scope(session, owner, owner.address + "/action:" + key);
+    Scope scope = new Scope(tab, owner, owner.address + "/action:" + key);
     scope.detached = true;
     owner.actionScopes.put(key, scope);
     live.put(scope.anchor, scope);
     scope.bind(component);
-    return session.renderDetached(scope);
+    return tab.renderDetached(scope);
   }
 
   /** The browser lost live content an action was given: stop patching that anchor, and say so. */
@@ -263,7 +263,7 @@ final class Clients {
   /** Sends the calls made during this update, after its patches. */
   void sendOutbox() {
     for (String message : outbox) {
-      session.send(message);
+      tab.send(message);
     }
     outbox.clear();
   }
@@ -333,7 +333,7 @@ final class Clients {
 
   void dispose() {
     for (String id : new ArrayList<>(calls.keySet())) {
-      settle(id, null, new ClientException("AbortError", "the session ended"));
+      settle(id, null, new ClientException("AbortError", "the tab ended"));
     }
     outbox.clear();
     byId.clear();
@@ -342,7 +342,7 @@ final class Clients {
   // ---- values
 
   /** Callbacks and upload targets become ids the browser calls back with; the rest is the host's JSON. */
-  private String encode(Object value, Class<?> declared, Type generic, Function<Session.RawHandler, String> register,
+  private String encode(Object value, Class<?> declared, Type generic, Function<Tab.RawHandler, String> register,
                         Function<ComponentTag, String> live, String where) {
     if (value == null) {
       return "null";
@@ -380,7 +380,7 @@ final class Clients {
       }
       return "{\"$html\":" + quote(html.toString()) + "}";
     }
-    return session.engine.json.write(value);
+    return tab.engine.json.write(value);
   }
 
   /** Runnable, Consumer and BiConsumer parameters arrive in JS as functions (ADR 0022). */
@@ -403,7 +403,7 @@ final class Clients {
     Object[] values = new Object[parameters.length];
     for (int i = 0; i < parameters.length; i++) {
       String arg = i < args.size() ? JsonBinding.basic().write(args.get(i)) : "null";
-      values[i] = session.engine.json.read(arg, parameters[i]);
+      values[i] = tab.engine.json.read(arg, parameters[i]);
     }
     if (callback instanceof Runnable) {
       ((Runnable) callback).run();
@@ -433,7 +433,7 @@ final class Clients {
   }
 
   private void warn(String message) {
-    session.engine.log(System.Logger.Level.WARNING, message + " (ADR 0022)", null);
+    tab.engine.log(System.Logger.Level.WARNING, message + " (ADR 0022)", null);
   }
 
   private static final class PendingCall {

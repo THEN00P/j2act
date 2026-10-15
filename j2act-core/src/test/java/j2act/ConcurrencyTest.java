@@ -18,7 +18,7 @@ import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
 
-/** ADR 0001 and 0014: one lane per session, foreign writes queued onto it, context never leaks. */
+/** ADR 0001 and 0014: one lane per tab, foreign writes queued onto it, context never leaks. */
 class ConcurrencyTest {
 
   /** Stands in for the app's scheduler, JMS or Debezium listener. */
@@ -83,7 +83,7 @@ class ConcurrencyTest {
   }
 
   @Test
-  void effectCleanupUnsubscribesWhenTheSessionIsDiscarded() {
+  void effectCleanupUnsubscribesWhenTheTabIsDiscarded() {
     Bus bus = new Bus();
     try (Harness h = new Harness(() -> new Feed(bus))) {
       h.load();
@@ -91,7 +91,7 @@ class ConcurrencyTest {
       assertEquals(1, bus.listeners.size());
       h.engine.onMessage(h.conn, Json.object("type", "bye"));
       Harness.eventually(() -> bus.listeners.isEmpty(), "effect cleanup");
-      assertEquals(0, h.engine.sessionCount());
+      assertEquals(0, h.engine.tabCount());
       bus.emit("after dispose");
     }
   }
@@ -114,7 +114,7 @@ class ConcurrencyTest {
       .build()) {
       assertEquals(200, engine.serve("/").status());
       AtomicReference<Object> leaked = new AtomicReference<>("unset");
-      single.submit(() -> leaked.set(Session.current() != null ? Session.current() : Tracking.observer())).get();
+      single.submit(() -> leaked.set(Tab.current() != null ? Tab.current() : Tracking.observer())).get();
       assertNull(leaked.get());
     } finally {
       single.shutdownNow();
@@ -122,12 +122,12 @@ class ConcurrencyTest {
   }
 
   @Test
-  void writesToADisposedSessionAreInert() {
+  void writesToADisposedTabAreInert() {
     try (Harness h = new Harness(Holder::new)) {
       h.load();
       h.connect();
       h.engine.onMessage(h.conn, Json.object("type", "bye"));
-      Harness.eventually(() -> h.engine.sessionCount() == 0, "session discarded");
+      Harness.eventually(() -> h.engine.tabCount() == 0, "tab discarded");
       Holder.handle.get().set(99);
       Holder.handle.get().update(x -> x + 1);
     }

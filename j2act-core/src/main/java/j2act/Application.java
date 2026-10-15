@@ -15,8 +15,8 @@ public final class Application {
 
   /**
    * Asks every connected page to pause (ADR 0026), such as before a deploy: each runs its
-   * j2act.onPausing handlers, then pauses, saving its Retained State and freeing its session.
-   * Returns how many pages were asked. A component's pauseTab() asks only its own tab.
+   * j2act.onPausing handlers, then pauses, saving its Retained State and freeing its tab.
+   * Returns how many pages were asked. A component's tab().requestPause() asks only its own.
    */
   public int requestPause() {
     return engine.requestPause();

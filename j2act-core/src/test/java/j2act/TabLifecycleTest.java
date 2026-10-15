@@ -10,14 +10,14 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /** ADR 0010 and 0013: grace window, token check, handler validity. */
-class SessionLifecycleTest {
+class TabLifecycleTest {
 
   @Test
-  void unattachedSessionIsDiscardedAfterTheGraceWindow() {
+  void unattachedTabIsDiscardedAfterTheGraceWindow() {
     try (Harness h = new Harness(IdentityTest.TwoCounters::new, b -> b.withReconnectGrace(Duration.ofMillis(100)))) {
       h.load();
-      assertEquals(1, h.engine.sessionCount());
-      Harness.eventually(() -> h.engine.sessionCount() == 0, "grace expiry");
+      assertEquals(1, h.engine.tabCount());
+      Harness.eventually(() -> h.engine.tabCount() == 0, "grace expiry");
     }
   }
 
@@ -30,9 +30,9 @@ class SessionLifecycleTest {
       h.engine.onClose(h.conn);
 
       Harness.FakeConnection second = new Harness.FakeConnection();
-      h.engine.onMessage(second, Json.object("type", "hello", "session", h.sid, "token", h.token));
+      h.engine.onMessage(second, Json.object("type", "hello", "tab", h.sid, "token", h.token));
       second.await(0, m -> "ready".equals(m.get("type")));
-      assertEquals(1, h.engine.sessionCount());
+      assertEquals(1, h.engine.tabCount());
     }
   }
 
@@ -40,7 +40,7 @@ class SessionLifecycleTest {
   void wrongTokenIsToldToRemount() {
     try (Harness h = new Harness(IdentityTest.TwoCounters::new)) {
       h.load();
-      h.engine.onMessage(h.conn, Json.object("type", "hello", "session", h.sid, "token", "forged"));
+      h.engine.onMessage(h.conn, Json.object("type", "hello", "tab", h.sid, "token", "forged"));
       h.conn.await(0, m -> "expired".equals(m.get("type")));
       assertTrue(h.conn.closed);
     }

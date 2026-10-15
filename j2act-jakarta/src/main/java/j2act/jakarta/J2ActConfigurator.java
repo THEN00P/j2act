@@ -12,8 +12,8 @@ import j2act.J2Act;
 
 /**
  * Supplies endpoints wired to the running J2Act and checks Origin against Host
- * (ADR 0008). The per-page session token already stops a foreign page from driving
- * a session, since it cannot read the token; the Origin check is defense in depth.
+ * (ADR 0008). The per-page tab token already stops a foreign page from driving
+ * a tab, since it cannot read the token; the Origin check is defense in depth.
  */
 final class J2ActConfigurator extends ServerEndpointConfig.Configurator {
 

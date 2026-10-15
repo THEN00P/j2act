@@ -4,13 +4,13 @@ import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 /**
- * Server-side reactive value owned by one session. get() inside render() subscribes
- * the component; set() from any thread is queued onto the session's lane (ADR 0014).
+ * Server-side reactive value owned by one tab. get() inside render() subscribes
+ * the component; set() from any thread is queued onto the tab's lane (ADR 0014).
  */
 public final class State<T> extends Primitive implements Supplier<T> {
 
   private final T initial;
-  /** Retained State (ADR 0026): its value goes into the session's snapshot. */
+  /** Retained State (ADR 0026): its value goes into the tab's snapshot. */
   final boolean retained;
   /** The explicit snapshot name, or null to use the field's name. */
   final String retainedName;
@@ -25,13 +25,13 @@ public final class State<T> extends Primitive implements Supplier<T> {
     this.retainedName = retainedName;
   }
 
-  /** Declares shared state with a per-session copy; see {@link Store}. Usually a static field. */
+  /** Declares shared state with a per-tab copy; see {@link Store}. Usually a static field. */
   public static <T> Store<T> createStore(T initial) {
     return new Store<>(initial, null);
   }
 
   /**
-   * A Store whose per-session value outlives the in-memory session for the page load (ADR
+   * A Store whose per-tab value outlives the in-memory tab for the page load (ADR
    * 0026), as .NET persists a scoped service registered with RegisterPersistentService. Keyed
    * by the declaring class and the static field holding it, so declare it as a static field.
    */
@@ -54,8 +54,8 @@ public final class State<T> extends Primitive implements Supplier<T> {
     ((ValueCell) requireCell()).update(fn);
   }
 
-  @Override Cell createCell(Session session, String address) {
-    return new ValueCell(session, address, initial);
+  @Override Cell createCell(Tab tab, String address) {
+    return new ValueCell(tab, address, initial);
   }
 
   T initial() {

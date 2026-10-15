@@ -8,7 +8,7 @@ import j2act.html.tags.DivTag;
 
 /**
  * upload() (ADR 0006): the file travels in resumable chunks, limits hold on the server,
- * and with no withTarget the stored file belongs to the session and goes away with it.
+ * and with no withTarget the stored file belongs to the tab and goes away with it.
  */
 public final class Attachment extends ComponentTag {
 

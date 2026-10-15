@@ -9,7 +9,7 @@ abstract class Primitive {
 
   Cell cell;
 
-  abstract Cell createCell(Session session, String address);
+  abstract Cell createCell(Tab tab, String address);
 
   /** Whether an existing cell at this index is of this primitive's kind. */
   abstract boolean accepts(Cell cell);

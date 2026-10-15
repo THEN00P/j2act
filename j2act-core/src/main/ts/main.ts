@@ -21,7 +21,7 @@ import { runWeb } from "./web.ts";
 type Handlers = { [T in ServerMessage["type"]]: (m: Extract<ServerMessage, { type: T }>) => void };
 
 function start(): void {
-  const sid = meta(document, "j2-session");
+  const sid = meta(document, "j2-tab");
   const wsPath = meta(document, "j2-ws");
   const base = meta(document, "j2-base") || "";
   if (!sid || !wsPath) {
@@ -94,7 +94,7 @@ function start(): void {
     (handlers[m.type] as ((m: ServerMessage) => void) | undefined)?.(m);
   }
 
-  // ---- session lifetime (ADR 0010)
+  // ---- tab lifetime (ADR 0010)
 
   function remount(): void {
     if (remounting) {
@@ -108,9 +108,9 @@ function start(): void {
       .then((r) => r.text())
       .then((html) => {
         const doc = new DOMParser().parseFromString(html, "text/html");
-        const sid = meta(doc, "j2-session");
+        const sid = meta(doc, "j2-tab");
         const tok = meta(doc, "j2-token");
-        document.querySelector<HTMLMetaElement>('meta[name="j2-session"]')!.content = sid!;
+        document.querySelector<HTMLMetaElement>('meta[name="j2-tab"]')!.content = sid!;
         document.querySelector<HTMLMetaElement>('meta[name="j2-token"]')!.content = tok!;
         document.documentElement.setAttribute("data-j2-scope", doc.documentElement.getAttribute("data-j2-scope")!);
         document.title = doc.title;

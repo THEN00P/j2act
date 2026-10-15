@@ -8,7 +8,7 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Resolved identity of a session: principal, roles and claims. Produced by the host's
+ * Resolved identity of a tab: principal, roles and claims. Produced by the host's
  * identity function (ADR 0004); j2act never looks up users itself. Immutable, with
  * value equality so a re-resolved identity that did not change is not a change.
  */

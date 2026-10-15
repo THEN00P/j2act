@@ -20,8 +20,8 @@ public final class Computed<T> extends Primitive implements Supplier<T> {
     return cell == null ? body.get() : (T) ((ComputedCell) cell).read();
   }
 
-  @Override Cell createCell(Session session, String address) {
-    return new ComputedCell(session, address, body);
+  @Override Cell createCell(Tab tab, String address) {
+    return new ComputedCell(tab, address, body);
   }
 
   @Override boolean accepts(Cell cell) {

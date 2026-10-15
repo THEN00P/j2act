@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-c08533c5096efcba799430ff0141283dc3ab82ed05fa3e5f3c3010ac92d14866 */
+* sources: sha256-864e938e0a70195fa574e8cc6540e450fbd98b7f3fffb312d5e4a37f9a1e1390 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -332,10 +332,10 @@
 	//#endregion
 	//#region src/main/ts/connection.ts
 	/**
-	* The page's socket (ADR 0010): says hello with the session id and token, queues messages until
+	* The page's socket (ADR 0010): says hello with the tab id and token, queues messages until
 	* the server answers ready, and reconnects with backoff unless the page is leaving or paused.
 	*/
-	function createConnection(url, session, token, onMessage, reconnects) {
+	function createConnection(url, tab, token, onMessage, reconnects) {
 		let ready = false;
 		let ws = null;
 		let queue = [];
@@ -346,7 +346,7 @@
 			socket.onopen = () => {
 				socket.send(JSON.stringify({
 					type: "hello",
-					session,
+					tab,
 					token
 				}));
 			};
@@ -361,7 +361,7 @@
 		}
 		return {
 			connect,
-			/** The session's token, which the page's HTTP requests carry too. */
+			/** The tab's token, which the page's HTTP requests carry too. */
 			get token() {
 				return token;
 			},
@@ -394,9 +394,9 @@
 					ws?.close();
 				} catch {}
 			},
-			/** A new session: what queued for the old one is meaningless to it. */
-			restart(newSession, newToken) {
-				session = newSession;
+			/** A new server-side tab: what queued for the old one is meaningless to it. */
+			restart(newTab, newToken) {
+				tab = newTab;
 				token = newToken;
 				retry = 0;
 				queue = [];
@@ -1655,7 +1655,7 @@
 			head,
 			body,
 			/**
-			* Morphs the component at anchor; false when it is not in the document. The session root may
+			* Morphs the component at anchor; false when it is not in the document. The tab root may
 			* be a new component after a navigation, with a new anchor, so it replaces head and body.
 			*/
 			patch(anchor, html, isRoot) {
@@ -1828,7 +1828,7 @@
 				saved.delete(swap);
 				if (before !== void 0 && swap.querySelector(":scope > [data-j2-pending-live]")) swap.innerHTML = before;
 			},
-			/** A new session will never ack these. */
+			/** A new server-side tab will never ack these. */
 			clear() {
 				inFlight.clear();
 				blocked.clear();
@@ -1857,7 +1857,7 @@
 				handlers = handlers.filter((h) => h !== handler);
 			};
 		}
-		/** Resolves true once the server saved the page's Retained State and let its session go. */
+		/** Resolves true once the server saved the page's Retained State and let its tab go. */
 		function pause() {
 			if (current === "paused") return Promise.resolve(true);
 			return new Promise((resolve) => {
@@ -1866,7 +1866,7 @@
 				else byHiding = false;
 			});
 		}
-		/** Resolves once the page runs again on a new session: true when its Retained State came back, or it had none. */
+		/** Resolves once the page runs again on a new server-side tab: true when its Retained State came back, or it had none. */
 		function resume() {
 			if (current === "deferring") {
 				cancel("resumed");
@@ -1882,7 +1882,7 @@
 				options.remount();
 			});
 		}
-		/** The server let the session go; saved: it had Retained State to keep. */
+		/** The server let the tab go; saved: it had Retained State to keep. */
 		function paused(saved) {
 			withState = saved;
 			current = "paused";
@@ -1977,12 +1977,12 @@
 				if (current === "running") begin(false);
 			},
 			/**
-			* The session is gone. Evicted while a pause was on its way, a snapshot may be saved all the
+			* The server-side tab is gone. Evicted while a pause was on its way, a snapshot may be saved all the
 			* same, so the page counts as paused. Returns whether the page should remount instead.
 			*/
 			expired() {
 				if (current === "pausing" || current === "deferring") {
-					stopDeferral("the session ended");
+					stopDeferral("the server-side tab ended");
 					paused(true);
 					return false;
 				}
@@ -1999,7 +1999,7 @@
 				if (document.hidden) hiddenTimer = setTimeout(autoPause, RETRY_MS);
 			},
 			/**
-			* The page runs on its new session. As .NET's resumeCircuit(): false when the page had state to
+			* The page runs on its new server-side tab. As .NET's resumeCircuit(): false when the page had state to
 			* keep and got none back, as when its snapshot expired, was used already or belongs to someone
 			* else. The page runs either way.
 			*/
@@ -2126,7 +2126,7 @@
 	//#endregion
 	//#region src/main/ts/main.ts
 	function start() {
-		const sid = meta(document, "j2-session");
+		const sid = meta(document, "j2-tab");
 		const wsPath = meta(document, "j2-ws");
 		const base = meta(document, "j2-base") || "";
 		if (!sid || !wsPath) return;
@@ -2199,9 +2199,9 @@
 				headers: tok ? { "X-J2-Restore": tok } : {}
 			}).then((r) => r.text()).then((html) => {
 				const doc = new DOMParser().parseFromString(html, "text/html");
-				const sid = meta(doc, "j2-session");
+				const sid = meta(doc, "j2-tab");
 				const tok = meta(doc, "j2-token");
-				document.querySelector("meta[name=\"j2-session\"]").content = sid;
+				document.querySelector("meta[name=\"j2-tab\"]").content = sid;
 				document.querySelector("meta[name=\"j2-token\"]").content = tok;
 				document.documentElement.setAttribute("data-j2-scope", doc.documentElement.getAttribute("data-j2-scope"));
 				document.title = doc.title;

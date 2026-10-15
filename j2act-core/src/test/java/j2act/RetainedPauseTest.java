@@ -32,7 +32,7 @@ class RetainedPauseTest {
   }
 
   @Test
-  void aPauseSavesTheSnapshotFreesTheSessionAndResumeRestoresIt() {
+  void aPauseSavesTheSnapshotFreesTheTabAndResumeRestoresIt() {
     CountingStorage storage = new CountingStorage();
     try (Harness h = harness(Form::new, storage)) {
       h.load();
@@ -43,7 +43,7 @@ class RetainedPauseTest {
       assertEquals("paused", pause(h, false).get("type"));
       assertTrue(storage.has(old), "saved before the client hears paused");
       assertTrue(h.conn.closed);
-      Harness.eventually(() -> h.engine.sessionCount() == 0, "the session is freed");
+      Harness.eventually(() -> h.engine.tabCount() == 0, "the tab is freed");
 
       String html = h.load("/", remount(old));
       assertTrue(html.contains("name=Ada;"), html);
@@ -79,7 +79,7 @@ class RetainedPauseTest {
       h.load();
       h.connect();
       assertEquals("paused", pause(h, false).get("type"));
-      Harness.eventually(() -> h.engine.sessionCount() == 0, "the session is freed");
+      Harness.eventually(() -> h.engine.tabCount() == 0, "the tab is freed");
       assertEquals(0, storage.saves.get());
     }
   }
@@ -108,7 +108,7 @@ class RetainedPauseTest {
       String old = h.token;
       int from = h.conn.size();
       h.send("type", "pause");
-      Harness.eventually(() -> h.engine.sessionCount() == 0, "the pause started");
+      Harness.eventually(() -> h.engine.tabCount() == 0, "the pause started");
       h.send("type", "event", "handler", Harness.handlerOn(h.html, "change", "age"), "value", "7", "id", "99");
       Thread.sleep(100);
       assertFalse(h.conn.since(from, m -> "expired".equals(m.get("type"))).stream().findAny().isPresent(),
@@ -131,7 +131,7 @@ class RetainedPauseTest {
       h.send("type", "pause");
       storage.release.countDown();
       h.conn.await(from, m -> "paused".equals(m.get("type")));
-      Harness.eventually(() -> h.engine.sessionCount() == 0, "the session is freed");
+      Harness.eventually(() -> h.engine.tabCount() == 0, "the tab is freed");
       assertEquals(1, storage.saves.get());
     }
   }
@@ -159,7 +159,7 @@ class RetainedPauseTest {
       h.conn.await(from, m -> "download".equals(m.get("type")));
 
       assertEquals("pauseRefused", pause(h, true).get("type"));
-      assertEquals(1, h.engine.sessionCount(), "the session goes on");
+      assertEquals(1, h.engine.tabCount(), "the tab goes on");
       assertEquals(0, storage.saves.get());
 
       assertEquals("paused", pause(h, false).get("type"));
@@ -289,7 +289,7 @@ class RetainedPauseTest {
       h.click(Harness.clickOn(h.html, "ask"));
       h.conn.await(from, m -> "pauseRequested".equals(m.get("type")));
       assertEquals(1, Asking.asked, "application().requestPause() asked the one connected page");
-      assertEquals(1, h.engine.sessionCount(), "asking does not pause: the page does, after its onPausing handlers");
+      assertEquals(1, h.engine.tabCount(), "asking does not pause: the page does, after its onPausing handlers");
       assertEquals(0, storage.saves.get());
       assertEquals("paused", pause(h, false).get("type"));
     }
@@ -304,12 +304,12 @@ class RetainedPauseTest {
       mounted = this;
       return T.page("tab", T.div(
         T.input().withId("name").onChange(e -> name.set(e.value())),
-        T.button("pause tab").onClick(e -> pauseTab().thenAccept(a -> asked = a))));
+        T.button("pause tab").onClick(e -> tab().requestPause().thenAccept(a -> asked = a))));
     }
   }
 
   @Test
-  void pauseTabAsksOnlyItsOwnTab() {
+  void requestPauseOnATabAsksOnlyThatTab() {
     CountingStorage storage = new CountingStorage();
     TabPausing.asked = null;
     try (Harness h = harness(TabPausing::new, storage)) {
@@ -317,7 +317,7 @@ class RetainedPauseTest {
       String otherHtml = h.engine.serve("/", Exchange.empty()).html();
       Harness.FakeConnection other = new Harness.FakeConnection();
       h.engine.onMessage(other, Json.object("type", "hello",
-        "session", Harness.find(otherHtml, "name=\"j2-session\" content=\"([^\"]+)\""),
+        "tab", Harness.find(otherHtml, "name=\"j2-tab\" content=\"([^\"]+)\""),
         "token", Harness.find(otherHtml, "name=\"j2-token\" content=\"([^\"]+)\"")));
       other.await(0, m -> "ready".equals(m.get("type")));
       h.load();
@@ -326,17 +326,17 @@ class RetainedPauseTest {
       int from = h.conn.size();
       h.click(Harness.clickOn(h.html, "pause tab"));
       h.conn.await(from, m -> "pauseRequested".equals(m.get("type")));
-      Harness.eventually(() -> Boolean.TRUE.equals(TabPausing.asked), "pauseTab() completes with true");
+      Harness.eventually(() -> Boolean.TRUE.equals(TabPausing.asked), "tab().requestPause() completes with true");
       assertFalse(other.since(0, m -> "pauseRequested".equals(m.get("type"))).stream().findAny().isPresent(), "only this tab");
 
       assertEquals("paused", pause(h, false).get("type"));
-      Harness.eventually(() -> h.engine.sessionCount() == 1, "the tab's session is freed, the other goes on");
-      assertThrows(IllegalStateException.class, first::pauseTab, "a component whose tab is gone is unmounted, as for navigate()");
+      Harness.eventually(() -> h.engine.tabCount() == 1, "that tab is freed, the other goes on");
+      assertThrows(IllegalStateException.class, first::tab, "a component whose tab is gone is unmounted, as for navigate()");
     }
   }
 
   @Test
-  void applicationNeedsAMountedComponentOrASession() {
+  void applicationNeedsAMountedComponentOrATab() {
     Asking unmounted = new Asking();
     assertThrows(IllegalStateException.class, unmounted::application);
   }
@@ -350,7 +350,7 @@ class RetainedPauseTest {
   }
 
   @Test
-  void closingSavesEverySessionWhenAskedAndClosesItsSocketWithoutAWord() {
+  void closingSavesEveryTabWhenAskedAndClosesItsSocketWithoutAWord() {
     CountingStorage storage = new CountingStorage();
     Harness h = harness(Form::new, storage, J2Act.Builder::withSaveOnShutdown);
     h.load();

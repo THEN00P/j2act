@@ -18,7 +18,7 @@ final class UploadSink {
   static final int MAX_CHUNK = 1024 * 1024;
 
   final String token;
-  final Session session;
+  final Tab tab;
   private final MutationCell cell;
   private final Upload run;
   private final UploadFile file;
@@ -29,15 +29,15 @@ final class UploadSink {
   private boolean closed;
   volatile long lastChunkAt;
 
-  UploadSink(String token, Session session, MutationCell cell, Upload run, UploadFile file, long seq, Path temp) {
+  UploadSink(String token, Tab tab, MutationCell cell, Upload run, UploadFile file, long seq, Path temp) {
     this.token = token;
-    this.session = session;
+    this.tab = tab;
     this.cell = cell;
     this.run = run;
     this.file = file;
     this.seq = seq;
     this.temp = temp;
-    this.lastChunkAt = session.engine.clock.millis();
+    this.lastChunkAt = tab.engine.clock.millis();
   }
 
   /** Appends one chunk that starts at {@code offset}; a mismatch answers 409 with the offset to resume from. */
@@ -65,7 +65,7 @@ final class UploadSink {
     } catch (IOException e) {
       // A dropped connection keeps what reached the disk; the client resumes from here.
       received += written;
-      lastChunkAt = session.engine.clock.millis();
+      lastChunkAt = tab.engine.clock.millis();
       return ChunkResult.offset(409, received, false);
     }
     if (overflow) {
@@ -73,11 +73,11 @@ final class UploadSink {
       return ChunkResult.error(413, "too many bytes");
     }
     received += written;
-    lastChunkAt = session.engine.clock.millis();
+    lastChunkAt = tab.engine.clock.millis();
     int now = file.size() == 0 ? 100 : (int) (received * 100 / file.size());
     if (now != percent && received < file.size()) {
       percent = now;
-      session.post(() -> cell.progress(seq, now));
+      tab.post(() -> cell.progress(seq, now));
     }
     if (received < file.size()) {
       return ChunkResult.offset(200, received, false);
@@ -88,12 +88,12 @@ final class UploadSink {
   /** Moves the complete file into place under the naming function's name. */
   private ChunkResult store() {
     closed = true;
-    session.engine.uploads.remove(token);
+    tab.engine.uploads.remove(token);
     try {
       String original = Uploads.sanitize(file.name());
-      UploadCtx ctx = new UploadCtx(session.currentAuth(), Instant.ofEpochMilli(session.engine.clock.millis()),
-        session.engine.newSecret(9));
-      Path dir = (run.target != null ? run.target : session.engine.uploadDir().resolve("done")).toAbsolutePath().normalize();
+      UploadCtx ctx = new UploadCtx(tab.currentAuth(), Instant.ofEpochMilli(tab.engine.clock.millis()),
+        tab.engine.newSecret(9));
+      Path dir = (run.target != null ? run.target : tab.engine.uploadDir().resolve("done")).toAbsolutePath().normalize();
       Path dest = dir.resolve(run.naming.apply(original, ctx)).normalize();
       if (!dest.startsWith(dir) || dest.equals(dir)) {
         throw new SecurityException("upload name escapes the target directory: " + dest);
@@ -101,15 +101,15 @@ final class UploadSink {
       Files.createDirectories(dest.getParent());
       Files.move(temp, dest);
       if (run.target == null) {
-        session.ownFile(dest);
+        tab.ownFile(dest);
       }
       UploadRef ref = new UploadRef(dest, original, received, contentType());
-      session.post(() -> cell.finish(run, file, seq, ref, null));
+      tab.post(() -> cell.finish(run, file, seq, ref, null));
       return ChunkResult.offset(200, received, true);
     } catch (Exception e) {
       deleteTemp();
       Exception error = e;
-      session.post(() -> cell.finish(run, file, seq, null, error));
+      tab.post(() -> cell.finish(run, file, seq, null, error));
       return ChunkResult.error(500, "upload could not be stored");
     }
   }
@@ -125,15 +125,15 @@ final class UploadSink {
       return;
     }
     closed = true;
-    session.engine.uploads.remove(token);
+    tab.engine.uploads.remove(token);
     deleteTemp();
-    session.post(() -> cell.finish(run, file, seq, null, error));
+    tab.post(() -> cell.finish(run, file, seq, null, error));
   }
 
-  /** Drops the partial file without an outcome, when the session itself is gone. */
+  /** Drops the partial file without an outcome, when the tab itself is gone. */
   synchronized void discard() {
     closed = true;
-    session.engine.uploads.remove(token);
+    tab.engine.uploads.remove(token);
     deleteTemp();
   }
 
@@ -141,7 +141,7 @@ final class UploadSink {
     try {
       Files.deleteIfExists(temp);
     } catch (IOException e) {
-      session.engine.log(System.Logger.Level.WARNING, "could not delete upload temp file " + temp, e);
+      tab.engine.log(System.Logger.Level.WARNING, "could not delete upload temp file " + temp, e);
     }
   }
 }

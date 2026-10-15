@@ -11,15 +11,15 @@ import java.util.Set;
  */
 abstract class Cell {
 
-  final Session session;
+  final Tab tab;
   final String address;
   final Set<Observer> observers = new LinkedHashSet<>();
   volatile boolean disposed;
-  /** The scope whose slot created this cell, or null for session-level cells. */
+  /** The scope whose slot created this cell, or null for tab-level cells. */
   Scope owner;
 
-  Cell(Session session, String address) {
-    this.session = session;
+  Cell(Tab tab, String address) {
+    this.tab = tab;
     this.address = address;
   }
 
@@ -28,7 +28,7 @@ abstract class Cell {
 
   /** Records a read of {@code seen}: a graph edge on the lane, a read-set entry inside a query run. */
   final void onRead(Object seen) {
-    if (session.lane.isCurrent()) {
+    if (tab.lane.isCurrent()) {
       Observer observer = Tracking.observer();
       if (observer != null && !disposed) {
         observers.add(observer);
@@ -37,11 +37,11 @@ abstract class Cell {
       return;
     }
     QueryRun run = Tracking.run();
-    if (run != null && run.session == session) {
+    if (run != null && run.tab == tab) {
       run.record(this, seen);
       return;
     }
-    session.warnForeignRead(address);
+    tab.warnForeignRead(address);
   }
 
   /** Lane-only. Removes a reader; a cell nobody reads any more may let go of what it observes. */

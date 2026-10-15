@@ -10,9 +10,9 @@ import j2act.Store;
 import j2act.html.tags.DivTag;
 
 /**
- * Retained State (ADR 0026): the draft outlives the session for this page load, such as a
+ * Retained State (ADR 0026): the draft outlives the in-memory tab for this page load, such as a
  * laptop lid closed past the grace window, a pause or a restart, while a reload still clears it.
- * So does the signer, kept in a retained store that any page of the session could read.
+ * So does the signer, kept in a retained store that any page of the tab could read.
  */
 public final class DraftNote extends ComponentTag {
 
@@ -52,7 +52,7 @@ public final class DraftNote extends ComponentTag {
       p("Signer: " + (signer.get().isEmpty() ? "none" : signer.get())).withId("signer-echo"),
       div().withId("pause-controls").withClient(pauseControls.mount()),
       // The server can ask too: this tab, or every tab as before a deploy. Each then pauses as if Pause was clicked.
-      button("Pause this tab from the server").withId("pause-tab").onClick(e -> pauseTab()),
+      button("Pause this tab from the server").withId("pause-tab").onClick(e -> tab().requestPause()),
       button("Pause every tab from the server").withId("pause-all").onClick(e -> application().requestPause())
     );
   }

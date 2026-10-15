@@ -71,7 +71,7 @@ export interface EventFields {
 export type FileFields = Pick<EventFields, "fileId" | "fileName" | "fileSize" | "fileType">;
 
 export type ClientMessage =
-  | { type: "hello"; session: string | null; token: string | null }
+  | { type: "hello"; tab: string | null; token: string | null }
   | ({ type: "event"; id: string; handler: string; value: string } & EventFields)
   /** args is a JSON array. */
   | ({ type: "callback"; handler: string; args: string } & FileFields)

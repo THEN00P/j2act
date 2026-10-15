@@ -63,7 +63,7 @@ public class HomePage extends LiveComponent implements Page {
           greetingForm()
         ),
         section(
-          h2("Retained State: a draft that outlives the session"),
+          h2("Retained State: a draft that outlives the in-memory tab"),
           draftNote()
         )
       )

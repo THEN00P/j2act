@@ -7,8 +7,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Serial execution over a shared pool: at most one task of a session runs at a time,
- * so the session's graph needs no locks (ADR 0001). Tasks never run on socket threads.
+ * Serial execution over a shared pool: at most one task of a tab runs at a time,
+ * so the tab's graph needs no locks (ADR 0001). Tasks never run on socket threads.
  */
 final class Lane implements Executor {
 

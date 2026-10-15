@@ -34,7 +34,7 @@ import java.util.function.Function;
 
 /**
  * The runtime a transport adapter drives: serve() for full-page loads, onMessage()
- * and onClose() for the socket. Holds sessions and evicts them on idle timeout or
+ * and onClose() for the socket. Holds tabs and evicts them on idle timeout or
  * after the reconnect grace window (ADR 0010). Servlet-agnostic (ADR 0004).
  */
 public final class J2Act implements AutoCloseable {
@@ -87,7 +87,7 @@ public final class J2Act implements AutoCloseable {
   final long autoPauseMillis;
   /** What components reach with application() (ADR 0027). */
   final Application application = new Application(this);
-  /** How long close() waits for sessions' snapshots; 0 when they are not saved on shutdown. */
+  /** How long close() waits for tabs' snapshots; 0 when they are not saved on shutdown. */
   private final long shutdownSaveMillis;
   private final long checkpointMillis;
   private final Set<String> warnedOnce = ConcurrentHashMap.newKeySet();
@@ -104,8 +104,8 @@ public final class J2Act implements AutoCloseable {
   volatile boolean watchingClasses;
   private ClassWatch classWatch;
 
-  private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
-  private final ConcurrentHashMap<Connection, Session> byConnection = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<String, Tab> tabs = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<Connection, Tab> byConnection = new ConcurrentHashMap<>();
   private final ScheduledExecutorService sweeper;
   private final ExecutorService ownedExecutor;
   private final SecureRandom random = new SecureRandom();
@@ -174,7 +174,7 @@ public final class J2Act implements AutoCloseable {
 
   /**
    * Dev mode's poll of the class folders while a debugger is attached. The debugger swaps the
-   * classes; this re-renders every session with them, soon after and once more a moment later,
+   * classes; this re-renders every tab with them, soon after and once more a moment later,
    * since the class file can land before or after the debugger's swap.
    */
   private void watchClasses() {
@@ -195,16 +195,16 @@ public final class J2Act implements AutoCloseable {
     }
   }
 
-  /** The session with this id, or null. */
-  Session session(String sid) {
-    return sessions.get(sid);
+  /** The tab with this id, or null. */
+  Tab tab(String sid) {
+    return tabs.get(sid);
   }
 
-  /** Re-renders every session with the current code (HotSwap in dev mode). */
+  /** Re-renders every tab with the current code (HotSwap in dev mode). */
   void hotSwapped() {
     codeEpoch++;
-    for (Session session : sessions.values()) {
-      session.post(session::hotSwapped);
+    for (Tab tab : tabs.values()) {
+      tab.post(tab::hotSwapped);
     }
   }
 
@@ -218,8 +218,8 @@ public final class J2Act implements AutoCloseable {
       StringBuilder b = new StringBuilder("{\"type\":\"modules\",\"modules\":");
       Json.write(moved, b);
       String message = b.append('}').toString();
-      for (Session session : sessions.values()) {
-        session.post(() -> session.send(message));
+      for (Tab tab : tabs.values()) {
+        tab.post(() -> tab.send(message));
       }
       log(System.Logger.Level.INFO, "j2act dev: new build, " + moved.size() + " changed file(s) re-imported", null);
     } catch (RuntimeException e) {
@@ -239,50 +239,50 @@ public final class J2Act implements AutoCloseable {
   }
 
   /**
-   * Full-page load: mounts a new session for the app URL, following redirect() routes
+   * Full-page load: mounts a new tab for the app URL, following redirect() routes
    * and guards (a 303 when the URL changed), and awaits queries within the SSR budget
    * (ADR 0016). notFound()/redirect() raised while rendering become a 404 or a 303.
    */
   public ServeResult serve(String url, Exchange exchange) {
-    Session session = new Session(this, newSecret(18), newSecret(18), exchange, url);
-    session.restore(restore(exchange));
-    sessions.put(session.id, session);
+    Tab tab = new Tab(this, newSecret(18), newSecret(18), exchange, url);
+    tab.restore(restore(exchange));
+    tabs.put(tab.id, tab);
     try {
-      Session.Resolution resolution = await(session.call(() -> session.resolve(url)));
+      Tab.Resolution resolution = await(tab.call(() -> tab.resolve(url)));
       if (!resolution.url.equals(url)) {
-        discard(session, false);
+        discard(tab, false);
         return new ServeResult(303, "", contextPath + resolution.url);
       }
       if (resolution.match == null && resolver.fallback() == null) {
-        // No route and no fallback page: a static 404, no session for a stray URL to hold.
-        discard(session, false);
+        // No route and no fallback page: a static 404, no tab for a stray URL to hold.
+        discard(tab, false);
         return new ServeResult(404, "<!DOCTYPE html><html><head><title>Not found</title></head>"
           + "<body><h1>Not found</h1></body></html>");
       }
       int status = resolution.status;
       // Render and the in-flight check run in one lane task, so a commit can never land
       // between them and leave us shipping HTML rendered before it (ADR 0016).
-      SsrPass pass = await(session.call(() -> {
+      SsrPass pass = await(tab.call(() -> {
         if (resolution.match == null) {
-          session.showNotFound();
+          tab.showNotFound();
         } else {
-          session.applyRoute(resolution);
+          tab.applyRoute(resolution);
         }
-        return SsrPass.of(session);
+        return SsrPass.of(tab);
       }));
       long deadline = clock.millis() + ssrAwaitMillis;
       while (true) {
-        RouteException route = session.pendingRoute;
+        RouteException route = tab.pendingRoute;
         if (route != null) {
           if (!route.isNotFound()) {
-            discard(session, false);
+            discard(tab, false);
             return new ServeResult(303, "", contextPath + route.redirect);
           }
           status = 404;
-          pass = await(session.call(() -> {
-            session.pendingRoute = null;
-            session.showNotFound();
-            return SsrPass.of(session);
+          pass = await(tab.call(() -> {
+            tab.pendingRoute = null;
+            tab.showNotFound();
+            return SsrPass.of(tab);
           }));
           continue;
         }
@@ -290,13 +290,13 @@ public final class J2Act implements AutoCloseable {
         if (pass.settleCount < 0 || left <= 0) {
           break;
         }
-        session.awaitSettleAfter(pass.settleCount, left);
-        pass = await(session.call(() -> SsrPass.of(session)));
+        tab.awaitSettleAfter(pass.settleCount, left);
+        pass = await(tab.call(() -> SsrPass.of(tab)));
       }
       return new ServeResult(status, pass.html);
     } catch (Exception e) {
       log(System.Logger.Level.ERROR, "render failed for " + url, e);
-      discard(session, false);
+      discard(tab, false);
       return new ServeResult(500, "<!DOCTYPE html><html><head><title>Error</title></head>"
         + "<body><h1>Render failed</h1></body></html>");
     }
@@ -304,16 +304,16 @@ public final class J2Act implements AutoCloseable {
 
   /**
    * Claims a download token for a GET to DOWNLOAD_PATH + token. Returns null (answer 404)
-   * when the token is unknown, already used or expired, its session is gone, or the
-   * request's identity is not the session's. The adapter sets the headers from the result
+   * when the token is unknown, already used or expired, its tab is gone, or the
+   * request's identity is not the tab's. The adapter sets the headers from the result
    * and calls writeTo with the response stream, on the request thread (ADR 0012).
    */
   public DownloadStream claimDownload(String token, Exchange exchange) {
     DownloadStream download = token == null ? null : downloads.remove(token);
-    if (download == null || download.session.disposed) {
+    if (download == null || download.tab.disposed) {
       return null;
     }
-    if (hasIdentity() && !resolveIdentity(exchange).equals(download.session.currentAuth())) {
+    if (hasIdentity() && !resolveIdentity(exchange).equals(download.tab.currentAuth())) {
       download.fail(new SecurityException("download fetched with a different identity"));
       return null;
     }
@@ -322,25 +322,25 @@ public final class J2Act implements AutoCloseable {
 
   /**
    * Accepts one upload chunk, POSTed to UPLOAD_PATH + token with the byte offset it starts
-   * at. The request must carry the session's CSRF token in X-J2-Token and, when it has an
+   * at. The request must carry the tab's CSRF token in X-J2-Token and, when it has an
    * Origin, come from the page's own host (ADR 0008). The adapter writes the result's
    * status and JSON; the client resumes from the offset in it.
    */
   public ChunkResult acceptChunk(String token, long offset, InputStream body, Exchange exchange) {
     UploadSink sink = token == null ? null : uploads.get(token);
-    if (sink == null || sink.session.disposed) {
+    if (sink == null || sink.tab.disposed) {
       return ChunkResult.error(404, "unknown upload");
     }
     String csrf = exchange.header("X-J2-Token").orElse("");
-    if (!MessageDigest.isEqual(csrf.getBytes(StandardCharsets.UTF_8), sink.session.token.getBytes(StandardCharsets.UTF_8))
+    if (!MessageDigest.isEqual(csrf.getBytes(StandardCharsets.UTF_8), sink.tab.token.getBytes(StandardCharsets.UTF_8))
       || !sameOrigin(exchange)) {
       return ChunkResult.error(403, "forbidden");
     }
-    if (offset == 0 && hasIdentity() && !resolveIdentity(exchange).equals(sink.session.currentAuth())) {
+    if (offset == 0 && hasIdentity() && !resolveIdentity(exchange).equals(sink.tab.currentAuth())) {
       sink.fail(new SecurityException("upload sent with a different identity"));
       return ChunkResult.error(403, "forbidden");
     }
-    if (!sink.session.admit(true)) {
+    if (!sink.tab.admit(true)) {
       stats.rateLimited.incrementAndGet();
       return ChunkResult.error(429, "slow down");
     }
@@ -399,9 +399,9 @@ public final class J2Act implements AutoCloseable {
     return dir;
   }
 
-  void discardUploads(Session session) {
+  void discardUploads(Tab tab) {
     for (UploadSink sink : uploads.values()) {
-      if (sink.session == session) {
+      if (sink.tab == tab) {
         sink.discard();
       }
     }
@@ -430,18 +430,18 @@ public final class J2Act implements AutoCloseable {
     }
     String type = message.getOrDefault("type", "");
     if ("hello".equals(type)) {
-      hello(connection, message.get("session"), message.get("token"));
+      hello(connection, message.get("tab"), message.get("token"));
       return;
     }
-    Session session = byConnection.get(connection);
-    if (session == null) {
+    Tab tab = byConnection.get(connection);
+    if (tab == null) {
       connection.send(Json.object("type", "expired"));
       connection.close();
       return;
     }
     boolean client = "callback".equals(type) || "callResult".equals(type) || "clientError".equals(type)
       || "liveGone".equals(type);
-    if (("event".equals(type) || "navigate".equals(type) || client) && !admit(session, connection)) {
+    if (("event".equals(type) || "navigate".equals(type) || client) && !admit(tab, connection)) {
       if ("event".equals(type)) {
         // The client's pending UI reverts; the event is gone (ADR 0013).
         connection.send(Json.object("type", "ack", "id", message.get("id"), "ok", false));
@@ -451,63 +451,63 @@ public final class J2Act implements AutoCloseable {
     if ("event".equals(type)) {
       String ack = message.get("id");
       boolean[] ok = new boolean[1];
-      session.lane.execute(session.task(
-        () -> ok[0] = session.dispatch(message),
-        () -> session.send(Json.object("type", "ack", "id", ack, "ok", ok[0]))));
+      tab.lane.execute(tab.task(
+        () -> ok[0] = tab.dispatch(message),
+        () -> tab.send(Json.object("type", "ack", "id", ack, "ok", ok[0]))));
     } else if ("callback".equals(type)) {
       // A client callback into Java: same identity re-check and stale-id rejection as events.
-      session.post(() -> session.dispatch(message));
+      tab.post(() -> tab.dispatch(message));
     } else if ("callResult".equals(type)) {
-      session.post(() -> session.clients.onResult(message));
+      tab.post(() -> tab.clients.onResult(message));
     } else if ("clientError".equals(type)) {
-      session.post(() -> session.clients.onError(message));
+      tab.post(() -> tab.clients.onError(message));
     } else if ("liveGone".equals(type)) {
-      session.post(() -> session.clients.onLiveGone(message.get("anchor")));
+      tab.post(() -> tab.clients.onLiveGone(message.get("anchor")));
     } else if ("preload".equals(type)) {
       String target = appUrl(message.get("url"));
-      if (target != null && admit(session, connection)) {
-        session.post(() -> session.preload(target));
+      if (target != null && admit(tab, connection)) {
+        tab.post(() -> tab.preload(target));
       }
     } else if ("navigate".equals(type)) {
       String target = appUrl(message.get("url"));
       if (target != null) {
         String mode = "pop".equals(message.get("mode")) ? "pop" : "push";
-        session.post(() -> session.onNavigate(target, mode));
+        tab.post(() -> tab.onNavigate(target, mode));
       }
     } else if ("pause".equals(type)) {
       // j2act.pause() (ADR 0026). An automatic pause gives way while something is in flight, and the client tries again later.
       boolean automatic = "true".equals(message.get("automatic"));
-      session.post(() -> {
-        if (sessions.get(session.id) != session) {
+      tab.post(() -> {
+        if (tabs.get(tab.id) != tab) {
           return; // already evicted or paused: its farewell is on the way
         }
-        if (automatic && (session.clients.busy() || transferring(session))) {
-          session.send(Json.object("type", "pauseRefused"));
+        if (automatic && (tab.clients.busy() || transferring(tab))) {
+          tab.send(Json.object("type", "pauseRefused"));
         } else {
-          retire(session, "paused");
+          retire(tab, "paused");
         }
       });
     } else if ("bye".equals(type)) {
       byConnection.remove(connection);
       // The page is gone for good, so its checkpoint can never be restored (ADR 0026).
-      session.lane.execute(() -> {
-        if (session.stored) {
-          session.stored = false;
-          write(session, () -> delete(session));
+      tab.lane.execute(() -> {
+        if (tab.stored) {
+          tab.stored = false;
+          write(tab, () -> delete(tab));
         }
       });
-      discard(session, false);
+      discard(tab, false);
     }
   }
 
   /** Rate limit and queue bound for one socket message; sustained overflow closes the socket. */
-  private boolean admit(Session session, Connection connection) {
-    if (session.admit(false) && session.lane.backlog() < maxQueuedEvents) {
+  private boolean admit(Tab tab, Connection connection) {
+    if (tab.admit(false) && tab.lane.backlog() < maxQueuedEvents) {
       return true;
     }
     stats.rateLimited.incrementAndGet();
-    if (session.overflowed()) {
-      log(System.Logger.Level.WARNING, "session " + session.id + " kept exceeding its rate limit; closing its socket", null);
+    if (tab.overflowed()) {
+      log(System.Logger.Level.WARNING, "tab " + tab.id + " kept exceeding its rate limit; closing its socket", null);
       onClose(connection);
       connection.close();
     }
@@ -520,22 +520,22 @@ public final class J2Act implements AutoCloseable {
   }
 
   public void onClose(Connection connection) {
-    Session session = byConnection.remove(connection);
-    if (session != null) {
-      session.post(() -> session.detach(connection));
+    Tab tab = byConnection.remove(connection);
+    if (tab != null) {
+      tab.post(() -> tab.detach(connection));
     }
   }
 
   private void hello(Connection connection, String sid, String token) {
-    Session session = sid == null ? null : sessions.get(sid);
-    if (session == null || session.disposed || token == null
-      || !MessageDigest.isEqual(token.getBytes(StandardCharsets.UTF_8), session.token.getBytes(StandardCharsets.UTF_8))) {
+    Tab tab = sid == null ? null : tabs.get(sid);
+    if (tab == null || tab.disposed || token == null
+      || !MessageDigest.isEqual(token.getBytes(StandardCharsets.UTF_8), tab.token.getBytes(StandardCharsets.UTF_8))) {
       connection.send(Json.object("type", "expired"));
       connection.close();
       return;
     }
-    byConnection.put(connection, session);
-    session.post(() -> session.attach(connection));
+    byConnection.put(connection, tab);
+    tab.post(() -> tab.attach(connection));
   }
 
   // ---- lifecycle
@@ -557,135 +557,135 @@ public final class J2Act implements AutoCloseable {
         sink.fail(new IllegalStateException("upload stalled: no bytes for " + uploadIdleMillis + " ms"));
       }
     }
-    for (Session session : sessions.values()) {
-      if (session.disposed) {
-        sessions.remove(session.id);
+    for (Tab tab : tabs.values()) {
+      if (tab.disposed) {
+        tabs.remove(tab.id);
         continue;
       }
-      boolean idle = now - session.lastActivity > idleTimeoutMillis;
-      boolean gone = session.connection == null && now - session.disconnectedAt > reconnectGraceMillis;
+      boolean idle = now - tab.lastActivity > idleTimeoutMillis;
+      boolean gone = tab.connection == null && now - tab.disconnectedAt > reconnectGraceMillis;
       if (idle || gone) {
-        discard(session, true);
+        discard(tab, true);
       }
     }
   }
 
-  private void discard(Session session, boolean expired) {
+  private void discard(Tab tab, boolean expired) {
     if (expired) {
-      retire(session, "expired");
+      retire(tab, "expired");
       return;
     }
-    sessions.remove(session.id);
-    byConnection.values().removeIf(s -> s == session);
-    session.lane.execute(() -> session.dispose(null));
+    tabs.remove(tab.id);
+    byConnection.values().removeIf(s -> s == tab);
+    tab.lane.execute(() -> tab.dispose(null));
   }
 
   /**
-   * Evicts or pauses a session: its snapshot is saved before the client hears the farewell
+   * Evicts or pauses a tab: its snapshot is saved before the client hears the farewell
    * ("expired" or "paused"), so the remount that follows finds it (ADR 0026).
    */
-  private CompletableFuture<Void> retire(Session session, String farewell) {
-    sessions.remove(session.id);
+  private CompletableFuture<Void> retire(Tab tab, String farewell) {
+    tabs.remove(tab.id);
     CompletableFuture<Void> done = new CompletableFuture<>();
     // The socket stays mapped until the farewell, so a message sent meanwhile cannot bring an "expired" before the save ends.
     java.util.function.Consumer<Boolean> end = saved -> {
-      byConnection.values().removeIf(s -> s == session);
+      byConnection.values().removeIf(s -> s == tab);
       // "paused" says whether there was anything to save, so j2act.resume() can tell a page that got nothing back.
-      session.dispose(farewell.isEmpty() ? "" : "paused".equals(farewell)
+      tab.dispose(farewell.isEmpty() ? "" : "paused".equals(farewell)
         ? Json.object("type", farewell, "saved", saved) : Json.object("type", farewell));
       done.complete(null);
     };
-    session.lane.execute(() -> {
-      if (session.disposed) {
+    tab.lane.execute(() -> {
+      if (tab.disposed) {
         end.accept(false);
         return;
       }
-      session.persisting();
-      persist(session).thenAccept(saved -> session.lane.execute(() -> end.accept(saved)));
+      tab.persisting();
+      persist(tab).thenAccept(saved -> tab.lane.execute(() -> end.accept(saved)));
     });
     return done;
   }
 
   /**
-   * Saves the snapshot of every session with a changed retained value, without discarding it
+   * Saves the snapshot of every tab with a changed retained value, without discarding it
    * (ADR 0026), so a crash loses at most one interval. onPersisting runs first in each.
    */
   private void checkpoint() {
-    for (Session session : sessions.values()) {
-      session.post(() -> {
-        if (sessions.get(session.id) != session) {
+    for (Tab tab : tabs.values()) {
+      tab.post(() -> {
+        if (tabs.get(tab.id) != tab) {
           return; // being evicted or paused, which saves it anyway
         }
-        session.persisting();
-        if (session.retainedDirty) {
-          persist(session);
+        tab.persisting();
+        if (tab.retainedDirty) {
+          persist(tab);
         }
       });
     }
   }
 
-  /** An upload or download of this session that would break if it were paused now. */
-  boolean transferring(Session session) {
-    return uploads.values().stream().anyMatch(sink -> sink.session == session)
-      || downloads.values().stream().anyMatch(download -> download.session == session);
+  /** An upload or download of this tab that would break if it were paused now. */
+  boolean transferring(Tab tab) {
+    return uploads.values().stream().anyMatch(sink -> sink.tab == tab)
+      || downloads.values().stream().anyMatch(download -> download.tab == tab);
   }
 
   // ---- Retained State (ADR 0026)
 
   /**
-   * Lane-only. Takes the session's snapshot and queues it for storage; with nothing to save, it
+   * Lane-only. Takes the tab's snapshot and queues it for storage; with nothing to save, it
    * deletes the checkpoint the snapshot would have replaced. Completes with whether it saved one.
    */
-  private CompletableFuture<Boolean> persist(Session session) {
-    session.retainedDirty = false;
-    String snapshot = snapshot(session);
+  private CompletableFuture<Boolean> persist(Tab tab) {
+    tab.retainedDirty = false;
+    String snapshot = snapshot(tab);
     if (snapshot != null) {
-      session.stored = true;
-      return write(session, () -> save(session, snapshot)).thenApply(v -> true);
+      tab.stored = true;
+      return write(tab, () -> save(tab, snapshot)).thenApply(v -> true);
     }
-    if (session.stored) {
-      session.stored = false;
-      return write(session, () -> delete(session)).thenApply(v -> false);
+    if (tab.stored) {
+      tab.stored = false;
+      return write(tab, () -> delete(tab)).thenApply(v -> false);
     }
     return CompletableFuture.completedFuture(false);
   }
 
-  /** Lane-only. Runs a storage write after the session's earlier ones, on the executor. */
-  private CompletableFuture<Void> write(Session session, Runnable write) {
-    return session.storageWrites = session.storageWrites.thenRunAsync(write, executor);
+  /** Lane-only. Runs a storage write after the tab's earlier ones, on the executor. */
+  private CompletableFuture<Void> write(Tab tab, Runnable write) {
+    return tab.storageWrites = tab.storageWrites.thenRunAsync(write, executor);
   }
 
-  /** Lane-only. The session's snapshot, or null when it has no retained values. */
-  private String snapshot(Session session) {
+  /** Lane-only. The tab's snapshot, or null when it has no retained values. */
+  private String snapshot(Tab tab) {
     Map<String, String> entries;
     String principal;
     try {
-      entries = session.retainedEntries();
+      entries = tab.retainedEntries();
       if (entries.isEmpty()) {
         return null;
       }
-      AuthCtx auth = session.currentAuth();
+      AuthCtx auth = tab.currentAuth();
       principal = auth.isAnonymous() ? null : auth.name();
     } catch (RuntimeException e) {
-      log(System.Logger.Level.WARNING, "retained state of session " + session.id + " could not be saved", e);
+      log(System.Logger.Level.WARNING, "retained state of tab " + tab.id + " could not be saved", e);
       return null;
     }
     return Retained.encode(clock.millis() + retainedRetentionMillis, principal, entries);
   }
 
-  private void save(Session session, String snapshot) {
+  private void save(Tab tab, String snapshot) {
     try {
-      retainedStorage.save(Retained.id(session.token), snapshot, Instant.ofEpochMilli(clock.millis() + retainedRetentionMillis));
+      retainedStorage.save(Retained.id(tab.token), snapshot, Instant.ofEpochMilli(clock.millis() + retainedRetentionMillis));
     } catch (RuntimeException e) {
-      log(System.Logger.Level.WARNING, "retained state of session " + session.id + " could not be saved", e);
+      log(System.Logger.Level.WARNING, "retained state of tab " + tab.id + " could not be saved", e);
     }
   }
 
-  private void delete(Session session) {
+  private void delete(Tab tab) {
     try {
-      retainedStorage.delete(Retained.id(session.token));
+      retainedStorage.delete(Retained.id(tab.token));
     } catch (RuntimeException e) {
-      log(System.Logger.Level.WARNING, "retained state of session " + session.id + " could not be deleted", e);
+      log(System.Logger.Level.WARNING, "retained state of tab " + tab.id + " could not be deleted", e);
     }
   }
 
@@ -749,8 +749,8 @@ public final class J2Act implements AutoCloseable {
     return importMap.isEmpty() ? Optional.empty() : Optional.of(importMap.hash());
   }
 
-  public int sessionCount() {
-    return sessions.size();
+  public int tabCount() {
+    return tabs.size();
   }
 
   public Stats stats() {
@@ -764,9 +764,9 @@ public final class J2Act implements AutoCloseable {
    */
   public int requestPause() {
     int asked = 0;
-    for (Session session : sessions.values()) {
-      if (session.connection != null) {
-        session.post(session::requestPause);
+    for (Tab tab : tabs.values()) {
+      if (tab.connection != null) {
+        tab.post(tab::askToPause);
         asked++;
       }
     }
@@ -774,7 +774,7 @@ public final class J2Act implements AutoCloseable {
   }
 
   /**
-   * Discards every session. With withSaveOnShutdown, their Retained State is saved first,
+   * Discards every tab. With withSaveOnShutdown, their Retained State is saved first,
    * waiting up to its timeout, and their sockets close without a word: the pages reconnect
    * to the next server, hear "expired" and remount with their snapshots (ADR 0026).
    */
@@ -785,22 +785,22 @@ public final class J2Act implements AutoCloseable {
     }
     if (shutdownSaveMillis > 0) {
       java.util.List<CompletableFuture<Void>> saves = new java.util.ArrayList<>();
-      for (Session session : sessions.values()) {
-        saves.add(retire(session, ""));
+      for (Tab tab : tabs.values()) {
+        saves.add(retire(tab, ""));
       }
       try {
         CompletableFuture.allOf(saves.toArray(new CompletableFuture<?>[0])).get(shutdownSaveMillis, TimeUnit.MILLISECONDS);
       } catch (TimeoutException e) {
         log(System.Logger.Level.WARNING, saves.stream().filter(f -> !f.isDone()).count()
-          + " sessions were not saved within the shutdown timeout; their Retained State is lost", null);
+          + " tabs were not saved within the shutdown timeout; their Retained State is lost", null);
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
       } catch (ExecutionException e) {
-        log(System.Logger.Level.WARNING, "saving sessions on shutdown failed", e);
+        log(System.Logger.Level.WARNING, "saving tabs on shutdown failed", e);
       }
     }
-    for (Session session : sessions.values()) {
-      discard(session, false);
+    for (Tab tab : tabs.values()) {
+      discard(tab, false);
     }
     if (ownedExecutor != null) {
       ownedExecutor.shutdown();
@@ -835,9 +835,9 @@ public final class J2Act implements AutoCloseable {
     return auth == null ? AuthCtx.anonymous() : auth;
   }
 
-  /** Runs a lane task for the session after a delay, on the sweeper thread's clock. */
-  void later(Session session, long millis, Runnable task) {
-    sweeper.schedule(() -> session.post(task), millis, TimeUnit.MILLISECONDS);
+  /** Runs a lane task for the tab after a delay, on the sweeper thread's clock. */
+  void later(Tab tab, long millis, Runnable task) {
+    sweeper.schedule(() -> tab.post(task), millis, TimeUnit.MILLISECONDS);
   }
 
   String newSecret(int bytes) {
@@ -882,14 +882,14 @@ public final class J2Act implements AutoCloseable {
       this.settleCount = settleCount;
     }
 
-    static SsrPass of(Session session) {
-      String html = session.renderFull();
+    static SsrPass of(Tab tab) {
+      String html = tab.renderFull();
       if (html == null) {
         return new SsrPass(null, 0);
       }
       // withDefer() queries finish over the socket; SSR waits only for the rest (ADR 0016).
-      boolean waiting = session.inFlight.stream().anyMatch(q -> !q.deferred);
-      return new SsrPass(html, waiting ? session.settleCount() : -1L);
+      boolean waiting = tab.inFlight.stream().anyMatch(q -> !q.deferred);
+      return new SsrPass(html, waiting ? tab.settleCount() : -1L);
     }
   }
 
@@ -1039,7 +1039,7 @@ public final class J2Act implements AutoCloseable {
     }
 
     /**
-     * Socket abuse limits per session, chosen from its identity (ADR 0013). Applies to
+     * Socket abuse limits per tab, chosen from its identity (ADR 0013). Applies to
      * events, navigations and upload chunks, each with its own bucket. Default 30 per
      * second with a burst of 60. Business limits (logins, API quotas) stay yours.
      */
@@ -1054,7 +1054,7 @@ public final class J2Act implements AutoCloseable {
       return this;
     }
 
-    /** Events a session may have waiting on its lane before new ones are dropped. Default 100. */
+    /** Events a tab may have waiting on its lane before new ones are dropped. Default 100. */
     public Builder withMaxQueuedEvents(int events) {
       this.maxQueuedEvents = events;
       return this;
@@ -1124,7 +1124,7 @@ public final class J2Act implements AutoCloseable {
 
     /**
      * Pauses a page whose tab stayed hidden this long (ADR 0026): its Retained State is saved,
-     * its session freed, and it resumes when the tab is shown again. Off by default. The pause
+     * its tab freed, and it resumes when the tab is shown again. Off by default. The pause
      * waits while an event, upload, download or client module call is in flight, an input has
      * focus or media is playing.
      */
@@ -1136,13 +1136,13 @@ public final class J2Act implements AutoCloseable {
       return this;
     }
 
-    /** Saves every session's Retained State when j2act closes, waiting up to 10 seconds; see {@link #withSaveOnShutdown(Duration)}. */
+    /** Saves every tab's Retained State when j2act closes, waiting up to 10 seconds; see {@link #withSaveOnShutdown(Duration)}. */
     public Builder withSaveOnShutdown() {
       return withSaveOnShutdown(Duration.ofSeconds(10));
     }
 
     /**
-     * Saves every session's Retained State when j2act closes, such as on a restart or redeploy,
+     * Saves every tab's Retained State when j2act closes, such as on a restart or redeploy,
      * and waits up to this long for storage (ADR 0026). Off by default, as .NET does not pause
      * circuits on shutdown. It only helps with storage that outlives the JVM, such as
      * j2act-retained-jdbc. The pages reconnect to the next server and remount with their values.
@@ -1156,7 +1156,7 @@ public final class J2Act implements AutoCloseable {
     }
 
     /**
-     * Also saves the Retained State of live sessions on this interval, those with a changed
+     * Also saves the Retained State of live tabs on this interval, those with a changed
      * value, without discarding them, so a crash or a kill loses at most one interval (ADR
      * 0026). Off by default and beyond .NET, which tracks it as dotnet/aspnetcore#64840. Each
      * save writes to storage, so pick an interval storage can take for every open tab.

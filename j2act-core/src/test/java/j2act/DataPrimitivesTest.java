@@ -81,7 +81,7 @@ class DataPrimitivesTest {
   }
 
   @Test
-  void selectReRendersOnlyTheReadersOfTheChangedSliceAndSessionsAreIsolated() {
+  void selectReRendersOnlyTheReadersOfTheChangedSliceAndTabsAreIsolated() {
     themeRenders.set(0);
     try (Harness h = new Harness(PrefsPage::new)) {
       h.load();
@@ -93,7 +93,7 @@ class DataPrimitivesTest {
       assertEquals(themeBefore, themeRenders.get(), "theme slice did not change");
 
       String other = h.engine.serve("/").html();
-      assertTrue(other.contains("size 12"), "another session keeps its own copy: " + other);
+      assertTrue(other.contains("size 12"), "another tab keeps its own copy: " + other);
     }
   }
 

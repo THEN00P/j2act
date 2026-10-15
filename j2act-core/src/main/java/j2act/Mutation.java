@@ -38,7 +38,7 @@ public class Mutation<V, R> extends Primitive {
     this.body = body;
   }
 
-  /** Runs sharing this key execute one at a time, in order, per session. */
+  /** Runs sharing this key execute one at a time, in order, per tab. */
   public Mutation<V, R> withKey(Object... parts) {
     this.key = Arrays.asList(parts);
     return configure();
@@ -126,8 +126,8 @@ public class Mutation<V, R> extends Primitive {
     return this;
   }
 
-  @Override Cell createCell(Session session, String address) {
-    return new MutationCell(session, address, this);
+  @Override Cell createCell(Tab tab, String address) {
+    return new MutationCell(tab, address, this);
   }
 
   @Override boolean accepts(Cell cell) {

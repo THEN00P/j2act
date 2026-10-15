@@ -6,16 +6,16 @@ import java.util.function.UnaryOperator;
 
 /**
  * Shared state declared once, typically as a static field, with an isolated copy per
- * session (CONTEXT: Store): current user, theme, locale. No middleware. A store made with
- * State.createRetainedStore keeps its value in the session's Retained State (ADR 0026).
+ * tab (CONTEXT: Store): current user, theme, locale. No middleware. A store made with
+ * State.createRetainedStore keeps its value in the tab's Retained State (ADR 0026).
  *
  * <pre>{@code
  * public static final Store<Theme> theme = State.createStore(Theme.LIGHT);
  * boolean dark = theme.select(t -> t == Theme.DARK);   // re-renders only when this slice changes
- * theme.set(Theme.DARK);                               // this session's copy
+ * theme.set(Theme.DARK);                               // this tab's copy
  * }</pre>
  *
- * Use it from components, handlers and query loaders; each reads the session they run in.
+ * Use it from components, handlers and query loaders; each reads the tab they run in.
  */
 public final class Store<T> {
 
@@ -41,24 +41,24 @@ public final class Store<T> {
     return found;
   }
 
-  /** This session's whole value, tracked. */
+  /** This tab's whole value, tracked. */
   @SuppressWarnings("unchecked")
   public T get() {
     return (T) cell().read();
   }
 
   /**
-   * A slice of this session's value. The reader re-renders only when the slice changes,
+   * A slice of this tab's value. The reader re-renders only when the slice changes,
    * not on every write to the store.
    */
   @SuppressWarnings("unchecked")
   public <R> R select(Function<? super T, R> slice) {
-    Session session = session();
-    ValueCell cell = session.storeCell(this);
+    Tab tab = tab();
+    ValueCell cell = tab.storeCell(this);
     Observer reader = Tracking.observer();
-    if (session.lane.isCurrent() && reader != null) {
+    if (tab.lane.isCurrent() && reader != null) {
       R result = slice.apply((T) cell.peek());
-      SliceCell sliceCell = new SliceCell(session, cell, (Function<Object, Object>) slice, result);
+      SliceCell sliceCell = new SliceCell(tab, cell, (Function<Object, Object>) slice, result);
       cell.observers.add(sliceCell);
       sliceCell.observers.add(reader);
       reader.dependsOn(sliceCell);
@@ -67,7 +67,7 @@ public final class Store<T> {
     return slice.apply((T) cell.read());
   }
 
-  /** Replaces this session's value; from a foreign thread it is queued onto the lane. */
+  /** Replaces this tab's value; from a foreign thread it is queued onto the lane. */
   public void set(T value) {
     cell().write(value);
   }
@@ -77,14 +77,14 @@ public final class Store<T> {
   }
 
   private ValueCell cell() {
-    return session().storeCell(this);
+    return tab().storeCell(this);
   }
 
-  private static Session session() {
-    Session session = Session.current();
-    if (session == null) {
-      throw new IllegalStateException("a Store is per session: use it from a component, handler or query loader");
+  private static Tab tab() {
+    Tab tab = Tab.current();
+    if (tab == null) {
+      throw new IllegalStateException("a Store is per tab: use it from a component, handler or query loader");
     }
-    return session;
+    return tab;
   }
 }

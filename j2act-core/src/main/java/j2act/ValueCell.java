@@ -11,8 +11,8 @@ class ValueCell extends Cell {
   String retainedName;
   java.lang.reflect.Type retainedType;
 
-  ValueCell(Session session, String address, Object initial) {
-    super(session, address);
+  ValueCell(Tab tab, String address, Object initial) {
+    super(tab, address);
     this.value = initial;
   }
 
@@ -27,19 +27,19 @@ class ValueCell extends Cell {
   }
 
   void write(Object next) {
-    if (session.lane.isCurrent()) {
+    if (tab.lane.isCurrent()) {
       setOnLane(next);
     } else {
-      session.post(() -> setOnLane(next));
+      tab.post(() -> setOnLane(next));
     }
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})
   void update(UnaryOperator fn) {
-    if (session.lane.isCurrent()) {
+    if (tab.lane.isCurrent()) {
       setOnLane(fn.apply(value));
     } else {
-      session.post(() -> setOnLane(fn.apply(value)));
+      tab.post(() -> setOnLane(fn.apply(value)));
     }
   }
 
@@ -55,14 +55,14 @@ class ValueCell extends Cell {
     }
     value = next;
     if (retainedName != null) {
-      session.retainedDirty = true;
+      tab.retainedDirty = true;
     }
     notifyObservers();
   }
 
   @Override void dispose() {
     if (retainedName != null && !disposed) {
-      session.retainedDirty = true; // an unmounted component's value leaves the snapshot
+      tab.retainedDirty = true; // an unmounted component's value leaves the snapshot
     }
     super.dispose();
   }

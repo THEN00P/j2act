@@ -19,7 +19,7 @@ public final class UploadRef {
 
   /**
    * The stored file. Under withTarget it is yours; without one it sits in the framework's
-   * upload directory and is deleted when the session ends, so move it in onSuccess.
+   * upload directory and is deleted when the tab ends, so move it in onSuccess.
    */
   public Path path() {
     return path;

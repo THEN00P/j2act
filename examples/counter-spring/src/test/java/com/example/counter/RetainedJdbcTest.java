@@ -21,7 +21,7 @@ import j2act.jdbc.JdbcRetainedStateStorage;
 
 /**
  * ADR 0026 on Spring Boot: j2act-spring wires j2act-retained-jdbc to the app's DataSource, an
- * evicted session's draft lands in the table, and the remount takes it back out.
+ * evicted tab's draft lands in the table, and the remount takes it back out.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "demo.idle-timeout=PT1S")
 class RetainedJdbcTest {
@@ -41,7 +41,7 @@ class RetainedJdbcTest {
     client.socket = http.newWebSocketBuilder()
       .buildAsync(URI.create("ws://localhost:" + port + "/_j2act/ws"), client)
       .get(5, TimeUnit.SECONDS);
-    client.send("{\"type\":\"hello\",\"session\":\"" + CounterAppTest.find(html, "name=\"j2-session\" content=\"([^\"]+)\"")
+    client.send("{\"type\":\"hello\",\"tab\":\"" + CounterAppTest.find(html, "name=\"j2-tab\" content=\"([^\"]+)\"")
       + "\",\"token\":\"" + token + "\"}");
     client.await(m -> m.contains("\"type\":\"ready\""));
     client.event(CounterAppTest.find(html, "id=\"draft\"[^>]*data-j2-change=\"([^\"]+)\""), "half-filled");

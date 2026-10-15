@@ -13,8 +13,8 @@ final class SliceCell extends Cell implements Observer {
   private final Function<Object, Object> slice;
   private Object last;
 
-  SliceCell(Session session, ValueCell source, Function<Object, Object> slice, Object initial) {
-    super(session, source.address + "#slice");
+  SliceCell(Tab tab, ValueCell source, Function<Object, Object> slice, Object initial) {
+    super(tab, source.address + "#slice");
     this.source = source;
     this.slice = slice;
     this.last = initial;

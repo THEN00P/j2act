@@ -1,6 +1,6 @@
 package j2act;
 
-/** Server-side event handler, run on the session's lane. Exceptions are logged, never sent to the client. */
+/** Server-side event handler, run on the tab's lane. Exceptions are logged, never sent to the client. */
 @FunctionalInterface
 public interface Handler<E> {
 

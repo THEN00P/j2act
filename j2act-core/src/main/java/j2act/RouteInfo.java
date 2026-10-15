@@ -8,7 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
-/** The current URL of a session: app path, path parameters and query parameters. Immutable. */
+/** The current URL of a tab: app path, path parameters and query parameters. Immutable. */
 final class RouteInfo {
 
   final String path;

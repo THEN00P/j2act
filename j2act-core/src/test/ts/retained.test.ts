@@ -123,7 +123,7 @@ describe("Retained", () => {
     expect(await resumed).toBe(true);
   });
 
-  it("counts a session that expired mid-pause as paused, and otherwise remounts", async () => {
+  it("counts a tab that expired mid-pause as paused, and otherwise remounts", async () => {
     expect(retained.expired()).toBe(true);
     retained.pause();
     expect(retained.expired()).toBe(false);
