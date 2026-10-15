@@ -42,7 +42,7 @@ class ProcessorTest {
 
   private static final Path FIXTURES = Paths.get("src/test/fixtures");
   private static final Pattern EXPECT = Pattern.compile("// expect( next line)?: (.*)$");
-  private static final List<String> DIRECTORIES = Arrays.asList("fixtures", "clients");
+  private static final List<String> DIRECTORIES = Arrays.asList("fixtures", "clients", "transactions");
 
   @Test void javacAndEcjAgree() throws IOException {
     for (String dir : DIRECTORIES) {

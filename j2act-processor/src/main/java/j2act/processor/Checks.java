@@ -98,6 +98,9 @@ final class Checks {
       missingKeys(node, scope);
       retainedInMethod(node, scope);
       retainedChangedInPlace(node, scope);
+      transactionalSelfCall(node, scope);
+    } else if (node.kind == Node.Kind.REF) {
+      transactionalSelfCall(node, scope);
     } else if (node.kind == Node.Kind.NEW && !allowsUnsafe && scope.isType(scope.typeNamed(node.type), UNSAFE_HTML)) {
       report(node, scope, "new UnsafeHtml() renders raw HTML; sanitize the input and mark the method "
         + "@AllowUnsafe(\"why it is safe\") (ADR 0008)");
@@ -246,6 +249,50 @@ final class Checks {
           + "position instead of its item (ADR 0019)");
       }
     }
+  }
+
+  // ---- transactions skipped by self-calls (ADR 0030)
+
+  /** Annotations a container applies through its proxy, which a call from inside the class bypasses. */
+  private static final List<String> TRANSACTIONAL = Arrays.asList(
+    "jakarta.transaction.Transactional", "org.springframework.transaction.annotation.Transactional",
+    "jakarta.ejb.TransactionAttribute");
+
+  /**
+   * A store or component calling its own transactional method calls the object, not the
+   * container's proxy, so no transaction starts: on Spring in proxy mode, and on Weld too.
+   */
+  private void transactionalSelfCall(Node call, Scope scope) {
+    boolean self = call.receiver == null ? call.kind == Node.Kind.CALL : call.receiver.is(Node.Kind.IDENT, "this");
+    if (!self || !scope.isType(scope.type, COMPONENT) && !scope.isType(scope.type, STORE)) {
+      return;
+    }
+    for (ExecutableElement method : scope.ownMethods(call.name)) {
+      if (isTransactional(method)) {
+        source.report(Diagnostic.Kind.ERROR, "j2act: " + call.name + "() is transactional, but a call from inside "
+          + scope.type.getSimpleName() + " skips the container's proxy, so no transaction starts; call it through the"
+          + " bean injected into itself (@Inject " + scope.type.getSimpleName() + " self) or move it to a service"
+          + " (ADR 0030)", call.kind == Node.Kind.REF ? call.receiver : call, scope.type);
+        return;
+      }
+    }
+  }
+
+  private static boolean isTransactional(ExecutableElement method) {
+    if (method.getModifiers().contains(javax.lang.model.element.Modifier.PRIVATE)
+        || method.getModifiers().contains(javax.lang.model.element.Modifier.STATIC)) {
+      return false;
+    }
+    return annotatedWith(method, TRANSACTIONAL) || annotatedWith(method.getEnclosingElement(), TRANSACTIONAL);
+  }
+
+  private static boolean annotatedWith(Element element, List<String> names) {
+    for (AnnotationMirror annotation : element.getAnnotationMirrors()) {
+      if (names.contains(((TypeElement) annotation.getAnnotationType().asElement()).getQualifiedName().toString())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // ---- Retained State (ADR 0026)
@@ -479,6 +526,11 @@ final class Checks {
       TypeElement target = elements.getTypeElement(name);
       return candidate != null && target != null
         && types.isSubtype(types.erasure(candidate.asType()), types.erasure(target.asType()));
+    }
+
+    /** This type's own methods of that name, declared here or inherited, not those of an enclosing type. */
+    List<ExecutableElement> ownMethods(String name) {
+      return methods(type, name);
     }
 
     boolean isOwnedBy(List<ExecutableElement> methods, String owner) {

@@ -294,8 +294,10 @@ final class JavacSource implements Source {
         return node;
       }
       case MEMBER_REFERENCE: {
-        Node node = new Node(Node.Kind.OTHER, tree);
-        node.add(convert(((MemberReferenceTree) tree).getQualifierExpression()));
+        MemberReferenceTree reference = (MemberReferenceTree) tree;
+        Node node = new Node(Node.Kind.REF, tree);
+        node.name = reference.getName().toString();
+        node.receiver = node.add(convert(reference.getQualifierExpression()));
         return node;
       }
       case ANNOTATION:

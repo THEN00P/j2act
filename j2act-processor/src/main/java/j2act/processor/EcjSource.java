@@ -369,8 +369,9 @@ final class EcjSource implements Source {
       case "TypeDeclaration":
         return type(ast);
       case "ReferenceExpression": {
-        Node node = positioned(Node.Kind.OTHER, ast);
-        node.add(convert(get(ast, "lhs")));
+        Node node = positioned(Node.Kind.REF, ast);
+        node.name = new String((char[]) get(ast, "selector"));
+        node.receiver = node.add(convert(get(ast, "lhs")));
         return node;
       }
       default:
