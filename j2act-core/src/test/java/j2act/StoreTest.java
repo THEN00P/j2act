@@ -263,6 +263,18 @@ class StoreTest {
     }
   }
 
+  @Test
+  void aLifecycleCallbackCanSetValuesBeforeTheTabTakesTheStore() {
+    try (Harness h = new Harness(FeedPage::new, b -> b.withStore(Feed.class, () -> {
+      Feed feed = new Feed("rss");
+      feed.latest.set("initialized"); // as a container's @PostConstruct would, before returning it
+      return feed;
+    }))) {
+      String html = h.load();
+      assertTrue(html.contains("latest=initialized;"), html);
+    }
+  }
+
   public static class NotAStore extends Store {
   }
 

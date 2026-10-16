@@ -30,8 +30,19 @@ public abstract class Store {
   /** Primitives its field initializers created, bound when its tab takes the instance. */
   final List<Primitive> primitives = new ArrayList<>();
   Scope scope;
+  /** The tab making this store, until it is bound; null for a container's proxy, which never binds. */
+  private Tab pending = Tab.MAKING_STORE.get();
 
   protected Store() {
+  }
+
+  /** Binds this store to the tab making it, if that has not happened yet: a lifecycle callback needs its values. */
+  void bindIfPending() {
+    Tab tab = pending;
+    if (scope == null && tab != null) {
+      pending = null;
+      tab.bindStoreNow(this);
+    }
   }
 
   protected <T> State<T> state(T initial) {
@@ -86,6 +97,7 @@ public abstract class Store {
       throw new IllegalStateException(getClass().getName()
         + " creates a primitive after it was created; declare a store's primitives as fields (ADR 0030)");
     }
+    primitive.store = this;
     primitives.add(primitive);
     return primitive;
   }

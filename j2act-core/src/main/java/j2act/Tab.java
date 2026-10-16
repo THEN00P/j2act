@@ -469,10 +469,35 @@ public final class Tab {
     if (!lane.isCurrent()) {
       return inline(() -> store(key, create, destroy));
     }
-    T instance = create.get();
-    Scope scope = instance instanceof Store ? bindStore((Store) instance) : null;
+    Tab previous = MAKING_STORE.get();
+    MAKING_STORE.set(this);
+    T instance;
+    try {
+      instance = create.get();
+    } finally {
+      if (previous == null) {
+        MAKING_STORE.remove();
+      } else {
+        MAKING_STORE.set(previous);
+      }
+    }
+    Scope scope = null;
+    if (instance instanceof Store) {
+      Store store = (Store) instance;
+      // A lifecycle callback may already have bound it; a subclass a container made binds as its class.
+      store.bindIfPending();
+      scope = store.scope != null ? store.scope : bindStore(store);
+    }
     stores.put(key, new StoreEntry(instance, destroy == null ? null : () -> destroy.accept(instance), scope));
     return instance;
+  }
+
+  /** The tab whose store() is constructing a store on this thread, so the store knows where it binds. */
+  static final ThreadLocal<Tab> MAKING_STORE = new ThreadLocal<>();
+
+  /** Lane-only. Binds a store a lifecycle callback reached before store() returned it. */
+  void bindStoreNow(Store store) {
+    bindStore(store);
   }
 
   /** Lane-only. Binds a store's field primitives to a scope of its own, keyed by its class. */

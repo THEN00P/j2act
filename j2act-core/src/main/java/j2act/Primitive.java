@@ -8,6 +8,8 @@ package j2act;
 abstract class Primitive {
 
   Cell cell;
+  /** The store whose field this is, which binds on first need while its tab makes it (ADR 0030). */
+  Store store;
 
   abstract Cell createCell(Tab tab, String address);
 
@@ -18,6 +20,10 @@ abstract class Primitive {
   abstract void attach(Cell cell, boolean created);
 
   final Cell requireCell() {
+    if (cell == null && store != null) {
+      // A container's @PostConstruct runs before the tab binds the store it is making: bind now.
+      store.bindIfPending();
+    }
     if (cell == null) {
       throw new IllegalStateException("primitive is not bound yet; it binds when its component is rendered");
     }
