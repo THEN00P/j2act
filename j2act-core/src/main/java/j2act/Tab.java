@@ -111,6 +111,8 @@ public final class Tab {
   volatile String pendingBrowserCookie;
   /** The Set-Cookie value of the browser this tab minted, offered again when the page's claim failed. */
   volatile String mintedBrowserCookie;
+  /** The token of this tab's latest cookie offer; a newer offer withdraws it, so an older one never lands last. */
+  String browserCookieOffer;
   /** Mirrors of browser cells this tab read, by source. */
   private final Map<Cell, MirrorCell> mirrors = new java.util.concurrent.ConcurrentHashMap<>();
 

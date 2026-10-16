@@ -363,7 +363,8 @@ final class Checks {
       }
       return out;
     }
-    for (int i = 0; i < Math.max(expandTo, parameters.size() - 1); i++) {
+    // At least one varargs element, so save() still compares String... with Object... (JLS 15.12.2.5).
+    for (int i = 0; i < Math.max(expandTo, parameters.size()); i++) {
       TypeMirror type = parameters.get(Math.min(i, parameters.size() - 1)).asType();
       if (i >= parameters.size() - 1 && type.getKind() == TypeKind.ARRAY) {
         type = ((javax.lang.model.type.ArrayType) type).getComponentType();

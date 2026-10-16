@@ -463,6 +463,42 @@ class BrowserStoreTest {
     }
   }
 
+  static final class OnceBrowser extends LiveComponent {
+    private final State<Boolean> used = state(false);
+
+    @Override public Tag<?> render() {
+      return T.page("o", T.div(
+        T.span("used=" + used.get() + ";"),
+        T.button("use").onClick(e -> {
+          browser(Player.class).track.get();
+          used.set(true);
+        }),
+        T.button("noop").onClick(e -> { })));
+    }
+  }
+
+  @Test
+  void aLiveLogoutClearsTheCookieEvenWhenNothingReadsBrowserState() {
+    signedIn.set("ada");
+    try (Harness h = new Harness(OnceBrowser::new, b -> b
+        .withIdentity(ex -> signedIn.get() == null ? AuthCtx.anonymous() : AuthCtx.of(signedIn.get(), Collections.emptySet())))) {
+      Page page = new Page(h.engine, "/", Exchange.empty()).connect();
+      int from = page.conn.size();
+      page.click("use"); // joins a browser, read outside render: no mirror keeps it
+      String minted = page.conn.await(from, m -> "browserCookie".equals(m.get("type"))).get("url");
+      h.engine.claimBrowserCookie(minted.substring(J2Act.BROWSER_PATH.length()));
+
+      signedIn.set(null);
+      int after = page.conn.size();
+      page.click("noop");
+      String url = page.conn.await(after, m -> "browserCookie".equals(m.get("type"))).get("url");
+      String header = h.engine.claimBrowserCookie(url.substring(J2Act.BROWSER_PATH.length()));
+      assertTrue(header.startsWith("j2-browser=;") && header.contains("Max-Age=0"), header);
+    } finally {
+      signedIn.set(null);
+    }
+  }
+
   static final class RedirectingPage extends LiveComponent {
     @Override public Tag<?> render() {
       browser(Player.class).track.get();
@@ -490,6 +526,7 @@ class BrowserStoreTest {
       h.engine.onMessage(page.conn, Json.object("type", "browserCookieRetry"));
       String second = page.conn.await(again, m -> "browserCookie".equals(m.get("type"))).get("url");
       assertNotEquals(first, second, "a fresh one-time URL");
+      assertNull(h.engine.claimBrowserCookie(first.substring(J2Act.BROWSER_PATH.length())), "the newer offer withdrew the older");
       assertNotNull(h.engine.claimBrowserCookie(second.substring(J2Act.BROWSER_PATH.length())));
     }
   }

@@ -221,8 +221,7 @@ public final class J2Act implements AutoCloseable {
     }
     if (bound != null && !bound.equals(principal)) {
       tab.browserCookie = null;
-      tab.pendingBrowserCookie = BROWSER_COOKIE + "=; Path=" + (contextPath.isEmpty() ? "/" : contextPath)
-        + "; Max-Age=0; HttpOnly; SameSite=Lax";
+      tab.pendingBrowserCookie = browserCookieClearHeader();
     }
   }
 
@@ -235,6 +234,11 @@ public final class J2Act implements AutoCloseable {
     }
     retire(tab, "");
     return true;
+  }
+
+  /** The Set-Cookie value that drops the browser cookie. */
+  private String browserCookieClearHeader() {
+    return BROWSER_COOKIE + "=; Path=" + (contextPath.isEmpty() ? "/" : contextPath) + "; Max-Age=0; HttpOnly; SameSite=Lax";
   }
 
   private String browserCookieHeader(String cookie) {
@@ -379,6 +383,10 @@ public final class J2Act implements AutoCloseable {
       }
     }
     tab.detachBrowser();
+    // The page drops the old cookie now, over a one-time URL, even if nothing it shows reads browser
+    // state; a later use of browser state mints a fresh one, replacing this offer.
+    tab.mintedBrowserCookie = tab.pendingBrowserCookie = browserCookieClearHeader();
+    offerBrowserCookie(tab);
   }
 
   /**
@@ -466,6 +474,11 @@ public final class J2Act implements AutoCloseable {
     }
     tab.pendingBrowserCookie = null;
     String token = newSecret(24);
+    if (tab.browserCookieOffer != null) {
+      // Clearing the old cookie, then a fresh one: the page's fetches may land in any order.
+      browserCookieOffers.remove(tab.browserCookieOffer);
+    }
+    tab.browserCookieOffer = token;
     browserCookieOffers.put(token,
       new java.util.AbstractMap.SimpleImmutableEntry<>(cookie, clock.millis() + downloadTtlMillis));
     tab.send(Json.object("type", "browserCookie", "url", contextPath + BROWSER_PATH + token));
