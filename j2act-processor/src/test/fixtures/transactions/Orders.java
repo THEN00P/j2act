@@ -124,6 +124,17 @@ public class Orders {
       pack(); // expect: pack() is transactional
     }
 
+    public void note(Object... any) {
+    }
+
+    @Transactional
+    public void note(String first, Object... rest) {
+    }
+
+    public void renote() {
+      note("x"); // expect: note() is transactional
+    }
+
     final Mutation<String, String> viaReference = mutation((String note) -> {
       java.util.function.Consumer<String> later = this::keep;
       later.accept(note);

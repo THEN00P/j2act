@@ -338,6 +338,12 @@ final class Checks {
    * phase, signatures are compared expanded to the call's argument count.
    */
   private List<ExecutableElement> mostSpecific(List<ExecutableElement> applicable, int expandTo) {
+    if (expandTo >= 0) {
+      // One comparison length for every candidate: the call's arguments or the longest declaration.
+      for (ExecutableElement method : applicable) {
+        expandTo = Math.max(expandTo, method.getParameters().size());
+      }
+    }
     for (ExecutableElement candidate : applicable) {
       boolean specific = true;
       for (ExecutableElement other : applicable) {

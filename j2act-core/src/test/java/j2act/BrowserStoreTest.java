@@ -499,6 +499,28 @@ class BrowserStoreTest {
     }
   }
 
+  @Test
+  void aLiveLogoutClearsABoundCookieTheTabNeverJoined() {
+    signedIn.set("ada");
+    try (Harness h = new Harness(path -> "/p".equals(path) ? new PageMatch(PlayerPage::new, Collections.emptyMap())
+        : "/".equals(path) ? new PageMatch(OnceBrowser::new, Collections.emptyMap()) : null,
+        b -> b.withIdentity(ex -> signedIn.get() == null ? AuthCtx.anonymous() : AuthCtx.of(signedIn.get(), Collections.emptySet())))) {
+      Page player = new Page(h.engine, "/p", Exchange.empty());
+      String cookie = cookieValue(player.result.setCookies());
+      player.connect(); // ada's browser, live
+
+      Page other = new Page(h.engine, "/", withCookie(cookie)).connect(); // never reads browser state
+      signedIn.set(null);
+      int from = other.conn.size();
+      other.click("noop");
+      String url = other.conn.await(from, m -> "browserCookie".equals(m.get("type"))).get("url");
+      String header = h.engine.claimBrowserCookie(url.substring(J2Act.BROWSER_PATH.length()));
+      assertTrue(header.startsWith("j2-browser=;") && header.contains("Max-Age=0"), header);
+    } finally {
+      signedIn.set(null);
+    }
+  }
+
   static final class RedirectingPage extends LiveComponent {
     @Override public Tag<?> render() {
       browser(Player.class).track.get();

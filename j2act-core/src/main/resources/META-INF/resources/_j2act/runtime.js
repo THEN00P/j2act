@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-6fad340b5e7017877cfbc409803c3c0da7fd8528205ba43e77261b59fd64d153 */
+* sources: sha256-3817f5ef490819b98a9529391bdaa5b40343ccf00124a614a2de76d55923a9e2 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -2262,8 +2262,10 @@
 		}
 		/** Failed claims of the browser cookie so far; the server offers a fresh URL after each, a few times. */
 		let cookieClaimFailures = 0;
+		/** Claims run one after another, so the latest offer's cookie is the one that lands last. */
+		let claims = Promise.resolve();
 		function claimBrowserCookie(url) {
-			fetch(url, {
+			claims = claims.then(() => fetch(url, {
 				credentials: "same-origin",
 				cache: "no-store"
 			}).then((r) => {
@@ -2271,7 +2273,7 @@
 				cookieClaimFailures = 0;
 			}).catch(() => {
 				if (cookieClaimFailures < 5) setTimeout(() => send({ type: "browserCookieRetry" }), 1e3 * 2 ** cookieClaimFailures++);
-			});
+			}));
 		}
 		function busy() {
 			const a = document.activeElement;

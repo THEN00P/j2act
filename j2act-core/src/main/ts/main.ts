@@ -136,8 +136,11 @@ function start(): void {
   /** Failed claims of the browser cookie so far; the server offers a fresh URL after each, a few times. */
   let cookieClaimFailures = 0;
 
+  /** Claims run one after another, so the latest offer's cookie is the one that lands last. */
+  let claims: Promise<void> = Promise.resolve();
+
   function claimBrowserCookie(url: string): void {
-    fetch(url, { credentials: "same-origin", cache: "no-store" })
+    claims = claims.then(() => fetch(url, { credentials: "same-origin", cache: "no-store" })
       .then((r) => {
         if (!r.ok) {
           throw new Error("browser cookie claim answered " + r.status);
@@ -148,7 +151,7 @@ function start(): void {
         if (cookieClaimFailures < 5) {
           setTimeout(() => send({ type: "browserCookieRetry" }), 1000 * 2 ** cookieClaimFailures++);
         }
-      });
+      }));
   }
 
   // What a pause would cut off: the server checks its own side (uploads, downloads, client calls).

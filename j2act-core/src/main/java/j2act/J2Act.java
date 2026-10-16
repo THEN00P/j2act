@@ -192,37 +192,48 @@ public final class J2Act implements AutoCloseable {
    * loses its cookie, so a later login, by the same user or another, never brings it back.
    */
   private void checkBrowserCookie(Tab tab) {
+    if (cookieBelongsElsewhere(tab, () -> {
+      AuthCtx auth = tab.currentAuth();
+      return auth.isAnonymous() ? null : auth.name();
+    })) {
+      tab.browserCookie = null;
+      tab.pendingBrowserCookie = browserCookieClearHeader();
+    }
+  }
+
+  /**
+   * The identity rules for a tab's browser cookie, joined or not: an anonymous browser records the
+   * principal, in memory or in its stored snapshot; true when the cookie belongs to another
+   * principal and must go. The principal is only resolved when the cookie names a known browser.
+   */
+  private boolean cookieBelongsElsewhere(Tab tab, java.util.function.Supplier<String> currentPrincipal) {
     String cookie = tab.browserCookie;
     if (cookie == null) {
-      return;
+      return false;
     }
     Browser browser = browsers.get(cookie);
     Retained.Snapshot stored = browser == null ? snapshots.browserSnapshot(cookie) : null;
     if (browser == null && stored == null) {
-      return; // nothing of it is left to protect: its first use makes a fresh browser
+      return false; // nothing of it is left to protect: its first use makes a fresh browser
     }
-    AuthCtx auth = tab.currentAuth();
-    String principal = auth.isAnonymous() ? null : auth.name();
+    String principal = currentPrincipal.get();
     String bound;
     if (browser != null) {
       synchronized (browser) {
         bound = browser.principal;
         if (bound == null && principal != null) {
           recordPrincipal(browser, principal);
-          return;
+          return false;
         }
       }
     } else {
       bound = stored.principal;
       if (bound == null && principal != null) {
         snapshots.bindBrowser(cookie, stored, principal);
-        return;
+        return false;
       }
     }
-    if (bound != null && !bound.equals(principal)) {
-      tab.browserCookie = null;
-      tab.pendingBrowserCookie = browserCookieClearHeader();
-    }
+    return bound != null && !bound.equals(principal);
   }
 
   /** Retires the tab with this token if it lost its socket, as a page whose goodbye never arrived; true if it did. */
@@ -370,10 +381,16 @@ public final class J2Act implements AutoCloseable {
    */
   void identityChanged(Tab tab, AuthCtx auth) {
     Browser browser = tab.browser;
+    String principal = auth.isAnonymous() ? null : auth.name();
     if (browser == null) {
+      // Not joined yet, but its cookie may still name a browser bound to the identity it had.
+      if (cookieBelongsElsewhere(tab, () -> principal)) {
+        tab.browserCookie = null;
+        tab.mintedBrowserCookie = tab.pendingBrowserCookie = browserCookieClearHeader();
+        offerBrowserCookie(tab);
+      }
       return;
     }
-    String principal = auth.isAnonymous() ? null : auth.name();
     synchronized (browser) {
       if (browser.principal == null || browser.principal.equals(principal)) {
         if (browser.principal == null && principal != null) {
