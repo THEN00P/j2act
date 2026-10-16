@@ -227,6 +227,23 @@ class BrowserStoreTest {
   }
 
   @Test
+  void aTabThatComesAndGoesRestartsTheBrowsersGraceWindow() {
+    try (Harness h = harness(PlayerPage::new)) {
+      Page first = new Page(h.engine, "/", Exchange.empty());
+      String cookie = cookieValue(first.result.setCookies());
+      first.connect();
+      first.change("track", "intro");
+      first.bye();
+      sleep(100);
+      Page brief = new Page(h.engine, "/", withCookie(cookie)).connect();
+      brief.bye();
+      sleep(100); // 200 ms after the first goodbye, past its 150 ms grace, but not past the second's
+      Page next = new Page(h.engine, "/", withCookie(cookie));
+      assertTrue(next.html.contains("track=intro;"), "the browser waited a full grace window after its latest tab: " + next.html);
+    }
+  }
+
+  @Test
   void aReloadInsideTheGraceWindowKeepsPlainBrowserState() {
     try (Harness h = harness(PlayerPage::new)) {
       Page first = new Page(h.engine, "/", Exchange.empty());

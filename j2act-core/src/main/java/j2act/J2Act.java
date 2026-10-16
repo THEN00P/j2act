@@ -264,6 +264,7 @@ public final class J2Act implements AutoCloseable {
           }
           // A browser still saving after its last tab comes back as it was: its values are all here.
           browser.retired = false;
+          browser.joins++;
           browser.tabs.add(tab);
           return browser;
         }
@@ -331,12 +332,22 @@ public final class J2Act implements AutoCloseable {
   /** A tab of this browser ended or left it; the last one gives the browser the grace window a tab has. */
   void leaveBrowser(Tab tab, Browser browser) {
     boolean empty;
+    long joins;
     synchronized (browser) {
       browser.tabs.remove(tab);
       empty = browser.tabs.isEmpty() && !browser.retired;
+      joins = browser.joins;
     }
     if (empty) {
-      later(browser.hub, reconnectGraceMillis, () -> retireBrowser(browser, false));
+      // A full grace window after the latest tab left: a tab that came and went meanwhile restarts it.
+      later(browser.hub, reconnectGraceMillis, () -> {
+        synchronized (browser) {
+          if (browser.joins != joins) {
+            return;
+          }
+        }
+        retireBrowser(browser, false);
+      });
     }
   }
 
@@ -1070,7 +1081,8 @@ public final class J2Act implements AutoCloseable {
         saves.add(retire(tab, ""));
       }
       try {
-        CompletableFuture.allOf(saves.toArray(new CompletableFuture<?>[0])).get(shutdownSaveMillis, TimeUnit.MILLISECONDS);
+        CompletableFuture.allOf(saves.toArray(new CompletableFuture<?>[0]))
+          .get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
       } catch (TimeoutException e) {
         log(System.Logger.Level.WARNING, saves.stream().filter(f -> !f.isDone()).count()
           + " tabs were not saved within the shutdown timeout; their Retained State is lost", null);
@@ -1086,7 +1098,8 @@ public final class J2Act implements AutoCloseable {
         browserSaves.add(retireBrowser(browser, true));
       }
       try {
-        CompletableFuture.allOf(browserSaves.toArray(new CompletableFuture<?>[0])).get(shutdownSaveMillis, TimeUnit.MILLISECONDS);
+        CompletableFuture.allOf(browserSaves.toArray(new CompletableFuture<?>[0]))
+          .get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
       } catch (TimeoutException | ExecutionException e) {
         log(System.Logger.Level.WARNING, "saving browsers on shutdown failed; their Retained State is lost", e);
       } catch (InterruptedException e) {

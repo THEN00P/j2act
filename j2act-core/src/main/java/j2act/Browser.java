@@ -22,6 +22,8 @@ public final class Browser {
   boolean retired;
   /** Its snapshot landed and its hub is ending: out of browsers, so the next tab restores. Guarded by this. */
   boolean ended;
+  /** Counts tabs joining, so a grace timer started before the latest join retires nothing. Guarded by this. */
+  long joins;
   /** Completes once the latest retirement's snapshot reached storage. Guarded by this. */
   CompletableFuture<Void> saved = CompletableFuture.completedFuture(null);
 
