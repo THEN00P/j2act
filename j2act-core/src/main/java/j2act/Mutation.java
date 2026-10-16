@@ -112,7 +112,8 @@ public class Mutation<V, R> extends Primitive {
   }
 
   private MutationCell.Snapshot snapshot() {
-    return cell == null ? MutationCell.Snapshot.IDLE : ((MutationCell) cell).read();
+    Cell bound = cellOrNull();
+    return bound == null ? MutationCell.Snapshot.IDLE : ((MutationCell) bound).read();
   }
 
   private MutationCell cell() {

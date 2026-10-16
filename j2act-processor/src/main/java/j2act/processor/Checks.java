@@ -326,7 +326,7 @@ final class Checks {
         }
       }
       if (!applicable.isEmpty()) {
-        return mostSpecific(applicable);
+        return mostSpecific(applicable, phase == 3 ? arguments.size() : -1);
       }
     }
     return new ArrayList<>();
@@ -334,13 +334,14 @@ final class Checks {
 
   /**
    * The one overload Java selects among applicable ones, the one whose parameters all fit the
-   * others' (JLS 15.12.2.5); all of them when none is more specific than the rest.
+   * others' (JLS 15.12.2.5); all of them when none is more specific than the rest. In the varargs
+   * phase, signatures are compared expanded to the call's argument count.
    */
-  private List<ExecutableElement> mostSpecific(List<ExecutableElement> applicable) {
+  private List<ExecutableElement> mostSpecific(List<ExecutableElement> applicable, int expandTo) {
     for (ExecutableElement candidate : applicable) {
       boolean specific = true;
       for (ExecutableElement other : applicable) {
-        if (other != candidate && !parametersFit(candidate, other)) {
+        if (other != candidate && !parametersFit(signature(candidate, expandTo), signature(other, expandTo))) {
           specific = false;
           break;
         }
@@ -352,15 +353,33 @@ final class Checks {
     return applicable;
   }
 
-  /** Whether every parameter of a is assignable to the matching parameter of b. */
-  private boolean parametersFit(ExecutableElement a, ExecutableElement b) {
-    List<? extends VariableElement> left = a.getParameters();
-    List<? extends VariableElement> right = b.getParameters();
-    if (left.size() != right.size()) {
+  /** A method's parameter types, or with expandTo set, expanded to that many with the varargs element type. */
+  private List<TypeMirror> signature(ExecutableElement method, int expandTo) {
+    List<TypeMirror> out = new ArrayList<>();
+    List<? extends VariableElement> parameters = method.getParameters();
+    if (expandTo < 0 || !method.isVarArgs()) {
+      for (VariableElement parameter : parameters) {
+        out.add(types.erasure(parameter.asType()));
+      }
+      return out;
+    }
+    for (int i = 0; i < Math.max(expandTo, parameters.size() - 1); i++) {
+      TypeMirror type = parameters.get(Math.min(i, parameters.size() - 1)).asType();
+      if (i >= parameters.size() - 1 && type.getKind() == TypeKind.ARRAY) {
+        type = ((javax.lang.model.type.ArrayType) type).getComponentType();
+      }
+      out.add(types.erasure(type));
+    }
+    return out;
+  }
+
+  /** Whether every type of a is assignable to the matching type of b. */
+  private boolean parametersFit(List<TypeMirror> a, List<TypeMirror> b) {
+    if (a.size() != b.size()) {
       return false;
     }
-    for (int i = 0; i < left.size(); i++) {
-      if (!types.isAssignable(types.erasure(left.get(i).asType()), types.erasure(right.get(i).asType()))) {
+    for (int i = 0; i < a.size(); i++) {
+      if (!types.isAssignable(a.get(i), b.get(i))) {
         return false;
       }
     }

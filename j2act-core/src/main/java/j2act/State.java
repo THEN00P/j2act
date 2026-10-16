@@ -29,7 +29,8 @@ public final class State<T> extends Primitive implements Supplier<T> {
   @Override
   @SuppressWarnings("unchecked")
   public T get() {
-    return cell == null ? initial : (T) ((ValueCell) cell).read();
+    Cell bound = cellOrNull();
+    return bound == null ? initial : (T) ((ValueCell) bound).read();
   }
 
   public void set(T value) {

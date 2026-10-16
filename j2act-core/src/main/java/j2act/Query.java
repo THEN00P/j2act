@@ -68,7 +68,8 @@ public final class Query<T> extends Primitive {
   }
 
   private QueryCell.Snapshot snapshot() {
-    return cell == null ? QueryCell.Snapshot.INITIAL : ((QueryCell) cell).read();
+    Cell bound = cellOrNull();
+    return bound == null ? QueryCell.Snapshot.INITIAL : ((QueryCell) bound).read();
   }
 
   @Override Cell createCell(Tab tab, String address) {

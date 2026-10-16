@@ -19,6 +19,14 @@ abstract class Primitive {
   /** Binds this handle to an existing or freshly created cell. Lane-only. */
   abstract void attach(Cell cell, boolean created);
 
+  /** This handle's cell, binding a store its tab is still making first; null while unbound. */
+  final Cell cellOrNull() {
+    if (cell == null && store != null) {
+      store.bindIfPending();
+    }
+    return cell;
+  }
+
   final Cell requireCell() {
     if (cell == null && store != null) {
       // A container's @PostConstruct runs before the tab binds the store it is making: bind now.

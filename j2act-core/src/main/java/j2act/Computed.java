@@ -17,7 +17,8 @@ public final class Computed<T> extends Primitive implements Supplier<T> {
   @Override
   @SuppressWarnings("unchecked")
   public T get() {
-    return cell == null ? body.get() : (T) ((ComputedCell) cell).read();
+    Cell bound = cellOrNull();
+    return bound == null ? body.get() : (T) ((ComputedCell) bound).read();
   }
 
   @Override Cell createCell(Tab tab, String address) {

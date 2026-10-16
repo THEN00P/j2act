@@ -102,6 +102,17 @@ public class Orders {
       count(1); // expect: count() is transactional
     }
 
+    @Transactional
+    public void label(String first, String... rest) {
+    }
+
+    public void label(Object... any) {
+    }
+
+    public void relabel() {
+      label("a", "b"); // expect: label() is transactional
+    }
+
     final Mutation<String, String> viaReference = mutation((String note) -> {
       java.util.function.Consumer<String> later = this::keep;
       later.accept(note);

@@ -275,6 +275,27 @@ class StoreTest {
     }
   }
 
+  static volatile String branchSeenOnCreate;
+
+  @Test
+  void aLifecycleCallbackReadsTheRestoredValue() {
+    branchSeenOnCreate = null;
+    CountingStorage storage = new CountingStorage();
+    try (Harness h = new Harness(path -> "/b".equals(path) ? page("branch", Branch::new) : null,
+        b -> b.withReconnectGrace(Duration.ofMillis(100)).withRetainedStateStorage(storage).withStore(Filters.class, () -> {
+          Filters filters = new Filters();
+          branchSeenOnCreate = filters.branch.get(); // as a container's @PostConstruct would read it
+          return filters;
+        }))) {
+      h.load("/b", Exchange.empty());
+      h.connect();
+      type(h, "branch", "north");
+      String old = evict(h, storage);
+      h.load("/b", remount(old));
+      assertEquals("north", branchSeenOnCreate, "the read bound the store, which restored its value first");
+    }
+  }
+
   public static class NotAStore extends Store {
   }
 
