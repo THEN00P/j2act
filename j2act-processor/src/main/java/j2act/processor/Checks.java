@@ -315,24 +315,21 @@ final class Checks {
       }
       arguments.add(types.erasure(type));
     }
-    // Java's phases (JLS 15.12.2): fixed arity first, a varargs parameter taken as its array
-    // type; expanding varargs only when no overload applies that way.
-    List<ExecutableElement> fixed = new ArrayList<>();
-    for (ExecutableElement method : fits) {
-      if (method.getParameters().size() == arguments.size() && argumentsFit(method, arguments, false)) {
-        fixed.add(method);
+    // Java's phases (JLS 15.12.2): fixed arity without boxing, then fixed arity with boxing (a
+    // varargs parameter taken as its array type in both), then varargs expansion.
+    for (int phase = 1; phase <= 3; phase++) {
+      List<ExecutableElement> applicable = new ArrayList<>();
+      for (ExecutableElement method : fits) {
+        boolean candidate = phase < 3 ? method.getParameters().size() == arguments.size() : method.isVarArgs();
+        if (candidate && argumentsFit(method, arguments, phase == 3, phase > 1)) {
+          applicable.add(method);
+        }
+      }
+      if (!applicable.isEmpty()) {
+        return mostSpecific(applicable);
       }
     }
-    if (!fixed.isEmpty()) {
-      return mostSpecific(fixed);
-    }
-    List<ExecutableElement> expanded = new ArrayList<>();
-    for (ExecutableElement method : fits) {
-      if (method.isVarArgs() && argumentsFit(method, arguments, true)) {
-        expanded.add(method);
-      }
-    }
-    return mostSpecific(expanded);
+    return new ArrayList<>();
   }
 
   /**
@@ -370,15 +367,22 @@ final class Checks {
     return true;
   }
 
-  /** Whether the arguments fit the parameters, the last one expanded to its element type when expand is set. */
-  private boolean argumentsFit(ExecutableElement method, List<TypeMirror> arguments, boolean expand) {
+  /**
+   * Whether the arguments fit the parameters: the last one expanded to its element type when expand
+   * is set, and boxing or unboxing allowed only when loose is.
+   */
+  private boolean argumentsFit(ExecutableElement method, List<TypeMirror> arguments, boolean expand, boolean loose) {
     List<? extends VariableElement> parameters = method.getParameters();
     for (int i = 0; i < arguments.size(); i++) {
       TypeMirror parameter = parameters.get(Math.min(i, parameters.size() - 1)).asType();
       if (expand && i >= parameters.size() - 1 && parameter.getKind() == TypeKind.ARRAY) {
         parameter = ((javax.lang.model.type.ArrayType) parameter).getComponentType();
       }
-      if (!types.isAssignable(arguments.get(i), types.erasure(parameter))) {
+      TypeMirror target = types.erasure(parameter);
+      if (!loose && arguments.get(i).getKind().isPrimitive() != target.getKind().isPrimitive()) {
+        return false; // strict invocation: no boxing or unboxing
+      }
+      if (!types.isAssignable(arguments.get(i), target)) {
         return false;
       }
     }

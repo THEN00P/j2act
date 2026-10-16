@@ -51,6 +51,20 @@ class ClosedTabTest {
   }
 
   @Test
+  void aReopenAfterALostGoodbyeRetiresTheDisconnectedTabFirst() {
+    CountingStorage storage = new CountingStorage();
+    try (Harness h = harness(Form::new, storage, b -> b.withReconnectGrace(Duration.ofSeconds(30)))) {
+      h.load();
+      h.connect();
+      type(h, "name", "Ada");
+      String old = h.token;
+      h.engine.onClose(h.conn); // the socket drops without a bye: the tab waits out its grace window
+      String html = h.load("/", remount(old));
+      assertTrue(html.contains("name=Ada;"), "the disconnected tab saved and ended before the restore: " + html);
+    }
+  }
+
+  @Test
   void aLiveTabsSnapshotIsNotForgotten() {
     CountingStorage storage = new CountingStorage();
     try (Harness h = harness(Form::new, storage, b -> b.withCheckpointInterval(Duration.ofMillis(100)))) {

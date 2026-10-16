@@ -91,6 +91,17 @@ public class Orders {
       stash("x", "y"); // expect: stash() is transactional
     }
 
+    @Transactional
+    public void count(long n) {
+    }
+
+    public void count(Integer n) {
+    }
+
+    public void tally() {
+      count(1); // expect: count() is transactional
+    }
+
     final Mutation<String, String> viaReference = mutation((String note) -> {
       java.util.function.Consumer<String> later = this::keep;
       later.accept(note);

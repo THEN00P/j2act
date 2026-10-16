@@ -151,6 +151,8 @@ final class Snapshots {
    */
   private boolean awaitClosing(String token, String id) {
     long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(RESTORE_WAIT_MILLIS);
+    // A page whose goodbye never arrived is still here, only disconnected: it saves and ends now.
+    engine.retireDisconnected(token);
     Tab live = engine.closingTab(token);
     try {
       if (live != null) {
@@ -173,6 +175,15 @@ final class Snapshots {
 
   private static long left(long deadline) {
     return Math.max(0, deadline - System.nanoTime());
+  }
+
+  /** The principal a browser's stored snapshot belongs to, or null when it is anonymous, absent or unreadable. */
+  String browserPrincipal(String cookie) {
+    try {
+      return storage.load(Retained.id("browser:" + cookie)).map(text -> Retained.decode(text).principal).orElse(null);
+    } catch (RuntimeException e) {
+      return null;
+    }
   }
 
   /**

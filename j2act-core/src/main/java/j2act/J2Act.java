@@ -185,6 +185,47 @@ public final class J2Act implements AutoCloseable {
     return value != null && value.matches("[A-Za-z0-9_-]{32}") ? value : null;
   }
 
+  /**
+   * A page load whose browser cookie belongs to another principal, such as the page a logout lands
+   * on, drops the cookie at once, whether or not the page uses browser state, so the same user
+   * logging in again later cannot bring back the browser of before the logout (ADR 0030).
+   */
+  private void dropForeignBrowserCookie(Tab tab) {
+    String cookie = tab.browserCookie;
+    if (cookie == null) {
+      return;
+    }
+    String bound;
+    Browser browser = browsers.get(cookie);
+    if (browser != null) {
+      synchronized (browser) {
+        bound = browser.principal;
+      }
+    } else {
+      bound = snapshots.browserPrincipal(cookie);
+    }
+    if (bound == null) {
+      return;
+    }
+    AuthCtx auth = tab.currentAuth();
+    if (!bound.equals(auth.isAnonymous() ? null : auth.name())) {
+      tab.browserCookie = null;
+      tab.pendingBrowserCookie = BROWSER_COOKIE + "=; Path=" + (contextPath.isEmpty() ? "/" : contextPath)
+        + "; Max-Age=0; HttpOnly; SameSite=Lax";
+    }
+  }
+
+  /** Retires the tab with this token if it lost its socket, as a page whose goodbye never arrived; true if it did. */
+  boolean retireDisconnected(String token) {
+    Tab tab = liveTab(token);
+    // byConnection drops a closed socket at once; the tab's own connection field follows on its lane.
+    if (tab == null || closingTabs.get(token) != null || byConnection.containsValue(tab)) {
+      return false;
+    }
+    retire(tab, "");
+    return true;
+  }
+
   private String browserCookieHeader(String cookie) {
     return BROWSER_COOKIE + "=" + cookie + "; Path=" + (contextPath.isEmpty() ? "/" : contextPath)
       + "; Max-Age=34560000; HttpOnly; SameSite=Lax";
@@ -609,6 +650,7 @@ public final class J2Act implements AutoCloseable {
     Tab tab = new Tab(this, newSecret(18), newSecret(18), exchange, url);
     tab.snapshot.restore(snapshots.restore(exchange));
     tabs.put(tab.id, tab);
+    dropForeignBrowserCookie(tab);
     try {
       Tab.Resolution resolution = await(tab.call(() -> tab.resolve(url)));
       if (!resolution.url.equals(url)) {

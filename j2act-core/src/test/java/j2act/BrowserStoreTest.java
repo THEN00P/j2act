@@ -406,6 +406,21 @@ class BrowserStoreTest {
     }
   }
 
+  @Test
+  void aLogoutPageThatNeverUsesBrowserStateStillDropsTheCookie() {
+    try (Harness h = new Harness(path -> "/".equals(path) ? new PageMatch(PlayerPage::new, Collections.emptyMap())
+        : "/out".equals(path) ? new PageMatch(LazyPage::new, Collections.emptyMap()) : null,
+        b -> b.withIdentity(ex -> ex.cookie("user").map(u -> AuthCtx.of(u, Collections.emptySet())).orElse(AuthCtx.anonymous())))) {
+      Page ada = new Page(h.engine, "/", withCookieAs(null, "ada"));
+      String cookie = cookieValue(ada.result.setCookies());
+      ada.connect();
+      Page loggedOut = new Page(h.engine, "/out", withCookieAs(cookie, null));
+      assertEquals(1, loggedOut.result.setCookies().size(), loggedOut.result.setCookies().toString());
+      assertTrue(loggedOut.result.setCookies().get(0).startsWith("j2-browser=;") && loggedOut.result.setCookies().get(0).contains("Max-Age=0"),
+        loggedOut.result.setCookies().get(0));
+    }
+  }
+
   static final class RedirectingPage extends LiveComponent {
     @Override public Tag<?> render() {
       browser(Player.class).track.get();
