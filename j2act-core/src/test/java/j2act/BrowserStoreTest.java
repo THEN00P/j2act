@@ -383,6 +383,29 @@ class BrowserStoreTest {
     }
   }
 
+  @Test
+  void aLoginRewritesTheBrowsersCheckpointWithTheUser() {
+    signedIn.set(null);
+    RetainedStateTest.CountingStorage storage = new RetainedStateTest.CountingStorage();
+    try (Harness h = new Harness(PlayerPage::new, b -> b
+        .withRetainedStateStorage(storage).withCheckpointInterval(Duration.ofMillis(100))
+        .withIdentity(ex -> signedIn.get() == null ? AuthCtx.anonymous() : AuthCtx.of(signedIn.get(), Collections.emptySet())))) {
+      Page page = new Page(h.engine, "/", Exchange.empty());
+      String cookie = cookieValue(page.result.setCookies());
+      page.connect();
+      page.change("volume", "8");
+      String id = Retained.id("browser:" + cookie);
+      Harness.eventually(() -> storage.inner.load(id).isPresent(), "an anonymous checkpoint");
+
+      signedIn.set("ada");
+      page.change("track", "after login"); // the event rechecks identity
+      Harness.eventually(() -> storage.inner.load(id).map(text -> "ada".equals(Retained.decode(text).principal)).orElse(false),
+        "the checkpoint now belongs to the user, not to anyone");
+    } finally {
+      signedIn.set(null);
+    }
+  }
+
   static final class RedirectingPage extends LiveComponent {
     @Override public Tag<?> render() {
       browser(Player.class).track.get();

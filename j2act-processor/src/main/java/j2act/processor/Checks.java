@@ -315,13 +315,24 @@ final class Checks {
       }
       arguments.add(types.erasure(type));
     }
-    List<ExecutableElement> byType = new ArrayList<>();
+    // Java's phases (JLS 15.12.2): fixed arity first, a varargs parameter taken as its array
+    // type; expanding varargs only when no overload applies that way.
+    List<ExecutableElement> fixed = new ArrayList<>();
     for (ExecutableElement method : fits) {
-      if (argumentsFit(method, arguments)) {
-        byType.add(method);
+      if (method.getParameters().size() == arguments.size() && argumentsFit(method, arguments, false)) {
+        fixed.add(method);
       }
     }
-    return mostSpecific(byType);
+    if (!fixed.isEmpty()) {
+      return mostSpecific(fixed);
+    }
+    List<ExecutableElement> expanded = new ArrayList<>();
+    for (ExecutableElement method : fits) {
+      if (method.isVarArgs() && argumentsFit(method, arguments, true)) {
+        expanded.add(method);
+      }
+    }
+    return mostSpecific(expanded);
   }
 
   /**
@@ -359,12 +370,12 @@ final class Checks {
     return true;
   }
 
-  private boolean argumentsFit(ExecutableElement method, List<TypeMirror> arguments) {
+  /** Whether the arguments fit the parameters, the last one expanded to its element type when expand is set. */
+  private boolean argumentsFit(ExecutableElement method, List<TypeMirror> arguments, boolean expand) {
     List<? extends VariableElement> parameters = method.getParameters();
     for (int i = 0; i < arguments.size(); i++) {
       TypeMirror parameter = parameters.get(Math.min(i, parameters.size() - 1)).asType();
-      if (method.isVarArgs() && i >= parameters.size() - 1 && parameter.getKind() == TypeKind.ARRAY
-          && !(arguments.size() == parameters.size() && types.isAssignable(arguments.get(i), types.erasure(parameter)))) {
+      if (expand && i >= parameters.size() - 1 && parameter.getKind() == TypeKind.ARRAY) {
         parameter = ((javax.lang.model.type.ArrayType) parameter).getComponentType();
       }
       if (!types.isAssignable(arguments.get(i), types.erasure(parameter))) {

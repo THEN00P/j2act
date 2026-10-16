@@ -229,24 +229,27 @@ final class Snapshots {
   void forgetToken(String token) {
     String id = Retained.id(token);
     Tab live = engine.liveTab(token);
-    if (live != null) {
-      try {
-        live.ended.get(FORGET_WAIT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS);
-      } catch (java.util.concurrent.TimeoutException e) {
-        return; // still live: a duplicated tab asked, and the source keeps its checkpoint
-      } catch (java.util.concurrent.ExecutionException e) {
-        // ended anyway
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        return;
-      }
+    if (live == null) {
+      deleteOnceSaved(id);
+      return;
     }
-    // A closing save still on its way is deleted once it lands, so it cannot come back later.
+    // Waits by callback, holding no thread: the old tab's end may need the only executor thread.
+    live.ended.copy().orTimeout(FORGET_WAIT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS)
+      .whenComplete((v, timedOut) -> {
+        if (timedOut == null || live.disposed) {
+          deleteOnceSaved(id);
+        }
+        // else still live: a duplicated tab asked, and the source keeps its checkpoint
+      });
+  }
+
+  /** A closing save still on its way is deleted once it lands, so it cannot come back later. */
+  private void deleteOnceSaved(String id) {
     CompletableFuture<Void> saving = inFlight.get(id);
     if (saving != null) {
-      saving.whenComplete((v, e) -> delete(id));
+      saving.whenComplete((v, e) -> engine.executor.execute(() -> delete(id)));
     } else {
-      delete(id);
+      engine.executor.execute(() -> delete(id));
     }
   }
 

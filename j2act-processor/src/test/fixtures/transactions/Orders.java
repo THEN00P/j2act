@@ -79,6 +79,18 @@ public class Orders {
       file(anything);
     }
 
+    @Transactional
+    public void stash(String... names) {
+    }
+
+    public void stash(Object anything) {
+    }
+
+    public void tidy() {
+      stash("x");
+      stash("x", "y"); // expect: stash() is transactional
+    }
+
     final Mutation<String, String> viaReference = mutation((String note) -> {
       java.util.function.Consumer<String> later = this::keep;
       later.accept(note);

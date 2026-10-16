@@ -259,8 +259,8 @@ public final class J2Act implements AutoCloseable {
           if (browser.principal != null && !browser.principal.equals(principal)) {
             return null;
           }
-          if (browser.principal == null) {
-            browser.principal = principal;
+          if (browser.principal == null && principal != null) {
+            recordPrincipal(browser, principal);
           }
           // A browser still saving after its last tab comes back as it was: its values are all here.
           browser.retired = false;
@@ -320,13 +320,32 @@ public final class J2Act implements AutoCloseable {
     String principal = auth.isAnonymous() ? null : auth.name();
     synchronized (browser) {
       if (browser.principal == null || browser.principal.equals(principal)) {
-        if (browser.principal == null) {
-          browser.principal = principal;
+        if (browser.principal == null && principal != null) {
+          recordPrincipal(browser, principal);
         }
         return;
       }
     }
     tab.detachBrowser();
+  }
+
+  /**
+   * Holding the browser's lock. An anonymous browser logs in: it records the user, and a checkpoint
+   * already in storage is saved again at once, so storage never holds this user's values as
+   * anonymous ones another account could restore after a crash.
+   */
+  private void recordPrincipal(Browser browser, String principal) {
+    browser.principal = principal;
+    Tab hub = browser.hub;
+    hub.post(() -> {
+      if (hub.disposed) {
+        return;
+      }
+      hub.snapshot.dirty = true;
+      if (hub.snapshot.stored) {
+        snapshots.persistBrowser(browser);
+      }
+    });
   }
 
   /** A tab of this browser ended or left it; the last one gives the browser the grace window a tab has. */
@@ -863,7 +882,7 @@ public final class J2Act implements AutoCloseable {
       // A reload of a page whose closed tab kept a snapshot: a reload starts empty (ADR 0030).
       String old = message.get("token");
       if (old != null && !old.isEmpty() && !old.equals(tab.token)) {
-        executor.execute(() -> snapshots.forgetToken(old));
+        snapshots.forgetToken(old);
       }
     }
   }
