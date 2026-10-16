@@ -250,6 +250,9 @@ final class Snapshots {
    */
   void forgetToken(String token) {
     String id = Retained.id(token);
+    // A reloaded page whose goodbye never arrived is still here, only disconnected: it ends now,
+    // and its save is deleted once it lands, instead of outliving the reload's one forget.
+    engine.retireDisconnected(token);
     Tab live = engine.liveTab(token);
     if (live == null) {
       deleteOnceSaved(id);

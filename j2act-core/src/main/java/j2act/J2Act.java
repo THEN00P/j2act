@@ -441,7 +441,9 @@ public final class J2Act implements AutoCloseable {
       snapshots.persistBrowser(browser).whenComplete((v, e) -> {
         boolean end;
         synchronized (browser) {
-          end = closing || browser.retired;
+          // Only the latest retirement ends it: an older save landing late must not end a browser
+          // that was revived and retired again, whose own save is still on its way.
+          end = closing || browser.retired && browser.saved == saved;
           if (end) {
             browser.ended = true;
             browsers.remove(browser.cookie, browser);

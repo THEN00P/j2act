@@ -65,6 +65,27 @@ class ClosedTabTest {
   }
 
   @Test
+  void aReloadAfterALostGoodbyeStillForgetsTheOldTabsSave() {
+    CountingStorage storage = new CountingStorage();
+    try (Harness h = harness(Form::new, storage, b -> b.withReconnectGrace(Duration.ofSeconds(30)))) {
+      h.load();
+      h.connect();
+      type(h, "name", "Ada");
+      String old = h.token;
+      Harness.FakeConnection oldSocket = h.conn;
+      h.engine.onClose(oldSocket); // the reload's goodbye never arrived
+      String html = h.load();
+      Harness.FakeConnection fresh = new Harness.FakeConnection();
+      h.engine.onMessage(fresh, j2act.internal.json.Json.object("type", "hello", "tab", h.sid, "token", h.token));
+      fresh.await(0, m -> "ready".equals(m.get("type")));
+      h.engine.onMessage(fresh, j2act.internal.json.Json.object("type", "forget", "token", old));
+      Harness.eventually(() -> h.engine.liveTab(old) == null, "the disconnected tab ended");
+      sleep(300);
+      assertTrue(!storage.has(old), "its save was deleted once it landed: " + html.length());
+    }
+  }
+
+  @Test
   void aLiveTabsSnapshotIsNotForgotten() {
     CountingStorage storage = new CountingStorage();
     try (Harness h = harness(Form::new, storage, b -> b.withCheckpointInterval(Duration.ofMillis(100)))) {
