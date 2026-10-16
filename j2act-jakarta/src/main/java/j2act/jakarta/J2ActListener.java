@@ -59,6 +59,10 @@ public abstract class J2ActListener implements ServletContextListener {
     J2Act.Builder builder = J2Act.builder(resolver)
       .withContextPath(context.getContextPath())
       .withMembersInjector(CdiSupport.membersInjector());
+    java.util.function.Function<Class<?>, Object> stores = CdiSupport.storeLookup();
+    if (stores != null) {
+      builder.withStoreLookup(stores);
+    }
     Executor executor = ManagedExecutors.lookup();
     if (executor != null) {
       builder.withExecutor(CdiSupport.withRequestContext(executor));

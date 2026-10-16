@@ -2,7 +2,7 @@ import type { ClientMessage } from "./protocol.ts";
 
 /*
  * Pause and resume (ADR 0026): the page's Retained State stays on the server as a snapshot and
- * its session is freed, as .NET's circuit pause. running -> deferring (onPausing handlers run)
+ * its tab is freed, as .NET's circuit pause. running -> deferring (onPausing handlers run)
  * -> pausing (asked the server) -> paused; resume() goes back through a remount.
  */
 
@@ -16,7 +16,7 @@ export interface RetainedOptions {
   sendIfReady: (message: ClientMessage) => void;
   /** The socket is about to close: queue from now on. */
   stopSending: () => void;
-  /** Starts the page again on a new session; resumed() follows. */
+  /** Starts the page again on a new server-side tab; resumed() follows. */
   remount: () => void;
   remounting: () => boolean;
   /** What a pause would cut off on this side: the server checks its own (uploads, downloads, client calls). */
@@ -47,7 +47,7 @@ export function createRetained(options: RetainedOptions) {
     };
   }
 
-  /** Resolves true once the server saved the page's Retained State and let its session go. */
+  /** Resolves true once the server saved the page's Retained State and let its tab go. */
   function pause(): Promise<boolean> {
     if (current === "paused") {
       return Promise.resolve(true);
@@ -62,7 +62,7 @@ export function createRetained(options: RetainedOptions) {
     });
   }
 
-  /** Resolves once the page runs again on a new session: true when its Retained State came back, or it had none. */
+  /** Resolves once the page runs again on a new server-side tab: true when its Retained State came back, or it had none. */
   function resume(): Promise<boolean> {
     if (current === "deferring") {
       cancel("resumed");
@@ -83,7 +83,7 @@ export function createRetained(options: RetainedOptions) {
     });
   }
 
-  /** The server let the session go; saved: it had Retained State to keep. */
+  /** The server let the tab go; saved: it had Retained State to keep. */
   function paused(saved: boolean): void {
     withState = saved;
     current = "paused";
@@ -198,12 +198,12 @@ export function createRetained(options: RetainedOptions) {
     },
 
     /**
-     * The session is gone. Evicted while a pause was on its way, a snapshot may be saved all the
+     * The server-side tab is gone. Evicted while a pause was on its way, a snapshot may be saved all the
      * same, so the page counts as paused. Returns whether the page should remount instead.
      */
     expired(): boolean {
       if (current === "pausing" || current === "deferring") {
-        stopDeferral("the session ended");
+        stopDeferral("the server-side tab ended");
         paused(true);
         return false;
       }
@@ -224,7 +224,7 @@ export function createRetained(options: RetainedOptions) {
     },
 
     /**
-     * The page runs on its new session. As .NET's resumeCircuit(): false when the page had state to
+     * The page runs on its new server-side tab. As .NET's resumeCircuit(): false when the page had state to
      * keep and got none back, as when its snapshot expired, was used already or belongs to someone
      * else. The page runs either way.
      */

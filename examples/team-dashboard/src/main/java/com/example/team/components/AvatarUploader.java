@@ -5,7 +5,7 @@ import static j2act.html.TagCreator.*;
 import jakarta.inject.Inject;
 
 import com.example.team.db.Users;
-import com.example.team.stores.AppStores;
+import com.example.team.stores.CurrentUser;
 import j2act.ComponentTag;
 import j2act.Upload;
 import j2act.html.tags.DivTag;
@@ -18,13 +18,14 @@ import j2act.html.tags.DivTag;
 public final class AvatarUploader extends ComponentTag {
 
   @Inject private Users users;
+  @Inject private CurrentUser currentUser;
 
   public static AvatarUploader avatarUploader() {
     return new AvatarUploader();
   }
 
   @Override protected DivTag render() {
-    long userId = AppStores.currentUser.select(u -> u.userId);
+    long userId = currentUser.userId();
     Upload up = upload()
       .withTarget("/var/app/uploads/avatars")
       .withNaming((orig, ctx) -> ctx.username() + "_" + ctx.timestamp() + "_" + orig)

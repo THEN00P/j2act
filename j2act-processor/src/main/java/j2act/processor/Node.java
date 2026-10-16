@@ -23,8 +23,12 @@ final class Node {
     IDENT,
     /** receiver.name, a field or a qualified name. */
     SELECT,
+    /** receiver::name, a method reference; the receiver is its only child. */
+    REF,
     /** A string literal, adjacent literals folded. */
     STRING,
+    /** A primitive or null literal; type is its keyword, such as int, boolean or null. */
+    LITERAL,
     /** a + b. */
     CONCAT,
     /** A local variable or parameter, with its initializer as the only child. */
@@ -43,13 +47,13 @@ final class Node {
   Node parent;
   final List<Node> children = new ArrayList<>();
 
-  /** CALL method name, IDENT, SELECT and VAR name. */
+  /** CALL and REF method name, IDENT, SELECT and VAR name. */
   String name;
-  /** NEW created type or VAR declared type, dotted without type arguments; "var" when inferred. */
+  /** NEW created type, VAR declared type (dotted, no type arguments; "var" when inferred), or LITERAL's primitive. */
   String type;
   /** STRING value. */
   String value;
-  /** CALL qualifier or SELECT target; null for an unqualified call. */
+  /** CALL and REF qualifier or SELECT target; null for an unqualified call. */
   Node receiver;
   /** CALL and NEW arguments. */
   final List<Node> args = new ArrayList<>();

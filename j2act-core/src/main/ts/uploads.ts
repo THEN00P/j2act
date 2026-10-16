@@ -104,7 +104,7 @@ export function createUploads(send: Send, token: () => string | null) {
               next();
             }
           } else if (res.status === 429) {
-            again(); // over the session's rate limit: back off, the bytes are still wanted
+            again(); // over the tab's rate limit: back off, the bytes are still wanted
           } else {
             files.delete(id); // refused: the server already failed the run
             settle(id, named("NotAllowedError", "the server refused the upload"));

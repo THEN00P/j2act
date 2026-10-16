@@ -43,6 +43,7 @@ class RetainedStateTest {
     final MemoryRetainedStateStorage inner = new MemoryRetainedStateStorage(1000);
     final AtomicInteger saves = new AtomicInteger();
     final AtomicInteger loads = new AtomicInteger();
+    volatile Instant lastExpiry;
 
     @Override public Optional<String> load(String id) {
       loads.incrementAndGet();
@@ -51,6 +52,7 @@ class RetainedStateTest {
 
     @Override public void save(String id, String snapshot, Instant expiresAt) {
       saves.incrementAndGet();
+      lastExpiry = expiresAt;
       inner.save(id, snapshot, expiresAt);
     }
 
@@ -74,15 +76,15 @@ class RetainedStateTest {
     return harness(page, storage, b -> { });
   }
 
-  /** The socket drops and the grace window ends: the session is evicted and its snapshot saved. */
+  /** The socket drops and the grace window ends: the tab is evicted and its snapshot saved. */
   static String evict(Harness h, CountingStorage storage) {
     String token = h.token;
     h.engine.onClose(h.conn);
-    Harness.eventually(() -> h.engine.sessionCount() == 0 && storage.has(token), "eviction with a snapshot");
+    Harness.eventually(() -> h.engine.tabCount() == 0 && storage.has(token), "eviction with a snapshot");
     return token;
   }
 
-  /** The remount runtime.js makes once its session is gone, naming the old page's token. */
+  /** The remount runtime.js makes once its tab is gone, naming the old page's token. */
   static Exchange remount(String oldToken, String... cookies) {
     Map<String, String> jar = new HashMap<>();
     for (int i = 0; i < cookies.length; i += 2) {
@@ -116,7 +118,7 @@ class RetainedStateTest {
       h.connect();
       type(h, "name", "Grace");
       assertTrue(h.conn.since(0, m -> "patch".equals(m.get("type"))).stream().anyMatch(m -> m.get("html").contains("name=Grace;")),
-        "the restored session is live");
+        "the restored tab is live");
     }
   }
 
@@ -204,7 +206,7 @@ class RetainedStateTest {
   }
 
   @Test
-  void anIdleSessionIsSavedBeforeItsClientHearsExpired() {
+  void anIdleTabIsSavedBeforeItsClientHearsExpired() {
     CountingStorage storage = new CountingStorage();
     try (Harness h = harness(Form::new, storage, b -> b.withIdleTimeout(Duration.ofMillis(300)))) {
       h.load();
@@ -227,14 +229,14 @@ class RetainedStateTest {
   }
 
   @Test
-  void sessionsWithoutRetainedValuesNeverTouchStorage() {
+  void tabsWithoutRetainedValuesNeverTouchStorage() {
     CountingStorage storage = new CountingStorage();
     try (Harness h = harness(Plain::new, storage)) {
       h.load();
       h.connect();
       type(h, "text", "x");
       h.engine.onClose(h.conn);
-      Harness.eventually(() -> h.engine.sessionCount() == 0, "eviction");
+      Harness.eventually(() -> h.engine.tabCount() == 0, "eviction");
       sleep(100);
       assertEquals(0, storage.saves.get());
       assertEquals(0, storage.loads.get(), "a page load without the restore header reads nothing");
@@ -248,9 +250,9 @@ class RetainedStateTest {
       h.load();
       h.connect();
       h.engine.onClose(h.conn);
-      Harness.eventually(() -> h.engine.sessionCount() == 0, "eviction");
+      Harness.eventually(() -> h.engine.tabCount() == 0, "eviction");
       sleep(100);
-      assertEquals(0, storage.saves.get(), "a session whose only retained value is null saves nothing");
+      assertEquals(0, storage.saves.get(), "a tab whose only retained value is null saves nothing");
     }
   }
 

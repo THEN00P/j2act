@@ -347,6 +347,20 @@ final class EcjSource implements Source {
         node.name = kind(ast.getClass()).equals("ThisReference") ? "this" : "super";
         return node;
       }
+      case "IntLiteral":
+      case "LongLiteral":
+      case "FloatLiteral":
+      case "DoubleLiteral":
+      case "CharLiteral":
+      case "TrueLiteral":
+      case "FalseLiteral":
+      case "NullLiteral": {
+        Node node = positioned(Node.Kind.LITERAL, ast);
+        String kind = kind(ast.getClass());
+        node.type = kind.endsWith("eLiteral") && (kind.startsWith("True") || kind.startsWith("False")) ? "boolean"
+          : kind.substring(0, kind.length() - "Literal".length()).toLowerCase(java.util.Locale.ROOT);
+        return node;
+      }
       case "StringLiteral": {
         Node node = positioned(Node.Kind.STRING, ast);
         node.value = new String((char[]) call(ast, "source"));
@@ -369,8 +383,9 @@ final class EcjSource implements Source {
       case "TypeDeclaration":
         return type(ast);
       case "ReferenceExpression": {
-        Node node = positioned(Node.Kind.OTHER, ast);
-        node.add(convert(get(ast, "lhs")));
+        Node node = positioned(Node.Kind.REF, ast);
+        node.name = new String((char[]) get(ast, "selector"));
+        node.receiver = node.add(convert(get(ast, "lhs")));
         return node;
       }
       default:
@@ -451,6 +466,14 @@ final class EcjSource implements Source {
           case "SuperReference":
           case "ThisReference":
           case "StringLiteral":
+          case "IntLiteral":
+          case "LongLiteral":
+          case "FloatLiteral":
+          case "DoubleLiteral":
+          case "CharLiteral":
+          case "TrueLiteral":
+          case "FalseLiteral":
+          case "NullLiteral":
           case "BinaryExpression":
           case "ReturnStatement":
           case "TypeDeclaration":

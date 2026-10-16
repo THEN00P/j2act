@@ -245,6 +245,18 @@ final class JavacSource implements Source {
         node.receiver = node.add(convert(select.getExpression()));
         return node;
       }
+      case INT_LITERAL:
+      case LONG_LITERAL:
+      case FLOAT_LITERAL:
+      case DOUBLE_LITERAL:
+      case BOOLEAN_LITERAL:
+      case CHAR_LITERAL:
+      case NULL_LITERAL: {
+        Node node = new Node(Node.Kind.LITERAL, tree);
+        String kind = tree.getKind().name();
+        node.type = kind.substring(0, kind.indexOf('_')).toLowerCase(java.util.Locale.ROOT);
+        return node;
+      }
       case STRING_LITERAL: {
         Node node = new Node(Node.Kind.STRING, tree);
         node.value = (String) ((LiteralTree) tree).getValue();
@@ -294,8 +306,10 @@ final class JavacSource implements Source {
         return node;
       }
       case MEMBER_REFERENCE: {
-        Node node = new Node(Node.Kind.OTHER, tree);
-        node.add(convert(((MemberReferenceTree) tree).getQualifierExpression()));
+        MemberReferenceTree reference = (MemberReferenceTree) tree;
+        Node node = new Node(Node.Kind.REF, tree);
+        node.name = reference.getName().toString();
+        node.receiver = node.add(convert(reference.getQualifierExpression()));
         return node;
       }
       case ANNOTATION:

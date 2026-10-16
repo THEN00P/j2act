@@ -9,7 +9,7 @@ import j2act.ComponentTag;
 import j2act.State;
 import j2act.html.tags.PTag;
 
-/** Pushes from a managed scheduler thread; update() runs on the session's lane (ADR 0014). */
+/** Pushes from a managed scheduler thread; update() runs on the tab's lane (ADR 0014). */
 public final class ClockFeed extends ComponentTag {
 
   @Inject private TickBus bus;

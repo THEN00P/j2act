@@ -37,8 +37,8 @@ final class ClientHandle extends Primitive implements InvocationHandler {
     return null;
   }
 
-  @Override Cell createCell(Session session, String address) {
-    return new ClientCell(session, address, type);
+  @Override Cell createCell(Tab tab, String address) {
+    return new ClientCell(tab, address, type);
   }
 
   @Override boolean accepts(Cell cell) {

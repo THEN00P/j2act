@@ -177,7 +177,7 @@ class UploadTest {
   }
 
   @Test
-  void anUntargetedUploadIsDeletedWhenTheSessionEnds(@TempDir Path dir) throws Exception {
+  void anUntargetedUploadIsDeletedWhenTheTabEnds(@TempDir Path dir) throws Exception {
     try (Harness h = new Harness(Scratch::new, b -> b.withUploadDir(dir))) {
       h.load();
       h.connect();
@@ -194,7 +194,7 @@ class UploadTest {
       while (Files.exists(stored) && System.currentTimeMillis() < end) {
         Thread.sleep(20);
       }
-      assertFalse(Files.exists(stored), "deleted with the session");
+      assertFalse(Files.exists(stored), "deleted with the tab");
     }
   }
 }

@@ -21,13 +21,13 @@ final class Retained {
 
   /** The request header a remount sends with the old page's token. */
   static final String RESTORE_HEADER = "X-J2-Restore";
-  /** Snapshot keys of retained stores start with this; component keys start with their frame. */
+  /** Snapshot keys of stores start with this, store:class#field (ADR 0030); component keys start with their frame. */
   static final String STORE_PREFIX = "store:";
 
   private static final ClassValue<List<Field>> STATE_FIELDS = new ClassValue<List<Field>>() {
     @Override protected List<Field> computeValue(Class<?> type) {
       List<Field> fields = new ArrayList<>();
-      for (Class<?> c = type; c != null && c != ComponentTag.class && c != Object.class; c = c.getSuperclass()) {
+      for (Class<?> c = type; c != null && c != ComponentTag.class && c != Store.class && c != Object.class; c = c.getSuperclass()) {
         for (Field field : c.getDeclaredFields()) {
           if (!Modifier.isStatic(field.getModifiers()) && field.getType() == State.class) {
             try {
@@ -60,7 +60,7 @@ final class Retained {
     return null;
   }
 
-  /** T of a State&lt;T&gt; or Store&lt;T&gt; field, or null when the declaration does not say. */
+  /** T of a State&lt;T&gt; field, or null when the declaration does not say. */
   static Type valueType(Field field) {
     Type type = field.getGenericType();
     if (type instanceof ParameterizedType) {
@@ -80,39 +80,6 @@ final class Retained {
       return (Class<?>) ((ParameterizedType) type).getRawType();
     }
     return Object.class;
-  }
-
-  /** A retained store's snapshot key, store:class#field, and the T of its Store&lt;T&gt; field. */
-  static final class StoreField {
-    final String key;
-    final Type type;
-
-    StoreField(String key, Type type) {
-      this.key = key;
-      this.type = type;
-    }
-  }
-
-  /** The static field of the declaring class that holds this store, or null when none does. */
-  static StoreField storeField(Class<?> declaring, Store<?> store) {
-    for (Field field : declaring.getDeclaredFields()) {
-      if (!Modifier.isStatic(field.getModifiers()) || !Store.class.isAssignableFrom(field.getType())) {
-        continue;
-      }
-      try {
-        field.setAccessible(true);
-        if (field.get(null) == store) {
-          Type type = valueType(field);
-          if (type == null) {
-            type = store.initial == null ? Object.class : store.initial.getClass();
-          }
-          return new StoreField(STORE_PREFIX + declaring.getName() + "#" + field.getName(), type);
-        }
-      } catch (RuntimeException | IllegalAccessException e) {
-        // A class in a named module that does not open its package: no field names from it.
-      }
-    }
-    return null;
   }
 
   /** The storage id of a page's snapshot: its token's SHA-256, so storage never holds the token. */

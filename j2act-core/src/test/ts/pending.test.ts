@@ -36,7 +36,7 @@ describe("Pending", () => {
     expect(pending.size).toBe(0);
   });
 
-  it("forgets everything for a new session", () => {
+  it("forgets everything for a new server-side tab", () => {
     pending.start(button, "1", button);
     pending.clear();
     expect(pending.has(button)).toBe(false);

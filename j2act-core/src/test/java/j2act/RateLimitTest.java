@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import j2act.internal.json.Json;
 
-/** Socket abuse limits: token buckets per session chosen from identity, queue and frame bounds (ADR 0013). */
+/** Socket abuse limits: token buckets per tab chosen from identity, queue and frame bounds (ADR 0013). */
 class RateLimitTest {
 
   static final class Clicks extends LiveComponent {

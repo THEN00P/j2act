@@ -77,6 +77,20 @@ public class J2ActHandlerMapping extends AbstractHandlerMapping {
         res.getOutputStream().write(result.json().getBytes(StandardCharsets.UTF_8));
       };
     }
+    if ("GET".equals(request.getMethod()) && initLookupPath(request).startsWith(J2Act.BROWSER_PATH)) {
+      // The browser cookie a page was offered over its socket (ADR 0030).
+      String token = initLookupPath(request).substring(J2Act.BROWSER_PATH.length());
+      return (HttpRequestHandler) (req, res) -> {
+        String cookie = j2Act.claimBrowserCookie(token);
+        res.setHeader("Cache-Control", "no-store");
+        if (cookie == null) {
+          res.sendError(HttpServletResponse.SC_NOT_FOUND);
+          return;
+        }
+        res.addHeader("Set-Cookie", req.isSecure() ? cookie + "; Secure" : cookie);
+        res.setStatus(HttpServletResponse.SC_NO_CONTENT);
+      };
+    }
     if (!"GET".equals(request.getMethod())) {
       return null;
     }
@@ -131,6 +145,9 @@ public class J2ActHandlerMapping extends AbstractHandlerMapping {
     return (HttpRequestHandler) (req, res) -> {
       ServeResult result = j2Act.serve(url, exchange(req));
       res.setHeader("Cache-Control", "no-store");
+      for (String cookie : result.setCookies()) {
+        res.addHeader("Set-Cookie", req.isSecure() ? cookie + "; Secure" : cookie);
+      }
       if (result.location() != null) {
         res.setStatus(result.status());
         res.setHeader("Location", result.location());

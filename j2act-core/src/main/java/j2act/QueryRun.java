@@ -6,13 +6,13 @@ import java.util.List;
 /** One execution of a query loader: everything it read, with the values it saw (ADR 0020). */
 final class QueryRun {
 
-  final Session session;
+  final Tab tab;
   final long seq;
   final List<Cell> cells = new ArrayList<>();
   final List<Object> values = new ArrayList<>();
 
-  QueryRun(Session session, long seq) {
-    this.session = session;
+  QueryRun(Tab tab, long seq) {
+    this.tab = tab;
     this.seq = seq;
   }
 

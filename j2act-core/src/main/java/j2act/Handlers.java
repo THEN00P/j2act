@@ -5,7 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * A session's event handlers by id: bound while their element renders, dropped when it stops,
+ * A tab's event handlers by id: bound while their element renders, dropped when it stops,
  * and run with the event their wire message describes (ADR 0013).
  */
 final class Handlers {
@@ -29,11 +29,11 @@ final class Handlers {
     }
   }
 
-  private final Session session;
+  private final Tab tab;
   private final Map<String, Entry> byId = new HashMap<>();
 
-  Handlers(Session session) {
-    this.session = session;
+  Handlers(Tab tab) {
+    this.tab = tab;
   }
 
   /**
@@ -45,7 +45,7 @@ final class Handlers {
     String slot = path + "|" + event;
     String handlerId = scope.previousHandlerIds.remove(slot);
     if (handlerId == null) {
-      handlerId = session.engine.newSecret(12);
+      handlerId = tab.engine.newSecret(12);
     }
     byId.put(handlerId, new Entry(scope, event, handler));
     scope.handlerIds.put(slot, handlerId);
@@ -83,7 +83,7 @@ final class Handlers {
    * the component unmounts or the next call of the same action replaces it.
    */
   String registerAction(Scope scope, String key, Object handler) {
-    String handlerId = session.engine.newSecret(12);
+    String handlerId = tab.engine.newSecret(12);
     String previous = scope.actionHandlerIds.put(key, handlerId);
     if (previous != null) {
       byId.remove(previous);

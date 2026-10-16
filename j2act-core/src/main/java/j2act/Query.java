@@ -51,7 +51,7 @@ public final class Query<T> extends Primitive {
   }
 
   /**
-   * Shares this query across components in the session: same key parts, one run and one
+   * Shares this query across components in the tab: same key parts, one run and one
    * result, with prefix invalidation via withInvalidates/invalidate (ADR 0020). Reads in
    * the loader still trigger refetches.
    */
@@ -68,11 +68,12 @@ public final class Query<T> extends Primitive {
   }
 
   private QueryCell.Snapshot snapshot() {
-    return cell == null ? QueryCell.Snapshot.INITIAL : ((QueryCell) cell).read();
+    Cell bound = cellOrNull();
+    return bound == null ? QueryCell.Snapshot.INITIAL : ((QueryCell) bound).read();
   }
 
-  @Override Cell createCell(Session session, String address) {
-    return new QueryCell(session, address, loader);
+  @Override Cell createCell(Tab tab, String address) {
+    return new QueryCell(tab, address, loader);
   }
 
   @Override boolean accepts(Cell cell) {

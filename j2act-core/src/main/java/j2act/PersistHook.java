@@ -1,6 +1,6 @@
 package j2act;
 
-/** Handle for onPersisting(): its callback runs right before the session's snapshot is taken (ADR 0026). */
+/** Handle for onPersisting(): its callback runs right before the tab's snapshot is taken (ADR 0026). */
 final class PersistHook extends Primitive {
 
   private final Runnable callback;
@@ -9,8 +9,8 @@ final class PersistHook extends Primitive {
     this.callback = java.util.Objects.requireNonNull(callback, "callback");
   }
 
-  @Override Cell createCell(Session session, String address) {
-    return new PersistCell(session, address);
+  @Override Cell createCell(Tab tab, String address) {
+    return new PersistCell(tab, address);
   }
 
   @Override boolean accepts(Cell cell) {

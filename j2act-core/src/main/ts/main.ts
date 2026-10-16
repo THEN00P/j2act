@@ -5,6 +5,7 @@ import { createMorpher } from "./morph.ts";
 import { createNavigation } from "./navigation.ts";
 import { createPending } from "./pending.ts";
 import type { ClientMessage, ServerMessage } from "./protocol.ts";
+import { navigationType, remember, takePrevious } from "./reopen.ts";
 import { createRetained } from "./retained.ts";
 import { createUploads } from "./uploads.ts";
 import { meta } from "./util.ts";
@@ -21,7 +22,7 @@ import { runWeb } from "./web.ts";
 type Handlers = { [T in ServerMessage["type"]]: (m: Extract<ServerMessage, { type: T }>) => void };
 
 function start(): void {
-  const sid = meta(document, "j2-session");
+  const sid = meta(document, "j2-tab");
   const wsPath = meta(document, "j2-ws");
   const base = meta(document, "j2-base") || "";
   if (!sid || !wsPath) {
@@ -30,6 +31,8 @@ function start(): void {
 
   let leaving = false;
   let remounting = false;
+  const here = () => location.pathname + location.search;
+  const previous = takePrevious(here(), meta(document, "j2-token"), navigationType());
 
   const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath,
     sid, meta(document, "j2-token"), onMessage,
@@ -87,30 +90,33 @@ function start(): void {
     paused: (m) => retained.paused(m.saved === true),
     pauseRefused: () => retained.refused(),
     pauseRequested: () => retained.requested(),
-    modules: (m) => clients.reimport(m.modules)
+    modules: (m) => clients.reimport(m.modules),
+    // First use of browser state over the socket: a socket cannot set the HttpOnly cookie, a fetch can (ADR 0030).
+    browserCookie: (m) => claimBrowserCookie(m.url)
   };
 
   function onMessage(m: ServerMessage): void {
     (handlers[m.type] as ((m: ServerMessage) => void) | undefined)?.(m);
   }
 
-  // ---- session lifetime (ADR 0010)
+  // ---- tab lifetime (ADR 0010)
 
-  function remount(): void {
+  /** Starts over on a new server-side tab; restoring names a closed page's token instead of this one's (ADR 0030). */
+  function remount(restoring?: string): void {
     if (remounting) {
       return;
     }
     remounting = true;
     connection.close();
     // The old page's token lets the server restore its Retained State, if it kept a snapshot (ADR 0026).
-    const tok = connection.token;
+    const tok = restoring ?? connection.token;
     fetch(location.href, { credentials: "same-origin", headers: tok ? { "X-J2-Restore": tok } : {} })
       .then((r) => r.text())
       .then((html) => {
         const doc = new DOMParser().parseFromString(html, "text/html");
-        const sid = meta(doc, "j2-session");
+        const sid = meta(doc, "j2-tab");
         const tok = meta(doc, "j2-token");
-        document.querySelector<HTMLMetaElement>('meta[name="j2-session"]')!.content = sid!;
+        document.querySelector<HTMLMetaElement>('meta[name="j2-tab"]')!.content = sid!;
         document.querySelector<HTMLMetaElement>('meta[name="j2-token"]')!.content = tok!;
         document.documentElement.setAttribute("data-j2-scope", doc.documentElement.getAttribute("data-j2-scope")!);
         document.title = doc.title;
@@ -123,8 +129,29 @@ function start(): void {
       })
       .catch(() => {
         remounting = false;
-        setTimeout(remount, 2000);
+        setTimeout(() => remount(restoring), 2000);
       });
+  }
+
+  /** Failed claims of the browser cookie so far; the server offers a fresh URL after each, a few times. */
+  let cookieClaimFailures = 0;
+
+  /** Claims run one after another, so the latest offer's cookie is the one that lands last. */
+  let claims: Promise<void> = Promise.resolve();
+
+  function claimBrowserCookie(url: string): void {
+    claims = claims.then(() => fetch(url, { credentials: "same-origin", cache: "no-store" })
+      .then((r) => {
+        if (!r.ok) {
+          throw new Error("browser cookie claim answered " + r.status);
+        }
+        cookieClaimFailures = 0;
+      })
+      .catch(() => {
+        if (cookieClaimFailures < 5) {
+          setTimeout(() => send({ type: "browserCookieRetry" }), 1000 * 2 ** cookieClaimFailures++);
+        }
+      }));
   }
 
   // What a pause would cut off: the server checks its own side (uploads, downloads, client calls).
@@ -136,6 +163,9 @@ function start(): void {
   }
 
   window.addEventListener("pagehide", () => {
+    if (connection.token) {
+      remember(here(), connection.token);
+    }
     if (connection.ready) {
       leaving = true;
       connection.sendIfReady({ type: "bye" });
@@ -156,7 +186,15 @@ function start(): void {
 
   // Clients mount from the props in the HTML at once; their calls into Java queue until the socket is up.
   clients.scan();
-  connection.connect();
+  if (previous.restore) {
+    // A reopened tab, or Back from another site: ask for what the closed page kept.
+    remount(previous.restore);
+  } else {
+    connection.connect();
+    if (previous.forget) {
+      send({ type: "forget", token: previous.forget });
+    }
+  }
 }
 
 /** A download link: the browser saves the response and the page stays (ADR 0012). */

@@ -14,7 +14,7 @@ import java.util.Map;
  */
 final class Renderer {
 
-  private final Session session;
+  private final Tab tab;
   private final long epoch;
   StringBuilder out = new StringBuilder(1024);
   /** The CSP nonce for the bootstrap tags, set only when rendering the served page. */
@@ -23,8 +23,8 @@ final class Renderer {
   private final Deque<List<QueryCell>> loadingOwners = new ArrayDeque<>();
   private final Deque<List<QueryCell>> errorOwners = new ArrayDeque<>();
 
-  Renderer(Session session, long epoch) {
-    this.session = session;
+  Renderer(Tab tab, long epoch) {
+    this.tab = tab;
     this.epoch = epoch;
   }
 
@@ -34,10 +34,10 @@ final class Renderer {
         + scope.instance.getClass().getName());
     }
     scope.renderedEpoch = epoch;
-    session.dirty.remove(scope);
+    tab.dirty.remove(scope);
     scope.dirty = false;
     scope.unsubscribeAll();
-    session.handlers.begin(scope);
+    tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
     scope.children = new java.util.LinkedHashMap<>();
 
@@ -58,7 +58,7 @@ final class Renderer {
       if (scope.shapeChanged(scope.instance.getClass())) {
         // Only a held object (a page, a layout, a field of its parent) reaches here: a fresh one
         // started over when it was bound, and dev mode mounts changed pages and layouts again.
-        session.engine.log(System.Logger.Level.WARNING, "j2act dev: " + scope.instance.getClass().getName()
+        tab.engine.log(System.Logger.Level.WARNING, "j2act dev: " + scope.instance.getClass().getName()
           + " has new fields, but its object is held by its parent, so they stay unset until the page reloads", null);
         scope.shape = Scope.shapeOf(scope.instance.getClass());
       }
@@ -116,8 +116,8 @@ final class Renderer {
         scope.dependsOn(query);
       }
     }
-    session.handlers.end(scope);
-    scope.codeEpoch = session.engine.codeEpoch;
+    tab.handlers.end(scope);
+    scope.codeEpoch = tab.engine.codeEpoch;
 
     Map<Scope, Boolean> kept = new IdentityHashMap<>();
     for (Scope child : scope.children.values()) {
@@ -133,7 +133,7 @@ final class Renderer {
 
   private void emit(Scope scope, Tag<?> root) {
     if ("html".equals(root.name) && root instanceof ContainerTag) {
-      if (scope == session.root) {
+      if (scope == tab.root) {
         renderDocument(scope, (ContainerTag<?>) root);
       } else {
         renderOutlet(scope, (ContainerTag<?>) root);
@@ -153,7 +153,7 @@ final class Renderer {
   }
 
   /**
-   * The session root's html: the body renders first so nested frames record their heads,
+   * The tab root's html: the body renders first so nested frames record their heads,
    * then the merged head is written in front of it (ADR 0007).
    */
   private void renderDocument(Scope scope, ContainerTag<?> html) {
@@ -171,13 +171,13 @@ final class Renderer {
     }
     String body = out.toString();
     out = document;
-    session.heads.record(scope, head);
+    tab.heads.record(scope, head);
     out.append("<html");
     attribute("data-j2-scope", scope.anchor);
     for (Map.Entry<String, String> attr : html.attributes.entrySet()) {
       attribute(attr.getKey(), attr.getValue());
     }
-    out.append("><head>").append(session.mergedHead(nonce)).append("</head>").append(body).append("</html>");
+    out.append("><head>").append(tab.mergedHead(nonce)).append("</head>").append(body).append("</html>");
   }
 
   /**
@@ -202,7 +202,7 @@ final class Renderer {
         renderNode(scope, "/" + i, child, false);
       }
     }
-    session.heads.record(scope, head);
+    tab.heads.record(scope, head);
     out.append("</div>");
   }
 
@@ -219,7 +219,7 @@ final class Renderer {
       attribute(attr.getKey(), attr.getValue());
     }
     for (Map.Entry<String, Handler<?>> event : tag.events.entrySet()) {
-      String id = session.handlers.register(scope, path, event.getKey(), event.getValue());
+      String id = tab.handlers.register(scope, path, event.getKey(), event.getValue());
       attribute("data-j2-" + event.getKey(), id);
     }
     if (tag.debounceMillis >= 0) {
@@ -235,11 +235,11 @@ final class Renderer {
       attribute("data-j2-keys", tag.keyFilter);
     }
     for (Map.Entry<String, Tag.ActionBinding> action : tag.actions.entrySet()) {
-      String[] bound = session.clients.bindAction(scope, path, action.getKey(), action.getValue());
+      String[] bound = tab.clients.bindAction(scope, path, action.getKey(), action.getValue());
       attribute("data-j2-" + action.getKey(), bound[0]);
       attribute("data-j2-call-" + action.getKey(), bound[1]);
     }
-    Clients.Binding client = tag.client == null ? null : session.clients.bind(scope, path, tag.client, epoch);
+    Clients.Binding client = tag.client == null ? null : tab.clients.bind(scope, path, tag.client, epoch);
     if (client != null) {
       // Like LiveView hooks, a client element has an id: morphs match it and never replace it.
       if (!tag.attributes.containsKey("id")) {
@@ -327,14 +327,14 @@ final class Renderer {
     } else {
       String address = parent.address + local;
       if (parent.children.containsKey(address)) {
-        session.engine.log(System.Logger.Level.WARNING, "duplicate slot " + address
+        tab.engine.log(System.Logger.Level.WARNING, "duplicate slot " + address
           + "; give repeated siblings distinct withKey values (ADR 0019)", null);
         local = local + "#dup" + parent.children.size();
         address = parent.address + local;
       }
       child = parent.previousChildren.get(address);
       if (child == null || child.disposed) {
-        child = new Scope(session, parent, address);
+        child = new Scope(tab, parent, address);
       }
       child.localPath = local;
       child.bind(component);

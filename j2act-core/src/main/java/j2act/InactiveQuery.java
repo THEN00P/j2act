@@ -23,9 +23,9 @@ final class InactiveQuery {
     this.fetchedAt = fetchedAt;
   }
 
-  boolean matchesCurrent(Session session) {
+  boolean matchesCurrent(Tab tab) {
     for (int i = 0; i < addresses.size(); i++) {
-      Cell cell = session.cells.get(addresses.get(i));
+      Cell cell = tab.cells.get(addresses.get(i));
       if (cell == null || !Objects.equals(cell.peek(), values.get(i))) {
         return false;
       }
@@ -33,10 +33,10 @@ final class InactiveQuery {
     return true;
   }
 
-  List<Cell> resolveCells(Session session) {
+  List<Cell> resolveCells(Tab tab) {
     List<Cell> cells = new ArrayList<>();
     for (String address : addresses) {
-      cells.add(session.cells.get(address));
+      cells.add(tab.cells.get(address));
     }
     return cells;
   }

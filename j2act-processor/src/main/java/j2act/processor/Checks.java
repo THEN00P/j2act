@@ -36,7 +36,6 @@ final class Checks {
   private static final String ALLOW_UNSAFE = "j2act.AllowUnsafe";
   private static final String PRIMITIVE = "j2act.Primitive";
   private static final String STORE = "j2act.Store";
-  private static final String STATE = "j2act.State";
   private static final String STREAM = "java.util.stream.Stream";
 
   /** Setters of URL-valued attributes in the generated tags. */
@@ -66,11 +65,6 @@ final class Checks {
         Node node = source.member(member);
         if (node != null && callsRetainedState(node, scope)) {
           scope.retainedFields.add(member.getSimpleName().toString());
-          retainedType((VariableElement) member, scope);
-        } else if (node != null && member.getModifiers().contains(javax.lang.model.element.Modifier.STATIC)
-            && initializesRetainedStore(node, scope)) {
-          scope.retainedFields.add(member.getSimpleName().toString());
-          scope.storeFields.add(node.children.get(0).origin);
           retainedType((VariableElement) member, scope);
         }
       }
@@ -103,8 +97,10 @@ final class Checks {
       capturedLocals(node, scope);
       missingKeys(node, scope);
       retainedInMethod(node, scope);
-      retainedStoreOutsideAField(node, scope);
       retainedChangedInPlace(node, scope);
+      transactionalSelfCall(node, scope);
+    } else if (node.kind == Node.Kind.REF) {
+      transactionalSelfCall(node, scope);
     } else if (node.kind == Node.Kind.NEW && !allowsUnsafe && scope.isType(scope.typeNamed(node.type), UNSAFE_HTML)) {
       report(node, scope, "new UnsafeHtml() renders raw HTML; sanitize the input and mark the method "
         + "@AllowUnsafe(\"why it is safe\") (ADR 0008)");
@@ -181,7 +177,7 @@ final class Checks {
 
   private void capturedLocals(Node call, Scope scope) {
     if (!call.name.equals("query") || call.args.size() != 1 || call.args.get(0).kind != Node.Kind.LAMBDA
-        || !scope.isOwnedBy(scope.candidates(call), COMPONENT)) {
+        || !ownsPrimitives(scope.candidates(call), scope)) {
       return;
     }
     Node loader = call.args.get(0);
@@ -255,6 +251,193 @@ final class Checks {
     }
   }
 
+  // ---- transactions skipped by self-calls (ADR 0030)
+
+  /** Annotations a container applies through its proxy, which a call from inside the class bypasses. */
+  private static final List<String> TRANSACTIONAL = Arrays.asList(
+    "jakarta.transaction.Transactional", "org.springframework.transaction.annotation.Transactional",
+    "jakarta.ejb.TransactionAttribute");
+
+  /**
+   * A store or component calling its own transactional method calls the object, not the
+   * container's proxy, so no transaction starts: on Spring in proxy mode, and on Weld too.
+   */
+  private void transactionalSelfCall(Node call, Scope scope) {
+    boolean viaSuper = call.receiver != null && call.receiver.is(Node.Kind.IDENT, "super");
+    boolean self = call.receiver == null ? call.kind == Node.Kind.CALL : viaSuper || call.receiver.is(Node.Kind.IDENT, "this");
+    if (!self || !scope.isType(scope.type, COMPONENT) && !scope.isType(scope.type, STORE)) {
+      return;
+    }
+    // super.save() and super::save skip the proxy as this.save() does, and name the superclass's method.
+    List<ExecutableElement> methods = viaSuper ? scope.superMethods(call.name) : scope.ownMethods(call.name);
+    if (call.kind == Node.Kind.REF) {
+      // A method reference's overload depends on its target type: only report what every overload shares.
+      for (ExecutableElement method : methods) {
+        if (!isTransactional(method)) {
+          return;
+        }
+      }
+    }
+    List<ExecutableElement> selected = call.kind == Node.Kind.REF ? methods : selectedOverloads(methods, call, scope);
+    if (selected.isEmpty()) {
+      return;
+    }
+    for (ExecutableElement method : selected) {
+      if (!isTransactional(method)) {
+        return; // the call may select a plain overload: report only what is certain
+      }
+    }
+    source.report(Diagnostic.Kind.ERROR, "j2act: " + call.name + "() is transactional, but a call from inside "
+      + scope.type.getSimpleName() + " skips the container's proxy, so no transaction starts; call it through the"
+      + " bean injected into itself (@Inject " + scope.type.getSimpleName() + " self) or move it to a service"
+      + " (ADR 0030)", call.kind == Node.Kind.REF ? call.receiver : call, scope.type);
+  }
+
+  /**
+   * The overloads a call can select: those its argument count fits, narrowed by the argument types
+   * when every one is plain to see. Unknown types keep every overload of the right arity.
+   */
+  private List<ExecutableElement> selectedOverloads(List<ExecutableElement> methods, Node call, Scope scope) {
+    List<ExecutableElement> fits = new ArrayList<>();
+    for (ExecutableElement method : methods) {
+      if (accepts(method, call.args.size())) {
+        fits.add(method);
+      }
+    }
+    if (fits.size() < 2) {
+      return fits;
+    }
+    List<TypeMirror> arguments = new ArrayList<>();
+    for (Node argument : call.args) {
+      TypeMirror type = scope.mirrorOf(argument);
+      if (type == null) {
+        return fits;
+      }
+      arguments.add(types.erasure(type));
+    }
+    // Java's phases (JLS 15.12.2): fixed arity without boxing, then fixed arity with boxing (a
+    // varargs parameter taken as its array type in both), then varargs expansion.
+    for (int phase = 1; phase <= 3; phase++) {
+      List<ExecutableElement> applicable = new ArrayList<>();
+      for (ExecutableElement method : fits) {
+        boolean candidate = phase < 3 ? method.getParameters().size() == arguments.size() : method.isVarArgs();
+        if (candidate && argumentsFit(method, arguments, phase == 3, phase > 1)) {
+          applicable.add(method);
+        }
+      }
+      if (!applicable.isEmpty()) {
+        return mostSpecific(applicable, phase == 3 ? arguments.size() : -1);
+      }
+    }
+    return new ArrayList<>();
+  }
+
+  /**
+   * The one overload Java selects among applicable ones, the one whose parameters all fit the
+   * others' (JLS 15.12.2.5); all of them when none is more specific than the rest. In the varargs
+   * phase, signatures are compared expanded to the call's argument count.
+   */
+  private List<ExecutableElement> mostSpecific(List<ExecutableElement> applicable, int expandTo) {
+    if (expandTo >= 0) {
+      // One comparison length for every candidate: the call's arguments or the longest declaration.
+      for (ExecutableElement method : applicable) {
+        expandTo = Math.max(expandTo, method.getParameters().size());
+      }
+    }
+    for (ExecutableElement candidate : applicable) {
+      boolean specific = true;
+      for (ExecutableElement other : applicable) {
+        if (other != candidate && !parametersFit(signature(candidate, expandTo), signature(other, expandTo))) {
+          specific = false;
+          break;
+        }
+      }
+      if (specific) {
+        return java.util.Collections.singletonList(candidate);
+      }
+    }
+    return applicable;
+  }
+
+  /** A method's parameter types, or with expandTo set, expanded to that many with the varargs element type. */
+  private List<TypeMirror> signature(ExecutableElement method, int expandTo) {
+    List<TypeMirror> out = new ArrayList<>();
+    List<? extends VariableElement> parameters = method.getParameters();
+    if (expandTo < 0 || !method.isVarArgs()) {
+      for (VariableElement parameter : parameters) {
+        out.add(types.erasure(parameter.asType()));
+      }
+      return out;
+    }
+    // At least one varargs element, so save() still compares String... with Object... (JLS 15.12.2.5).
+    for (int i = 0; i < Math.max(expandTo, parameters.size()); i++) {
+      TypeMirror type = parameters.get(Math.min(i, parameters.size() - 1)).asType();
+      if (i >= parameters.size() - 1 && type.getKind() == TypeKind.ARRAY) {
+        type = ((javax.lang.model.type.ArrayType) type).getComponentType();
+      }
+      out.add(types.erasure(type));
+    }
+    return out;
+  }
+
+  /** Whether every type of a is assignable to the matching type of b. */
+  private boolean parametersFit(List<TypeMirror> a, List<TypeMirror> b) {
+    if (a.size() != b.size()) {
+      return false;
+    }
+    for (int i = 0; i < a.size(); i++) {
+      if (!types.isAssignable(a.get(i), b.get(i))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Whether the arguments fit the parameters: the last one expanded to its element type when expand
+   * is set, and boxing or unboxing allowed only when loose is.
+   */
+  private boolean argumentsFit(ExecutableElement method, List<TypeMirror> arguments, boolean expand, boolean loose) {
+    List<? extends VariableElement> parameters = method.getParameters();
+    for (int i = 0; i < arguments.size(); i++) {
+      TypeMirror parameter = parameters.get(Math.min(i, parameters.size() - 1)).asType();
+      if (expand && i >= parameters.size() - 1 && parameter.getKind() == TypeKind.ARRAY) {
+        parameter = ((javax.lang.model.type.ArrayType) parameter).getComponentType();
+      }
+      TypeMirror target = types.erasure(parameter);
+      if (!loose && arguments.get(i).getKind().isPrimitive() != target.getKind().isPrimitive()) {
+        return false; // strict invocation: no boxing or unboxing
+      }
+      if (!types.isAssignable(arguments.get(i), target)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Whether a call with this many arguments can select the method. */
+  private static boolean accepts(ExecutableElement method, int arguments) {
+    int parameters = method.getParameters().size();
+    return method.isVarArgs() ? arguments >= parameters - 1 : arguments == parameters;
+  }
+
+  private static boolean isTransactional(ExecutableElement method) {
+    if (method.getModifiers().contains(javax.lang.model.element.Modifier.PRIVATE)
+        || method.getModifiers().contains(javax.lang.model.element.Modifier.STATIC)) {
+      return false;
+    }
+    return annotatedWith(method, TRANSACTIONAL) || annotatedWith(method.getEnclosingElement(), TRANSACTIONAL);
+  }
+
+  private static boolean annotatedWith(Element element, List<String> names) {
+    for (AnnotationMirror annotation : element.getAnnotationMirrors()) {
+      if (names.contains(((TypeElement) annotation.getAnnotationType().asElement()).getQualifiedName().toString())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // ---- Retained State (ADR 0026)
 
   /** Calls on a value that change it in place, so a retained State never sees a write. */
@@ -271,8 +454,12 @@ final class Checks {
     "j2act.ComponentTag", "j2act.UploadRef", "j2act.Exchange");
 
   private boolean isRetainedState(Node node, Scope scope) {
-    return node.kind == Node.Kind.CALL && node.name.equals("retainedState")
-      && scope.isOwnedBy(scope.candidates(node), COMPONENT);
+    return node.kind == Node.Kind.CALL && node.name.equals("retainedState") && ownsPrimitives(scope.candidates(node), scope);
+  }
+
+  /** Declared by ComponentTag or Store, the two owners of primitives (ADR 0019, 0030). */
+  private static boolean ownsPrimitives(List<ExecutableElement> methods, Scope scope) {
+    return scope.isOwnedBy(methods, COMPONENT) || scope.isOwnedBy(methods, STORE);
   }
 
   /** A field initializer that is, or chains from, retainedState(...). */
@@ -287,31 +474,12 @@ final class Checks {
     return false;
   }
 
-  private boolean isRetainedStore(Node node, Scope scope) {
-    return node.kind == Node.Kind.CALL && node.name.equals("createRetainedStore")
-      && scope.isOwnedBy(scope.candidates(node), STATE);
-  }
-
-  /** A field initializer that is createRetainedStore(...) itself. */
-  private boolean initializesRetainedStore(Node member, Scope scope) {
-    return member.children.size() == 1 && isRetainedStore(member.children.get(0), scope);
-  }
-
-  /** A retained store is keyed by the static field holding it; anywhere else the runtime finds none. */
-  private void retainedStoreOutsideAField(Node call, Scope scope) {
-    if (isRetainedStore(call, scope) && !scope.storeFields.contains(call.origin)) {
-      report(call, scope, "createRetainedStore is keyed by the static field holding it, so elsewhere it is not "
-        + "retained; make it a static field's initializer (ADR 0026)");
-    }
-  }
-
-  /** Owner.name, a static field of another type initialized with createRetainedStore(...). */
+  /** Owner.name, a field of a store initialized with retainedState(...) (ADR 0030). */
   private boolean isRetainedStoreField(TypeElement owner, String name) {
     for (Element member : owner.getEnclosedElements()) {
-      if (member.getKind() == ElementKind.FIELD && member.getSimpleName().contentEquals(name)
-          && member.getModifiers().contains(javax.lang.model.element.Modifier.STATIC)) {
+      if (member.getKind() == ElementKind.FIELD && member.getSimpleName().contentEquals(name)) {
         Node node = source.member(member);
-        return node != null && initializesRetainedStore(node, new Scope(owner, source.imports(owner)));
+        return node != null && callsRetainedState(node, new Scope(owner, source.imports(owner)));
       }
     }
     return false;
@@ -351,7 +519,7 @@ final class Checks {
     } else if (field.kind == Node.Kind.SELECT && field.receiver != null && field.receiver.is(Node.Kind.IDENT, "this")) {
       name = field.name;
     } else if (field.kind == Node.Kind.SELECT && field.receiver != null) {
-      TypeElement owner = scope.asType(field.receiver);
+      TypeElement owner = scope.typeOf(field.receiver);
       if (owner != null && isRetainedStoreField(owner, field.name)) {
         report(call, scope, "retained " + field.name + " is changed in place by " + call.name + "(), which is not "
           + "saved; set a new value with " + field.name + ".set(...) (ADR 0026)");
@@ -366,7 +534,7 @@ final class Checks {
     }
   }
 
-  /** State&lt;T&gt; and Store&lt;T&gt; fields whose T is code, a handle or an open resource. */
+  /** State&lt;T&gt; fields whose T is code, a handle or an open resource. */
   private void retainedType(VariableElement field, Scope scope) {
     TypeMirror declared = field.asType();
     if (!(declared instanceof DeclaredType) || ((DeclaredType) declared).getTypeArguments().size() != 1) {
@@ -479,10 +647,8 @@ final class Checks {
   /** Name resolution inside one type: locals from the Node tree, everything else from the model. */
   private final class Scope {
     final TypeElement type;
-    /** Fields initialized with retainedState(...), and static ones with createRetainedStore(...) (ADR 0026). */
+    /** Fields initialized with retainedState(...) (ADR 0026). */
     final Set<String> retainedFields = new HashSet<>();
-    /** The compiler nodes of the createRetainedStore(...) calls that initialize a static field. */
-    final Set<Object> storeFields = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     /** The method members of this type, as opposed to fields, constructors and initializers. */
     final Set<Node> methods = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     private final List<Source.Import> imports;
@@ -503,6 +669,63 @@ final class Checks {
       TypeElement target = elements.getTypeElement(name);
       return candidate != null && target != null
         && types.isSubtype(types.erasure(candidate.asType()), types.erasure(target.asType()));
+    }
+
+    /** This type's own methods of that name, declared here or inherited, not those of an enclosing type. */
+    List<ExecutableElement> ownMethods(String name) {
+      return methods(type, name);
+    }
+
+    /**
+     * The static type of an argument when it is plain to see, primitives included: literals, and
+     * locals or fields declared with a primitive or a class. Null otherwise.
+     */
+    TypeMirror mirrorOf(Node node) {
+      switch (node.kind) {
+        case STRING:
+        case CONCAT:
+          return elements.getTypeElement("java.lang.String").asType();
+        case LITERAL:
+          return primitive(node.type);
+        case IDENT: {
+          Node local = local(node, node.name);
+          if (local != null && local.type != null && !local.type.equals("var") && primitive(local.type) != null) {
+            return primitive(local.type);
+          }
+          if (local == null && !node.name.equals("this")) {
+            Element field = field(type, node.name);
+            if (field != null && field.asType().getKind().isPrimitive()) {
+              return field.asType();
+            }
+          }
+          break;
+        }
+        default:
+          break;
+      }
+      TypeElement declared = typeOf(node);
+      return declared == null ? null : declared.asType();
+    }
+
+    private TypeMirror primitive(String keyword) {
+      switch (keyword == null ? "" : keyword) {
+        case "int": return types.getPrimitiveType(TypeKind.INT);
+        case "long": return types.getPrimitiveType(TypeKind.LONG);
+        case "float": return types.getPrimitiveType(TypeKind.FLOAT);
+        case "double": return types.getPrimitiveType(TypeKind.DOUBLE);
+        case "boolean": return types.getPrimitiveType(TypeKind.BOOLEAN);
+        case "char": return types.getPrimitiveType(TypeKind.CHAR);
+        case "byte": return types.getPrimitiveType(TypeKind.BYTE);
+        case "short": return types.getPrimitiveType(TypeKind.SHORT);
+        case "null": return types.getNullType();
+        default: return null;
+      }
+    }
+
+    /** The superclass's methods of that name, as super.name() selects them. */
+    List<ExecutableElement> superMethods(String name) {
+      TypeMirror superclass = type.getSuperclass();
+      return superclass.getKind() == TypeKind.DECLARED ? methods((TypeElement) types.asElement(superclass), name) : new ArrayList<>();
     }
 
     boolean isOwnedBy(List<ExecutableElement> methods, String owner) {

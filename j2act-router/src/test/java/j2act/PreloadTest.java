@@ -120,7 +120,7 @@ class PreloadTest {
       assertEquals(1, loads.get(), "the preload's run is the page's run");
       eventually(() -> effects.get() == 1, "the Effect after the click");
 
-      // Reads made while preloaded follow the session's route after adoption.
+      // Reads made while preloaded follow the tab's route after adoption.
       int before = h.conn.size();
       h.nav("/items/8");
       h.awaitPatch(before, p -> p.contains("item 8"));

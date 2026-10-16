@@ -7,19 +7,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * A claimed download, for the adapter to serve: set the headers, then writeTo() the
- * response stream. The outcome is committed to the Mutation on the session's lane.
+ * response stream. The outcome is committed to the Mutation on the tab's lane.
  */
 public final class DownloadStream {
 
-  final Session session;
+  final Tab tab;
   private final MutationCell cell;
   private final Download<?> run;
   private final Object variables;
   private final long seq;
   private final AtomicBoolean finished = new AtomicBoolean();
 
-  DownloadStream(Session session, MutationCell cell, Download<?> run, Object variables, long seq) {
-    this.session = session;
+  DownloadStream(Tab tab, MutationCell cell, Download<?> run, Object variables, long seq) {
+    this.tab = tab;
     this.cell = cell;
     this.run = run;
     this.variables = variables;
@@ -76,7 +76,7 @@ public final class DownloadStream {
 
   private void complete(Throwable error) {
     if (finished.compareAndSet(false, true)) {
-      session.post(() -> cell.finish(run, variables, seq, null, error));
+      tab.post(() -> cell.finish(run, variables, seq, null, error));
     }
   }
 }

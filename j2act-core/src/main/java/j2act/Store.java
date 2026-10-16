@@ -1,90 +1,104 @@
 package j2act;
 
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
-import java.util.function.UnaryOperator;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Supplier;
 
 /**
- * Shared state declared once, typically as a static field, with an isolated copy per
- * session (CONTEXT: Store): current user, theme, locale. No middleware. A store made with
- * State.createRetainedStore keeps its value in the session's Retained State (ADR 0026).
+ * State shared beyond one component (ADR 0030): a class annotated {@link TabScoped} that
+ * extends Store has one instance per tab. With Spring or CDI it is a bean of the app's
+ * container, so components {@code @Inject} it and it injects what it needs; without one,
+ * components reach it with tab(Type.class).
  *
  * <pre>{@code
- * public static final Store<Theme> theme = State.createStore(Theme.LIGHT);
- * boolean dark = theme.select(t -> t == Theme.DARK);   // re-renders only when this slice changes
- * theme.set(Theme.DARK);                               // this session's copy
+ * @TabScoped
+ * public class EditorContext extends Store {
+ *   private final State<String> selected = state(null);
+ *
+ *   public String selected() { return selected.get(); }
+ *   public void select(String id) { selected.set(id); }
+ * }
  * }</pre>
  *
- * Use it from components, handlers and query loaders; each reads the session they run in.
+ * Its values are State, Retained State, Computeds, Queries and Mutations, declared as fields:
+ * a plain field changes without re-rendering anything. Its methods are the actions. A Retained
+ * State here is keyed by the store's class and field name. No method of a store may be final,
+ * since containers proxy scoped beans by subclassing them.
  */
-public final class Store<T> {
+public abstract class Store {
 
-  private static final AtomicInteger IDS = new AtomicInteger();
+  /** Primitives its field initializers created, bound when its tab takes the instance. */
+  final List<Primitive> primitives = new ArrayList<>();
+  Scope scope;
+  /** The tab making this store, until it is bound; null for a container's proxy, which never binds. */
+  private Tab pending = Tab.MAKING_STORE.get();
 
-  final T initial;
-  final String address = "store:" + IDS.incrementAndGet();
-  /** For a retained store, the class that created it, whose static field names it; else null. */
-  final Class<?> declaring;
-  private volatile Retained.StoreField field;
-
-  Store(T initial, Class<?> declaring) {
-    this.initial = initial;
-    this.declaring = declaring;
+  protected Store() {
   }
 
-  /** The retained store's snapshot key and value type, or null while no static field holds it. */
-  Retained.StoreField retainedField() {
-    Retained.StoreField found = field;
-    if (found == null) {
-      found = field = Retained.storeField(declaring, this);
+  /** Binds this store to the tab making it, if that has not happened yet: a lifecycle callback needs its values. */
+  void bindIfPending() {
+    Tab tab = pending;
+    if (scope == null && tab != null) {
+      pending = null;
+      tab.bindStoreNow(this);
     }
-    return found;
   }
 
-  /** This session's whole value, tracked. */
-  @SuppressWarnings("unchecked")
-  public T get() {
-    return (T) cell().read();
+  protected <T> State<T> state(T initial) {
+    return register(new State<>(initial));
   }
 
   /**
-   * A slice of this session's value. The reader re-renders only when the slice changes,
-   * not on every write to the store.
+   * A State whose value outlives the in-memory tab (ADR 0026, 0030): it comes back after the
+   * grace window, a pause, a restart or a redeploy, while a reload still starts empty. Keyed
+   * by this store's class and the field holding it. Replace values through set(), since
+   * changing a retained list in place does not count as a change.
    */
-  @SuppressWarnings("unchecked")
-  public <R> R select(Function<? super T, R> slice) {
-    Session session = session();
-    ValueCell cell = session.storeCell(this);
-    Observer reader = Tracking.observer();
-    if (session.lane.isCurrent() && reader != null) {
-      R result = slice.apply((T) cell.peek());
-      SliceCell sliceCell = new SliceCell(session, cell, (Function<Object, Object>) slice, result);
-      cell.observers.add(sliceCell);
-      sliceCell.observers.add(reader);
-      reader.dependsOn(sliceCell);
-      return result;
+  protected <T> State<T> retainedState(T initial) {
+    return register(new State<>(initial, true, null));
+  }
+
+  /** A Retained State with an explicit name instead of its field's name; never required. */
+  protected <T> State<T> retainedState(String name, T initial) {
+    if (name == null || name.isEmpty()) {
+      throw new IllegalArgumentException("a retained state name must not be empty");
     }
-    return slice.apply((T) cell.read());
+    return register(new State<>(initial, true, name));
   }
 
-  /** Replaces this session's value; from a foreign thread it is queued onto the lane. */
-  public void set(T value) {
-    cell().write(value);
+  /** A pure derived value, recomputed when what it read changes (CONTEXT: Computed). */
+  protected <T> Computed<T> computed(Supplier<T> body) {
+    return register(new Computed<>(body));
   }
 
-  public void update(UnaryOperator<T> fn) {
-    cell().update(fn);
+  /** A cached async loader; State it reads is its dependency (ADR 0020). */
+  protected <T> Query<T> query(Loader<T> loader) {
+    return register(new Query<>(loader));
   }
 
-  private ValueCell cell() {
-    return session().storeCell(this);
+  /** An async write: status, data, error and variables are tracked (ADR 0006). */
+  protected <V, R> Mutation<V, R> mutation(Mutation.Body<V, R> body) {
+    return register(new Mutation<>(body));
   }
 
-  private static Session session() {
-    Session session = Session.current();
-    if (session == null) {
-      throw new IllegalStateException("a Store is per session: use it from a component, handler or query loader");
+  /** Runs once the store is created and whenever a State it read changes; returns its cleanup or null. */
+  protected void effect(Supplier<Runnable> body) {
+    register(new Effect(body));
+  }
+
+  /** Runs right before the tab's snapshot is taken, so the store can copy values into its retained fields (ADR 0026). */
+  protected void onPersisting(Runnable callback) {
+    register(new PersistHook(callback));
+  }
+
+  private <P extends Primitive> P register(P primitive) {
+    if (scope != null) {
+      throw new IllegalStateException(getClass().getName()
+        + " creates a primitive after it was created; declare a store's primitives as fields (ADR 0030)");
     }
-    return session;
+    primitive.store = this;
+    primitives.add(primitive);
+    return primitive;
   }
 }

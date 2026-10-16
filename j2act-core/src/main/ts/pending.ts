@@ -52,7 +52,7 @@ export function createPending() {
       }
     },
 
-    /** A new session will never ack these. */
+    /** A new server-side tab will never ack these. */
     clear(): void {
       inFlight.clear();
       blocked.clear();

@@ -102,7 +102,7 @@ class CounterAppTest {
   @Test
   void byeDiscardsTheSessionAndItsEffectCleanupUnsubscribes() throws Exception {
     int listenersBefore = bus.listenerCount();
-    int sessionsBefore = j2Act.sessionCount();
+    int tabsBefore = j2Act.tabCount();
     Client client = connect();
     client.send("{\"type\":\"bye\"}");
     long deadline = System.currentTimeMillis() + 5000;
@@ -110,7 +110,7 @@ class CounterAppTest {
       Thread.sleep(20);
     }
     assertEquals(listenersBefore, bus.listenerCount());
-    assertTrue(j2Act.sessionCount() <= sessionsBefore, "session should be discarded");
+    assertTrue(j2Act.tabCount() <= tabsBefore, "the tab should be discarded");
     client.close();
   }
 
@@ -127,7 +127,7 @@ class CounterAppTest {
     client.socket = http.newWebSocketBuilder()
       .buildAsync(URI.create("ws://localhost:" + port + "/_j2act/ws"), client)
       .get(5, TimeUnit.SECONDS);
-    client.send("{\"type\":\"hello\",\"session\":\"" + find(html, "name=\"j2-session\" content=\"([^\"]+)\"")
+    client.send("{\"type\":\"hello\",\"tab\":\"" + find(html, "name=\"j2-tab\" content=\"([^\"]+)\"")
       + "\",\"token\":\"" + find(html, "name=\"j2-token\" content=\"([^\"]+)\"") + "\"}");
     client.await(m -> m.contains("\"type\":\"ready\""));
     return client;

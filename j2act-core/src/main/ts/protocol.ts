@@ -49,7 +49,9 @@ export type ServerMessage =
   | { type: "paused"; saved?: boolean }
   | { type: "pauseRefused" }
   | { type: "pauseRequested" }
-  | { type: "modules"; modules: Record<string, string> };
+  | { type: "modules"; modules: Record<string, string> }
+  /** Fetch this to receive the browser cookie, first used over the socket (ADR 0030). */
+  | { type: "browserCookie"; url: string };
 
 /** Fields an event may add: keys, pointer, a picked file, a failed bound action. */
 export interface EventFields {
@@ -71,7 +73,7 @@ export interface EventFields {
 export type FileFields = Pick<EventFields, "fileId" | "fileName" | "fileSize" | "fileType">;
 
 export type ClientMessage =
-  | { type: "hello"; session: string | null; token: string | null }
+  | { type: "hello"; tab: string | null; token: string | null }
   | ({ type: "event"; id: string; handler: string; value: string } & EventFields)
   /** args is a JSON array. */
   | ({ type: "callback"; handler: string; args: string } & FileFields)
@@ -82,6 +84,10 @@ export type ClientMessage =
   | { type: "navigate"; url: string; mode: NavMode }
   | { type: "preload"; url: string }
   | { type: "pause"; automatic?: true }
-  | { type: "bye" };
+  | { type: "bye" }
+  /** The page's claim of its new browser cookie failed: the server offers it again (ADR 0030). */
+  | { type: "browserCookieRetry" }
+  /** A reload of a page whose closed tab kept a snapshot: the server deletes it (ADR 0030). */
+  | { type: "forget"; token: string };
 
 export type Send = (message: ClientMessage) => void;
