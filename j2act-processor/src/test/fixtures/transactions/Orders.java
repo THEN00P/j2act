@@ -135,6 +135,17 @@ public class Orders {
       note("x"); // expect: note() is transactional
     }
 
+    @Transactional
+    public void drop(String name) {
+    }
+
+    public void drop(Object anything) {
+    }
+
+    public void undrop() {
+      drop(null); // expect: drop() is transactional
+    }
+
     final Mutation<String, String> viaReference = mutation((String note) -> {
       java.util.function.Consumer<String> later = this::keep;
       later.accept(note);

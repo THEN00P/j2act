@@ -353,7 +353,8 @@ final class EcjSource implements Source {
       case "DoubleLiteral":
       case "CharLiteral":
       case "TrueLiteral":
-      case "FalseLiteral": {
+      case "FalseLiteral":
+      case "NullLiteral": {
         Node node = positioned(Node.Kind.LITERAL, ast);
         String kind = kind(ast.getClass());
         node.type = kind.endsWith("eLiteral") && (kind.startsWith("True") || kind.startsWith("False")) ? "boolean"
@@ -472,6 +473,7 @@ final class EcjSource implements Source {
           case "CharLiteral":
           case "TrueLiteral":
           case "FalseLiteral":
+          case "NullLiteral":
           case "BinaryExpression":
           case "ReturnStatement":
           case "TypeDeclaration":

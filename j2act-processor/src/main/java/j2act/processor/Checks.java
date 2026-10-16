@@ -717,6 +717,7 @@ final class Checks {
         case "char": return types.getPrimitiveType(TypeKind.CHAR);
         case "byte": return types.getPrimitiveType(TypeKind.BYTE);
         case "short": return types.getPrimitiveType(TypeKind.SHORT);
+        case "null": return types.getNullType();
         default: return null;
       }
     }

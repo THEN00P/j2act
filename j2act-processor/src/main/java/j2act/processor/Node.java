@@ -27,7 +27,7 @@ final class Node {
     REF,
     /** A string literal, adjacent literals folded. */
     STRING,
-    /** A primitive literal; type is its primitive type's keyword, such as int or boolean. */
+    /** A primitive or null literal; type is its keyword, such as int, boolean or null. */
     LITERAL,
     /** a + b. */
     CONCAT,

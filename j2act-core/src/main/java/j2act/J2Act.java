@@ -109,9 +109,9 @@ public final class J2Act implements AutoCloseable {
    * on first use in the tab with its registered factory or its no-argument constructor.
    */
   <S extends Store> S store(Tab tab, Class<S> type) {
-    if (Scope.storeClass(type).getDeclaredAnnotation(TabScoped.class) == null) {
+    if (!Scope.storeClass(type).isAnnotationPresent(TabScoped.class)) {
       throw new IllegalArgumentException(type.getName()
-        + (Scope.storeClass(type).getDeclaredAnnotation(BrowserScoped.class) != null
+        + (Scope.storeClass(type).isAnnotationPresent(BrowserScoped.class)
           ? " is a browser store: reach it with browser(" + type.getSimpleName() + ".class)"
           : " is not a store: annotate it @TabScoped") + " (ADR 0030)");
     }
@@ -512,7 +512,7 @@ public final class J2Act implements AutoCloseable {
 
   /** The browser's instance of a @BrowserScoped store: the container's, else made on first use in the browser. */
   <S extends Store> S browserStore(Tab tab, Class<S> type) {
-    if (Scope.storeClass(type).getDeclaredAnnotation(BrowserScoped.class) == null) {
+    if (!Scope.storeClass(type).isAnnotationPresent(BrowserScoped.class)) {
       throw new IllegalArgumentException(type.getName()
         + " is not a browser store: annotate it @BrowserScoped (ADR 0030)");
     }
@@ -703,8 +703,12 @@ public final class J2Act implements AutoCloseable {
       if (resolution.match == null && resolver.fallback() == null) {
         // No route and no fallback page: a static 404, no tab for a stray URL to hold.
         discard(tab, false);
+        // It still carries a cookie the page load queued, such as one clearing a stale browser cookie.
+        String cookie = tab.pendingBrowserCookie;
+        tab.pendingBrowserCookie = null;
         return new ServeResult(404, "<!DOCTYPE html><html><head><title>Not found</title></head>"
-          + "<body><h1>Not found</h1></body></html>");
+          + "<body><h1>Not found</h1></body></html>", null,
+          cookie == null ? java.util.Collections.emptyList() : java.util.Collections.singletonList(cookie));
       }
       int status = resolution.status;
       // Render and the in-flight check run in one lane task, so a commit can never land

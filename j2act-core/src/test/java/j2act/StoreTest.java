@@ -296,6 +296,42 @@ class StoreTest {
     }
   }
 
+  @TabScoped
+  public static class Draft extends Store {
+    final State<String> text = retainedState("");
+  }
+
+  public static class LetterDraft extends Draft {
+  }
+
+  public static class MemoDraft extends Draft {
+  }
+
+  @Test
+  void storesInheritingTheirScopeFromOneBaseKeepApart() {
+    CountingStorage storage = new CountingStorage();
+    try (Harness h = new Harness(() -> new LiveComponent() {
+      @Override public Tag<?> render() {
+        LetterDraft letter = tab(LetterDraft.class);
+        MemoDraft memo = tab(MemoDraft.class);
+        return T.page("d", T.div(
+          T.span("letter=" + letter.text.get() + ";memo=" + memo.text.get() + ";"),
+          T.input().withId("letter").onChange(e -> letter.text.set(e.value())),
+          T.input().withId("memo").onChange(e -> memo.text.set(e.value()))));
+      }
+    }, b -> b.withReconnectGrace(Duration.ofMillis(100)).withRetainedStateStorage(storage))) {
+      h.load();
+      h.connect();
+      type(h, "letter", "dear");
+      type(h, "memo", "note");
+      String old = evict(h, storage);
+      String snapshot = storage.inner.load(Retained.id(old)).get();
+      assertTrue(snapshot.contains("StoreTest$LetterDraft#text") && snapshot.contains("StoreTest$MemoDraft#text"), snapshot);
+      String html = h.load("/", remount(old));
+      assertTrue(html.contains("letter=dear;memo=note;"), html);
+    }
+  }
+
   public static class NotAStore extends Store {
   }
 

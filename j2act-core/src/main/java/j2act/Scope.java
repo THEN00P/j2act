@@ -90,14 +90,17 @@ final class Scope implements Observer {
     return instance != null ? instance.getClass() : storeClass(store.getClass());
   }
 
-  /** The class carrying the scope annotation, under any subclass a container made of it. */
+  /**
+   * The app's own store class: the concrete one, under any subclass a container generated for it
+   * (Spring's CGLIB and Weld's carry "$$" in their names). Two stores inheriting their scope from
+   * one annotated base so keep apart (ADR 0030).
+   */
   static Class<?> storeClass(Class<?> type) {
-    for (Class<?> c = type; c != null && c != Store.class; c = c.getSuperclass()) {
-      if (c.getDeclaredAnnotation(TabScoped.class) != null || c.getDeclaredAnnotation(BrowserScoped.class) != null) {
-        return c;
-      }
+    Class<?> c = type;
+    while (c.getSuperclass() != null && c.getSuperclass() != Store.class && c.getName().contains("$$")) {
+      c = c.getSuperclass();
     }
-    return type;
+    return c;
   }
 
   /** Lane-only. Binds a store's field primitives; a store never renders, so they settle at once. */
