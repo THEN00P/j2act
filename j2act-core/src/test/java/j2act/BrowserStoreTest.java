@@ -421,6 +421,48 @@ class BrowserStoreTest {
     }
   }
 
+  static Harness twoPages(java.util.function.Consumer<J2Act.Builder> more) {
+    return new Harness(path -> "/".equals(path) ? new PageMatch(PlayerPage::new, Collections.emptyMap())
+        : "/out".equals(path) ? new PageMatch(LazyPage::new, Collections.emptyMap()) : null,
+      b -> {
+        b.withReconnectGrace(Duration.ofMillis(150))
+          .withIdentity(ex -> ex.cookie("user").map(u -> AuthCtx.of(u, Collections.emptySet())).orElse(AuthCtx.anonymous()));
+        more.accept(b);
+      });
+  }
+
+  @Test
+  void aLoginOnAPageWithoutBrowserStateBindsTheGuestBrowserToTheUser() {
+    try (Harness h = twoPages(b -> { })) {
+      Page guest = new Page(h.engine, "/", Exchange.empty());
+      String cookie = cookieValue(guest.result.setCookies());
+      guest.connect();
+      guest.change("track", "guest pick");
+
+      Page ada = new Page(h.engine, "/out", withCookieAs(cookie, "ada"));
+      assertTrue(ada.result.setCookies().isEmpty(), "the login keeps the browser");
+      Page bob = new Page(h.engine, "/out", withCookieAs(cookie, "bob"));
+      assertTrue(bob.result.setCookies().get(0).contains("Max-Age=0"), "another user no longer gets ada's browser");
+    }
+  }
+
+  @Test
+  void aLoginBindsAStoredGuestSnapshotToTheUser() {
+    RetainedStateTest.CountingStorage storage = new RetainedStateTest.CountingStorage();
+    try (Harness h = twoPages(b -> b.withRetainedStateStorage(storage))) {
+      Page guest = new Page(h.engine, "/", Exchange.empty());
+      String cookie = cookieValue(guest.result.setCookies());
+      guest.connect();
+      guest.change("volume", "9");
+      guest.bye();
+      String id = Retained.id("browser:" + cookie);
+      Harness.eventually(() -> storage.inner.load(id).isPresent(), "the guest browser's snapshot");
+
+      new Page(h.engine, "/out", withCookieAs(cookie, "ada"));
+      assertEquals("ada", Retained.decode(storage.inner.load(id).get()).principal, "the snapshot is ada's now");
+    }
+  }
+
   static final class RedirectingPage extends LiveComponent {
     @Override public Tag<?> render() {
       browser(Player.class).track.get();

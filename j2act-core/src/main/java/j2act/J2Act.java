@@ -186,29 +186,40 @@ public final class J2Act implements AutoCloseable {
   }
 
   /**
-   * A page load whose browser cookie belongs to another principal, such as the page a logout lands
-   * on, drops the cookie at once, whether or not the page uses browser state, so the same user
-   * logging in again later cannot bring back the browser of before the logout (ADR 0030).
+   * Applies the identity rules to a page load's browser cookie whether or not the page uses browser
+   * state (ADR 0030). An anonymous browser loaded by a user, such as on the page a login lands on,
+   * records the user. A browser bound to another principal, such as on the page a logout lands on,
+   * loses its cookie, so a later login, by the same user or another, never brings it back.
    */
-  private void dropForeignBrowserCookie(Tab tab) {
+  private void checkBrowserCookie(Tab tab) {
     String cookie = tab.browserCookie;
     if (cookie == null) {
       return;
     }
-    String bound;
     Browser browser = browsers.get(cookie);
+    Retained.Snapshot stored = browser == null ? snapshots.browserSnapshot(cookie) : null;
+    if (browser == null && stored == null) {
+      return; // nothing of it is left to protect: its first use makes a fresh browser
+    }
+    AuthCtx auth = tab.currentAuth();
+    String principal = auth.isAnonymous() ? null : auth.name();
+    String bound;
     if (browser != null) {
       synchronized (browser) {
         bound = browser.principal;
+        if (bound == null && principal != null) {
+          recordPrincipal(browser, principal);
+          return;
+        }
       }
     } else {
-      bound = snapshots.browserPrincipal(cookie);
+      bound = stored.principal;
+      if (bound == null && principal != null) {
+        snapshots.bindBrowser(cookie, stored, principal);
+        return;
+      }
     }
-    if (bound == null) {
-      return;
-    }
-    AuthCtx auth = tab.currentAuth();
-    if (!bound.equals(auth.isAnonymous() ? null : auth.name())) {
+    if (bound != null && !bound.equals(principal)) {
       tab.browserCookie = null;
       tab.pendingBrowserCookie = BROWSER_COOKIE + "=; Path=" + (contextPath.isEmpty() ? "/" : contextPath)
         + "; Max-Age=0; HttpOnly; SameSite=Lax";
@@ -650,7 +661,7 @@ public final class J2Act implements AutoCloseable {
     Tab tab = new Tab(this, newSecret(18), newSecret(18), exchange, url);
     tab.snapshot.restore(snapshots.restore(exchange));
     tabs.put(tab.id, tab);
-    dropForeignBrowserCookie(tab);
+    checkBrowserCookie(tab);
     try {
       Tab.Resolution resolution = await(tab.call(() -> tab.resolve(url)));
       if (!resolution.url.equals(url)) {

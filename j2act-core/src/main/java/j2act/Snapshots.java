@@ -177,12 +177,23 @@ final class Snapshots {
     return Math.max(0, deadline - System.nanoTime());
   }
 
-  /** The principal a browser's stored snapshot belongs to, or null when it is anonymous, absent or unreadable. */
-  String browserPrincipal(String cookie) {
+  /** A browser's stored snapshot, without using it up; null when absent, expired or unreadable. */
+  Retained.Snapshot browserSnapshot(String cookie) {
     try {
-      return storage.load(Retained.id("browser:" + cookie)).map(text -> Retained.decode(text).principal).orElse(null);
+      Retained.Snapshot snapshot = storage.load(Retained.id("browser:" + cookie)).map(Retained::decode).orElse(null);
+      return snapshot == null || snapshot.expiresAt <= engine.clock.millis() ? null : snapshot;
     } catch (RuntimeException e) {
       return null;
+    }
+  }
+
+  /** Saves an anonymous browser's snapshot again as this user's, keeping its expiry (ADR 0030). */
+  void bindBrowser(String cookie, Retained.Snapshot anonymous, String principal) {
+    try {
+      storage.save(Retained.id("browser:" + cookie), Retained.encode(anonymous.expiresAt, principal, anonymous.entries),
+        Instant.ofEpochMilli(anonymous.expiresAt));
+    } catch (RuntimeException e) {
+      engine.log(System.Logger.Level.WARNING, "a browser's snapshot could not be bound to its user", e);
     }
   }
 
