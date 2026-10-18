@@ -6,7 +6,6 @@ import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 
 import j2act.LiveComponent;
-import j2act.Page;
 import j2act.Query;
 import j2act.State;
 import j2act.html.tags.HtmlTag;
@@ -16,7 +15,7 @@ import j2act.html.tags.HtmlTag;
  * query, so a click a moment later lands on the finished report. The effect records when
  * the page was really opened, which a preload never does.
  */
-public class ReportPage extends LiveComponent implements Page {
+public class ReportPage extends LiveComponent {
 
   private final State<String> openedAt = state("not yet");
   private final Query<String> report = query(() -> {

@@ -5,11 +5,10 @@ import static com.example.tspnpm.components.SalesChart.salesChart;
 import static j2act.html.TagCreator.*;
 
 import j2act.LiveComponent;
-import j2act.Page;
 import j2act.html.tags.HtmlTag;
 
 /** Two TypeScript client modules with npm packages, CSS imports and CSS modules. */
-public class HomePage extends LiveComponent implements Page {
+public class HomePage extends LiveComponent {
 
   @Override public HtmlTag render() {
     return html(

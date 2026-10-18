@@ -13,7 +13,6 @@ import jakarta.inject.Inject;
 import com.example.team.db.Users;
 import j2act.Download;
 import j2act.LiveComponent;
-import j2act.Page;
 import j2act.PageError;
 import j2act.Query;
 import j2act.State;
@@ -26,7 +25,7 @@ import j2act.html.tags.HtmlTag;
  * rows. CSV export streams through download(), and the button spins until
  * the last byte.
  */
-public class UsersPage extends LiveComponent implements Page {
+public class UsersPage extends LiveComponent {
 
   @Inject private Users users;
 

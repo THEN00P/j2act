@@ -25,13 +25,13 @@ class RetainedRoutingTest {
     }
   }
 
-  public static final class Home extends LiveComponent implements Page {
+  public static final class Home extends LiveComponent {
     @Override public HtmlTag render() {
       return html(head(title("Home")), body(h1("Home")));
     }
   }
 
-  public static final class FormPage extends LiveComponent implements Page {
+  public static final class FormPage extends LiveComponent {
     private final State<String> name = retainedState("");
 
     @Override public HtmlTag render() {

@@ -17,11 +17,10 @@ import static j2act.html.TagCreator.*;
 import com.example.counter.components.Counter;
 import j2act.html.tags.HtmlTag;
 import j2act.LiveComponent;
-import j2act.Page;
 import j2act.State;
 
 /** One page exercising every claim the first slice has to prove. */
-public class HomePage extends LiveComponent implements Page {
+public class HomePage extends LiveComponent {
 
   private final Counter pinned = counter().withLabel("Held instance");
   private final State<Integer> pageRenders = state(0);

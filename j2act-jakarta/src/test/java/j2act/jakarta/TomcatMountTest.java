@@ -39,7 +39,6 @@ import org.junit.jupiter.api.Test;
 import j2act.ComponentTag;
 import j2act.J2Act;
 import j2act.LiveComponent;
-import j2act.Page;
 import j2act.PageResolver;
 import j2act.State;
 import j2act.html.tags.ButtonTag;
@@ -55,7 +54,7 @@ class TomcatMountTest {
     }
   }
 
-  public static final class Home extends LiveComponent implements Page {
+  public static final class Home extends LiveComponent {
     @Override public HtmlTag render() {
       return html(head(title("Tomcat")), body(new Counter(), new Counter()));
     }

@@ -5,11 +5,10 @@ import static com.example.team.components.Counter.counter;
 import static j2act.html.TagCreator.*;
 
 import j2act.LiveComponent;
-import j2act.Page;
 import j2act.html.tags.HtmlTag;
 
 /** Public landing page. No guard, no identity seam needed. */
-public class HomePage extends LiveComponent implements Page {
+public class HomePage extends LiveComponent {
 
   @Override public HtmlTag render() {
     return html(

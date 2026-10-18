@@ -25,7 +25,7 @@ class BoundaryTest {
   static final AtomicInteger attempts = new AtomicInteger();
   static volatile long slowMillis = 0;
 
-  public static final class DeferredPage extends LiveComponent implements Page {
+  public static final class DeferredPage extends LiveComponent {
     private final Query<String> data = query(() -> {
       gate.await(5, TimeUnit.SECONDS);
       return "deferred data";
@@ -40,7 +40,7 @@ class BoundaryTest {
     }
   }
 
-  public static final class FlakyPage extends LiveComponent implements Page {
+  public static final class FlakyPage extends LiveComponent {
     private final Query<String> data = query(() -> {
       if (attempts.incrementAndGet() == 1) {
         throw new IllegalStateException("database unavailable");
@@ -79,7 +79,7 @@ class BoundaryTest {
     }
   }
 
-  public static final class NestedPage extends LiveComponent implements Page {
+  public static final class NestedPage extends LiveComponent {
     @Override public HtmlTag render() {
       return html(head(title("Nested")), body(h1("Page chrome"), new Widget()));
     }
@@ -89,13 +89,13 @@ class BoundaryTest {
     }
   }
 
-  public static final class HomePage extends LiveComponent implements Page {
+  public static final class HomePage extends LiveComponent {
     @Override public HtmlTag render() {
       return html(head(title("Home")), body(h1("Home")));
     }
   }
 
-  public static final class SlowPage extends LiveComponent implements Page {
+  public static final class SlowPage extends LiveComponent {
     private final Query<String> data = query(() -> {
       Thread.sleep(slowMillis);
       return "slow data";
