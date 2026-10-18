@@ -29,7 +29,7 @@ div(counter().withLabel("A"), counter().withLabel("B"))
 ## User table page (filter, query, head, boundaries)
 
 ```java
-public class UsersPage extends LiveComponent implements Page {
+public class UsersPage extends LiveComponent {
   @Inject private Users repo; // host bean via the members-injector seam; no em()
 
   @Override public HtmlTag render() {

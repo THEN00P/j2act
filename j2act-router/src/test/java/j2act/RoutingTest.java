@@ -47,7 +47,7 @@ class RoutingTest {
     }
   }
 
-  public static final class UsersPage extends LiveComponent implements Page {
+  public static final class UsersPage extends LiveComponent {
     @Override public HtmlTag render() {
       return html(
         head(title("Users")),
@@ -56,7 +56,7 @@ class RoutingTest {
     }
   }
 
-  public static final class SettingsPage extends LiveComponent implements Page {
+  public static final class SettingsPage extends LiveComponent {
     @Override public HtmlTag render() {
       return html(
         head(title("Settings"), meta().withName("description").withContent("settings")),
@@ -65,7 +65,7 @@ class RoutingTest {
     }
   }
 
-  public static final class UserPage extends LiveComponent implements Page {
+  public static final class UserPage extends LiveComponent {
     private final State<Integer> visits = state(0);
     private final Query<String> user = query(() -> {
       userLoads.incrementAndGet();
@@ -87,25 +87,25 @@ class RoutingTest {
     }
   }
 
-  public static final class SearchPage extends LiveComponent implements Page {
+  public static final class SearchPage extends LiveComponent {
     @Override public HtmlTag render() {
       return html(head(title("Search")), body(p("q=" + queryParam("q"))));
     }
   }
 
-  public static final class HomePage extends LiveComponent implements Page {
+  public static final class HomePage extends LiveComponent {
     @Override public HtmlTag render() {
       return html(head(title("Home")), body(h1("Home")));
     }
   }
 
-  public static final class LoginPage extends LiveComponent implements Page {
+  public static final class LoginPage extends LiveComponent {
     @Override public HtmlTag render() {
       return html(head(title("Login")), body(h1("Please log in")));
     }
   }
 
-  public static final class NotFoundPage extends LiveComponent implements Page {
+  public static final class NotFoundPage extends LiveComponent {
     @Override public HtmlTag render() {
       return html(head(title("Nope")), body(h1("Nothing here")));
     }

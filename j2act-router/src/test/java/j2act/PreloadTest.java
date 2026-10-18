@@ -32,13 +32,13 @@ class PreloadTest {
     }
   }
 
-  public static final class Home extends LiveComponent implements Page {
+  public static final class Home extends LiveComponent {
     @Override public HtmlTag render() {
       return html(head(title("Home")), body(h1("Home")));
     }
   }
 
-  public static final class ItemPage extends LiveComponent implements Page {
+  public static final class ItemPage extends LiveComponent {
     private final Query<String> item = query(() -> {
       loads.incrementAndGet();
       String id = pathParam("id");
@@ -58,7 +58,7 @@ class PreloadTest {
     }
   }
 
-  public static final class Secret extends LiveComponent implements Page {
+  public static final class Secret extends LiveComponent {
     private final Query<String> secret = query(() -> {
       secretLoads.incrementAndGet();
       return "secret";

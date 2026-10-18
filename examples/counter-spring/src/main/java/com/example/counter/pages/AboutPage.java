@@ -6,11 +6,10 @@ import static com.example.counter.components.Volume.volume;
 import static j2act.html.TagCreator.*;
 
 import j2act.LiveComponent;
-import j2act.Page;
 import j2act.html.tags.HtmlTag;
 
 /** A second page to navigate to; its title wins over the layout's in the merged head (ADR 0007). */
-public class AboutPage extends LiveComponent implements Page {
+public class AboutPage extends LiveComponent {
 
   @Override public HtmlTag render() {
     return html(

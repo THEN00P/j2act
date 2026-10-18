@@ -85,7 +85,7 @@ Generated Java facade mirroring the browser's Web APIs one to one, executed remo
 _Avoid_: Browser, JsRuntime
 
 **Page**:
-A LiveComponent with a code-based route, nested layouts/subroutes, plus optional loading() and error() boundary methods with nearest-defined-wins nesting. render() returns html(head(...), body(...)) for pages, bare content for island fragments. URL is read ambiently via pathParam()/queryParam(), never passed as props.
+Any LiveComponent mounted at a route with page(path, Class); there is no Page type, and the route, not the class, makes it a page. It gets nested layouts/subroutes, plus optional loading() and error() boundary methods with nearest-defined-wins nesting. render() returns html(head(...), body(...)) for pages, bare content for island fragments. URL is read ambiently via pathParam()/queryParam(), never passed as props.
 _Avoid_: View, Screen, Controller
 
 **Component**:
@@ -105,7 +105,7 @@ Check receiving AuthCtx, returning allow or redirect — per route, or per scope
 _Avoid_: Interceptor, Filter, on_mount
 
 **Route**:
-Declared via page(path, Page), scope(path, ...), layout(path, Page, ...) static factories plus middleware(), redirect() and fallback() nodes. Index inferred from path "/". Dynamic segments use {id} (Spring/Jakarta style), read via pathParam("id"). Route DSL is carved out of the children-only rule: path and page ride positionally since every route has exactly those two.
+Declared via page(path, component), scope(path, ...), layout(path, Layout, ...) static factories plus middleware(), redirect() and fallback() nodes. Index inferred from path "/". Dynamic segments use {id} (Spring/Jakarta style), read via pathParam("id"). Route DSL is carved out of the children-only rule: path and page ride positionally since every route has exactly those two.
 _Avoid_: Endpoint, Handler, FileRoute
 
 **Layout**:

@@ -9,7 +9,6 @@ import jakarta.inject.Inject;
 import com.example.team.db.Users;
 import com.example.team.stores.CurrentUser;
 import j2act.LiveComponent;
-import j2act.Page;
 import j2act.State;
 import j2act.html.tags.HtmlTag;
 
@@ -19,7 +18,7 @@ import j2act.html.tags.HtmlTag;
  * the submit carries it as a field (ADR 0013). The Save button swaps to a
  * spinner client-side until the handler's morph lands.
  */
-public class SettingsPage extends LiveComponent implements Page {
+public class SettingsPage extends LiveComponent {
 
   @Inject private Users users;
   @Inject private CurrentUser currentUser;

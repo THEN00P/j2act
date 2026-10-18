@@ -6,7 +6,7 @@ Lazy filter by default (`onChange` commits on blur, no DB spam). Eager opt-in is
 import static j2act.html.TagCreator.*;
 import static j2act.router.Routes.*;
 
-public class UserTablePage extends LiveComponent implements Page {
+public class UserTablePage extends LiveComponent {
   @Inject private Users users;
 
   private final State<String> nameFilter = state("");

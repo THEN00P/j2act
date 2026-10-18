@@ -8,7 +8,6 @@ import jakarta.inject.Inject;
 
 import com.example.team.db.Users;
 import j2act.LiveComponent;
-import j2act.Page;
 import j2act.Query;
 import j2act.html.tags.HtmlTag;
 
@@ -19,7 +18,7 @@ import j2act.html.tags.HtmlTag;
  * pathParam("id"), so it refetches. Rename is a form submit whose field is
  * controlled: the render sets its value to the current name.
  */
-public class UserPage extends LiveComponent implements Page {
+public class UserPage extends LiveComponent {
 
   @Inject private Users users;
 

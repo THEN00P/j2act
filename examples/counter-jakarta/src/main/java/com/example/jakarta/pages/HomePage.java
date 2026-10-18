@@ -15,11 +15,10 @@ import static com.example.jakarta.components.SearchBox.searchBox;
 import static j2act.html.TagCreator.*;
 
 import j2act.LiveComponent;
-import j2act.Page;
 import j2act.html.tags.HtmlTag;
 
 /** The slice on WildFly: every section exercises one container integration. */
-public class HomePage extends LiveComponent implements Page {
+public class HomePage extends LiveComponent {
 
   @Override public HtmlTag render() {
     return html(

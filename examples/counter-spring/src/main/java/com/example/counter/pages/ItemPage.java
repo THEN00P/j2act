@@ -4,7 +4,6 @@ import static j2act.router.Routes.notFound;
 import static j2act.html.TagCreator.*;
 
 import j2act.LiveComponent;
-import j2act.Page;
 import j2act.Query;
 import j2act.State;
 import j2act.html.tags.HtmlTag;
@@ -14,7 +13,7 @@ import j2act.html.tags.HtmlTag;
  * instance (and its State) and refetches. Item 404 throws notFound() (ADR 0015).
  * loading() is a boundary (ADR 0007).
  */
-public class ItemPage extends LiveComponent implements Page {
+public class ItemPage extends LiveComponent {
 
   private final State<Integer> likes = state(0);
   private final Query<String> item = query(() -> {
