@@ -39,8 +39,8 @@ public final class Prop<T> extends Primitive implements Supplier<T> {
     return hasPending ? pending : fallback;
   }
 
-  @Override Cell createCell(Session session, String address) {
-    return new ValueCell(session, address, described());
+  @Override Cell createCell(Tab tab, String address) {
+    return new ValueCell(tab, address, described());
   }
 
   @Override boolean accepts(Cell cell) {

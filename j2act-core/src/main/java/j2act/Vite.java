@@ -18,13 +18,13 @@ public final class Vite {
   }
 
   public static DomContent vite(String... sources) {
-    Session session = Session.current();
-    if (session == null) {
+    Tab tab = Tab.current();
+    if (tab == null) {
       throw new IllegalStateException("vite(...) renders inside a page, where the engine is known");
     }
     List<DomContent> tags = new ArrayList<>();
     for (String source : sources) {
-      List<String> urls = session.engine.modules.pageEntry(source);
+      List<String> urls = tab.engine.modules.pageEntry(source);
       for (String style : urls.subList(1, urls.size())) {
         tags.add(new CustomEmptyTag("link").attr("rel", "stylesheet").attr("href", style));
       }

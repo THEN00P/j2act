@@ -54,8 +54,8 @@ final class QueryCell extends Cell implements Observer {
   private QueryCell leader;
   private final Set<QueryCell> followers = new LinkedHashSet<>();
 
-  QueryCell(Session session, String address, Loader<?> loader) {
-    super(session, address);
+  QueryCell(Tab tab, String address, Loader<?> loader) {
+    super(tab, address);
     this.loader = loader;
   }
 
@@ -92,11 +92,11 @@ final class QueryCell extends Cell implements Observer {
     return current().error;
   }
 
-  // ---- keyed sharing (ADR 0020): same key, one run, one snapshot per session
+  // ---- keyed sharing (ADR 0020): same key, one run, one snapshot per tab
 
-  /** Lane-only. Follows the session's cell for this key, or becomes it. */
+  /** Lane-only. Follows the tab's cell for this key, or becomes it. */
   private void link() {
-    QueryCell existing = session.queryLeader(key);
+    QueryCell existing = tab.queryLeader(key);
     if (existing == this || leader != null) {
       return;
     }
@@ -105,12 +105,12 @@ final class QueryCell extends Cell implements Observer {
       existing.followers.add(this);
       return;
     }
-    session.putQueryLeader(key, this);
-    InactiveQuery cached = session.takeInactive(keyAddress());
+    tab.putQueryLeader(key, this);
+    InactiveQuery cached = tab.takeInactive(keyAddress());
     if (cached != null) {
       snapshot = new Snapshot(Status.SUCCESS, cached.data, null, false);
       fetchedAt = cached.fetchedAt;
-      if (session.engine.clock.millis() - fetchedAt >= session.engine.queryStaleMillis) {
+      if (tab.engine.clock.millis() - fetchedAt >= tab.engine.queryStaleMillis) {
         start(false);
       }
       return;
@@ -143,13 +143,13 @@ final class QueryCell extends Cell implements Observer {
       leader = null;
       return;
     }
-    if (key == null || session.queryLeader(key) != this) {
+    if (key == null || tab.queryLeader(key) != this) {
       return;
     }
     if (followers.isEmpty()) {
-      session.removeQueryLeader(key);
+      tab.removeQueryLeader(key);
       if (snapshot.status == Status.SUCCESS) {
-        session.putInactive(keyAddress(),
+        tab.putInactive(keyAddress(),
           new InactiveQuery(snapshot.data, new ArrayList<>(), new ArrayList<>(), fetchedAt));
       }
       return;
@@ -170,7 +170,7 @@ final class QueryCell extends Cell implements Observer {
     for (Observer reader : observers) {
       heir.observers.add(reader);
     }
-    session.putQueryLeader(key, heir);
+    tab.putQueryLeader(key, heir);
     if (snapshot.fetching) {
       heir.start(false);
     }
@@ -186,14 +186,14 @@ final class QueryCell extends Cell implements Observer {
       link();
       return;
     }
-    InactiveQuery cached = session.takeInactive(address);
-    if (cached != null && cached.matchesCurrent(session)) {
+    InactiveQuery cached = tab.takeInactive(address);
+    if (cached != null && cached.matchesCurrent(tab)) {
       snapshot = new Snapshot(Status.SUCCESS, cached.data, null, false);
-      readCells = cached.resolveCells(session);
+      readCells = cached.resolveCells(tab);
       readValues = cached.values;
       fetchedAt = cached.fetchedAt;
       subscribe(readCells);
-      if (session.engine.clock.millis() - fetchedAt >= session.engine.queryStaleMillis) {
+      if (tab.engine.clock.millis() - fetchedAt >= tab.engine.queryStaleMillis) {
         start(false);
       }
       return;
@@ -213,20 +213,20 @@ final class QueryCell extends Cell implements Observer {
     long mySeq = ++seq;
     Loader<?> runLoader = loader;
     snapshot = snapshot.fetching(true);
-    session.inFlight.add(this);
+    tab.inFlight.add(this);
     if (notify) {
       notifyObservers();
     }
     try {
-      session.engine.executor.execute(() -> execute(runLoader, mySeq));
+      tab.engine.executor.execute(() -> execute(runLoader, mySeq));
     } catch (RejectedExecutionException e) {
-      commit(new QueryRun(session, mySeq), null, e);
+      commit(new QueryRun(tab, mySeq), null, e);
     }
   }
 
   /** Runs on an executor thread. */
   private void execute(Loader<?> runLoader, long mySeq) {
-    QueryRun run = new QueryRun(session, mySeq);
+    QueryRun run = new QueryRun(tab, mySeq);
     Object result = null;
     Throwable error = null;
     Tracking.setRun(run);
@@ -239,7 +239,7 @@ final class QueryCell extends Cell implements Observer {
     }
     Object r = result;
     Throwable e = error;
-    session.post(() -> commit(run, r, e));
+    tab.post(() -> commit(run, r, e));
   }
 
   /** Lane-only. The optimistic check: commit only if nothing the run read has changed since. */
@@ -250,7 +250,7 @@ final class QueryCell extends Cell implements Observer {
     for (int i = 0; i < run.cells.size(); i++) {
       Cell cell = run.cells.get(i);
       if (cell.disposed || !Objects.equals(cell.peek(), run.values.get(i))) {
-        session.engine.stats.supersededRuns.incrementAndGet();
+        tab.engine.stats.supersededRuns.incrementAndGet();
         start(false);
         return;
       }
@@ -259,23 +259,23 @@ final class QueryCell extends Cell implements Observer {
     readCells = new ArrayList<>(run.cells);
     readValues = new ArrayList<>(run.values);
     subscribe(readCells);
-    fetchedAt = session.engine.clock.millis();
+    fetchedAt = tab.engine.clock.millis();
     snapshot = error == null
       ? new Snapshot(Status.SUCCESS, result, null, false)
       : new Snapshot(Status.ERROR, snapshot.data, error, false);
     if (error instanceof RouteException) {
       // notFound()/redirect() from a loader ends the route, not the query (ADR 0015).
-      session.inFlight.remove(this);
-      session.onRouteException((RouteException) error);
+      tab.inFlight.remove(this);
+      tab.onRouteException((RouteException) error);
       return;
     }
     if (error != null) {
-      session.engine.log(System.Logger.Level.WARNING, "query failed at " + address, error);
+      tab.engine.log(System.Logger.Level.WARNING, "query failed at " + address, error);
     }
-    session.inFlight.remove(this);
-    session.engine.stats.committedRuns.incrementAndGet();
+    tab.inFlight.remove(this);
+    tab.engine.stats.committedRuns.incrementAndGet();
     notifyObservers();
-    session.settled();
+    tab.settled();
   }
 
   void refetch() {
@@ -283,10 +283,10 @@ final class QueryCell extends Cell implements Observer {
       leader.refetch();
       return;
     }
-    if (session.lane.isCurrent()) {
+    if (tab.lane.isCurrent()) {
       start(true);
     } else {
-      session.post(() -> start(true));
+      tab.post(() -> start(true));
     }
   }
 
@@ -318,7 +318,7 @@ final class QueryCell extends Cell implements Observer {
     if (key != null) {
       unlink();
       unsubscribe();
-      session.inFlight.remove(this);
+      tab.inFlight.remove(this);
       super.dispose();
       return;
     }
@@ -327,10 +327,10 @@ final class QueryCell extends Cell implements Observer {
       for (Cell cell : readCells) {
         addresses.add(cell.address);
       }
-      session.putInactive(address, new InactiveQuery(snapshot.data, addresses, readValues, fetchedAt));
+      tab.putInactive(address, new InactiveQuery(snapshot.data, addresses, readValues, fetchedAt));
     }
     unsubscribe();
-    session.inFlight.remove(this);
+    tab.inFlight.remove(this);
     super.dispose();
   }
 }

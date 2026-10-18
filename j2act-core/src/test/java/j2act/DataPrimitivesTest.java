@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
-/** computed, Store/select, mutation and keyed queries (CONTEXT, ADR 0006, 0020). */
+/** computed, mutation and keyed queries (CONTEXT, ADR 0006, 0020). */
 class DataPrimitivesTest {
 
   // ---- computed
@@ -40,60 +40,6 @@ class DataPrimitivesTest {
       List<Map<String, String>> third = h.click(add);
       assertEquals(1, third.size());
       assertTrue(third.get(0).get("html").contains("big"));
-    }
-  }
-
-  // ---- stores
-
-  static final class Prefs {
-    final String theme;
-    final int size;
-
-    Prefs(String theme, int size) {
-      this.theme = theme;
-      this.size = size;
-    }
-  }
-
-  static final Store<Prefs> PREFS = State.createStore(new Prefs("light", 12));
-  static final AtomicInteger themeRenders = new AtomicInteger();
-
-  static final class ThemeView extends ComponentTag {
-    @Override protected Tag<?> render() {
-      themeRenders.incrementAndGet();
-      return T.span("theme " + PREFS.select(p -> p.theme));
-    }
-  }
-
-  static final class SizeView extends ComponentTag {
-    @Override protected Tag<?> render() {
-      return T.span("size " + PREFS.select(p -> p.size));
-    }
-  }
-
-  static final class PrefsPage extends LiveComponent {
-    @Override public Tag<?> render() {
-      return T.page("t", T.div(
-        new ThemeView(),
-        new SizeView(),
-        T.button("bigger").onClick(e -> PREFS.update(p -> new Prefs(p.theme, p.size + 1)))));
-    }
-  }
-
-  @Test
-  void selectReRendersOnlyTheReadersOfTheChangedSliceAndSessionsAreIsolated() {
-    themeRenders.set(0);
-    try (Harness h = new Harness(PrefsPage::new)) {
-      h.load();
-      h.connect();
-      int themeBefore = themeRenders.get();
-      List<Map<String, String>> patches = h.click(Harness.clickOn(h.html, "bigger"));
-      assertEquals(1, patches.size(), patches.toString());
-      assertTrue(patches.get(0).get("html").contains("size 13"));
-      assertEquals(themeBefore, themeRenders.get(), "theme slice did not change");
-
-      String other = h.engine.serve("/").html();
-      assertTrue(other.contains("size 12"), "another session keeps its own copy: " + other);
     }
   }
 

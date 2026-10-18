@@ -2,17 +2,18 @@ package com.example.jakarta.components;
 
 import static j2act.html.TagCreator.*;
 
+import jakarta.inject.Inject;
+
 import j2act.Client;
 import j2act.ComponentTag;
 import j2act.Mount;
 import j2act.State;
-import j2act.Store;
 import j2act.html.tags.DivTag;
 
 /**
- * Retained State (ADR 0026): the draft outlives the session for this page load, such as a
+ * Retained State (ADR 0026): the draft outlives the in-memory tab for this page load, such as a
  * laptop lid closed past the grace window, a pause or a restart, while a reload still clears it.
- * So does the signer, kept in a retained store that any page of the session could read.
+ * So does the signer, kept in the Signature store that any component of the tab can inject.
  */
 public final class DraftNote extends ComponentTag {
 
@@ -21,7 +22,7 @@ public final class DraftNote extends ComponentTag {
     Mount<DivTag> mount();
   }
 
-  public static final Store<String> signer = State.createRetainedStore("");
+  @Inject private Signature signature;
 
   private final State<String> draft = retainedState("");
   private final PauseControls pauseControls = client(PauseControls.class);
@@ -46,13 +47,13 @@ public final class DraftNote extends ComponentTag {
         input()
           .withId("signer")
           .withAutocomplete("off")
-          .withValue(signer.get())
-          .onChange(e -> signer.set(e.value()))
+          .withValue(signature.signer())
+          .onChange(e -> signature.sign(e.value()))
       ),
-      p("Signer: " + (signer.get().isEmpty() ? "none" : signer.get())).withId("signer-echo"),
+      p("Signer: " + (signature.signer().isEmpty() ? "none" : signature.signer())).withId("signer-echo"),
       div().withId("pause-controls").withClient(pauseControls.mount()),
       // The server can ask too: this tab, or every tab as before a deploy. Each then pauses as if Pause was clicked.
-      button("Pause this tab from the server").withId("pause-tab").onClick(e -> pauseTab()),
+      button("Pause this tab from the server").withId("pause-tab").onClick(e -> tab().requestPause()),
       button("Pause every tab from the server").withId("pause-all").onClick(e -> application().requestPause())
     );
   }

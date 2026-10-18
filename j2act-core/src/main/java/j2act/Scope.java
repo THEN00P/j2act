@@ -8,12 +8,13 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * One mounted component: its tree slot, its cells in creation order, the cells its
+ * One mounted component, or one store of a tab (ADR 0030), which has no parent and never
+ * renders: its tree slot, its cells in creation order, the cells its
  * last render read, and the child scopes it placed. Lane-only.
  */
 final class Scope implements Observer {
 
-  final Session session;
+  final Tab tab;
   final Scope parent;
   final String address;
   /**
@@ -26,6 +27,8 @@ final class Scope implements Observer {
   boolean restored;
   final String anchor;
   ComponentTag instance;
+  /** The store this scope holds instead of a component. */
+  Store store;
   final List<Cell> cells = new ArrayList<>();
   final Set<Cell> deps = new HashSet<>();
   Map<String, Scope> children = new LinkedHashMap<>();
@@ -42,8 +45,8 @@ final class Scope implements Observer {
   /** Primitive count after the first render; later renders must create exactly as many (ADR 0019). */
   int settledCount = -1;
   /** Set on the root of a subtree mounted ahead of a navigation, until the click adopts it (ADR 0011). */
-  Session.PreloadedRoute preload;
-  /** The route this subtree reads instead of the session's; see PreloadRouteCell. */
+  Tab.PreloadedRoute preload;
+  /** The route this subtree reads instead of the tab's; see PreloadRouteCell. */
   PreloadRouteCell routeOverride;
   boolean dirty;
   boolean rendering;
@@ -54,12 +57,12 @@ final class Scope implements Observer {
   /** The component class's instance fields when its primitives settled, while dev mode watches classes. */
   String shape;
 
-  Scope(Session session, Scope parent, String address) {
-    this.session = session;
+  Scope(Tab tab, Scope parent, String address) {
+    this.tab = tab;
     this.parent = parent;
     this.address = address;
-    this.anchor = session.nextAnchor();
-    this.codeEpoch = session.engine.codeEpoch;
+    this.anchor = tab.nextAnchor();
+    this.codeEpoch = tab.engine.codeEpoch;
   }
 
   /**
@@ -78,13 +81,47 @@ final class Scope implements Observer {
     return parent == null || localPath == null ? address : parent.slotPath() + localPath;
   }
 
+  /** The component or store whose primitives this scope holds. */
+  Object owner() {
+    return instance != null ? instance : store;
+  }
+
+  Class<?> ownerClass() {
+    return instance != null ? instance.getClass() : storeClass(store.getClass());
+  }
+
+  /**
+   * The app's own store class: the concrete one, under any subclass a container generated for it
+   * (Spring's CGLIB and Weld's carry "$$" in their names). Two stores inheriting their scope from
+   * one annotated base so keep apart (ADR 0030).
+   */
+  static Class<?> storeClass(Class<?> type) {
+    Class<?> c = type;
+    while (c.getSuperclass() != null && c.getSuperclass() != Store.class && c.getName().contains("$$")) {
+      c = c.getSuperclass();
+    }
+    return c;
+  }
+
+  /** Lane-only. Binds a store's field primitives; a store never renders, so they settle at once. */
+  void bindStore(Store s) {
+    store = s;
+    s.scope = this;
+    List<Primitive> primitives = s.primitives;
+    for (int i = 0; i < primitives.size(); i++) {
+      bindPrimitive(primitives.get(i), i);
+    }
+    settledCount = cells.size();
+    activatePending();
+  }
+
   IllegalStateException orderViolation(String message) {
     return swapped() ? new ShapeChanged(message) : new IllegalStateException(message);
   }
 
   /** Classes were swapped since this scope last rendered. */
   boolean swapped() {
-    return codeEpoch != session.engine.codeEpoch;
+    return codeEpoch != tab.engine.codeEpoch;
   }
 
   /** The component's instance fields, name and type, from its class up to ComponentTag. */
@@ -107,14 +144,14 @@ final class Scope implements Observer {
 
   /** Called when the primitives settle after the first render: records the shape while classes are watched. */
   void settled() {
-    if (session.engine.watchingClasses) {
+    if (tab.engine.watchingClasses) {
       shape = shapeOf(instance.getClass());
     }
   }
 
   /** Drops this component's own state (not its children's) and binds its field primitives to fresh cells. */
   void startOver(String reason) {
-    session.engine.log(System.Logger.Level.INFO, "j2act dev: " + instance.getClass().getName()
+    tab.engine.log(System.Logger.Level.INFO, "j2act dev: " + instance.getClass().getName()
       + " starts over with fresh state, since the new code changed it: " + reason, null);
     unsubscribeAll();
     for (Cell cell : cells) {
@@ -123,7 +160,7 @@ final class Scope implements Observer {
       } catch (RuntimeException | LinkageError e) {
         // An effect's cleanup from the old code may call a method the new code removed.
       }
-      session.cells.remove(cell.address);
+      tab.cells.remove(cell.address);
     }
     cells.clear();
     settledCount = -1;
@@ -138,7 +175,7 @@ final class Scope implements Observer {
     }
     instance = component;
     component.scope = this;
-    session.engine.injector.inject(component);
+    tab.engine.injector.inject(component);
     if (shapeChanged(component.getClass())) {
       startOver("its fields changed");
     } else {
@@ -173,28 +210,28 @@ final class Scope implements Observer {
     if (index < cells.size()) {
       Cell cell = cells.get(index);
       if (!primitive.accepts(cell)) {
-        throw orderViolation(instance.getClass().getName() + " primitive #" + index
+        throw orderViolation(ownerClass().getName() + " primitive #" + index
           + " changed kind between renders; primitives must be created in the same order every time (ADR 0019)");
       }
       primitive.attach(cell, false);
       return;
     }
     if (settledCount >= 0) {
-      throw orderViolation(instance.getClass().getName() + " created primitive #" + index
+      throw orderViolation(ownerClass().getName() + " created primitive #" + index
         + " that earlier renders did not; primitives must not be created conditionally (ADR 0019)");
     }
-    Cell cell = primitive.createCell(session, address + "#" + index);
+    Cell cell = primitive.createCell(tab, address + "#" + index);
     cell.owner = this;
     cells.add(cell);
-    session.cells.put(cell.address, cell);
+    tab.cells.put(cell.address, cell);
     if (primitive instanceof State && ((State<?>) primitive).retained) {
-      session.snapshot.retain(this, (State<?>) primitive, (ValueCell) cell, index);
+      tab.snapshot.retain(this, (State<?>) primitive, (ValueCell) cell, index);
     }
     primitive.attach(cell, true);
   }
 
   @Override public void invalidate() {
-    session.markDirty(this);
+    tab.markDirty(this);
   }
 
   /** Inside a preloaded subtree that has not been navigated to yet. */
@@ -207,14 +244,14 @@ final class Scope implements Observer {
     return false;
   }
 
-  /** The route cell pathParam()/queryParam() read here: a preloaded subtree's own, else the session's. */
+  /** The route cell pathParam()/queryParam() read here: a preloaded subtree's own, else the tab's. */
   ValueCell routeCell() {
     for (Scope s = this; s != null; s = s.parent) {
       if (s.routeOverride != null) {
         return s.routeOverride;
       }
     }
-    return session.routeCell;
+    return tab.routeCell;
   }
 
   @Override public void dependsOn(Cell cell) {
@@ -242,13 +279,13 @@ final class Scope implements Observer {
     }
     actionScopes.clear();
     unsubscribeAll();
-    session.handlers.remove(this);
-    session.heads.forget(this);
+    tab.handlers.remove(this);
+    tab.heads.forget(this);
     for (Cell cell : cells) {
       cell.dispose();
-      session.cells.remove(cell.address);
+      tab.cells.remove(cell.address);
     }
-    session.dirty.remove(this);
+    tab.dirty.remove(this);
     if (routeOverride != null) {
       routeOverride.unfollow();
     }

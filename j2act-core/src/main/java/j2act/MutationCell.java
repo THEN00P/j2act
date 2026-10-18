@@ -38,8 +38,8 @@ final class MutationCell extends Cell {
   private volatile Snapshot snapshot = Snapshot.IDLE;
   private long seq;
 
-  MutationCell(Session session, String address, Mutation<?, ?> config) {
-    super(session, address);
+  MutationCell(Tab tab, String address, Mutation<?, ?> config) {
+    super(tab, address);
     this.config = config;
   }
 
@@ -54,10 +54,10 @@ final class MutationCell extends Cell {
   }
 
   void mutate(Object variables) {
-    if (session.lane.isCurrent()) {
+    if (tab.lane.isCurrent()) {
       start(variables);
     } else {
-      session.post(() -> start(variables));
+      tab.post(() -> start(variables));
     }
   }
 
@@ -66,10 +66,10 @@ final class MutationCell extends Cell {
       seq++;
       set(Snapshot.IDLE);
     };
-    if (session.lane.isCurrent()) {
+    if (tab.lane.isCurrent()) {
       reset.run();
     } else {
-      session.post(reset);
+      tab.post(reset);
     }
   }
 
@@ -83,7 +83,7 @@ final class MutationCell extends Cell {
     set(new Snapshot(MutationStatus.PENDING, null, null, variables));
     Runnable execution = () -> attempt(run, variables, mySeq, 0);
     if (run.key != null) {
-      session.enqueueMutation(run.key, execution);
+      tab.enqueueMutation(run.key, execution);
     } else {
       execution.run();
     }
@@ -99,25 +99,28 @@ final class MutationCell extends Cell {
       return;
     }
     try {
-      session.engine.executor.execute(() -> {
+      tab.engine.executor.execute(() -> {
         Object result = null;
         Throwable error = null;
+        Tab.RUNNING_FOR.set(tab);
         try {
           result = invoke(run, variables);
         } catch (Throwable t) {
           error = t;
+        } finally {
+          Tab.RUNNING_FOR.remove();
         }
         if (error != null && attempt < run.retries) {
           long delay = run.backoff.toMillis() << attempt;
-          session.engine.later(session, delay, () -> attempt(run, variables, mySeq, attempt + 1));
+          tab.engine.later(tab, delay, () -> attempt(run, variables, mySeq, attempt + 1));
           return;
         }
         Object r = result;
         Throwable e = error;
-        session.post(() -> finish(run, variables, mySeq, r, e));
+        tab.post(() -> finish(run, variables, mySeq, r, e));
       });
     } catch (RejectedExecutionException e) {
-      session.post(() -> finish(run, variables, mySeq, null, e));
+      tab.post(() -> finish(run, variables, mySeq, null, e));
     }
   }
 
@@ -126,11 +129,11 @@ final class MutationCell extends Cell {
    * token, tell the client to fetch it, and fail the run if nobody does in time (ADR 0012).
    */
   private void offer(Download<?> run, Object variables, long mySeq) {
-    J2Act engine = session.engine;
+    J2Act engine = tab.engine;
     String token = engine.newSecret(24);
-    engine.downloads.put(token, new DownloadStream(session, this, run, variables, mySeq));
-    session.send(Json.object("type", "download", "url", engine.contextPath + J2Act.DOWNLOAD_PATH + token));
-    engine.later(session, engine.downloadTtlMillis, () -> {
+    engine.downloads.put(token, new DownloadStream(tab, this, run, variables, mySeq));
+    tab.send(Json.object("type", "download", "url", engine.contextPath + J2Act.DOWNLOAD_PATH + token));
+    engine.later(tab, engine.downloadTtlMillis, () -> {
       if (engine.downloads.remove(token) != null) {
         finish(run, variables, mySeq, null, new IllegalStateException("download was not fetched in time"));
       }
@@ -143,7 +146,7 @@ final class MutationCell extends Cell {
    * again on every chunk.
    */
   private void offerUpload(Upload run, UploadFile file, long mySeq) {
-    J2Act engine = session.engine;
+    J2Act engine = tab.engine;
     Throwable refused = file == null ? new IllegalArgumentException("no file: pass the UploadFile from a file input's change event")
       : file.size() > run.maxFileSize ? new IllegalArgumentException(file.name() + " is larger than " + run.maxFileSize + " bytes")
       : !Uploads.accepts(run.accept, file) ? new IllegalArgumentException(file.name() + " is not an accepted type " + run.accept)
@@ -160,8 +163,8 @@ final class MutationCell extends Cell {
       return;
     }
     String token = engine.newSecret(24);
-    engine.uploads.put(token, new UploadSink(token, session, this, run, file, mySeq, temp));
-    session.send(Json.object("type", "upload", "file", file.id, "url", engine.contextPath + J2Act.UPLOAD_PATH + token));
+    engine.uploads.put(token, new UploadSink(token, tab, this, run, file, mySeq, temp));
+    tab.send(Json.object("type", "upload", "file", file.id, "url", engine.contextPath + J2Act.UPLOAD_PATH + token));
   }
 
   /**
@@ -170,7 +173,7 @@ final class MutationCell extends Cell {
    */
   private void refuse(Upload run, UploadFile file, long mySeq, Throwable reason) {
     if (file != null) {
-      session.send(Json.object("type", "uploadRefused", "file", file.id, "error", String.valueOf(reason.getMessage())));
+      tab.send(Json.object("type", "uploadRefused", "file", file.id, "error", String.valueOf(reason.getMessage())));
     }
     finish(run, file, mySeq, null, reason);
   }
@@ -192,7 +195,7 @@ final class MutationCell extends Cell {
   @SuppressWarnings({"unchecked", "rawtypes"})
   void finish(Mutation<?, ?> run, Object variables, long mySeq, Object result, Throwable error) {
     if (run.key != null) {
-      session.mutationDone(run.key);
+      tab.mutationDone(run.key);
     }
     if (disposed) {
       return;
@@ -204,17 +207,17 @@ final class MutationCell extends Cell {
     }
     if (error == null) {
       for (List<Object> prefix : run.invalidates) {
-        session.invalidate(prefix);
+        tab.invalidate(prefix);
       }
       if (run.onSuccess != null) {
         ((java.util.function.Consumer) run.onSuccess).accept(result);
       }
     } else {
       if (error instanceof RouteException) {
-        session.onRouteException((RouteException) error);
+        tab.onRouteException((RouteException) error);
         return;
       }
-      session.engine.log(System.Logger.Level.WARNING, "mutation failed at " + address, error);
+      tab.engine.log(System.Logger.Level.WARNING, "mutation failed at " + address, error);
       if (run.onError != null) {
         run.onError.accept(error);
       }

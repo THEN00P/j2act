@@ -11,8 +11,8 @@ final class Effect extends Primitive {
     this.body = body;
   }
 
-  @Override Cell createCell(Session session, String address) {
-    return new EffectCell(session, address, body);
+  @Override Cell createCell(Tab tab, String address) {
+    return new EffectCell(tab, address, body);
   }
 
   @Override boolean accepts(Cell cell) {

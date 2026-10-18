@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Renders tags without a session, for emails, fragments and tests. Handlers, keys
+ * Renders tags without a tab, for emails, fragments and tests. Handlers, keys
  * and pending markup are not emitted; components render once with their initial
  * State and unbound queries.
  */

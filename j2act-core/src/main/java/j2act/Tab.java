@@ -18,13 +18,15 @@ import java.util.concurrent.CompletableFuture;
 import j2act.internal.json.Json;
 
 /**
- * One browser session: its route, component tree, cells, handlers and query cache.
+ * The server side of one page load (ADR 0030), reached with tab() in a component: created when
+ * the page's HTML renders, kept across socket drops and reconnects, ended by unload, idle
+ * timeout or pause. A reload starts a new one. Internally: its route, component tree, cells, handlers and query cache.
  * Every mutation runs as a task on its lane; a task ends with a flush that re-renders
  * dirty components and sends one patch per dirty subtree (ADR 0001, 0003).
  */
-final class Session {
+public final class Tab {
 
-  private static final ThreadLocal<Session> CURRENT = new ThreadLocal<>();
+  private static final ThreadLocal<Tab> CURRENT = new ThreadLocal<>();
   private static final int MAX_INACTIVE = 256;
   private static final int MAX_REDIRECTS = 10;
   static final Object UNRESOLVED = new Object();
@@ -50,9 +52,9 @@ final class Session {
   final Handlers handlers = new Handlers(this);
   /** Rate limits on its socket's events and upload chunks (ADR 0013). */
   final SocketLimits limits = new SocketLimits(this);
-  /** What this session restored from and saves next (ADR 0026). */
-  final SessionSnapshot snapshot = new SessionSnapshot(this);
-  /** Client modules mounted in this session and their calls in flight (ADR 0022). */
+  /** What this tab restored from and saves next (ADR 0026). */
+  final TabSnapshot snapshot = new TabSnapshot(this);
+  /** Client modules mounted in this tab and their calls in flight (ADR 0022). */
   final Clients clients = new Clients(this);
 
   /** Current URL; reads of pathParam/queryParam are tracked through it (ADR 0020). */
@@ -88,6 +90,8 @@ final class Session {
   volatile long lastActivity;
   volatile long disconnectedAt;
   volatile boolean disposed;
+  /** Completes once this tab is disposed, so a restore can wait for a tab that is closing (ADR 0030). */
+  final CompletableFuture<Void> ended = new CompletableFuture<>();
   private int anchorSeq;
   private long epoch;
   private boolean foreignReadWarned;
@@ -95,7 +99,66 @@ final class Session {
   private final Object settleLock = new Object();
   private long settleCount;
 
-  Session(J2Act engine, String id, String token, Exchange exchange, String url) {
+  // ---- browser (ADR 0030)
+
+  /** Set when this tab is a browser's hub: no page, no socket, only its stores. */
+  volatile Browser hubFor;
+  /** The j2-browser cookie this page load sent, or the one minted for it on first use. */
+  volatile String browserCookie;
+  /** The browser this tab joined on first use of browser state, or null. */
+  volatile Browser browser;
+  /** A Set-Cookie value this tab still has to hand the browser: on the page response, or by fetch. */
+  volatile String pendingBrowserCookie;
+  /** The Set-Cookie value of the browser this tab minted, offered again when the page's claim failed. */
+  volatile String mintedBrowserCookie;
+  /** The token of this tab's latest cookie offer; a newer offer withdraws it, so an older one never lands last. */
+  String browserCookieOffer;
+  /** Mirrors of browser cells this tab read, by source. */
+  private final Map<Cell, MirrorCell> mirrors = new java.util.concurrent.ConcurrentHashMap<>();
+
+  /** This tab's mirror of a browser cell, made and subscribed on first read. */
+  MirrorCell mirror(Cell source, Object seen) {
+    MirrorCell mirror = mirrors.get(source);
+    if (mirror == null) {
+      MirrorCell made = new MirrorCell(this, source);
+      mirror = mirrors.putIfAbsent(source, made);
+      if (mirror == null) {
+        mirror = made;
+        made.subscribe(seen);
+      }
+    }
+    return mirror;
+  }
+
+  /**
+   * Lane-only. Leaves a browser joined under another identity (ADR 0030): whatever read its state
+   * re-renders, and its next use joins the browser of the identity this tab has now.
+   */
+  void detachBrowser() {
+    Browser old;
+    synchronized (this) {
+      old = browser;
+      browser = null;
+      browserCookie = null;
+      mintedBrowserCookie = null;
+    }
+    if (old == null) {
+      return;
+    }
+    List<MirrorCell> readers = new ArrayList<>(mirrors.values());
+    mirrors.clear();
+    engine.leaveBrowser(this, old);
+    for (MirrorCell mirror : readers) {
+      mirror.notifyObservers();
+      mirror.dispose();
+    }
+  }
+
+  void forgetMirror(MirrorCell mirror) {
+    mirrors.remove(mirror.source, mirror);
+  }
+
+  Tab(J2Act engine, String id, String token, Exchange exchange, String url) {
     this.engine = engine;
     this.id = id;
     this.token = token;
@@ -109,16 +172,26 @@ final class Session {
     long now = engine.clock.millis();
     this.lastActivity = now;
     this.disconnectedAt = now;
+    this.browserCookie = J2Act.browserCookie(exchange);
   }
 
-  /** The session whose lane task or query run is executing on this thread, if any. */
-  static Session current() {
-    Session session = CURRENT.get();
-    if (session != null) {
-      return session;
+  /** The tab a mutation body runs for, on its executor thread; only stores read it (ADR 0030). */
+  static final ThreadLocal<Tab> RUNNING_FOR = new ThreadLocal<>();
+
+  /** The tab whose lane task, query run or mutation run is executing on this thread, if any. */
+  static Tab ambient() {
+    Tab tab = current();
+    return tab != null ? tab : RUNNING_FOR.get();
+  }
+
+  /** The tab whose lane task or query run is executing on this thread, if any. */
+  static Tab current() {
+    Tab tab = CURRENT.get();
+    if (tab != null) {
+      return tab;
     }
     QueryRun run = Tracking.run();
-    return run == null ? null : run.session;
+    return run == null ? null : run.tab;
   }
 
   // ---- lane tasks
@@ -147,7 +220,7 @@ final class Session {
           }
         } catch (Throwable t) {
           engine.stats.failedTasks.incrementAndGet();
-          engine.log(System.Logger.Level.ERROR, "session task failed", t);
+          engine.log(System.Logger.Level.ERROR, "tab task failed", t);
         }
         if (afterFlush != null) {
           afterFlush.run();
@@ -158,6 +231,76 @@ final class Session {
     };
   }
 
+  /**
+   * Runs body as a task of this tab's lane on the calling thread, then flushes, instead of posting
+   * it and waiting: a tab using its browser's hub, or a query loader using a store, never waits
+   * for a pool thread that may be the one it holds (ADR 0030). Reads inside are not tracked for
+   * the caller.
+   */
+  <T> T inline(Callable<T> body) {
+    Object[] result = new Object[1];
+    Throwable[] failure = new Throwable[1];
+    lane.runInline(() -> {
+      Tab previous = CURRENT.get();
+      Observer observer = Tracking.swap(null);
+      QueryRun run = Tracking.run();
+      Tracking.clearRun();
+      CURRENT.set(this);
+      try {
+        if (disposed) {
+          throw new IllegalStateException("tab " + id + " has ended");
+        }
+        result[0] = body.call();
+        flush();
+      } catch (Throwable t) {
+        failure[0] = t;
+      } finally {
+        if (previous == null) {
+          CURRENT.remove();
+        } else {
+          CURRENT.set(previous);
+        }
+        Tracking.swap(observer);
+        if (run != null) {
+          Tracking.setRun(run);
+        }
+      }
+    });
+    if (failure[0] instanceof RuntimeException) {
+      throw (RuntimeException) failure[0];
+    }
+    if (failure[0] instanceof Error) {
+      throw (Error) failure[0];
+    }
+    if (failure[0] != null) {
+      throw new IllegalStateException(failure[0]);
+    }
+    @SuppressWarnings("unchecked")
+    T value = (T) result[0];
+    return value;
+  }
+
+  /**
+   * Queues body on the lane with this tab bound, as post() does, but without the flush after it:
+   * for its last tasks, the goodbye and retirement, whose onPersisting callbacks and effect cleanups
+   * may still call injected scoped stores (ADR 0030).
+   */
+  void postBound(Runnable body) {
+    lane.execute(() -> {
+      Tab previous = CURRENT.get();
+      CURRENT.set(this);
+      try {
+        body.run();
+      } finally {
+        if (previous == null) {
+          CURRENT.remove();
+        } else {
+          CURRENT.set(previous);
+        }
+      }
+    });
+  }
+
   void post(Runnable body) {
     lane.execute(task(body));
   }
@@ -166,7 +309,7 @@ final class Session {
     CompletableFuture<T> result = new CompletableFuture<>();
     lane.execute(() -> {
       if (disposed) {
-        result.completeExceptionally(new IllegalStateException("session disposed"));
+        result.completeExceptionally(new IllegalStateException("tab disposed"));
         return;
       }
       CURRENT.set(this);
@@ -235,8 +378,24 @@ final class Session {
 
   // ---- Retained State (ADR 0026)
 
+  /** This tab's id, as the page's j2-tab meta tag carries it. Routing, not a secret. */
+  public String id() {
+    return id;
+  }
+
+  /**
+   * Asks this browser tab, and only this one, to pause (ADR 0026), as .NET's
+   * Circuit.RequestCircuitPauseAsync asks one circuit: the page runs its j2act.onPausing
+   * handlers, then pauses, saving its Retained State and freeing this tab.
+   * application().requestPause() asks every tab. Completes with false when the tab is not
+   * connected or already gone.
+   */
+  public java.util.concurrent.CompletionStage<Boolean> requestPause() {
+    return call(this::askToPause).handle((asked, error) -> error == null && asked);
+  }
+
   /** Lane-only. Asks the page to pause (ADR 0026); false when it is not connected, as in .NET. */
-  boolean requestPause() {
+  boolean askToPause() {
     if (disposed || connection == null) {
       return false;
     }
@@ -244,22 +403,145 @@ final class Session {
     return true;
   }
 
-  // ---- stores
+  // ---- stores (ADR 0030)
 
-  /** This session's cell for a store, created on first use with the store's initial value. */
-  ValueCell storeCell(Store<?> store) {
-    return (ValueCell) cells.computeIfAbsent(store.address, address -> {
-      ValueCell cell = new ValueCell(this, address, store.initial);
-      if (store.declaring != null) {
-        snapshot.retainStore(store, cell);
+  /** A store instance and what ends it, by the key its scope adapter gave. */
+  private static final class StoreEntry {
+    final Object instance;
+    final Runnable destroy;
+    final Scope scope;
+
+    StoreEntry(Object instance, Runnable destroy, Scope scope) {
+      this.instance = instance;
+      this.destroy = destroy;
+      this.scope = scope;
+    }
+  }
+
+  /** Written on the lane only; read from loader and mutation threads too. */
+  private final Map<Object, StoreEntry> stores = new java.util.concurrent.ConcurrentHashMap<>();
+
+  /** Callbacks a container registered for a store, run when this tab ends. */
+  private final Map<Object, List<Runnable>> storeDestructions = new java.util.concurrent.ConcurrentHashMap<>();
+
+  void onStoreDestroyed(Object key, Runnable callback) {
+    storeDestructions.computeIfAbsent(key, k -> new java.util.concurrent.CopyOnWriteArrayList<>()).add(callback);
+  }
+
+  /** Ends one store now, as its container asks; on the lane, so a caller elsewhere waits for it. */
+  void destroyStore(Object key) {
+    if (!lane.isCurrent()) {
+      inline(() -> {
+        destroyStore(key);
+        return null;
+      });
+      return;
+    }
+    StoreEntry entry = stores.remove(key);
+    List<Runnable> callbacks = storeDestructions.remove(key);
+    if (entry != null) {
+      endStore(entry, callbacks);
+    }
+  }
+
+  Object removeStore(Object key) {
+    storeDestructions.remove(key);
+    StoreEntry entry = stores.remove(key);
+    return entry == null ? null : entry.instance;
+  }
+
+  Object existingStore(Object key) {
+    StoreEntry entry = stores.get(key);
+    return entry == null ? null : entry.instance;
+  }
+
+  /**
+   * This tab's instance for the key, made on first use. A Store gets a scope of its own whose
+   * cells live in this tab. Made on the lane, so off it the caller waits for the lane.
+   */
+  @SuppressWarnings("unchecked")
+  <T> T store(Object key, java.util.function.Supplier<T> create, java.util.function.Consumer<? super T> destroy) {
+    StoreEntry entry = stores.get(key);
+    if (entry != null) {
+      return (T) entry.instance;
+    }
+    if (disposed) {
+      throw new IllegalStateException("tab " + id + " has ended; its stores are gone");
+    }
+    if (!lane.isCurrent()) {
+      return inline(() -> store(key, create, destroy));
+    }
+    Tab previous = MAKING_STORE.get();
+    MAKING_STORE.set(this);
+    T instance;
+    try {
+      instance = create.get();
+    } finally {
+      if (previous == null) {
+        MAKING_STORE.remove();
+      } else {
+        MAKING_STORE.set(previous);
       }
-      return cell;
-    });
+    }
+    Scope scope = null;
+    if (instance instanceof Store) {
+      Store store = (Store) instance;
+      // A lifecycle callback may already have bound it; a subclass a container made binds as its class.
+      store.bindIfPending();
+      scope = store.scope != null ? store.scope : bindStore(store);
+    }
+    stores.put(key, new StoreEntry(instance, destroy == null ? null : () -> destroy.accept(instance), scope));
+    return instance;
+  }
+
+  /** The tab whose store() is constructing a store on this thread, so the store knows where it binds. */
+  static final ThreadLocal<Tab> MAKING_STORE = new ThreadLocal<>();
+
+  /** Lane-only. Binds a store a lifecycle callback reached before store() returned it. */
+  void bindStoreNow(Store store) {
+    bindStore(store);
+  }
+
+  /** Lane-only. Binds a store's field primitives to a scope of its own, keyed by its class. */
+  private Scope bindStore(Store store) {
+    Scope scope = new Scope(this, null, Retained.STORE_PREFIX + Scope.storeClass(store.getClass()).getName());
+    scope.bindStore(store);
+    return scope;
+  }
+
+  /** Lane-only. Ends this tab's stores: their effects' cleanups, then the container's destroy. */
+  private void disposeStores() {
+    for (Map.Entry<Object, StoreEntry> e : stores.entrySet()) {
+      endStore(e.getValue(), storeDestructions.get(e.getKey()));
+    }
+    stores.clear();
+    storeDestructions.clear();
+  }
+
+  /** Lane-only. A store's effects' cleanups, then its own destroy and the callbacks registered for it. */
+  private void endStore(StoreEntry entry, List<Runnable> registered) {
+    if (entry.scope != null) {
+      entry.scope.dispose();
+    }
+    List<Runnable> callbacks = new ArrayList<>();
+    if (entry.destroy != null) {
+      callbacks.add(entry.destroy);
+    }
+    if (registered != null) {
+      callbacks.addAll(registered);
+    }
+    for (Runnable callback : callbacks) {
+      try {
+        callback.run();
+      } catch (RuntimeException ex) {
+        engine.log(System.Logger.Level.WARNING, "destroying store " + entry.instance.getClass().getName() + " failed", ex);
+      }
+    }
   }
 
   // ---- identity (ADR 0004, 0008)
 
-  /** The session's identity, resolving it on first use. Safe from loader threads. */
+  /** The tab's identity, resolving it on first use. Safe from loader threads. */
   AuthCtx currentAuth() {
     Object value = authCell.peek();
     if (value != UNRESOLVED) {
@@ -295,6 +577,7 @@ final class Session {
       return;
     }
     authCell.setOnLane(fresh);
+    engine.identityChanged(this, fresh);
     Verdict verdict = checkGuards(guards, fresh);
     if (verdict.kind == Verdict.Kind.REDIRECT) {
       navigate(verdict.target, "replace");
@@ -703,7 +986,7 @@ final class Session {
       }
       b.append('>').append(engine.importMap.content()).append("</script>");
     }
-    b.append("<meta name=\"j2-session\" content=\"").append(id).append("\">");
+    b.append("<meta name=\"j2-tab\" content=\"").append(id).append("\">");
     b.append("<meta name=\"j2-token\" content=\"").append(token).append("\">");
     if (snapshot.restored) {
       b.append("<meta name=\"j2-restored\" content=\"1\">");
@@ -863,7 +1146,15 @@ final class Session {
     if (root != null) {
       root.dispose();
     }
+    disposeStores();
+    for (MirrorCell mirror : mirrors.values()) {
+      mirror.dispose();
+    }
+    mirrors.clear();
     disposed = true;
+    if (browser != null) {
+      engine.leaveBrowser(this, browser);
+    }
     clients.dispose();
     handlers.clear();
     cells.clear();
@@ -888,6 +1179,7 @@ final class Session {
       }
       c.close();
     }
+    ended.complete(null);
   }
 
   // ---- preload (ADR 0011)
@@ -1050,7 +1342,7 @@ final class Session {
 
   private final List<java.nio.file.Path> ownedFiles = new ArrayList<>();
 
-  /** An upload stored without a target: deleted when the session ends. */
+  /** An upload stored without a target: deleted when the tab ends. */
   void ownFile(java.nio.file.Path file) {
     synchronized (ownedFiles) {
       if (!disposed) {

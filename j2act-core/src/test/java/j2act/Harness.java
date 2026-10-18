@@ -18,7 +18,7 @@ import java.util.regex.Pattern;
 
 import j2act.internal.json.Json;
 
-/** Headless session driver: serve, connect a fake socket, fire events, await patches. */
+/** Headless tab driver: serve, connect a fake socket, fire events, await patches. */
 final class Harness implements AutoCloseable {
 
   static final long TIMEOUT_MS = 5000;
@@ -59,7 +59,7 @@ final class Harness implements AutoCloseable {
       fail("expected a page for " + url + " but got " + result.status() + " " + result.location());
     }
     html = result.html();
-    sid = find(html, "name=\"j2-session\" content=\"([^\"]+)\"");
+    sid = find(html, "name=\"j2-tab\" content=\"([^\"]+)\"");
     token = find(html, "name=\"j2-token\" content=\"([^\"]+)\"");
     return html;
   }
@@ -88,7 +88,7 @@ final class Harness implements AutoCloseable {
 
   Harness connect() {
     int from = conn.size();
-    engine.onMessage(conn, Json.object("type", "hello", "session", sid, "token", token));
+    engine.onMessage(conn, Json.object("type", "hello", "tab", sid, "token", token));
     conn.await(from, m -> "ready".equals(m.get("type")));
     return this;
   }

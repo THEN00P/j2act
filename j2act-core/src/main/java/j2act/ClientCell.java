@@ -11,10 +11,10 @@ final class ClientCell extends Cell {
   final String id;
   long mountedEpoch = -1;
 
-  ClientCell(Session session, String address, Class<?> type) {
-    super(session, address);
+  ClientCell(Tab tab, String address, Class<?> type) {
+    super(tab, address);
     this.type = type;
-    this.id = session.engine.newSecret(9);
+    this.id = tab.engine.newSecret(9);
   }
 
   @Override Object peek() {
@@ -27,13 +27,13 @@ final class ClientCell extends Cell {
       throw new IllegalStateException(type.getSimpleName() + "." + method.getName()
         + "() is a client action; call it from a handler or effect, or bind it with onClick, not in render() (ADR 0022)");
     }
-    if (session.lane.isCurrent()) {
-      return session.clients.call(this, method, args);
+    if (tab.lane.isCurrent()) {
+      return tab.clients.call(this, method, args);
     }
     // From another thread, e.g. a query loader's continuation: hop onto the lane first.
     CompletableFuture<Object> relay = new CompletableFuture<>();
-    session.post(() -> {
-      Object stage = session.clients.call(this, method, args);
+    tab.post(() -> {
+      Object stage = tab.clients.call(this, method, args);
       if (stage instanceof CompletionStage) {
         ((CompletionStage<?>) stage).whenComplete((value, error) -> {
           if (error != null) {
@@ -48,7 +48,7 @@ final class ClientCell extends Cell {
   }
 
   @Override void dispose() {
-    session.clients.forget(this);
+    tab.clients.forget(this);
     super.dispose();
   }
 }

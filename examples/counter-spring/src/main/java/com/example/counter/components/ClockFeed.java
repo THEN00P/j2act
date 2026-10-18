@@ -10,9 +10,9 @@ import j2act.html.tags.PTag;
 import j2act.State;
 
 /**
- * Push from outside the session (ADR 0014): the scheduler thread calls update(),
- * which runs on this session's lane. The effect's cleanup unsubscribes on unmount
- * and on session eviction.
+ * Push from outside the tab (ADR 0014): the scheduler thread calls update(),
+ * which runs on this tab's lane. The effect's cleanup unsubscribes on unmount
+ * and on tab eviction.
  */
 public final class ClockFeed extends ComponentTag {
 

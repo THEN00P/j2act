@@ -52,7 +52,7 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
     body,
 
     /**
-     * Morphs the component at anchor; false when it is not in the document. The session root may
+     * Morphs the component at anchor; false when it is not in the document. The tab root may
      * be a new component after a navigation, with a new anchor, so it replaces head and body.
      */
     patch(anchor: string, html: string, isRoot: boolean): boolean {

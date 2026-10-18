@@ -2,7 +2,7 @@ package j2act;
 
 /**
  * A token bucket shape for socket abuse limits (ADR 0013): a steady rate plus a burst.
- * Chosen per session from its AuthCtx, e.g.
+ * Chosen per tab from its AuthCtx, e.g.
  * withRateLimit(auth -> auth.isAnonymous() ? RateLimit.perSecond(10) : RateLimit.perSecond(50)).
  */
 public final class RateLimit {
@@ -43,7 +43,7 @@ public final class RateLimit {
     return this == UNLIMITED ? "RateLimit(unlimited)" : "RateLimit(" + perSecond + "/s, burst " + burst + ")";
   }
 
-  /** One session's bucket for one kind of traffic. Thread-safe. */
+  /** One tab's bucket for one kind of traffic. Thread-safe. */
   static final class Bucket {
     final RateLimit limit;
     private double tokens;

@@ -15,8 +15,8 @@ final class EffectCell extends Cell implements Observer {
   private boolean queued;
   private final Set<Cell> deps = new HashSet<>();
 
-  EffectCell(Session session, String address, Supplier<Runnable> body) {
-    super(session, address);
+  EffectCell(Tab tab, String address, Supplier<Runnable> body) {
+    super(tab, address);
     this.body = body;
   }
 
@@ -27,7 +27,7 @@ final class EffectCell extends Cell implements Observer {
   void schedule() {
     if (!queued && !disposed) {
       queued = true;
-      session.pendingEffects.add(this);
+      tab.pendingEffects.add(this);
     }
   }
 
@@ -38,7 +38,7 @@ final class EffectCell extends Cell implements Observer {
     }
     if (owner != null && owner.preloading()) {
       // Effects wait for the navigation to commit (ADR 0011); still queued, so no duplicates.
-      session.parkedEffects.add(this);
+      tab.parkedEffects.add(this);
       return;
     }
     queued = false;
@@ -48,7 +48,7 @@ final class EffectCell extends Cell implements Observer {
     try {
       cleanup = body.get();
     } catch (Throwable t) {
-      session.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, t);
+      tab.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, t);
     } finally {
       Tracking.swap(previous);
     }
@@ -75,7 +75,7 @@ final class EffectCell extends Cell implements Observer {
       try {
         c.run();
       } catch (Throwable t) {
-        session.engine.log(System.Logger.Level.WARNING, "effect cleanup failed at " + address, t);
+        tab.engine.log(System.Logger.Level.WARNING, "effect cleanup failed at " + address, t);
       }
     }
   }

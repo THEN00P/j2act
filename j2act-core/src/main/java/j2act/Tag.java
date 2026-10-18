@@ -291,7 +291,7 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
     return self();
   }
 
-  /** Renders to HTML outside any session: no handlers, components render with initial state. */
+  /** Renders to HTML outside any tab: no handlers, components render with initial state. */
   public String render() {
     StringBuilder out = new StringBuilder();
     render(out);

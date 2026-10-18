@@ -7,8 +7,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Serial execution over a shared pool: at most one task of a session runs at a time,
- * so the session's graph needs no locks (ADR 0001). Tasks never run on socket threads.
+ * Serial execution over a shared pool: at most one task of a tab runs at a time,
+ * so the tab's graph needs no locks (ADR 0001). Tasks never run on socket threads.
  */
 final class Lane implements Executor {
 
@@ -19,6 +19,8 @@ final class Lane implements Executor {
   private final AtomicBoolean scheduled = new AtomicBoolean();
   private final AtomicInteger backlog = new AtomicInteger();
   private volatile Thread owner;
+  /** Held while one of this lane's tasks runs, by drain or inline; reentrant for a lane running itself. */
+  private final java.util.concurrent.locks.ReentrantLock running = new java.util.concurrent.locks.ReentrantLock();
 
   Lane(Executor pool) {
     this.pool = pool;
@@ -50,21 +52,41 @@ final class Lane implements Executor {
     }
   }
 
-  private void drain() {
+  /**
+   * Runs a task as this lane's, on the calling thread, once no other task of the lane runs. It
+   * never waits for a pool thread, so a lane can use another lane even when the pool has one
+   * thread (ADR 0030). The task must not wait on the calling thread's own lane.
+   */
+  void runInline(Runnable task) {
+    running.lock();
+    Thread previous = owner;
     owner = Thread.currentThread();
+    try {
+      task.run();
+    } finally {
+      owner = previous;
+      running.unlock();
+    }
+  }
+
+  private void drain() {
     try {
       Runnable task;
       int ran = 0;
       while (ran++ < BATCH && (task = queue.poll()) != null) {
         backlog.decrementAndGet();
+        running.lock();
+        owner = Thread.currentThread();
         try {
           task.run();
         } catch (Throwable t) {
           System.getLogger("j2act").log(System.Logger.Level.ERROR, "lane task failed", t);
+        } finally {
+          owner = null;
+          running.unlock();
         }
       }
     } finally {
-      owner = null;
       scheduled.set(false);
       if (!queue.isEmpty()) {
         schedule();

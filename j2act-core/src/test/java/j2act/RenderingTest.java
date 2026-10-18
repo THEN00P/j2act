@@ -59,7 +59,7 @@ class RenderingTest {
   void injectsBootstrapIntoHead() {
     try (Harness h = new Harness(Plain::new)) {
       String html = h.load();
-      assertTrue(html.contains("<meta name=\"j2-session\""), html);
+      assertTrue(html.contains("<meta name=\"j2-tab\""), html);
       assertTrue(html.contains("<script src=\"/_j2act/runtime.js\" defer></script></head>"), html);
     }
   }
@@ -68,7 +68,7 @@ class RenderingTest {
   void unknownPathIs404() {
     try (Harness h = new Harness(Plain::new)) {
       assertEquals(404, h.engine.serve("/missing").status());
-      assertEquals(0, h.engine.sessionCount());
+      assertEquals(0, h.engine.tabCount());
     }
   }
 }

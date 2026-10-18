@@ -21,7 +21,7 @@ import j2act.html.tags.HtmlTag;
 /** Routes, layouts, guards and soft navigation end to end over the headless harness (ADR 0005, 0007, 0011, 0015). */
 class RoutingTest {
 
-  /** Sessions the identity function knows; removing one simulates a server-side logout. */
+  /** Tabs the identity function knows; removing one simulates a server-side logout. */
   static final Map<String, AuthCtx> LOGGED_IN = new ConcurrentHashMap<>();
   static final AtomicInteger userLoads = new AtomicInteger();
 

@@ -7,7 +7,7 @@ import static j2act.ui.Ui.*;
 import jakarta.inject.Inject;
 
 import com.example.team.db.Users;
-import com.example.team.stores.AppStores;
+import com.example.team.stores.CurrentUser;
 import j2act.LiveComponent;
 import j2act.Page;
 import j2act.State;
@@ -22,6 +22,7 @@ import j2act.html.tags.HtmlTag;
 public class SettingsPage extends LiveComponent implements Page {
 
   @Inject private Users users;
+  @Inject private CurrentUser currentUser;
 
   private final State<String> saved = state(null);
 
@@ -46,7 +47,7 @@ public class SettingsPage extends LiveComponent implements Page {
           )
             .onSubmit(e -> {
               String name = e.value("displayName").trim();
-              users.rename(AppStores.currentUser.select(u -> u.userId), name);
+              users.rename(currentUser.userId(), name);
               saved.set(name);
             }),
           saved.get() == null

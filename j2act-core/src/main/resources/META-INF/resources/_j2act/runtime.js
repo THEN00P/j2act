@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-c08533c5096efcba799430ff0141283dc3ab82ed05fa3e5f3c3010ac92d14866 */
+* sources: sha256-3817f5ef490819b98a9529391bdaa5b40343ccf00124a614a2de76d55923a9e2 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -332,10 +332,10 @@
 	//#endregion
 	//#region src/main/ts/connection.ts
 	/**
-	* The page's socket (ADR 0010): says hello with the session id and token, queues messages until
+	* The page's socket (ADR 0010): says hello with the tab id and token, queues messages until
 	* the server answers ready, and reconnects with backoff unless the page is leaving or paused.
 	*/
-	function createConnection(url, session, token, onMessage, reconnects) {
+	function createConnection(url, tab, token, onMessage, reconnects) {
 		let ready = false;
 		let ws = null;
 		let queue = [];
@@ -346,7 +346,7 @@
 			socket.onopen = () => {
 				socket.send(JSON.stringify({
 					type: "hello",
-					session,
+					tab,
 					token
 				}));
 			};
@@ -361,7 +361,7 @@
 		}
 		return {
 			connect,
-			/** The session's token, which the page's HTTP requests carry too. */
+			/** The tab's token, which the page's HTTP requests carry too. */
 			get token() {
 				return token;
 			},
@@ -394,9 +394,9 @@
 					ws?.close();
 				} catch {}
 			},
-			/** A new session: what queued for the old one is meaningless to it. */
-			restart(newSession, newToken) {
-				session = newSession;
+			/** A new server-side tab: what queued for the old one is meaningless to it. */
+			restart(newTab, newToken) {
+				tab = newTab;
 				token = newToken;
 				retry = 0;
 				queue = [];
@@ -1655,7 +1655,7 @@
 			head,
 			body,
 			/**
-			* Morphs the component at anchor; false when it is not in the document. The session root may
+			* Morphs the component at anchor; false when it is not in the document. The tab root may
 			* be a new component after a navigation, with a new anchor, so it replaces head and body.
 			*/
 			patch(anchor, html, isRoot) {
@@ -1828,12 +1828,52 @@
 				saved.delete(swap);
 				if (before !== void 0 && swap.querySelector(":scope > [data-j2-pending-live]")) swap.innerHTML = before;
 			},
-			/** A new session will never ack these. */
+			/** A new server-side tab will never ack these. */
 			clear() {
 				inFlight.clear();
 				blocked.clear();
 			}
 		};
+	}
+	//#endregion
+	//#region src/main/ts/reopen.ts
+	var KEY = "j2act:tabs";
+	/** URLs remembered per browser tab, oldest dropped first. */
+	var MAX = 20;
+	function read() {
+		try {
+			const tokens = JSON.parse(sessionStorage.getItem(KEY) || "{}");
+			return tokens && typeof tokens === "object" ? tokens : {};
+		} catch {
+			return {};
+		}
+	}
+	function write(tokens) {
+		try {
+			sessionStorage.setItem(KEY, JSON.stringify(tokens));
+		} catch {}
+	}
+	/** How this page load came about, as the browser reports it. */
+	function navigationType() {
+		return (performance.getEntriesByType?.("navigation")[0])?.type ?? "navigate";
+	}
+	/** The token a closed page left for this URL: to restore when going back or forward, to forget on a reload. */
+	function takePrevious(url, current, type) {
+		const tokens = read();
+		const previous = tokens[url];
+		if (!previous || previous === current) return {};
+		delete tokens[url];
+		write(tokens);
+		return type === "back_forward" ? { restore: previous } : type === "reload" ? { forget: previous } : {};
+	}
+	/** On pagehide: this URL was last shown by the server-side tab with this token. */
+	function remember(url, token) {
+		const tokens = read();
+		for (const key of Object.keys(tokens)) if (tokens[key] === token) delete tokens[key];
+		tokens[url] = token;
+		const keys = Object.keys(tokens);
+		for (let i = 0; i < keys.length - MAX; i++) delete tokens[keys[i]];
+		write(tokens);
 	}
 	//#endregion
 	//#region src/main/ts/retained.ts
@@ -1857,7 +1897,7 @@
 				handlers = handlers.filter((h) => h !== handler);
 			};
 		}
-		/** Resolves true once the server saved the page's Retained State and let its session go. */
+		/** Resolves true once the server saved the page's Retained State and let its tab go. */
 		function pause() {
 			if (current === "paused") return Promise.resolve(true);
 			return new Promise((resolve) => {
@@ -1866,7 +1906,7 @@
 				else byHiding = false;
 			});
 		}
-		/** Resolves once the page runs again on a new session: true when its Retained State came back, or it had none. */
+		/** Resolves once the page runs again on a new server-side tab: true when its Retained State came back, or it had none. */
 		function resume() {
 			if (current === "deferring") {
 				cancel("resumed");
@@ -1882,7 +1922,7 @@
 				options.remount();
 			});
 		}
-		/** The server let the session go; saved: it had Retained State to keep. */
+		/** The server let the tab go; saved: it had Retained State to keep. */
 		function paused(saved) {
 			withState = saved;
 			current = "paused";
@@ -1977,12 +2017,12 @@
 				if (current === "running") begin(false);
 			},
 			/**
-			* The session is gone. Evicted while a pause was on its way, a snapshot may be saved all the
+			* The server-side tab is gone. Evicted while a pause was on its way, a snapshot may be saved all the
 			* same, so the page counts as paused. Returns whether the page should remount instead.
 			*/
 			expired() {
 				if (current === "pausing" || current === "deferring") {
-					stopDeferral("the session ended");
+					stopDeferral("the server-side tab ended");
 					paused(true);
 					return false;
 				}
@@ -1999,7 +2039,7 @@
 				if (document.hidden) hiddenTimer = setTimeout(autoPause, RETRY_MS);
 			},
 			/**
-			* The page runs on its new session. As .NET's resumeCircuit(): false when the page had state to
+			* The page runs on its new server-side tab. As .NET's resumeCircuit(): false when the page had state to
 			* keep and got none back, as when its snapshot expired, was used already or belongs to someone
 			* else. The page runs either way.
 			*/
@@ -2126,12 +2166,14 @@
 	//#endregion
 	//#region src/main/ts/main.ts
 	function start() {
-		const sid = meta(document, "j2-session");
+		const sid = meta(document, "j2-tab");
 		const wsPath = meta(document, "j2-ws");
 		const base = meta(document, "j2-base") || "";
 		if (!sid || !wsPath) return;
 		let leaving = false;
 		let remounting = false;
+		const here = () => location.pathname + location.search;
+		const previous = takePrevious(here(), meta(document, "j2-token"), navigationType());
 		const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath, sid, meta(document, "j2-token"), onMessage, () => !leaving && !remounting && retained.phase !== "paused");
 		const send = (message) => connection.send(message);
 		const pending = createPending();
@@ -2184,24 +2226,26 @@
 			paused: (m) => retained.paused(m.saved === true),
 			pauseRefused: () => retained.refused(),
 			pauseRequested: () => retained.requested(),
-			modules: (m) => clients.reimport(m.modules)
+			modules: (m) => clients.reimport(m.modules),
+			browserCookie: (m) => claimBrowserCookie(m.url)
 		};
 		function onMessage(m) {
 			handlers[m.type]?.(m);
 		}
-		function remount() {
+		/** Starts over on a new server-side tab; restoring names a closed page's token instead of this one's (ADR 0030). */
+		function remount(restoring) {
 			if (remounting) return;
 			remounting = true;
 			connection.close();
-			const tok = connection.token;
+			const tok = restoring ?? connection.token;
 			fetch(location.href, {
 				credentials: "same-origin",
 				headers: tok ? { "X-J2-Restore": tok } : {}
 			}).then((r) => r.text()).then((html) => {
 				const doc = new DOMParser().parseFromString(html, "text/html");
-				const sid = meta(doc, "j2-session");
+				const sid = meta(doc, "j2-tab");
 				const tok = meta(doc, "j2-token");
-				document.querySelector("meta[name=\"j2-session\"]").content = sid;
+				document.querySelector("meta[name=\"j2-tab\"]").content = sid;
 				document.querySelector("meta[name=\"j2-token\"]").content = tok;
 				document.documentElement.setAttribute("data-j2-scope", doc.documentElement.getAttribute("data-j2-scope"));
 				document.title = doc.title;
@@ -2213,14 +2257,30 @@
 				retained.resumed(meta(doc, "j2-restored") === "1");
 			}).catch(() => {
 				remounting = false;
-				setTimeout(remount, 2e3);
+				setTimeout(() => remount(restoring), 2e3);
 			});
+		}
+		/** Failed claims of the browser cookie so far; the server offers a fresh URL after each, a few times. */
+		let cookieClaimFailures = 0;
+		/** Claims run one after another, so the latest offer's cookie is the one that lands last. */
+		let claims = Promise.resolve();
+		function claimBrowserCookie(url) {
+			claims = claims.then(() => fetch(url, {
+				credentials: "same-origin",
+				cache: "no-store"
+			}).then((r) => {
+				if (!r.ok) throw new Error("browser cookie claim answered " + r.status);
+				cookieClaimFailures = 0;
+			}).catch(() => {
+				if (cookieClaimFailures < 5) setTimeout(() => send({ type: "browserCookieRetry" }), 1e3 * 2 ** cookieClaimFailures++);
+			}));
 		}
 		function busy() {
 			const a = document.activeElement;
 			return pending.size > 0 || uploads.size > 0 || !!a && a !== document.body && (a.matches("input, textarea, select") || a.isContentEditable) || Array.prototype.some.call(document.querySelectorAll("audio, video"), (m) => !m.paused && !m.ended);
 		}
 		window.addEventListener("pagehide", () => {
+			if (connection.token) remember(here(), connection.token);
 			if (connection.ready) {
 				leaving = true;
 				connection.sendIfReady({ type: "bye" });
@@ -2242,7 +2302,14 @@
 		retained.listen(document);
 		window.j2act = retained.api();
 		clients.scan();
-		connection.connect();
+		if (previous.restore) remount(previous.restore);
+		else {
+			connection.connect();
+			if (previous.forget) send({
+				type: "forget",
+				token: previous.forget
+			});
+		}
 	}
 	/** A download link: the browser saves the response and the page stays (ADR 0012). */
 	function download(url) {

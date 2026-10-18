@@ -46,6 +46,10 @@ final class J2ActFilter implements Filter {
       chunk(j2Act, path.substring(J2Act.UPLOAD_PATH.length()), request, (HttpServletResponse) res);
       return;
     }
+    if ("GET".equals(request.getMethod()) && path.startsWith(J2Act.BROWSER_PATH)) {
+      browserCookie(j2Act, path.substring(J2Act.BROWSER_PATH.length()), request, (HttpServletResponse) res);
+      return;
+    }
     if ("GET".equals(request.getMethod()) && path.startsWith(J2Act.DOWNLOAD_PATH)) {
       download(j2Act, path.substring(J2Act.DOWNLOAD_PATH.length()), request, (HttpServletResponse) res);
       return;
@@ -76,6 +80,9 @@ final class J2ActFilter implements Filter {
     ServeResult result = j2Act.serve(url, exchange(request));
     HttpServletResponse response = (HttpServletResponse) res;
     response.setHeader("Cache-Control", "no-store");
+    for (String cookie : result.setCookies()) {
+      response.addHeader("Set-Cookie", request.isSecure() ? cookie + "; Secure" : cookie);
+    }
     response.setStatus(result.status());
     if (result.location() != null) {
       response.setHeader("Location", result.location());
@@ -83,6 +90,19 @@ final class J2ActFilter implements Filter {
     }
     response.setContentType("text/html;charset=UTF-8");
     response.getOutputStream().write(result.html().getBytes(StandardCharsets.UTF_8));
+  }
+
+  /** Sets the browser cookie a page was offered over its socket (ADR 0030); 404 for a bad or used token. */
+  static void browserCookie(J2Act j2Act, String token, HttpServletRequest request, HttpServletResponse response)
+    throws IOException {
+    String cookie = j2Act.claimBrowserCookie(token);
+    response.setHeader("Cache-Control", "no-store");
+    if (cookie == null) {
+      response.sendError(HttpServletResponse.SC_NOT_FOUND);
+      return;
+    }
+    response.addHeader("Set-Cookie", request.isSecure() ? cookie + "; Secure" : cookie);
+    response.setStatus(HttpServletResponse.SC_NO_CONTENT);
   }
 
   /** Appends one upload chunk from the request body (ADR 0006); the answer tells the client where to resume. */

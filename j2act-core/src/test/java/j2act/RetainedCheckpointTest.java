@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 import j2act.RetainedStateTest.CountingStorage;
 import j2act.RetainedStateTest.Form;
 
-/** ADR 0026: withCheckpointInterval saves live sessions that changed; bye deletes their checkpoint. */
+/** ADR 0026: withCheckpointInterval saves live tabs that changed; without closed-tab retention, bye deletes their checkpoint. */
 class RetainedCheckpointTest {
 
   static Harness checkpointing(CountingStorage storage) {
@@ -31,20 +31,20 @@ class RetainedCheckpointTest {
   }
 
   @Test
-  void aCheckpointSavesALiveSessionThatAnotherServerRestoresAfterACrash() {
+  void aCheckpointSavesALiveTabThatAnotherServerRestoresAfterACrash() {
     CountingStorage storage = new CountingStorage();
     try (Harness h = checkpointing(storage); Harness next = checkpointing(storage)) {
       h.load();
       h.connect();
       type(h, "name", "Ada");
       Harness.eventually(() -> storage.has(h.token), "a checkpoint");
-      assertEquals(1, h.engine.sessionCount(), "a checkpoint does not discard the session");
+      assertEquals(1, h.engine.tabCount(), "a checkpoint does not discard the tab");
 
       type(h, "age", "36");
       Harness.eventually(() -> storage.inner.load(Retained.id(h.token)).get().contains("36"), "the next checkpoint");
       int saves = storage.saves.get();
       sleep(400);
-      assertEquals(saves, storage.saves.get(), "an unchanged session is not saved again");
+      assertEquals(saves, storage.saves.get(), "an unchanged tab is not saved again");
 
       // The first server dies without saving; the page remounts on the next one.
       String html = next.load("/", remount(h.token));
@@ -53,7 +53,7 @@ class RetainedCheckpointTest {
   }
 
   @Test
-  void aRestoredSessionIsCheckpointedAgainSinceItsSnapshotWasUsedUp() {
+  void aRestoredTabIsCheckpointedAgainSinceItsSnapshotWasUsedUp() {
     CountingStorage storage = new CountingStorage();
     try (Harness h = checkpointing(storage)) {
       h.load();
@@ -63,20 +63,21 @@ class RetainedCheckpointTest {
       String old = h.token;
       h.load("/", remount(old));
       assertFalse(storage.has(old), "the restore used it up");
-      Harness.eventually(() -> storage.has(h.token), "the restored session's own checkpoint, unchanged since the restore");
+      Harness.eventually(() -> storage.has(h.token), "the restored tab's own checkpoint, unchanged since the restore");
     }
   }
 
   @Test
-  void byeDeletesTheCheckpointOfAPageThatIsGoneForGood() {
+  void withoutClosedTabRetentionByeDeletesTheCheckpointOfAPageThatIsGoneForGood() {
     CountingStorage storage = new CountingStorage();
-    try (Harness h = checkpointing(storage)) {
+    try (Harness h = harness(Form::new, storage,
+        b -> b.withCheckpointInterval(Duration.ofMillis(100)).withClosedTabRetention(Duration.ZERO))) {
       h.load();
       h.connect();
       type(h, "name", "Ada");
       Harness.eventually(() -> storage.has(h.token), "a checkpoint");
       h.send("type", "bye");
-      Harness.eventually(() -> !storage.has(h.token) && h.engine.sessionCount() == 0, "bye deleting it");
+      Harness.eventually(() -> !storage.has(h.token) && h.engine.tabCount() == 0, "bye deleting it");
     }
   }
 
@@ -115,7 +116,7 @@ class RetainedCheckpointTest {
   }
 
   @Test
-  void aSessionsSavesLandInTheOrderTheirSnapshotsWereTaken() {
+  void aTabsSavesLandInTheOrderTheirSnapshotsWereTaken() {
     SlowFirstSave storage = new SlowFirstSave();
     try (Harness h = harness(Form::new, storage, b -> b.withCheckpointInterval(Duration.ofMillis(100)))) {
       h.load();
@@ -125,7 +126,7 @@ class RetainedCheckpointTest {
       type(h, "name", "second");
       String token = h.token;
       h.engine.onClose(h.conn);
-      Harness.eventually(() -> h.engine.sessionCount() == 0, "the eviction");
+      Harness.eventually(() -> h.engine.tabCount() == 0, "the eviction");
       sleep(500); // past the slow save
       assertTrue(storage.inner.load(Retained.id(token)).get().contains("second"), "the newer snapshot landed last");
     }
@@ -139,7 +140,7 @@ class RetainedCheckpointTest {
       h.connect();
       type(h, "name", "Ada");
       sleep(400);
-      assertEquals(0, storage.saves.get(), "as in .NET, a live session is not saved");
+      assertEquals(0, storage.saves.get(), "as in .NET, a live tab is not saved");
     }
   }
 }

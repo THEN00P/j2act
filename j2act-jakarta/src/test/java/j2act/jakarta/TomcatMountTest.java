@@ -161,7 +161,7 @@ class TomcatMountTest {
     }
     client.socket = builder.buildAsync(URI.create("ws://localhost:" + port + "/app/_j2act/ws"), client)
       .get(5, TimeUnit.SECONDS);
-    client.send("{\"type\":\"hello\",\"session\":\"" + find(html, "name=\"j2-session\" content=\"([^\"]+)\"")
+    client.send("{\"type\":\"hello\",\"tab\":\"" + find(html, "name=\"j2-tab\" content=\"([^\"]+)\"")
       + "\",\"token\":\"" + find(html, "name=\"j2-token\" content=\"([^\"]+)\"") + "\"}");
     if (origin == null) {
       client.await(m -> m.contains("\"type\":\"ready\""));

@@ -42,6 +42,18 @@ final class CdiSupport {
   }
 
   /**
+   * The container's store for a type (ADR 0030): a client proxy that reaches the bean of the tab
+   * current on the calling thread. Null without CDI, so tab(Type.class) makes stores itself.
+   */
+  static java.util.function.Function<Class<?>, Object> storeLookup() {
+    BeanManager beans = beanManager();
+    if (beans == null) {
+      return null;
+    }
+    return type -> beans.createInstance().select(type).get();
+  }
+
+  /**
    * Wraps each executor task in an activated CDI request context, so @RequestScoped
    * beans work in handlers and query loaders. One lane drain is one request.
    */

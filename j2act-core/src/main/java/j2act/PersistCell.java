@@ -1,12 +1,12 @@
 package j2act;
 
-/** Backs onPersisting(): holds the latest render's callback for Session.persisting(). */
+/** Backs onPersisting(): holds the latest render's callback for Tab.persisting(). */
 final class PersistCell extends Cell {
 
   Runnable callback;
 
-  PersistCell(Session session, String address) {
-    super(session, address);
+  PersistCell(Tab tab, String address) {
+    super(tab, address);
   }
 
   @Override Object peek() {

@@ -15,7 +15,7 @@ import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 
 /**
- * ADR 0026 across a restart: the demo saves its sessions on shutdown into the H2 file, and the
+ * ADR 0026 across a restart: the demo saves its tabs on shutdown into the H2 file, and the
  * next server, over the same file, restores the page that remounts with its old token.
  */
 class RetainedRestartTest {
@@ -41,7 +41,7 @@ class RetainedRestartTest {
       client.socket = http.newWebSocketBuilder()
         .buildAsync(URI.create("ws://localhost:" + port + "/_j2act/ws"), client)
         .get(5, TimeUnit.SECONDS);
-      client.send("{\"type\":\"hello\",\"session\":\"" + CounterAppTest.find(html, "name=\"j2-session\" content=\"([^\"]+)\"")
+      client.send("{\"type\":\"hello\",\"tab\":\"" + CounterAppTest.find(html, "name=\"j2-tab\" content=\"([^\"]+)\"")
         + "\",\"token\":\"" + token + "\"}");
       client.await(m -> m.contains("\"type\":\"ready\""));
       client.event(CounterAppTest.find(html, "id=\"draft\"[^>]*data-j2-change=\"([^\"]+)\""), "half-filled");

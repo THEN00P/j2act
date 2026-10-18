@@ -13,10 +13,10 @@ import j2act.State;
 import j2act.html.tags.UlTag;
 
 /**
- * Live feed pushed from outside the session. ActivityBus is the app's own
+ * Live feed pushed from outside the tab. ActivityBus is the app's own
  * listener (a scheduler, a JMS consumer, Debezium); J2ACT ships no pub/sub.
  * The bus calls State.update() on its own thread, which is safe: the
- * read-modify-write runs on this session's lane, so no heartbeat is lost.
+ * read-modify-write runs on this tab's lane, so no heartbeat is lost.
  * The unsubscribe cleanup runs on unmount, navigation away and eviction.
  */
 public final class ActivityFeed extends ComponentTag {

@@ -59,12 +59,12 @@ class HotSwapRenderTest {
     return h;
   }
 
-  private static Session session(Harness h) {
-    return h.engine.session(h.sid);
+  private static Tab tab(Harness h) {
+    return h.engine.tab(h.sid);
   }
 
   private static Scope child(Harness h) throws Exception {
-    return session(h).call(() -> session(h).root.children.values().iterator().next()).get();
+    return tab(h).call(() -> tab(h).root.children.values().iterator().next()).get();
   }
 
   @Test void aSwapReRendersEveryPageWithTheNewCodeAndKeepsItsState() {
@@ -95,10 +95,10 @@ class HotSwapRenderTest {
       extraPrimitive = true;
       int from = h.conn.size();
       // A re-render without a swap: ADR 0019's rule stands.
-      Session session = session(h);
+      Tab tab = tab(h);
       Scope child = child(h);
-      session.call(() -> {
-        session.markDirty(child);
+      tab.call(() -> {
+        tab.markDirty(child);
         return null;
       }).get();
       Thread.sleep(200);
@@ -109,7 +109,7 @@ class HotSwapRenderTest {
   @Test void aComponentWhoseFieldsChangedStartsOver() throws Exception {
     try (Harness h = started()) {
       Scope child = child(h);
-      session(h).call(() -> child.shape = "an older class").get();
+      tab(h).call(() -> child.shape = "an older class").get();
       int from = h.conn.size();
       h.engine.hotSwapped();
       String html = h.awaitPatch(from, s -> s.contains("child:0")).get("html");
@@ -119,9 +119,9 @@ class HotSwapRenderTest {
 
   @Test void aPageWhoseFieldsChangedIsMountedAgain() throws Exception {
     try (Harness h = started()) {
-      Session session = session(h);
-      Scope before = session.call(() -> session.root).get();
-      session.call(() -> before.shape = "an older class").get();
+      Tab tab = tab(h);
+      Scope before = tab.call(() -> tab.root).get();
+      tab.call(() -> before.shape = "an older class").get();
       int from = h.conn.size();
       h.engine.hotSwapped();
       String html = h.awaitPatch(from, s -> s.contains("old:0")).get("html");

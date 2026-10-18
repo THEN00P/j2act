@@ -44,7 +44,7 @@ public abstract class ComponentTag implements DomContent {
   }
 
   /**
-   * A State whose value outlives the in-memory session for this page load (ADR 0026): it
+   * A State whose value outlives the in-memory tab for this page load (ADR 0026): it
    * comes back after the grace window, a pause, a restart or a redeploy, while a reload
    * still starts empty. Keyed by this component's slot and the field holding it, so declare
    * it as a field; give a repeated component a withKey. Replace values through set(), since
@@ -63,7 +63,7 @@ public abstract class ComponentTag implements DomContent {
   }
 
   /**
-   * Runs on the session's lane right before its snapshot is taken, on eviction, a pause or a
+   * Runs on the tab's lane right before its snapshot is taken, on eviction, a pause or a
    * checkpoint (where it runs at every interval, to see whether anything changed), so
    * the component can copy values into its retained fields (ADR 0026), as .NET's
    * RegisterOnPersisting does. Like every primitive, call it in a field initializer or render().
@@ -90,6 +90,22 @@ public abstract class ComponentTag implements DomContent {
       }
       return null;
     }));
+  }
+
+  /**
+   * A value kept in the page's query string under name (ADR 0030): it survives a reload and can
+   * be shared, which suits filters and tabs within a page. initial's type picks the parsing
+   * (String, Integer, Long, Double, Boolean or an enum), and initial itself leaves the parameter
+   * out. Writes replace the URL after the current event.
+   */
+  protected final <T> QueryState<T> queryState(String name, T initial) {
+    return register(QueryState.of(name, initial));
+  }
+
+  /** A query state of any type, read with parse and written with format; parse may return null for the initial value. */
+  protected final <T> QueryState<T> queryState(String name, T initial, java.util.function.Function<String, T> parse,
+      java.util.function.Function<? super T, String> format) {
+    return register(new QueryState<>(name, initial, parse, format));
   }
 
   protected final <T> Prop<T> prop() {
@@ -156,13 +172,13 @@ public abstract class ComponentTag implements DomContent {
     return new j2act.web.Window(WebPath.root(this));
   }
 
-  /** Refetches every keyed query whose key starts with these parts, in this session (ADR 0020). */
+  /** Refetches every keyed query whose key starts with these parts, in this tab (ADR 0020). */
   protected final void invalidate(Object... keyPrefix) {
-    Session session = scope != null ? scope.session : Session.current();
-    if (session == null) {
+    Tab tab = scope != null ? scope.tab : Tab.current();
+    if (tab == null) {
       throw new IllegalStateException("invalidate() needs a mounted component");
     }
-    session.invalidate(java.util.Arrays.asList(keyPrefix));
+    tab.invalidate(java.util.Arrays.asList(keyPrefix));
   }
 
   /** Runs after mount and whenever a State it read changes; returns its cleanup or null. */
@@ -171,15 +187,41 @@ public abstract class ComponentTag implements DomContent {
   }
 
   /**
-   * Asks this browser tab, and only this one, to pause (ADR 0026), as .NET's
-   * Circuit.RequestCircuitPauseAsync asks one circuit: the tab runs its j2act.onPausing
-   * handlers, then pauses, saving its Retained State and freeing its session.
-   * application().requestPause() asks every tab. Completes with false when the tab is not
-   * connected; like navigate(), it throws once the component is unmounted.
+   * The browser tab this component renders in (ADR 0030): its id, and requestPause() to ask
+   * the page to pause (ADR 0026). Throws once the component is unmounted, like navigate().
    */
-  protected final java.util.concurrent.CompletionStage<Boolean> pauseTab() {
-    Session session = session("pauseTab()");
-    return session.call(session::requestPause).handle((asked, error) -> error == null && asked);
+  protected final Tab tab() {
+    return mountedTab("tab()");
+  }
+
+  /**
+   * This tab's instance of a @TabScoped store (ADR 0030). With Spring or CDI, inject it
+   * instead; this returns the container's instance either way. Without a container, the first
+   * call in a tab makes it, with the factory registered by withStore or its no-argument
+   * constructor.
+   */
+  protected final <S extends Store> S tab(Class<S> store) {
+    Tab tab = mountedTab("tab(" + store.getSimpleName() + ".class)");
+    return tab.engine.store(tab, store);
+  }
+
+  /**
+   * Every tab of this browser (ADR 0030): its id, and requestPause() to ask all its tabs to
+   * pause. Its first use joins the tab to its browser, which sets the j2-browser cookie when the
+   * browser has none yet.
+   */
+  protected final Browser browser() {
+    Tab tab = mountedTab("browser()");
+    return tab.engine.browserOf(tab);
+  }
+
+  /**
+   * This browser's instance of a @BrowserScoped store (ADR 0030), shared live by all its tabs.
+   * With Spring or CDI, inject it instead; this returns the container's instance either way.
+   */
+  protected final <S extends Store> S browser(Class<S> store) {
+    Tab tab = mountedTab("browser(" + store.getSimpleName() + ".class)");
+    return tab.engine.browserStore(tab, store);
   }
 
   /**
@@ -188,7 +230,7 @@ public abstract class ComponentTag implements DomContent {
    * since a component can be a page.
    */
   protected final Application application() {
-    return session("application()").engine.application;
+    return mountedTab("application()").engine.application;
   }
 
   /** Path parameter of the current route, e.g. "id" for /users/{id}. Tracked: a change re-renders or refetches. */
@@ -201,27 +243,27 @@ public abstract class ComponentTag implements DomContent {
     return route().queryParams.get(name);
   }
 
-  /** The session's identity (ADR 0004). Tracked: render branches re-run when it changes. */
+  /** The tab's identity (ADR 0004). Tracked: render branches re-run when it changes. */
   protected final AuthCtx auth() {
-    return session("auth()").readAuth();
+    return mountedTab("auth()").readAuth();
   }
 
   /** Soft-navigates to an app path after the current event, like a link click (ADR 0011). */
   protected final void navigate(String path) {
-    Session session = session("navigate()");
-    session.post(() -> session.navigate(path, "push"));
+    Tab tab = mountedTab("navigate()");
+    tab.post(() -> tab.navigate(path, "push"));
   }
 
   private RouteInfo route() {
-    return (RouteInfo) (scope != null ? scope.routeCell() : session("pathParam()").routeCell).read();
+    return (RouteInfo) (scope != null ? scope.routeCell() : mountedTab("pathParam()").routeCell).read();
   }
 
-  private Session session(String what) {
-    Session session = scope != null ? scope.session : Session.current();
-    if (session == null) {
+  private Tab mountedTab(String what) {
+    Tab tab = scope != null ? scope.tab : Tab.current();
+    if (tab == null) {
       throw new IllegalStateException(what + " needs a mounted component");
     }
-    return session;
+    return tab;
   }
 
   private <P extends Primitive> P register(P primitive) {
