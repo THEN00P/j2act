@@ -7,8 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 
 import org.junit.jupiter.api.Test;
 
@@ -19,7 +21,13 @@ import j2act.RetainedStateTest.Form;
 class RetainedCheckpointTest {
 
   static Harness checkpointing(CountingStorage storage) {
-    return harness(Form::new, storage, b -> b.withCheckpointInterval(Duration.ofMillis(100)));
+    return checkpointing(storage, Clock.systemUTC());
+  }
+
+  static Harness checkpointing(CountingStorage storage, Clock clock) {
+    return harness(Form::new, storage, b -> b
+      .withClock(clock)
+      .withCheckpointInterval(Duration.ofMillis(100)));
   }
 
   private static void sleep(long millis) {
@@ -33,7 +41,9 @@ class RetainedCheckpointTest {
   @Test
   void aCheckpointSavesALiveTabThatAnotherServerRestoresAfterACrash() {
     CountingStorage storage = new CountingStorage();
-    try (Harness h = checkpointing(storage); Harness next = checkpointing(storage)) {
+    // The expiry contains "36" before the age does, so a raw JSON substring is not a valid wait.
+    Clock clock = Clock.fixed(Instant.ofEpochMilli(3_600_000_000_000L), ZoneOffset.UTC);
+    try (Harness h = checkpointing(storage, clock); Harness next = checkpointing(storage, clock)) {
       h.load();
       h.connect();
       type(h, "name", "Ada");
@@ -41,7 +51,8 @@ class RetainedCheckpointTest {
       assertEquals(1, h.engine.tabCount(), "a checkpoint does not discard the tab");
 
       type(h, "age", "36");
-      Harness.eventually(() -> storage.inner.load(Retained.id(h.token)).get().contains("36"), "the next checkpoint");
+      Harness.eventually(() -> Retained.decode(storage.inner.load(Retained.id(h.token)).get()).entries.containsValue("36"),
+        "the next checkpoint");
       int saves = storage.saves.get();
       sleep(400);
       assertEquals(saves, storage.saves.get(), "an unchanged tab is not saved again");

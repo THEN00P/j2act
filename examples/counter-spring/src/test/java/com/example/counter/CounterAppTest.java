@@ -43,11 +43,11 @@ class CounterAppTest {
   }
 
   @Test
-  void theImportMapAndRuntimeCarryTheNonceOfTheRequestsPolicy() throws Exception {
+  void theRuntimeCarriesTheNonceOfTheRequestsPolicy() throws Exception {
     HttpResponse<String> page = get("/");
     String policy = page.headers().firstValue("Content-Security-Policy").orElseThrow();
     String nonce = find(policy, "'nonce-([^']+)'");
-    assertTrue(page.body().contains("<script type=\"importmap\" nonce=\"" + nonce + "\">"), page.body());
+    assertFalse(page.body().contains("type=\"importmap\""), page.body());
     assertTrue(page.body().contains("runtime.js\" nonce=\"" + nonce + "\" defer>"), page.body());
   }
 

@@ -1,5 +1,5 @@
-// The browser half of SalesChart.Bars (ADR 0022): Chart.js by bare name, through the import map.
-import { Chart } from "chart.js/auto";
+// The page loads Chart.js's browser distribution before this client module (ADR 0022).
+const { Chart } = window;
 
 /** Per element: its Chart, kept in module state. */
 const charts = new WeakMap();

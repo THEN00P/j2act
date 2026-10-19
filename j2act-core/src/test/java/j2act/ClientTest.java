@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -67,7 +68,7 @@ class ClientTest {
   }
 
   @Test
-  void rendersTheClientElementWithItsModulePropsAndSlots() {
+  void rendersTheClientElementWithItsModulePropsAndSlots() throws Exception {
     try (Harness h = new Harness(Gauge::new)) {
       String html = h.load();
       String id = Harness.find(html, "data-j2-client=\"([^\"]+)\"");
@@ -76,11 +77,13 @@ class ClientTest {
       assertTrue(html.contains("data-j2-export=\"meter\""), html);
       String served = new String(h.engine.module(module).bytes(), StandardCharsets.UTF_8);
       assertTrue(served.contains("export const meter"), served);
+      try (InputStream source = getClass().getResourceAsStream("/j2act/ClientTest.client.js")) {
+        assertEquals(new String(source.readAllBytes(), StandardCharsets.UTF_8), served);
+      }
       assertEquals(null, h.engine.module("0000/j2act/ClientTest.class"));
-      // The graph of relative imports is served under the same hash; nothing else is.
+      // Only the entry is published. Dependencies use public URLs served by the host.
       String hash = module.substring(0, module.indexOf('/'));
-      String helper = new String(h.engine.module(hash + "/j2act/client-test/units.js").bytes(), StandardCharsets.UTF_8);
-      assertTrue(helper.contains("volts"), helper);
+      assertEquals(null, h.engine.module(hash + "/j2act/client-test/units.js"));
       assertEquals(null, h.engine.module(hash + "/j2act/client-test/unimported.js"));
 
       Map<String, Object> props = props(html);

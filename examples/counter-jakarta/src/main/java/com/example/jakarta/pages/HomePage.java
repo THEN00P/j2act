@@ -23,6 +23,18 @@ public class HomePage extends LiveComponent {
   @Override public HtmlTag render() {
     return html(
       head(
+        // Classic scripts run in document order, before the client modules mount.
+        script()
+          .withSrc("/counter-jakarta/js/marks.js"),
+        script()
+          .withSrc("/counter-jakarta/js/countdown-face.js"),
+        script()
+          .withSrc("/counter-jakarta/_static/chart.js/4.5.1/dist/chart.umd.js"),
+        script()
+          .withSrc("/counter-jakarta/_static/quill/2.0.3/dist/quill.js"),
+        link()
+          .withRel("stylesheet")
+          .withHref("/counter-jakarta/_static/quill/2.0.3/dist/quill.snow.css"),
         title("j2act · WildFly")
       ),
       body(

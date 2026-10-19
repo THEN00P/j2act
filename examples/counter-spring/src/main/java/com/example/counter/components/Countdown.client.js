@@ -1,7 +1,9 @@
+/// <reference path="./Countdown.globals.d.ts" />
 // The browser half of Countdown.Timer (ADR 0022). Types: Countdown.types.d.ts.
 // @ts-check
 
-import { faceText, graphMark } from "./countdown-face.js";
+// The page loads the classic helper scripts in dependency order.
+const { text: faceText, mark: graphMark } = window.countdownFace;
 
 /** Per element: the running countdown, kept in module state, never on this. */
 const running = new WeakMap();

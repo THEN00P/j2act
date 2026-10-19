@@ -1,13 +1,14 @@
 import Chart from "chart.js/auto";
 
 import styles from "./SalesChart.module.css";
-import type { Bars } from "./SalesChart.types";
 
 // The build stamp lets the checks see which build of this module is mounted.
 const BUILD = "one";
 
-const charts = new WeakMap<HTMLDivElement, Chart<"bar">>();
+/** @type {WeakMap<HTMLDivElement, Chart<"bar">>} */
+const charts = new WeakMap();
 
+/** @satisfies {import("./SalesChart.types").Bars} */
 export const bars = {
   mount(el, { months, sales }) {
     el.classList.add(styles.chart);
@@ -28,10 +29,13 @@ export const bars = {
   },
 
   update(el, { months, sales }) {
-    const chart = charts.get(el)!;
+    const chart = charts.get(el);
+    if (!chart) {
+      return;
+    }
     chart.data.labels = months;
     chart.data.datasets[0].data = sales;
     chart.update();
     el.dataset.bars = String(sales.length);
   },
-} satisfies Bars;
+};

@@ -71,14 +71,14 @@ b.run(async () => {
     .textContent === 'exported 14 bytes'`));
   await js(`document.getElementById('timer-restart').click(); true`);
   check("a direct action runs after the patch", await until(`${timer}.querySelector('.face')?.textContent === '2'`));
-  check("the module's import graph is served under the context path", await js(`${timer}.dataset.graph === 'graph ok'`));
+  check("classic helper scripts run in dependency order under the context path", await js(`${timer}.dataset.graph === 'graph ok'`));
   const moduleUrl = await js(`${timer}.getAttribute('data-j2-module')`);
   const statuses = await js(`Promise.all([
     ${JSON.stringify(moduleUrl.replace("Countdown.client.js", "countdown-face.js"))},
     ${JSON.stringify(moduleUrl.replace("components/Countdown.client.js", "shared/marks.js"))},
     ${JSON.stringify(moduleUrl.replace("Countdown.client.js", "Countdown.class"))},
   ].map(u => fetch(u).then(r => r.status))).then(s => s.join(' '))`);
-  check("only the graph is reachable through the filter", statuses === "200 200 404", statuses);
+  check("only the plain client entry is published through the filter", statuses === "404 404 404", statuses);
   await js(`document.getElementById('timer-note').click(); true`);
   await until(`${timer}.querySelector('.note-badge')?.textContent === 'notes 0'`);
   await js(`window.__note = ${timer}.querySelector('.note-badge'); window.__note.click(); true`);
@@ -105,9 +105,10 @@ b.run(async () => {
   check("a failing call is a BrowserException", await until(`document.getElementById('api-failure').textContent
     === 'failure: TypeError'`));
 
-  // Spikes: mvnpm packages served by WildFly from WEB-INF/lib, imported by bare name.
-  check("the import map carries the context path", await js(`JSON.parse(document.querySelector('script[type=importmap]')
-    .textContent).imports['chart.js'] === '/counter-jakarta/_j2act/pkg/chart.js/4.5.1/dist/chart.js'`));
+  // Explicit browser-distribution URLs are served by WildFly from the jars in WEB-INF/lib.
+  check("classic scripts load under the context path without an import map", await js(`
+    !document.querySelector('script[type=importmap]') && !!window.Chart && !!window.Quill
+    && !!document.querySelector('script[src="/counter-jakarta/_static/chart.js/4.5.1/dist/chart.umd.js"]')`));
   const sales = `document.getElementById('sales')`;
   check("Chart.js loads under the context path and draws", await until(`${sales}?.querySelector('canvas')?.width > 0
     && ${sales}.dataset.total === '60'`, 8000));

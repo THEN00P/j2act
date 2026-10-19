@@ -54,20 +54,6 @@ final class J2ActFilter implements Filter {
       download(j2Act, path.substring(J2Act.DOWNLOAD_PATH.length()), request, (HttpServletResponse) res);
       return;
     }
-    if ("GET".equals(request.getMethod()) && path.startsWith(J2Act.PACKAGE_PATH)) {
-      Asset file = j2Act.packageFile(path.substring(J2Act.PACKAGE_PATH.length()));
-      HttpServletResponse response = (HttpServletResponse) res;
-      if (file == null) {
-        response.sendError(HttpServletResponse.SC_NOT_FOUND);
-        return;
-      }
-      // An npm package file from an mvnpm jar; CommonJS arrives as an ES module (ADR 0022).
-      response.setContentType(file.contentType());
-      response.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-      response.setHeader("X-Content-Type-Options", "nosniff");
-      response.getOutputStream().write(file.bytes());
-      return;
-    }
     if ("GET".equals(request.getMethod()) && path.startsWith(J2Act.MODULE_PATH)) {
       module(j2Act, path.substring(J2Act.MODULE_PATH.length()), (HttpServletResponse) res);
       return;

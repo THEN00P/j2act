@@ -43,7 +43,7 @@
       <version>10.0.0</version>
       <scope>provided</scope>
     </dependency>
-    <!-- npm packages as Maven artifacts: their import maps and files reach the page (ADR 0022). -->
+    <!-- Browser distributions as static assets. The page names each URL explicitly (ADR 0022). -->
     <dependency>
       <groupId>org.mvnpm</groupId>
       <artifactId>chart.js</artifactId>
@@ -60,7 +60,7 @@
 
   <build>
     <finalName>counter-jakarta</finalName>
-    <!-- Client modules and the files they import sit next to their Java class (ADR 0022).
+    <!-- Client modules sit next to their Java class (ADR 0022).
          Overriding <resources> drops the default, so src/main/resources is listed again. -->
     <resources>
       <resource>

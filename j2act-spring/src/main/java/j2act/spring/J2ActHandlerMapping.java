@@ -124,20 +124,6 @@ public class J2ActHandlerMapping extends AbstractHandlerMapping {
         res.getOutputStream().write(module.bytes());
       };
     }
-    if (path.startsWith(J2Act.PACKAGE_PATH)) {
-      // An npm package file from an mvnpm jar; CommonJS arrives as an ES module (ADR 0022).
-      Asset file = j2Act.packageFile(path.substring(J2Act.PACKAGE_PATH.length()));
-      return (HttpRequestHandler) (req, res) -> {
-        if (file == null) {
-          res.sendError(HttpServletResponse.SC_NOT_FOUND);
-          return;
-        }
-        res.setContentType(file.contentType());
-        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-        res.setHeader("X-Content-Type-Options", "nosniff");
-        res.getOutputStream().write(file.bytes());
-      };
-    }
     if (resolver.resolve(path) == null) {
       return null;
     }

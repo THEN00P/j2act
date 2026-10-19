@@ -1,6 +1,8 @@
 {
   "compilerOptions": {
     "strict": true,
+    "allowJs": true,
+    "checkJs": true,
     "target": "es2022",
     "module": "esnext",
     "moduleResolution": "bundler",
@@ -10,5 +12,5 @@
     "types": ["vite/client"],
     "rootDirs": ["src/main/java", ".j2act/types"]
   },
-  "include": ["src/main/java/**/*.ts", ".j2act/types/**/*.d.ts"]
+  "include": ["src/main/java/**/*.ts", "src/main/java/**/*.js", ".j2act/types/**/*.d.ts"]
 }

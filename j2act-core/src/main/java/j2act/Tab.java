@@ -976,16 +976,6 @@ public final class Tab {
 
   private String bootstrap(String nonce) {
     StringBuilder b = new StringBuilder();
-    if (!engine.importMap.isEmpty()) {
-      // Before any module loads, so client modules can import packages by bare name (ADR 0022).
-      b.append("<script type=\"importmap\"");
-      if (nonce != null) {
-        b.append(" nonce=\"");
-        Html.escape(nonce, b);
-        b.append('"');
-      }
-      b.append('>').append(engine.importMap.content()).append("</script>");
-    }
     b.append("<meta name=\"j2-tab\" content=\"").append(id).append("\">");
     b.append("<meta name=\"j2-token\" content=\"").append(token).append("\">");
     if (snapshot.restored) {

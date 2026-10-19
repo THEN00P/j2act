@@ -35,9 +35,7 @@ import j2act.internal.dev.ClassWatch;
 import j2act.internal.dev.DevMode;
 import j2act.internal.dev.HotSwap;
 import j2act.internal.json.Json;
-import j2act.internal.modules.ImportMap;
 import j2act.internal.modules.Modules;
-import j2act.internal.modules.Packages;
 
 /**
  * The runtime a transport adapter drives: serve() for full-page loads, onMessage()
@@ -63,8 +61,6 @@ public final class J2Act implements AutoCloseable {
   public static final String UPLOAD_PATH = "/_j2act/up/";
   /** Where adapters serve client modules: GET MODULE_PATH + hash/package/Name.client.js (ADR 0022). */
   public static final String MODULE_PATH = "/_j2act/m/";
-  /** Where adapters serve npm packages from mvnpm jars: GET PACKAGE_PATH + name/version/file (ADR 0022). */
-  public static final String PACKAGE_PATH = "/_j2act/pkg/";
 
   final PageResolver resolver;
   final Executor executor;
@@ -529,10 +525,8 @@ public final class J2Act implements AutoCloseable {
   private final long checkpointMillis;
   private final Set<String> warnedOnce = ConcurrentHashMap.newKeySet();
   private volatile long lastStorageSweep;
-  final ImportMap importMap;
-  /** Where client modules and package files are read from: the application's class loader. */
+  /** Where Vite builds are read from: the application's class loader. */
   final ClassLoader resourceLoader;
-  final Packages packages;
   final Modules modules;
   private final DevMode dev;
   /** Bumped when dev mode sees swapped classes; scopes behind it re-check their shape (Scope.swapped). */
@@ -587,11 +581,7 @@ public final class J2Act implements AutoCloseable {
     this.checkpointMillis = b.checkpointInterval == null ? 0 : b.checkpointInterval.toMillis();
     ClassLoader loader = Thread.currentThread().getContextClassLoader();
     this.resourceLoader = loader != null ? loader : J2Act.class.getClassLoader();
-    this.importMap = ImportMap.build(resourceLoader, b.contextPath);
-    this.packages = new Packages(b.contextPath, resourceLoader, importMap);
-    this.modules = new Modules(b.contextPath, resourceLoader, packages);
-    importMap.preferModules(packages);
-    importMap.addManual(b.imports);
+    this.modules = new Modules(b.contextPath, resourceLoader);
     if (b.executor != null) {
       this.executor = b.executor;
       this.ownedExecutor = null;
@@ -821,23 +811,13 @@ public final class J2Act implements AutoCloseable {
   }
 
   /**
-   * A client module file for a GET to MODULE_PATH + path, or null (answer 404): a module,
-   * the files it imports, or a Vite build's chunks, stylesheets, assets and source maps. Only files a
-   * rendered client registered are served. The URL carries a content hash, so the adapter
-   * may cache it forever (ADR 0022).
+   * A client module file for a GET to MODULE_PATH + path, or null (answer 404): a plain
+   * module or a Vite build's manifest-listed chunks, stylesheets, assets and source maps.
+   * Only registered entries and build outputs are served. The URL carries a content hash,
+   * so the adapter may cache it forever (ADR 0022).
    */
   public Asset module(String path) {
     return modules.file(path);
-  }
-
-  /**
-   * A package file for a GET to PACKAGE_PATH + path, or null (answer 404): what an mvnpm jar
-   * ships under META-INF/resources/_static, with CommonJS wrapped as an ES module so plain
-   * JavaScript needs no build step. The path carries the version, so the adapter may cache
-   * it forever (ADR 0022).
-   */
-  public Asset packageFile(String path) {
-    return packages.file(path);
   }
 
   /** The framework's upload directory: temp parts and uploads stored without a target. */
@@ -1131,14 +1111,6 @@ public final class J2Act implements AutoCloseable {
     }
   }
 
-  /**
-   * The import map script's CSP hash source ('sha256-...') for a script-src that allows
-   * scripts by hash; empty when no npm package or withImport needs a map (ADR 0022).
-   */
-  public Optional<String> importMapHash() {
-    return importMap.isEmpty() ? Optional.empty() : Optional.of(importMap.hash());
-  }
-
   public int tabCount() {
     return tabs.size();
   }
@@ -1380,7 +1352,6 @@ public final class J2Act implements AutoCloseable {
     private Duration shutdownSave;
     private Duration checkpointInterval;
     private final Map<Class<?>, RetainedCodec<?>> retainedCodecs = new java.util.HashMap<>();
-    private final Map<String, String> imports = new java.util.LinkedHashMap<>();
 
     private Builder(PageResolver resolver) {
       this.resolver = resolver;
@@ -1427,9 +1398,9 @@ public final class J2Act implements AutoCloseable {
 
     /**
      * The page-load request's CSP nonce, e.g. exchange -> exchange.attribute("cspNonce").orElse(null),
-     * for a filter that stores one. The page's import map and runtime.js script tags carry it,
-     * so a nonce-based policy ('strict-dynamic' included) lets them run. Without a nonce
-     * policy, allow the import map by importMapHash().
+     * for a filter that stores one. The runtime.js script tag carries it, so a nonce-based
+     * policy ('strict-dynamic' included) lets it run. The host must also allow its own
+     * script tags through its policy.
      */
     public Builder withCspNonce(Function<Exchange, String> nonce) {
       this.cspNonce = nonce;
@@ -1541,16 +1512,6 @@ public final class J2Act implements AutoCloseable {
      * the application's Jackson mapper and the Jakarta adapter JSON-B; the default handles
      * plain JSON values only.
      */
-    /**
-     * An import map entry beside the ones mvnpm jars bring (ADR 0022), e.g.
-     * withImport("chart.js", "https://cdn.jsdelivr.net/npm/chart.js@4/+esm"). Wins over a
-     * jar's entry for the same name; an app path like /js/x.js gets the context path.
-     */
-    public Builder withImport(String specifier, String url) {
-      this.imports.put(specifier, url);
-      return this;
-    }
-
     public Builder withJson(JsonBinding json) {
       this.json = java.util.Objects.requireNonNull(json);
       return this;

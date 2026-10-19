@@ -321,18 +321,15 @@ async function main() {
   check("a failing call completes exceptionally with a BrowserException",
     await until(`document.getElementById('api-failure').textContent === 'failure: TypeError'`));
 
-  // 17. spikes (ADR 0022): Chart.js and Quill by bare name through the mvnpm import map
-  check("the import map comes before the runtime and names the mvnpm packages", await js(`(() => {
-    const map = document.querySelector('script[type=importmap]');
-    const imports = map ? JSON.parse(map.textContent).imports : {};
-    return imports['chart.js'] === '/_j2act/pkg/chart.js/4.5.1/dist/chart.js' && !!imports['quill']
-      && map.compareDocumentPosition(document.querySelector('script[src$="runtime.js"]')) === Node.DOCUMENT_POSITION_FOLLOWING;
+  // 17. Plain JS: explicit script tags load browser distributions before the client modules.
+  check("plain scripts load in order without a generated import map", await js(`(() => {
+    const scripts = [...document.querySelectorAll('script[src]')].map(s => s.getAttribute('src'));
+    return !document.querySelector('script[type=importmap]') && !!window.Chart && !!window.Quill
+      && window.countdownFace.mark === 'graph ok'
+      && scripts.indexOf('/js/marks.js') < scripts.indexOf('/js/countdown-face.js');
   })()`));
-  const delta = await js(`fetch('/_j2act/pkg/quill-delta/5.1.0/dist/Delta.js').then(r => r.text())`);
-  check("CommonJS packages are served as ES modules, no build step", delta.includes("export default ")
-    && delta.includes("export const AttributeMap = ") && delta.includes('from "/_j2act/pkg/fast-diff/'));
   const sales = `document.getElementById('sales')`;
-  check("Chart.js loads by bare name and draws", await until(`${sales}?.querySelector('canvas')?.width > 0
+  check("Chart.js loads from its classic script tag and draws", await until(`${sales}?.querySelector('canvas')?.width > 0
     && ${sales}.dataset.total === '60'`, 8000));
   check("the server's legend sits inside the chart's box, after the canvas", await js(`${sales}.querySelector('canvas')
     .nextElementSibling?.matches('[data-j2-slot]') && ${sales}.querySelector('.sales-total').textContent === 'total 60'`));
@@ -368,7 +365,15 @@ async function main() {
     ${JSON.stringify(moduleUrl.replace("components/Countdown.client.js", "shared/marks.js"))},
     ${JSON.stringify(moduleUrl.replace("Countdown.client.js", "Countdown.class"))},
   ].map(u => fetch(u).then(r => r.status))).then(s => s.join(' '))`);
-  check("its import graph shares the hash, and nothing outside the graph is reachable", statuses === "200 200 404", statuses);
+  check("only the plain client entry is published under its hash", statuses === "404 404 404", statuses);
+
+  await js(`location.assign('/about'); true`);
+  await until(`location.pathname === '/about' && !!window.j2act && !!window.Chart && !!window.Quill`);
+  await js(`window.__plainNavigation = true; document.querySelector('a[href="/"]').click(); true`);
+  check("soft navigation mounts plain clients after loading the layout's globals on another page",
+    await until(`location.pathname === '/' && !!document.querySelector('#editor .ql-editor')
+      && document.getElementById('sales')?.dataset.total === '60'`, 8000)
+    && await js(`window.__plainNavigation === true`));
 
   check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
   ws.close();

@@ -11,7 +11,7 @@ import j2act.Mount;
 import j2act.State;
 import j2act.html.tags.DivTag;
 
-/** Chart.js from npm in a TypeScript client module, styled by a CSS module. */
+/** Chart.js from npm in a JavaScript client module, styled by a CSS module. */
 public final class SalesChart extends ComponentTag {
 
   interface Bars extends Client {
