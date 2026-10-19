@@ -7,7 +7,7 @@
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "check": "tsc -p tsconfig.json && vitest run"
+    "check": "tsc -p tsconfig.json && vitest run && node --test src/test/vite/*.test.mjs"
   },
   "devDependencies": {
     "happy-dom": "20.14.6",

@@ -69,7 +69,7 @@
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
-    <!-- npm packages as Maven artifacts: their import maps and files reach the page (ADR 0022). -->
+    <!-- Browser distributions as static assets. The page names each URL explicitly (ADR 0022). -->
     <dependency>
       <groupId>org.mvnpm</groupId>
       <artifactId>chart.js</artifactId>
@@ -85,7 +85,7 @@
   </dependencies>
 
   <build>
-    <!-- Client modules and the files they import sit next to their Java class (ADR 0022).
+    <!-- Client modules sit next to their Java class (ADR 0022).
          Overriding <resources> drops the default, so src/main/resources is listed again. -->
     <resources>
       <resource>

@@ -41,7 +41,8 @@ class RetainedCheckpointTest {
       assertEquals(1, h.engine.tabCount(), "a checkpoint does not discard the tab");
 
       type(h, "age", "36");
-      Harness.eventually(() -> storage.inner.load(Retained.id(h.token)).get().contains("36"), "the next checkpoint");
+      Harness.eventually(() -> Retained.decode(storage.inner.load(Retained.id(h.token)).get()).entries.containsValue("36"),
+        "the next checkpoint");
       int saves = storage.saves.get();
       sleep(400);
       assertEquals(saves, storage.saves.get(), "an unchanged tab is not saved again");

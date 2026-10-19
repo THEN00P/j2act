@@ -13,8 +13,8 @@ import j2act.State;
 import j2act.html.tags.DivTag;
 
 /**
- * The Chart.js spike (ADR 0022): Chart.js draws in the browser, imported by bare name
- * through the mvnpm import map, while the legend is server-rendered and lives inside the
+ * The Chart.js spike (ADR 0022): Chart.js draws in the browser, loaded by the page
+ * from an explicit script tag, while the legend is server-rendered and lives inside the
  * chart's own box as a slot. New data reaches the chart through update(), not a remount.
  */
 public final class SalesChart extends ComponentTag {

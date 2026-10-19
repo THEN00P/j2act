@@ -13,9 +13,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
- * A strict nonce-based CSP: only scripts carrying the request's nonce run, and what they load
- * is trusted through 'strict-dynamic'. The nonce goes into a request attribute, where the
- * withCspNonce customizer in CounterApp reads it for the import map and runtime.js tags.
+ * Allows the page's same-origin browser distributions and a nonce on runtime.js. The
+ * withCspNonce customizer reads the nonce from the page-load request's attribute.
  */
 @Component
 public class ContentSecurityPolicy extends OncePerRequestFilter {
@@ -31,7 +30,7 @@ public class ContentSecurityPolicy extends OncePerRequestFilter {
     String nonce = Base64.getEncoder().encodeToString(bytes);
     request.setAttribute(NONCE_ATTRIBUTE, nonce);
     response.setHeader("Content-Security-Policy",
-      "script-src 'nonce-" + nonce + "' 'strict-dynamic'; object-src 'none'; base-uri 'none'");
+      "script-src 'self' 'nonce-" + nonce + "'; object-src 'none'; base-uri 'none'");
     chain.doFilter(request, response);
   }
 }

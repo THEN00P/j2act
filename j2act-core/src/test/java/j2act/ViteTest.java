@@ -2,6 +2,7 @@ package j2act;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -60,6 +61,20 @@ class ViteTest {
     }
   }
 
+  @Test void aManifestPublishesLazyChunksAssetsAndLinkedMapsButNotHiddenMaps() {
+    try (Harness h = new Harness(Page::new, b -> b.withContextPath("/app"))) {
+      String module = Harness.find(h.load(), "data-j2-module=\"(/app/_j2act/m/[^\"]+)\"");
+      String hash = module.split("/")[4];
+      String base = hash + "/assets/";
+      assertNotNull(h.engine.module(base + "lazy-L1.js"));
+      assertNotNull(h.engine.module(base + "icon-A1.svg"));
+      assertNotNull(h.engine.module(base + "j2act/ViteTest.client-E1.js.map"));
+      assertNull(h.engine.module(base + "numbers-S1.js.map"), "a hidden map is absent from the manifest");
+      assertNull(h.engine.module(hash + "/.vite/manifest.json"));
+      assertNull(h.engine.module(hash + "/../j2act/ViteTest.class"));
+    }
+  }
+
   @Test void aPageEntryRendersItsStylesheetIntoTheHead() {
     try (Harness h = new Harness(Page::new)) {
       String html = h.load();
@@ -79,7 +94,8 @@ class ViteTest {
 
   @Test void devModeRereadsAChangedManifestAndNamesWhatMoved(@TempDir Path build) throws IOException {
     for (String file : List.of(".vite/manifest.json", "assets/j2act/ViteTest.client-E1.js", "assets/numbers-S1.js",
-      "assets/ViteTest-C1.css", "assets/numbers-C2.css", "assets/src/main/frontend/app-P1.css")) {
+      "assets/ViteTest-C1.css", "assets/numbers-C2.css", "assets/src/main/frontend/app-P1.css",
+      "assets/lazy-L1.js", "assets/icon-A1.svg", "assets/j2act/ViteTest.client-E1.js.map")) {
       try (InputStream in = getClass().getResourceAsStream("/META-INF/j2act/vite/" + file)) {
         Files.createDirectories(build.resolve(file).getParent());
         Files.copy(in, build.resolve(file));
@@ -93,6 +109,7 @@ class ViteTest {
       // A rebuild: the entry gets a new hashed name, and the manifest goes live.
       Files.writeString(build.resolve("assets/j2act/ViteTest.client-E2.js"),
         "import { total } from \"../numbers-S1.js\";\nexport const chart = { mount() {} }; // two\n");
+      Files.writeString(build.resolve("assets/j2act/ViteTest.client-E2.js.map"), "{}\n");
       Path manifest = build.resolve(".vite/manifest.json");
       Files.writeString(manifest, Files.readString(manifest).replace("ViteTest.client-E1.js", "ViteTest.client-E2.js"));
       Map<String, String> moved = h.engine.modules.refresh();

@@ -8,16 +8,12 @@ import java.lang.reflect.Parameter;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import j2act.Asset;
 import j2act.J2Act;
@@ -27,21 +23,11 @@ import j2act.internal.json.Json;
  * Client module files. Two sources: Webcam.client.js on the classpath next to Webcam.class,
  * put there by the build's resources configuration, with no build step (ADR 0022); or a Vite
  * build under META-INF/j2act/vite, found through its manifest (ADR 0023), which wins. The
- * runtime serves each module with exactly the files it reaches, under one content hash of
- * them all, since a WAR serves META-INF/resources only from jars. Nothing else on the
- * classpath is reachable.
+ * runtime serves a plain module unchanged, or the files a Vite manifest names, under a
+ * content hash. Plain modules use browser URLs or globals for their dependencies. Nothing
+ * else on the classpath is reachable.
  */
 public final class Modules {
-
-  /** import ... from "x", import "x", export ... from "x". */
-  private static final Pattern STATIC_IMPORT =
-    Pattern.compile("\\b(?:import|export)\\s*(?:[\\w*${},\\s]+?\\s*\\bfrom\\s*)?([\"'])([^\"'\\n]+)\\1");
-  private static final Pattern DYNAMIC_IMPORT = Pattern.compile("\\bimport\\s*\\(\\s*([\"'])([^\"'\\n]+)\\1");
-  private static final Pattern COMMENTS = Pattern.compile("/\\*.*?\\*/|//[^\\n]*", Pattern.DOTALL);
-
-  /** A stylesheet's url("x") and @import "x". */
-  private static final Pattern CSS_URL = Pattern.compile("@import\\s+([\"'])([^\"'\\n]+)\\1|url\\(\\s*([\"']?)([^\"')\\n]+)\\3\\s*\\)");
-  private static final Pattern SOURCE_MAP = Pattern.compile("[#@]\\s*sourceMappingURL=([^\\s*'\"]+)");
 
   /** Where @j2act/vite puts its build on the classpath, with .vite/manifest.json in it (ADR 0023). */
   public static final String VITE_DIR = "META-INF/j2act/vite/";
@@ -50,7 +36,6 @@ public final class Modules {
 
   private final String contextPath;
   private final ClassLoader resourceLoader;
-  private final Packages packages;
   private final ConcurrentHashMap<Class<?>, Loaded> loaded = new ConcurrentHashMap<>();
   /** Page-level Vite entries by source path, e.g. src/main/frontend/app.css. */
   private final ConcurrentHashMap<String, Loaded> pages = new ConcurrentHashMap<>();
@@ -81,6 +66,7 @@ public final class Modules {
     final byte[] raw;
     final Map<String, Map<String, Object>> chunks;
     final Map<String, Map<String, Object>> byName = new java.util.HashMap<>();
+    Graph graph;
 
     ViteBuild(byte[] raw, Map<String, Map<String, Object>> chunks) {
       this.raw = raw;
@@ -93,10 +79,9 @@ public final class Modules {
     }
   }
 
-  public Modules(String contextPath, ClassLoader resourceLoader, Packages packages) {
+  public Modules(String contextPath, ClassLoader resourceLoader) {
     this.contextPath = contextPath;
     this.resourceLoader = resourceLoader;
-    this.packages = packages;
   }
 
   /** The module URL for a client interface: its top-level class's Vite entry or sibling .client.js. */
@@ -241,9 +226,10 @@ public final class Modules {
     Package pkg = top.getPackage();
     String dir = pkg == null || pkg.getName().isEmpty() ? "" : pkg.getName().replace('.', '/') + "/";
     // A Vite build names the entry after the class's resource path; it wins over a plain file.
-    Map<String, Object> chunk = vite().byName.get(dir + top.getSimpleName() + ".client");
+    ViteBuild build = vite();
+    Map<String, Object> chunk = build.byName.get(dir + top.getSimpleName() + ".client");
     if (chunk != null) {
-      return loadVite(chunk, top.getSimpleName() + ".client");
+      return loadVite(build, chunk, top.getSimpleName() + ".client");
     }
     String entry = dir + top.getSimpleName() + ".client.js";
     ClassLoader loader = top.getClassLoader() != null ? top.getClassLoader() : ClassLoader.getSystemClassLoader();
@@ -252,38 +238,33 @@ public final class Modules {
       throw new IllegalStateException("no client module " + entry + " on the classpath next to "
         + top.getSimpleName() + ".class; put " + top.getSimpleName() + ".client.js beside " + top.getSimpleName()
         + ".java and include src/main/java **/*.js in the build's resources, or build "
-        + top.getSimpleName() + ".client.ts with @j2act/vite (ADR 0022, 0023)");
+        + top.getSimpleName() + ".client.js or .client.ts with @j2act/vite (ADR 0022, 0023)");
     }
-    Graph graph = graph(entry, read);
+    Graph graph = graph(entry, List.of(entry), read);
     register(graph);
     return new Loaded(graph.hash + "/" + entry, List.of());
   }
 
   private Loaded loadPage(String source) {
-    Map<String, Object> chunk = vite().chunks.get(source);
+    ViteBuild build = vite();
+    Map<String, Object> chunk = build.chunks.get(source);
     if (chunk == null) {
       throw new IllegalStateException("vite(\"" + source + "\"): no such entry in " + VITE_MANIFEST
         + "; list it in j2act({ input: [...] }) in vite.config and build");
     }
-    return loadVite(chunk, source);
+    return loadVite(build, chunk, source);
   }
 
-  /** A Vite chunk, its imports and every stylesheet they carry, as one served graph. */
-  private Loaded loadVite(Map<String, Object> chunk, String label) {
-    Function<String, byte[]> read = this::readVite;
+  /** A client or page entry, with Vite's ordered list of initial stylesheets. */
+  private Loaded loadVite(ViteBuild build, Map<String, Object> chunk, String label) {
     String file = (String) chunk.get("file");
     boolean css = file.endsWith(".css");
     List<String> styles = new ArrayList<>();
     if (css) {
       styles.add(file);
     }
-    collectCss(chunk, styles, new java.util.HashSet<>());
-    List<String> roots = new ArrayList<>(styles);
-    if (!css) {
-      roots.add(0, file);
-    }
-    Graph graph = graph(label, roots, read);
-    register(graph);
+    collectCss(build, chunk, styles, new java.util.HashSet<>());
+    Graph graph = publish(build, label);
     List<String> served = new ArrayList<>();
     for (String style : styles) {
       served.add(graph.hash + "/" + style);
@@ -291,9 +272,30 @@ public final class Modules {
     return new Loaded(css ? null : graph.hash + "/" + file, served);
   }
 
+  /** Publishes a manifest once; each entry shares its files, including lazy chunks. */
+  private Graph publish(ViteBuild build, String label) {
+    synchronized (build) {
+      if (build.graph == null) {
+        List<String> roots = new ArrayList<>();
+        for (Map<String, Object> output : build.chunks.values()) {
+          roots.add((String) output.get("file"));
+          for (String field : List.of("css", "assets")) {
+            for (Object asset : (List<?>) output.getOrDefault(field, List.of())) {
+              roots.add((String) asset);
+            }
+          }
+        }
+        Graph graph = graph(label, roots, this::readVite);
+        register(graph);
+        build.graph = graph;
+      }
+      return build.graph;
+    }
+  }
+
   /** Vite's rule for backend integration: the chunk's css, then that of every chunk it imports. */
   @SuppressWarnings("unchecked")
-  private void collectCss(Map<String, Object> chunk, List<String> styles, java.util.Set<Object> seen) {
+  private void collectCss(ViteBuild build, Map<String, Object> chunk, List<String> styles, java.util.Set<Object> seen) {
     if (!seen.add(chunk)) {
       return;
     }
@@ -303,9 +305,9 @@ public final class Modules {
       }
     }
     for (Object key : (List<Object>) chunk.getOrDefault("imports", List.of())) {
-      Map<String, Object> imported = vite().chunks.get(key);
+      Map<String, Object> imported = build.chunks.get(key);
       if (imported != null) {
-        collectCss(imported, styles, seen);
+        collectCss(build, imported, styles, seen);
       }
     }
   }
@@ -313,41 +315,11 @@ public final class Modules {
   private void register(Graph graph) {
     for (Map.Entry<String, byte[]> file : graph.files.entrySet()) {
       files.put(graph.hash + "/" + file.getKey(),
-        new Asset(serve(graph, file.getKey(), file.getValue()), ContentTypes.of(file.getKey())));
+        new Asset(file.getValue(), ContentTypes.of(file.getKey())));
     }
   }
 
-  /** A CommonJS file goes out as an ES module: its relative requires point into the graph, bare ones at packages. */
-  private byte[] serve(Graph graph, String path, byte[] bytes) {
-    String code = new String(bytes, StandardCharsets.UTF_8);
-    if (!path.endsWith(".js") && !path.endsWith(".cjs") || !CommonJs.isCommonJs(code)) {
-      return bytes;
-    }
-    String wrapped = CommonJs.wrap(code, specifier -> {
-      if (!isRelative(specifier)) {
-        return packages.resolveBare(specifier);
-      }
-      String found = requireTarget(resolve(path, specifier), graph.files::containsKey);
-      if (found == null) {
-        return null;
-      }
-      return found.endsWith(".json") ? CommonJs.Target.json(new String(graph.files.get(found), StandardCharsets.UTF_8))
-        : CommonJs.Target.module(contextPath + J2Act.MODULE_PATH + graph.hash + "/" + found);
-    });
-    return wrapped.getBytes(StandardCharsets.UTF_8);
-  }
-
-  /** Node's resolution of a relative require: as is, with .js, .cjs or .json, or a directory's index.js. */
-  private static String requireTarget(String path, java.util.function.Predicate<String> exists) {
-    for (String candidate : new String[] {path, path + ".js", path + ".cjs", path + ".json", path + "/index.js"}) {
-      if (exists.test(candidate)) {
-        return candidate;
-      }
-    }
-    return null;
-  }
-
-  /** A module and the files its relative static imports reach, with one hash over all of them. */
+  /** Explicitly published files, with one hash over all of them. */
   static final class Graph {
     final String hash;
     /** Classpath path to bytes, sorted. */
@@ -360,76 +332,26 @@ public final class Modules {
   }
 
   /**
-   * Follows relative static imports from the entry, a regex walk and not a bundler. Bare
-   * imports are left to import maps; a relative dynamic import() fails, since it is not served.
+   * Publishes exactly the named files, without interpreting JavaScript or CSS. Vite's
+   * manifest names its chunks and assets, including dynamic imports. A plain client names
+   * only its entry; dependencies are public URLs served by the host application.
    */
-  static Graph graph(String entry, Function<String, byte[]> read) {
-    return graph(entry, List.of(entry), read);
-  }
-
-  /** The same walk from several roots, e.g. a Vite chunk and its stylesheets. */
   static Graph graph(String entry, List<String> roots, Function<String, byte[]> read) {
     Map<String, byte[]> files = new TreeMap<>();
-    Deque<String> todo = new ArrayDeque<>(roots);
-    while (!todo.isEmpty()) {
-      String path = todo.poll();
+    for (String path : roots) {
+      if (path == null || path.isEmpty() || path.startsWith("/") || path.contains("\\")
+        || path.contains(":") || java.util.Arrays.asList(path.split("/", -1)).contains("..")) {
+        throw new IllegalStateException("client module " + entry + " names an invalid output path: " + path);
+      }
       if (files.containsKey(path)) {
         continue;
       }
       byte[] bytes = read.apply(path);
       if (bytes == null) {
-        throw new IllegalStateException("client module " + entry + " imports " + path
-          + ", which is not on the classpath; include src/main/java **/*.js in the build's resources (ADR 0022)");
+        throw new IllegalStateException("client module " + entry + " names " + path
+          + ", which is not on the classpath; copy the client module or rebuild with @j2act/vite (ADR 0022, 0023)");
       }
       files.put(path, bytes);
-      String raw = new String(bytes, StandardCharsets.UTF_8);
-      // Source maps are served when present, so browser devtools show the TS.
-      Matcher map = SOURCE_MAP.matcher(raw);
-      while (map.find()) {
-        String target = map.group(1);
-        if (isLocal(target) && read.apply(resolve(path, target)) != null) {
-          todo.add(resolve(path, target));
-        }
-      }
-      if (path.endsWith(".css")) {
-        Matcher urls = CSS_URL.matcher(COMMENTS.matcher(raw).replaceAll(" "));
-        while (urls.find()) {
-          String target = (urls.group(2) != null ? urls.group(2) : urls.group(4)).replaceAll("[?#].*$", "");
-          if (isLocal(target) && !target.isEmpty()) {
-            todo.add(resolve(path, target));
-          }
-        }
-        continue;
-      }
-      if (!path.endsWith(".js") && !path.endsWith(".mjs") && !path.endsWith(".cjs")) {
-        continue;
-      }
-      String code = COMMENTS.matcher(raw).replaceAll(" ");
-      Matcher dynamic = DYNAMIC_IMPORT.matcher(code);
-      while (dynamic.find()) {
-        if (isRelative(dynamic.group(2))) {
-          throw new IllegalStateException(path + " has import(\"" + dynamic.group(2) + "\"); a relative dynamic"
-            + " import is not served, so use a static import (ADR 0022)");
-        }
-      }
-      Matcher imports = STATIC_IMPORT.matcher(code);
-      while (imports.find()) {
-        if (isRelative(imports.group(2))) {
-          todo.add(resolve(path, imports.group(2)));
-        }
-      }
-      // CommonJS helpers: relative requires resolve as in Node, extension optional.
-      String text = new String(bytes, StandardCharsets.UTF_8);
-      for (String specifier : CommonJs.isCommonJs(text) ? CommonJs.requires(text) : java.util.List.<String>of()) {
-        if (isRelative(specifier)) {
-          String found = requireTarget(resolve(path, specifier), candidate -> read.apply(candidate) != null);
-          if (found == null) {
-            throw new IllegalStateException("client module " + entry + ": " + path + " requires " + specifier
-              + ", which is not on the classpath; include src/main/java **/*.js in the build's resources (ADR 0022)");
-          }
-          todo.add(found);
-        }
-      }
     }
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -447,35 +369,6 @@ public final class Modules {
     } catch (NoSuchAlgorithmException e) {
       throw new IllegalStateException(e);
     }
-  }
-
-  /** A path relative to the file, as in CSS url() and sourceMappingURL: no scheme, no leading slash, no fragment. */
-  private static boolean isLocal(String target) {
-    return !target.contains(":") && !target.startsWith("/") && !target.startsWith("#");
-  }
-
-  private static boolean isRelative(String specifier) {
-    return specifier.startsWith("./") || specifier.startsWith("../");
-  }
-
-  /** "a/b/X.client.js" + "../shared/f.js" is "a/shared/f.js". */
-  private static String resolve(String from, String specifier) {
-    Deque<String> segments = new ArrayDeque<>();
-    String[] base = from.split("/");
-    for (int i = 0; i < base.length - 1; i++) {
-      segments.addLast(base[i]);
-    }
-    for (String segment : specifier.split("/")) {
-      if (segment.equals("..")) {
-        if (segments.isEmpty()) {
-          throw new IllegalStateException(from + " imports " + specifier + ", which leaves the classpath root (ADR 0022)");
-        }
-        segments.removeLast();
-      } else if (!segment.equals(".") && !segment.isEmpty()) {
-        segments.addLast(segment);
-      }
-    }
-    return String.join("/", segments);
   }
 
   /** The prop names of a mount(...), from j2act-processor's .mount-params file or -parameters. */

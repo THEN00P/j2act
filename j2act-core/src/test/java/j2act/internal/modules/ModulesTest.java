@@ -1,9 +1,9 @@
 package j2act.internal.modules;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -12,7 +12,7 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-/** The import graph a client module is served with (ADR 0022). */
+/** Only explicitly published files are reachable, and their source stays unchanged (ADR 0022, 0023). */
 class ModulesTest {
 
   private static Map<String, byte[]> files(String... pathsAndCode) {
@@ -23,98 +23,53 @@ class ModulesTest {
     return files;
   }
 
-  private static Modules.Graph graph(Map<String, byte[]> files) {
-    return Modules.graph("app/ui/Chart.client.js", files::get);
-  }
-
   @Test
-  void followsRelativeStaticImportsAndNothingElse() {
+  void aPlainModuleIsServedUnchangedWithoutDiscoveringDependencies() {
     Map<String, byte[]> files = files(
-      "app/ui/Chart.client.js", "import { axis } from \"./chart-helpers.js\";\n"
-        + "import * as fmt from '../shared/format.js';\n"
-        + "export { legend } from \"./legend.js\";\n"
-        + "import \"./side-effect.js\";\n"
-        + "import Chart from \"chart.js\";\n"
-        + "// import \"./commented-out.js\";\n"
-        + "export const chart = {};",
-      "app/ui/chart-helpers.js", "import { round } from '../shared/format.js'; export const axis = 1;",
-      "app/shared/format.js", "export const round = Math.round;",
-      "app/ui/legend.js", "export const legend = 2;",
-      "app/ui/side-effect.js", "window.x = 1;",
-      "app/ui/commented-out.js", "",
-      "app/ui/Unrelated.client.js", "");
-    Modules.Graph graph = graph(files);
-    assertEquals(List.of("app/shared/format.js", "app/ui/Chart.client.js", "app/ui/chart-helpers.js",
-      "app/ui/legend.js", "app/ui/side-effect.js"), List.copyOf(graph.files.keySet()));
+      "Chart.client.js", "import './public-helper.js';\nconst lazy = import('./lazy.js');\n"
+        + "const example = \"require('unused') and exports.name = 1\";\nexport const chart = {};",
+      "public-helper.js", "export const axis = 1;",
+      "lazy.js", "export const total = 2;");
+    Modules.Graph graph = Modules.graph("Chart", List.of("Chart.client.js"), files::get);
+    assertEquals(List.of("Chart.client.js"), List.copyOf(graph.files.keySet()));
+    assertArrayEquals(files.get("Chart.client.js"), graph.files.get("Chart.client.js"));
   }
 
   @Test
-  void followsRelativeRequiresOfCommonJsHelpersAsNodeResolvesThem() {
+  void explicitOutputsIncludeLazyChunksAndAssetsWithoutParsingTheirSource() {
     Map<String, byte[]> files = files(
-      "app/ui/Chart.client.js", "import { axis } from './helpers.js';\nexport const chart = {};",
-      "app/ui/helpers.js", "const util = require('./util');\nconst lib = require('../lib');\nexports.axis = util.x + lib.y;",
-      "app/ui/util.js", "exports.x = 1;",
-      "app/lib/index.js", "exports.y = 2;");
-    assertEquals(List.of("app/lib/index.js", "app/ui/Chart.client.js", "app/ui/helpers.js", "app/ui/util.js"),
-      List.copyOf(graph(files).files.keySet()));
+      "entry.js", "export const load = () => import('./lazy.js');",
+      "lazy.js", "export const total = 1;",
+      "app.css", "@font-face { src: url('./font.woff2'); }",
+      "font.woff2", "font",
+      "entry.js.map", "{}",
+      "private.class", "secret");
+    List<String> outputs = List.of("entry.js", "lazy.js", "app.css", "font.woff2", "entry.js.map");
+    Modules.Graph graph = Modules.graph("Chart", outputs, files::get);
+    assertEquals(5, graph.files.size());
+    for (String path : outputs) {
+      assertArrayEquals(files.get(path), graph.files.get(path));
+    }
   }
 
   @Test
-  void servesAViteChunkWithItsImportsStylesheetAssetsAndSourceMaps() {
-    // A Vite build's entry and stylesheet are the roots, as the manifest names them (ADR 0023).
-    Map<String, byte[]> files = files(
-      "assets/app/ui/Chart.client-Q1.js", "import {\n  total\n} from \"../../numbers-AB12.js\";\nexport { bars };\n"
-        + "//# sourceMappingURL=Chart.client-Q1.js.map",
-      "assets/app/ui/Chart.client-Q1.js.map", "{}",
-      "assets/numbers-AB12.js", "export { total };\n//# sourceMappingURL=numbers-AB12.js.map",
-      "assets/numbers-AB12.js.map", "{}",
-      "assets/Chart-C3.css", "@font-face { src: url(\"./icons-XY9.woff2\") format(\"woff2\"); }\n"
-        + ".Chart_legend { background: url(data:image/png;base64,AAAA); }\n/*# sourceMappingURL=Chart-C3.css.map */",
-      "assets/Chart-C3.css.map", "{}",
-      "assets/icons-XY9.woff2", "font",
-      "assets/unused.woff2", "font");
-    Modules.Graph graph = Modules.graph("Chart", List.of("assets/app/ui/Chart.client-Q1.js", "assets/Chart-C3.css"),
-      path -> files.get(path));
-    assertEquals(List.of("assets/Chart-C3.css", "assets/Chart-C3.css.map", "assets/app/ui/Chart.client-Q1.js",
-      "assets/app/ui/Chart.client-Q1.js.map", "assets/icons-XY9.woff2", "assets/numbers-AB12.js",
-      "assets/numbers-AB12.js.map"), List.copyOf(graph.files.keySet()));
+  void theHashCoversPublishedFilesAndIsIndependentOfTheirOrder() {
+    Map<String, byte[]> files = files("entry.js", "export const x = 1;", "font.woff2", "font");
+    Modules.Graph before = Modules.graph("Chart", List.of("entry.js", "font.woff2"), files::get);
+    assertEquals(before.hash, Modules.graph("Chart", List.of("font.woff2", "entry.js"), files::get).hash);
+    files.put("private.class", new byte[] { 1 });
+    assertEquals(before.hash, Modules.graph("Chart", List.of("entry.js", "font.woff2"), files::get).hash);
+    files.put("font.woff2", new byte[] { 2 });
+    assertNotEquals(before.hash, Modules.graph("Chart", List.of("entry.js", "font.woff2"), files::get).hash);
   }
 
   @Test
-  void aPlainModuleGetsNoSiblingStylesheet() {
-    // The esbuild naming (Chart.client.css beside Chart.client.js) is no rule any more.
-    Map<String, byte[]> files = files(
-      "app/ui/Chart.client.js", "export const bars = {};",
-      "app/ui/Chart.client.css", ".bars {}");
-    assertEquals(List.of("app/ui/Chart.client.js"), List.copyOf(graph(files).files.keySet()));
-  }
-
-  @Test
-  void theHashCoversEveryFileInTheGraph() {
-    Map<String, byte[]> files = files(
-      "app/ui/Chart.client.js", "import { axis } from './helpers.js';",
-      "app/ui/helpers.js", "export const axis = 1;");
-    String before = graph(files).hash;
-    files.put("app/ui/helpers.js", "export const axis = 2;".getBytes(StandardCharsets.UTF_8));
-    assertNotEquals(before, graph(files).hash, "a changed helper changes the URL");
-    files.put("app/ui/Other.js", "unrelated".getBytes(StandardCharsets.UTF_8));
-    assertEquals(graph(files).hash, graph(files).hash);
-  }
-
-  @Test
-  void aRelativeDynamicImportFailsLoudly() {
-    Map<String, byte[]> files = files("app/ui/Chart.client.js", "const m = await import(\"./lazy.js\");");
-    IllegalStateException e = assertThrows(IllegalStateException.class, () -> graph(files));
-    assertTrue(e.getMessage().contains("use a static import"), e.getMessage());
-  }
-
-  @Test
-  void aMissingImportOrOneAboveTheRootFailsLoudly() {
-    IllegalStateException missing = assertThrows(IllegalStateException.class,
-      () -> graph(files("app/ui/Chart.client.js", "import './gone.js';")));
-    assertTrue(missing.getMessage().contains("app/ui/gone.js"), missing.getMessage());
-    IllegalStateException above = assertThrows(IllegalStateException.class,
-      () -> graph(files("app/ui/Chart.client.js", "import '../../../x.js';")));
-    assertTrue(above.getMessage().contains("leaves the classpath root"), above.getMessage());
+  void missingOutputsAndPathsOutsideThePublishedDirectoryFail() {
+    assertThrows(IllegalStateException.class,
+      () -> Modules.graph("Chart", List.of("missing.js"), path -> null));
+    for (String path : List.of("../secret", "assets/../../secret", "/absolute", "C:/secret", "assets\\secret")) {
+      assertThrows(IllegalStateException.class,
+        () -> Modules.graph("Chart", List.of(path), ignored -> new byte[0]), path);
+    }
   }
 }

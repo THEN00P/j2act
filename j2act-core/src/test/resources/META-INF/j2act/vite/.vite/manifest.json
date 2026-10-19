@@ -10,12 +10,30 @@
     "name": "j2act/ViteTest.client",
     "src": "src/main/java/j2act/ViteTest.client.ts",
     "isEntry": true,
-    "imports": ["_numbers-S1.js"],
-    "css": ["assets/ViteTest-C1.css"]
+    "imports": [
+      "_numbers-S1.js"
+    ],
+    "css": [
+      "assets/ViteTest-C1.css"
+    ],
+    "dynamicImports": [
+      "_lazy-L1.js"
+    ],
+    "assets": [
+      "assets/icon-A1.svg",
+      "assets/j2act/ViteTest.client-E1.js.map"
+    ]
   },
   "_numbers-S1.js": {
     "file": "assets/numbers-S1.js",
     "name": "numbers",
-    "css": ["assets/numbers-C2.css"]
+    "css": [
+      "assets/numbers-C2.css"
+    ]
+  },
+  "_lazy-L1.js": {
+    "file": "assets/lazy-L1.js",
+    "name": "lazy",
+    "isDynamicEntry": true
   }
 }

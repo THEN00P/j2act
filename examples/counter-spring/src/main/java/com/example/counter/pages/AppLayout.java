@@ -27,6 +27,18 @@ public class AppLayout extends Layout {
   @Override public HtmlTag render(DomContent content) {
     return html(
       head(
+        // Classic scripts run in document order, before the client modules mount.
+        script()
+          .withSrc("/js/marks.js"),
+        script()
+          .withSrc("/js/countdown-face.js"),
+        script()
+          .withSrc("/_static/chart.js/4.5.1/dist/chart.umd.js"),
+        script()
+          .withSrc("/_static/quill/2.0.3/dist/quill.js"),
+        link()
+          .withRel("stylesheet")
+          .withHref("/_static/quill/2.0.3/dist/quill.snow.css"),
         title("j2act"),
         style(CSS)
       ),

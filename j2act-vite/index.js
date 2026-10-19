@@ -53,6 +53,7 @@ export default function j2act(options = {}) {
   let root;
   let outDir;
   let staging;
+  let serveSourceMaps;
   return {
     name: "j2act",
     config(config, env) {
@@ -61,6 +62,8 @@ export default function j2act(options = {}) {
       outDir = path.join(root, detected.classpathDir, "META-INF/j2act/vite");
       // Vite writes into a staging folder of this process; writeBundle moves the files over.
       staging = path.join(outDir, ".staging-" + process.pid);
+      const sourcemap = config.build?.sourcemap ?? env.mode === "development";
+      serveSourceMaps = sourcemap === true;
       const input = {};
       for (const m of clientModules(root, options.sourceDirs || ["src/main/java"])) {
         input[m.name] = path.join(root, m.file);
@@ -79,7 +82,7 @@ export default function j2act(options = {}) {
           manifest: NEXT_MANIFEST,
           // Source maps in dev builds only, unless vite.config sets build.sourcemap: true for
           // maps the browser can load, or "hidden" for maps on disk that the runtime never serves.
-          sourcemap: config.build?.sourcemap ?? env.mode === "development",
+          sourcemap,
           modulePreload: config.build?.modulePreload ?? { polyfill: false },
           rolldownOptions: {
             input,
@@ -90,6 +93,21 @@ export default function j2act(options = {}) {
       };
     },
     writeBundle() {
+      const next = path.join(staging, NEXT_MANIFEST);
+      const manifest = JSON.parse(fs.readFileSync(next, "utf8"));
+      // Publish linked maps explicitly. Hidden maps stay on disk; the server never needs
+      // to inspect generated JavaScript or CSS to discover files it should serve.
+      if (serveSourceMaps) {
+        for (const chunk of Object.values(manifest)) {
+          const maps = [chunk.file, ...(chunk.css || [])]
+            .map((file) => file + ".map")
+            .filter((file) => fs.existsSync(path.join(staging, file)));
+          if (maps.length) {
+            chunk.assets = [...new Set([...(chunk.assets || []), ...maps])];
+          }
+        }
+        fs.writeFileSync(next, JSON.stringify(manifest, null, 2));
+      }
       // Built files are write-once: their names carry a content hash, so one that exists is the
       // same file, and is left alone while the runtime may be reading it. New ones arrive whole.
       for (const file of fs.readdirSync(staging, { recursive: true })) {
@@ -106,9 +124,9 @@ export default function j2act(options = {}) {
       }
       // The manifest goes live last, in one rename: the runtime never sees a half-written build.
       fs.mkdirSync(path.join(outDir, ".vite"), { recursive: true });
-      replace(path.join(staging, NEXT_MANIFEST), path.join(outDir, MANIFEST), false);
+      replace(next, path.join(outDir, MANIFEST), false);
       fs.rmSync(staging, { recursive: true, force: true });
-      prune(outDir, JSON.parse(fs.readFileSync(path.join(outDir, MANIFEST), "utf8")));
+      prune(outDir, manifest);
     },
   };
 }

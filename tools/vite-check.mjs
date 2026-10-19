@@ -1,5 +1,5 @@
 // Checks a Vite example (examples/vite-*) in headless Chrome: Tailwind from Java class names, a
-// TypeScript client module with Chart.js and a CSS module, clicks and props (ADR 0023), e.g.
+// JavaScript or TypeScript client module with Chart.js and a CSS module, clicks and props (ADR 0023), e.g.
 //   node tools/vite-check.mjs http://localhost:8080/vite-gradle-wildfly/
 //   node tools/vite-check.mjs http://localhost:8092/ --reimport examples/vite-gradle-spring/src/main/java/com/example/vite/components/SalesChart.client.ts
 // --reimport edits the client module's BUILD stamp while the page is open and wants the page to
@@ -20,7 +20,8 @@ b.run(async () => {
     const t = getComputedStyle(document.getElementById('title'));
     return t.fontWeight === '700' && t.fontSize === '30px' && t.color !== 'rgb(0, 0, 0)';
   })()`));
-  check("the TS client module draws Chart.js", await until(`${sales}?.querySelector('canvas')?.width > 0`, 8000));
+  check("the JS or TS client module draws Chart.js", await until(`${sales}?.querySelector('canvas')?.width > 0`, 8000));
+  check("the client entry keeps its named export and build stamp", await js(`${sales}.dataset.build === 'one'`));
   check("its CSS module styles the element", await js(`getComputedStyle(${sales}).borderTopColor === 'rgb(10, 20, 30)'`));
 
   await js(`document.getElementById('inc').click(); true`);
