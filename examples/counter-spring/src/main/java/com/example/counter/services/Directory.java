@@ -8,7 +8,7 @@ import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 
-/** Stands in for a slow repository. Counts calls so the page can show when the cache saved one. */
+/** Stands in for a slow repository. Counts profile loads so the page can show when the cache saved one. */
 @Service
 public class Directory {
 
@@ -16,10 +16,9 @@ public class Directory {
     "Ada Lovelace", "Alan Turing", "Barbara Liskov", "Donald Knuth", "Edsger Dijkstra",
     "Frances Allen", "Grace Hopper", "John Backus", "Ken Thompson", "Margaret Hamilton");
 
-  private final AtomicInteger calls = new AtomicInteger();
+  private final AtomicInteger profileCalls = new AtomicInteger();
 
   public List<String> search(String filter) throws InterruptedException {
-    calls.incrementAndGet();
     Thread.sleep(300);
     String needle = filter.toLowerCase(Locale.ROOT);
     return PEOPLE.stream()
@@ -28,12 +27,12 @@ public class Directory {
   }
 
   public String profile(String name) throws InterruptedException {
-    calls.incrementAndGet();
+    profileCalls.incrementAndGet();
     Thread.sleep(300);
     return name + " — " + name.length() + " characters of legend";
   }
 
-  public int calls() {
-    return calls.get();
+  public int profileCalls() {
+    return profileCalls.get();
   }
 }

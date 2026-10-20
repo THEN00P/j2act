@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-3817f5ef490819b98a9529391bdaa5b40343ccf00124a614a2de76d55923a9e2 */
+* sources: sha256-312ad199f7309cd74ff49655c9c4488c4273511619dbb09ea7ada5342e9315f2 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1617,6 +1617,23 @@
 	* element's node and children (ADR 0022), and what the runtime added to the head.
 	*/
 	function createMorpher(pending, syncClient) {
+		/** Copies standing in for kept elements, and the live element each copies. */
+		const kept = /* @__PURE__ */ new WeakMap();
+		/**
+		* An unchanged child arrives as an empty element marked data-j2-unchanged (ADR 0031): a copy of
+		* the element the page shows for it takes its place, so the morph leaves that element as it is.
+		* False when one is missing.
+		*/
+		function keep(fresh) {
+			for (const stub of Array.from(fresh.querySelectorAll("[data-j2-unchanged]"))) {
+				const live = document.querySelector("[data-j2-scope=\"" + stub.getAttribute("data-j2-unchanged") + "\"]");
+				if (!live) return false;
+				const copy = live.cloneNode(true);
+				kept.set(copy, live);
+				stub.replaceWith(copy);
+			}
+			return true;
+		}
 		const callbacks = {
 			beforeAttributeUpdated: (name, el) => {
 				if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) return false;
@@ -1624,6 +1641,7 @@
 				return true;
 			},
 			beforeNodeMorphed: (oldNode, newNode) => {
+				if (kept.get(newNode) === oldNode) return false;
 				if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.hasAttribute("data-j2-client") && oldNode.getAttribute("data-j2-client") === newNode.getAttribute("data-j2-client")) {
 					syncClient(oldNode, newNode);
 					return false;
@@ -1655,21 +1673,27 @@
 			head,
 			body,
 			/**
-			* Morphs the component at anchor; false when it is not in the document. The tab root may
-			* be a new component after a navigation, with a new anchor, so it replaces head and body.
+			* Morphs the component at anchor. The tab root may be a new component after a navigation,
+			* with a new anchor, so it replaces head and body.
 			*/
 			patch(anchor, html, isRoot) {
 				if (isRoot) {
 					const doc = new DOMParser().parseFromString(html, "text/html");
+					if (!keep(doc.body)) return "resync";
 					document.documentElement.setAttribute("data-j2-scope", anchor);
 					head(doc.head.innerHTML);
 					body(doc.body);
-					return true;
+					return "applied";
 				}
 				const el = document.querySelector("[data-j2-scope=\"" + anchor + "\"]");
-				if (!el) return false;
-				Idiomorph.morph(el, html, config);
-				return true;
+				if (!el) return "gone";
+				const template = document.createElement("template");
+				template.innerHTML = html;
+				if (!keep(template.content)) return "resync";
+				const fresh = template.content.firstElementChild;
+				if (!fresh) return "applied";
+				Idiomorph.morph(el, fresh, config);
+				return "applied";
 			},
 			slot(live, html) {
 				Idiomorph.morph(live, html, slotConfig);
@@ -2199,7 +2223,12 @@
 				retained.connected();
 			},
 			patch: (m) => {
-				if (!morpher.patch(m.anchor, m.html, m.root === true)) clients.anchorGone(m.anchor);
+				const result = morpher.patch(m.anchor, m.html, m.root === true);
+				if (result === "gone") clients.anchorGone(m.anchor);
+				else if (result === "resync") send({
+					type: "resync",
+					anchor: m.anchor
+				});
 				clients.scan();
 			},
 			head: (m) => morpher.head(m.html),

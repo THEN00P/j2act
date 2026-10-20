@@ -87,6 +87,8 @@ public final class Tab {
 
   Scope root;
   volatile Connection connection;
+  /** A socket was attached before, so the page may have missed patches sent into it. */
+  private boolean attachedBefore;
   volatile long lastActivity;
   volatile long disconnectedAt;
   volatile boolean disposed;
@@ -799,6 +801,8 @@ public final class Tab {
       onRouteException(e);
       return null;
     }
+    // The served page is what the client shows when it connects; the last pass is the one served.
+    renderer.sent();
     runEffects();
     lastHead = mergedHead();
     return "<!DOCTYPE html>" + renderer.out;
@@ -905,6 +909,7 @@ public final class Tab {
           continue;
         }
         Renderer renderer = new Renderer(this, passEpoch);
+        renderer.keeping = sending;
         try {
           renderer.renderScope(scope);
         } catch (RouteException e) {
@@ -916,7 +921,9 @@ public final class Tab {
         } else {
           send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope == root ? true : null,
             "html", renderer.out.toString()));
+          renderer.sent();
           engine.stats.patches.incrementAndGet();
+          engine.stats.patchChars.addAndGet(renderer.out.length());
         }
       }
       runEffects();
@@ -929,6 +936,23 @@ public final class Tab {
       lastHead = head;
       send(Json.object("type", "head", "html", head));
     }
+  }
+
+  /**
+   * Lane-only. The client could not find the element a patch kept at anchor (ADR 0031): render
+   * the patched scope again in full. Expected only when client code removed a component's element.
+   */
+  void resync(String anchor) {
+    Scope scope = root == null ? null : root.find(anchor);
+    if (scope == null || scope.disposed) {
+      return;
+    }
+    engine.stats.resyncs.incrementAndGet();
+    engine.log(System.Logger.Level.DEBUG, "the client lacks an element kept in the patch of "
+      + scope.instance.getClass().getName() + "; rendering it in full", null);
+    scope.unsync();
+    markDirty(scope);
+    flush();
   }
 
   /** A detached scope (an action's live argument) is its own root: its owner's render never includes it. */
@@ -1093,6 +1117,11 @@ public final class Tab {
     }
     connection = next;
     disconnectedAt = 0;
+    // Patches sent into an earlier socket may never have arrived: render in full until the client has ours (ADR 0031).
+    if (attachedBefore && root != null) {
+      root.unsync();
+    }
+    attachedBefore = true;
     lastActivity = engine.clock.millis();
     send(Json.object("type", "ready"));
   }

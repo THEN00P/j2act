@@ -100,13 +100,13 @@ async function main() {
   check("scheduler-thread ticks are pushed", await until(`/[2-9] ticks pushed/.test(document.body.textContent)`, 4000));
 
   // 7. query cache across unmount
-  const callsBefore = await js(`(document.body.textContent.match(/directory calls so far: (\\d+)/) || [])[1]`);
+  const callsBefore = await js(`(document.body.textContent.match(/profile loads so far: (\\d+)/) || [])[1]`);
   await js(`${btn("Hide profile")}.click(); true`);
   await until(`!!${btn("Show profile")}`);
   await js(`${btn("Show profile")}.click(); true`);
   await until(`document.body.textContent.includes('characters of legend')`);
   const loadingShown = await js(`document.body.textContent.includes('Loading profile')`);
-  const callsAfter = await js(`(document.body.textContent.match(/directory calls so far: (\\d+)/) || [])[1]`);
+  const callsAfter = await js(`(document.body.textContent.match(/profile loads so far: (\\d+)/) || [])[1]`);
   check("remount shows cached profile with no loading state", !loadingShown);
   check("remount does not call the directory again", callsBefore === callsAfter, `${callsBefore} -> ${callsAfter}`);
 

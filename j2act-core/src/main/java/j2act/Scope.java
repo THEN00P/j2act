@@ -49,6 +49,17 @@ final class Scope implements Observer {
   /** The route this subtree reads instead of the tab's; see PreloadRouteCell. */
   PreloadRouteCell routeOverride;
   boolean dirty;
+  /**
+   * The HTML of this scope's last render reached the client, so a parent's re-render may keep its
+   * element instead of rendering it again (ADR 0031). Cleared when a render starts and set when its
+   * patch is sent; a render that is held, preloaded or replaced by a boundary leaves it cleared.
+   */
+  boolean synced;
+  /** The tag name and voidness of the root element of the last render, for the kept element's placeholder. */
+  String rootName;
+  boolean rootVoid;
+  /** The component's plain field values at its last render; a changed one renders it again (ADR 0031). */
+  Object[] fieldValues;
   boolean rendering;
   boolean disposed;
   long renderedEpoch = -1;
@@ -170,12 +181,17 @@ final class Scope implements Observer {
 
   /** Attaches a component object to this slot and binds its field primitives by creation order. */
   void bind(ComponentTag component) {
+    tab.engine.injector.inject(component);
+    bindInjected(component);
+  }
+
+  /** bind() for a component whose fields were already injected. */
+  void bindInjected(ComponentTag component) {
     if (instance != null && instance != component && instance.scope == this) {
       instance.scope = null;
     }
     instance = component;
     component.scope = this;
-    tab.engine.injector.inject(component);
     if (shapeChanged(component.getClass())) {
       startOver("its fields changed");
     } else {
@@ -228,6 +244,37 @@ final class Scope implements Observer {
       tab.snapshot.retain(this, (State<?>) primitive, (ValueCell) cell, index);
     }
     primitive.attach(cell, true);
+  }
+
+  /** This scope and every scope under it render in full next time, as after a reconnect (ADR 0031). */
+  void unsync() {
+    synced = false;
+    for (Scope child : children.values()) {
+      child.unsync();
+    }
+    for (Scope live : actionScopes.values()) {
+      live.unsync();
+    }
+  }
+
+  /** The scope at anchor in this subtree, or null. */
+  Scope find(String anchor) {
+    if (this.anchor.equals(anchor)) {
+      return this;
+    }
+    for (Scope child : children.values()) {
+      Scope found = child.find(anchor);
+      if (found != null) {
+        return found;
+      }
+    }
+    for (Scope live : actionScopes.values()) {
+      Scope found = live.find(anchor);
+      if (found != null) {
+        return found;
+      }
+    }
+    return null;
   }
 
   @Override public void invalidate() {

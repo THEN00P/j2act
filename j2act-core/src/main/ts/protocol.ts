@@ -81,6 +81,8 @@ export type ClientMessage =
   | { type: "callResult"; id: string; ok: false; error: string }
   | { type: "clientError"; client: string | null; error: string }
   | { type: "liveGone"; anchor: string }
+  /** A patch kept an element the page lacks: the server renders that patch again in full (ADR 0031). */
+  | { type: "resync"; anchor: string }
   | { type: "navigate"; url: string; mode: NavMode }
   | { type: "preload"; url: string }
   | { type: "pause"; automatic?: true }
