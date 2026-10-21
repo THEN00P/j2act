@@ -596,6 +596,14 @@ class KeepTest {
   }
 
   @Test
+  void javaTimeValuesAreImmutableButClocksAndBuildersAreNot() {
+    assertTrue(Unchanged.immutable(java.time.LocalDate.of(2026, 10, 21)));
+    assertTrue(Unchanged.immutable(java.time.Duration.ofSeconds(3)));
+    assertFalse(Unchanged.immutable(java.time.Clock.systemUTC()));
+    assertFalse(Unchanged.immutable(new java.time.format.DateTimeFormatterBuilder()));
+  }
+
+  @Test
   void aJavaTimeBuilderChangedInPlaceRendersTheChild() {
     try (Harness h = new Harness(Dates::new)) {
       h.load();

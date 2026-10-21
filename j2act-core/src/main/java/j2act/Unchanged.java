@@ -250,8 +250,9 @@ final class Unchanged {
     }
     Class<?> type = value.getClass();
     String name = type.getName();
-    // The java.time package holds only immutable values; its subpackages also hold builders.
-    if ("java.time".equals(type.getPackageName())) {
+    // The java.time package holds only immutable values, except a Clock, whose time moves on;
+    // its subpackages also hold builders.
+    if ("java.time".equals(type.getPackageName()) && !(value instanceof java.time.Clock)) {
       return true;
     }
     if (depth >= 4) {
