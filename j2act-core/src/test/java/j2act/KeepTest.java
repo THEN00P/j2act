@@ -279,6 +279,40 @@ class KeepTest {
     }
   }
 
+  static final class Picker extends ComponentTag {
+    private final State<String> a = state("first");
+    private final State<String> b = state("second");
+    private final State<String> selected;
+
+    Picker(boolean second) {
+      selected = second ? b : a;
+    }
+
+    @Override protected Tag<?> render() {
+      return T.span("picked " + selected.get());
+    }
+  }
+
+  static final class Pickers extends LiveComponent {
+    private final State<Boolean> second = state(false);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        new Picker(second.get()),
+        T.button("pick").onClick(e -> second.set(true))));
+    }
+  }
+
+  @Test
+  void aChildFieldPointingAtAnotherOwnPrimitiveRenders() {
+    try (Harness h = new Harness(Pickers::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "pick")));
+      assertTrue(sent.contains("picked second"), sent);
+    }
+  }
+
   static java.util.concurrent.CountDownLatch gate;
 
   static final class Leaf extends ComponentTag {

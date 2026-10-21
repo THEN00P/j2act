@@ -15,8 +15,25 @@ import java.util.Objects;
  */
 final class Unchanged {
 
-  /** A field that holds one of the component's own primitives: its cell decides, not the field. */
-  private static final Object OWN = new Object();
+  /**
+   * A field that holds one of the component's own primitives, by creation index: which one it
+   * holds is what counts, and the cell decides the value.
+   */
+  private static final class Own {
+    final int index;
+
+    Own(int index) {
+      this.index = index;
+    }
+
+    @Override public boolean equals(Object other) {
+      return other instanceof Own && ((Own) other).index == index;
+    }
+
+    @Override public int hashCode() {
+      return index;
+    }
+  }
 
   /** Plain instance fields from the component's class up to ComponentTag; null if one is not readable. */
   private static final ClassValue<Field[]> FIELDS = new ClassValue<Field[]>() {
@@ -62,8 +79,9 @@ final class Unchanged {
       }
       if (value instanceof Primitive) {
         Primitive primitive = (Primitive) value;
-        if (owns(component, primitive)) {
-          value = OWN;
+        Integer own = ownIndex(component, primitive);
+        if (own != null) {
+          value = new Own(own);
         } else {
           // Another component's State handed down: the same cell is the same value.
           Cell cell = primitive.cellOrNull();
@@ -73,15 +91,6 @@ final class Unchanged {
       values[i] = value;
     }
     return values;
-  }
-
-  private static boolean owns(ComponentTag component, Primitive primitive) {
-    for (Primitive own : component.primitives) {
-      if (own == primitive) {
-        return true;
-      }
-    }
-    return false;
   }
 
   /**
