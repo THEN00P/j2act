@@ -30,13 +30,43 @@ describe("Morpher keeping unchanged children (ADR 0031)", () => {
     expect(document.querySelector("[data-j2-unchanged]")).toBeNull();
   });
 
-  it("keeps elements that moved", () => {
-    document.body.innerHTML = '<ul data-j2-scope="s1"><li data-j2-scope="s2">Ada</li><li data-j2-scope="s3">Ken</li></ul>';
+  it("moves kept elements that changed places", () => {
+    document.body.innerHTML = '<ul data-j2-scope="s1"><li data-j2-scope="s2"><input value="Ada"></li>'
+      + '<li data-j2-scope="s3"><input value="Ken"></li></ul>';
+    const ada = document.querySelector('[data-j2-scope="s2"]')!;
+    ada.querySelector("input")!.value = "typed by Ada";
 
     morpher.patch("s1", '<ul data-j2-scope="s1"><li data-j2-unchanged="s3"></li><li data-j2-unchanged="s2"></li></ul>', false);
 
-    const names = Array.from(document.querySelectorAll("li")).map(li => li.getAttribute("data-j2-scope") + "=" + li.textContent);
-    expect(names).toEqual(["s3=Ken", "s2=Ada"]);
+    const rows = Array.from(document.querySelectorAll("li"));
+    expect(rows.map(li => li.getAttribute("data-j2-scope"))).toEqual(["s3", "s2"]);
+    expect(rows[1]).toBe(ada);
+    expect(ada.querySelector("input")!.value).toBe("typed by Ada");
+    expect(document.querySelector("[id]")).toBeNull();
+  });
+
+  it("moves re-rendered components that changed places, with what the user typed", () => {
+    // A free-text input: the render does not set its value (ADR 0013).
+    document.body.innerHTML = '<ul data-j2-scope="s1"><li data-j2-scope="s2">Ada <input data-j2-controlled></li>'
+      + '<li data-j2-scope="s3">Ken <input data-j2-controlled></li></ul>';
+    const ada = document.querySelector('[data-j2-scope="s2"]')!;
+    ada.querySelector("input")!.value = "typed by Ada";
+
+    morpher.patch("s1", '<ul data-j2-scope="s1"><li data-j2-scope="s3">Ken <input data-j2-controlled></li>'
+      + '<li data-j2-scope="s2">Ada <input data-j2-controlled></li></ul>', false);
+
+    const rows = Array.from(document.querySelectorAll("li"));
+    expect(rows[1]).toBe(ada);
+    expect(ada.querySelector("input")!.value).toBe("typed by Ada");
+    expect(document.querySelector("[id]")).toBeNull();
+  });
+
+  it("leaves the ids components have of their own", () => {
+    document.body.innerHTML = '<div data-j2-scope="s1"><p id="note" data-j2-scope="s2">a</p></div>';
+
+    morpher.patch("s1", '<div data-j2-scope="s1"><p id="note" data-j2-scope="s2">b</p></div>', false);
+
+    expect(document.getElementById("note")!.textContent).toBe("b");
   });
 
   it("asks for a full render when a kept element is missing", () => {

@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-312ad199f7309cd74ff49655c9c4488c4273511619dbb09ea7ada5342e9315f2 */
+* sources: sha256-e9efef211ab8fb59b2379786f353bdc8d1432d2d25e887e481b9e94f8f4bfc1a */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1634,6 +1634,26 @@
 			}
 			return true;
 		}
+		/**
+		* Idiomorph matches elements by id alone, so a component that moved would get another one's
+		* content morphed into its node, and the user's input and focus with it. Each component in fresh
+		* and its live element under root get a shared temporary id, so Idiomorph moves the node instead.
+		* Returns the live elements to untag after the morph.
+		*/
+		function pair(root, fresh) {
+			const tagged = [];
+			for (const el of Array.from(fresh.querySelectorAll("[data-j2-scope],[data-j2-unchanged]"))) {
+				const anchor = el.getAttribute("data-j2-scope") ?? el.getAttribute("data-j2-unchanged");
+				const live = root.querySelector("[data-j2-scope=\"" + anchor + "\"]");
+				if (!live || el.id || live.id) continue;
+				el.id = live.id = "j2k-" + anchor;
+				tagged.push(live);
+			}
+			return tagged;
+		}
+		function untag(tagged) {
+			for (const el of tagged) if (el.id.startsWith("j2k-")) el.removeAttribute("id");
+		}
 		const callbacks = {
 			beforeAttributeUpdated: (name, el) => {
 				if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) return false;
@@ -1679,20 +1699,29 @@
 			patch(anchor, html, isRoot) {
 				if (isRoot) {
 					const doc = new DOMParser().parseFromString(html, "text/html");
-					if (!keep(doc.body)) return "resync";
+					const tagged = pair(document.body, doc.body);
+					if (!keep(doc.body)) {
+						untag(tagged);
+						return "resync";
+					}
 					document.documentElement.setAttribute("data-j2-scope", anchor);
 					head(doc.head.innerHTML);
 					body(doc.body);
+					untag(tagged);
 					return "applied";
 				}
 				const el = document.querySelector("[data-j2-scope=\"" + anchor + "\"]");
 				if (!el) return "gone";
 				const template = document.createElement("template");
 				template.innerHTML = html;
-				if (!keep(template.content)) return "resync";
+				const tagged = pair(el, template.content);
+				if (!keep(template.content)) {
+					untag(tagged);
+					return "resync";
+				}
 				const fresh = template.content.firstElementChild;
-				if (!fresh) return "applied";
-				Idiomorph.morph(el, fresh, config);
+				if (fresh) Idiomorph.morph(el, fresh, config);
+				untag(tagged);
 				return "applied";
 			},
 			slot(live, html) {
