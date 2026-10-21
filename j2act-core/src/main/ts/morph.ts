@@ -42,6 +42,8 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
    */
   function pair(root: Element, fresh: ParentNode): [Element, string][] {
     const tagged: [Element, string][] = [];
+    // A fresh prefix per patch, so no id the page has can collide with ours.
+    const prefix = "j2k" + Math.random().toString(36).slice(2, 10) + "-";
     for (const el of Array.from(fresh.querySelectorAll("[data-j2-scope],[data-j2-unchanged]"))) {
       const anchor = el.getAttribute("data-j2-scope") ?? el.getAttribute("data-j2-unchanged");
       const live = root.querySelector('[data-j2-scope="' + anchor + '"]');
@@ -53,7 +55,7 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
       if (authored && authored === live.id) {
         continue; // already matched by its own id
       }
-      el.id = live.id = "j2k-" + anchor;
+      el.id = live.id = prefix + anchor;
       tagged.push([live, authored]);
     }
     return tagged;
@@ -61,7 +63,7 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
 
   function untag(tagged: [Element, string][]): void {
     for (const [el, authored] of tagged) {
-      if (el.id.startsWith("j2k-")) {
+      if (el.id.startsWith("j2k")) {
         if (authored) {
           el.id = authored;
         } else {

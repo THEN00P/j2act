@@ -428,6 +428,43 @@ class KeepTest {
     }
   }
 
+  static final class Filter extends ComponentTag {
+    private final QueryState<java.util.List<String>> tags;
+
+    Filter(java.util.List<String> initial) {
+      tags = queryState("tags", initial, s -> java.util.Arrays.asList(s.split(",")), v -> String.join(",", v));
+    }
+
+    @Override protected Tag<?> render() {
+      return T.span("tags " + tags.get());
+    }
+  }
+
+  static final class Filters extends LiveComponent {
+    private final java.util.List<String> defaults = new java.util.ArrayList<>(java.util.List.of("a"));
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        new Filter(defaults),
+        T.button("more").onClick(e -> {
+          defaults.add("b");
+          bump.set(bump.get() + 1);
+        })));
+    }
+  }
+
+  @Test
+  void aQueryStateWithAMutableInitialValueRendersTheChild() {
+    try (Harness h = new Harness(Filters::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "more")));
+      assertTrue(sent.contains("tags [a, b]"), sent);
+    }
+  }
+
   static java.util.concurrent.CountDownLatch gate;
 
   static final class Leaf extends ComponentTag {

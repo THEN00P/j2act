@@ -313,6 +313,10 @@ final class Unchanged {
     if (!fresh.carriesSettings()) {
       return true;
     }
+    // Rendered whenever the parameter is absent, so changing it in place would go unseen.
+    if (fresh instanceof QueryState && !immutable(((QueryState<?>) fresh).initial())) {
+      return false;
+    }
     return sameFields(PRIMITIVE_FIELDS.get(last.getClass()), last, fresh, lastOwner, freshOwner, 0);
   }
 

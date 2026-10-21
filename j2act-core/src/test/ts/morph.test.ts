@@ -74,6 +74,18 @@ describe("Morpher keeping unchanged children (ADR 0031)", () => {
     expect(rows.map(li => li.id)).toEqual(["k2", "a2"]);
   });
 
+  it("moves components even when the page uses an id like the temporary ones", () => {
+    document.body.innerHTML = '<div data-j2-scope="s1"><p id="j2k-s2">authored</p><ul><li data-j2-scope="s2">Ada</li>'
+      + '<li data-j2-scope="s3">Ken</li></ul></div>';
+    const ada = document.querySelector('[data-j2-scope="s2"]')!;
+
+    morpher.patch("s1", '<div data-j2-scope="s1"><p id="j2k-s2">authored</p><ul><li data-j2-scope="s3">Ken</li>'
+      + '<li data-j2-scope="s2">Ada</li></ul></div>', false);
+
+    expect(Array.from(document.querySelectorAll("li"))[1]).toBe(ada);
+    expect(document.getElementById("j2k-s2")!.textContent).toBe("authored");
+  });
+
   it("leaves the ids components have of their own", () => {
     document.body.innerHTML = '<div data-j2-scope="s1"><p id="note" data-j2-scope="s2">a</p></div>';
 

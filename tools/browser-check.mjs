@@ -93,7 +93,8 @@ async function main() {
   const saveBtn = `[...document.querySelectorAll('button')].find(b => /Sav/.test(b.textContent))`;
   const settled = await until(`!${saveBtn}.hasAttribute('data-pending') && ${saveBtn}.textContent.trim() === 'Save' && !document.body.textContent.includes('last saved: never')`, 4000);
   const savedOnce = await js(`document.body.textContent.match(/last saved: (\\S+)/)[1]`);
-  check("repeat click while pending was dropped (one save)", /\d\d:\d\d:\d\d/.test(savedOnce), savedOnce);
+  // LocalTime prints 07:44 rather than 07:44:00 when the seconds are zero.
+  check("repeat click while pending was dropped (one save)", /^\d\d:\d\d(:\d\d)?$/.test(savedOnce), savedOnce);
   check("pending reverts after the handler finishes", settled);
 
   // 6. scheduler pushes arrive

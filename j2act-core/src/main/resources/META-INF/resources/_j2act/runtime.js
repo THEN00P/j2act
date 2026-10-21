@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-3778c68de12a69403e580f5be43caa59717a844c80e473825ae0c47ea1644831 */
+* sources: sha256-3860aa575b714b061e798c0897e258f4e37a00fb3ebac50b9eca665bc31ebaf9 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1642,19 +1642,20 @@
 		*/
 		function pair(root, fresh) {
 			const tagged = [];
+			const prefix = "j2k" + Math.random().toString(36).slice(2, 10) + "-";
 			for (const el of Array.from(fresh.querySelectorAll("[data-j2-scope],[data-j2-unchanged]"))) {
 				const anchor = el.getAttribute("data-j2-scope") ?? el.getAttribute("data-j2-unchanged");
 				const live = root.querySelector("[data-j2-scope=\"" + anchor + "\"]");
 				if (!live) continue;
 				const authored = el.hasAttribute("data-j2-unchanged") ? live.id : el.id;
 				if (authored && authored === live.id) continue;
-				el.id = live.id = "j2k-" + anchor;
+				el.id = live.id = prefix + anchor;
 				tagged.push([live, authored]);
 			}
 			return tagged;
 		}
 		function untag(tagged) {
-			for (const [el, authored] of tagged) if (el.id.startsWith("j2k-")) {
+			for (const [el, authored] of tagged) if (el.id.startsWith("j2k")) {
 				if (authored) el.id = authored;
 				else el.removeAttribute("id");
 			}
