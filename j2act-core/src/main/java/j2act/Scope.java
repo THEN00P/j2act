@@ -60,6 +60,8 @@ final class Scope implements Observer {
   boolean rootVoid;
   /** The component's plain field values at its last render; a changed one renders it again (ADR 0031). */
   Object[] fieldValues;
+  /** Which of the bound object's fields its injector set; those hold services. */
+  boolean[] injected;
   boolean rendering;
   boolean disposed;
   long renderedEpoch = -1;
@@ -181,12 +183,18 @@ final class Scope implements Observer {
 
   /** Attaches a component object to this slot and binds its field primitives by creation order. */
   void bind(ComponentTag component) {
-    tab.engine.injector.inject(component);
-    bindInjected(component);
+    bindInjected(component, Unchanged.inject(tab.engine.injector, component));
   }
 
-  /** bind() for a component whose fields were already injected. */
-  void bindInjected(ComponentTag component) {
+  /** bind() for a component whose fields were already injected; injected marks the fields the injector set. */
+  void bindInjected(ComponentTag component, boolean[] injected) {
+    if (instance == component && this.injected != null && injected != null && injected.length == this.injected.length) {
+      // Bound again: injecting the same services twice leaves them looking untouched.
+      for (int i = 0; i < injected.length; i++) {
+        injected[i] |= this.injected[i];
+      }
+    }
+    this.injected = injected;
     if (instance != null && instance != component && instance.scope == this) {
       instance.scope = null;
     }

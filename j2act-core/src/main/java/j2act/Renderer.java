@@ -88,7 +88,7 @@ final class Renderer {
       Tracking.swap(previous);
     }
     scope.activatePending();
-    scope.fieldValues = Unchanged.fieldValues(scope.instance);
+    scope.fieldValues = Unchanged.fieldValues(scope.instance, scope.injected);
     ownQueries(scope);
     emit(scope, root);
 
@@ -374,7 +374,7 @@ final class Renderer {
         // An adopted preloaded page (ADR 0011): its slot is where it renders now.
         child.localPath = local;
       }
-      keep = keepable() && Unchanged.check(child, component);
+      keep = keepable() && Unchanged.check(child, component, child.injected);
     } else {
       String address = parent.address + local;
       if (parent.children.containsKey(address)) {
@@ -388,11 +388,11 @@ final class Renderer {
         child = new Scope(tab, parent, address);
       }
       child.localPath = local;
-      tab.engine.injector.inject(component);
+      boolean[] injected = Unchanged.inject(tab.engine.injector, component);
       // An unchanged fresh description is dropped unbound; the object that rendered last stays (ADR 0031).
-      keep = keepable() && Unchanged.check(child, component);
+      keep = keepable() && Unchanged.check(child, component, injected);
       if (!keep) {
-        child.bindInjected(component);
+        child.bindInjected(component, injected);
       }
     }
     parent.children.put(child.address, child);

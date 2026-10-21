@@ -38,27 +38,35 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
    * Idiomorph matches elements by id alone, so a component that moved would get another one's
    * content morphed into its node, and the user's input and focus with it. Each component in fresh
    * and its live element under root get a shared temporary id, so Idiomorph moves the node instead.
-   * Returns the live elements to untag after the morph.
+   * Returns the live elements to untag after the morph, each with the id the render gave it.
    */
-  function pair(root: Element, fresh: ParentNode): Element[] {
-    const tagged: Element[] = [];
+  function pair(root: Element, fresh: ParentNode): [Element, string][] {
+    const tagged: [Element, string][] = [];
     for (const el of Array.from(fresh.querySelectorAll("[data-j2-scope],[data-j2-unchanged]"))) {
       const anchor = el.getAttribute("data-j2-scope") ?? el.getAttribute("data-j2-unchanged");
       const live = root.querySelector('[data-j2-scope="' + anchor + '"]');
-      // Elements with an id of their own already match by it.
-      if (!live || el.id || live.id) {
+      if (!live) {
         continue;
       }
+      // A kept element keeps the id it has; a rendered one gets the render's.
+      const authored = el.hasAttribute("data-j2-unchanged") ? live.id : el.id;
+      if (authored && authored === live.id) {
+        continue; // already matched by its own id
+      }
       el.id = live.id = "j2k-" + anchor;
-      tagged.push(live);
+      tagged.push([live, authored]);
     }
     return tagged;
   }
 
-  function untag(tagged: Element[]): void {
-    for (const el of tagged) {
+  function untag(tagged: [Element, string][]): void {
+    for (const [el, authored] of tagged) {
       if (el.id.startsWith("j2k-")) {
-        el.removeAttribute("id");
+        if (authored) {
+          el.id = authored;
+        } else {
+          el.removeAttribute("id");
+        }
       }
     }
   }

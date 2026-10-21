@@ -313,6 +313,121 @@ class KeepTest {
     }
   }
 
+  static final class Service {
+  }
+
+  static final Service SERVICE = new Service();
+
+  static final class Listing extends ComponentTag {
+    private final Prop<java.util.List<String>> fixed = prop();
+    private java.util.List<String> items = java.util.Collections.emptyList();
+    Service service;
+
+    Listing withFixed(java.util.List<String> f) {
+      fixed.set(f);
+      return this;
+    }
+
+    Listing withItems(java.util.List<String> i) {
+      items = i;
+      return this;
+    }
+
+    @Override protected Tag<?> render() {
+      return T.span(fixed.get() + " " + items + (service == null ? "" : " served"));
+    }
+  }
+
+  static final class Listings extends LiveComponent {
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        new Listing().withFixed(java.util.List.of("a", "b")),
+        T.button("bump").onClick(e -> bump.set(bump.get() + 1))));
+    }
+  }
+
+  @Test
+  void anInjectedServiceAndAnImmutableListKeepTheChild() {
+    try (Harness h = new Harness(Listings::new, b -> b.withMembersInjector(c -> {
+      if (c instanceof Listing) {
+        ((Listing) c).service = SERVICE;
+      }
+    }))) {
+      h.load();
+      assertTrue(h.html.contains("[a, b] [] served"), h.html);
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "bump")));
+      assertTrue(sent.contains("<span data-j2-unchanged="), sent);
+    }
+  }
+
+  static final class Sharing extends LiveComponent {
+    private final java.util.List<String> shared = new java.util.ArrayList<>();
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        new Listing().withFixed(java.util.List.of("a", "b")).withItems(shared),
+        T.button("add").onClick(e -> {
+          shared.add("x");
+          bump.set(bump.get() + 1);
+        })));
+    }
+  }
+
+  @Test
+  void aMutableObjectChangedInPlaceRendersTheChild() {
+    try (Harness h = new Harness(Sharing::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "add")));
+      assertTrue(sent.contains("[a, b] [x]"), sent);
+    }
+  }
+
+  static final class Holder extends ComponentTag {
+    private final Prop<java.util.List<String>> items = prop();
+
+    Holder withItems(java.util.List<String> i) {
+      items.set(i);
+      return this;
+    }
+
+    @Override protected Tag<?> render() {
+      return T.span("held " + items.get());
+    }
+  }
+
+  static final class Holders extends LiveComponent {
+    private final java.util.List<String> shared = new java.util.ArrayList<>();
+    private final Holder holder = new Holder();
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        holder.withItems(shared),
+        T.button("add").onClick(e -> {
+          shared.add("x");
+          bump.set(bump.get() + 1);
+        })));
+    }
+  }
+
+  @Test
+  void aHeldChildWhosePropChangedInPlaceRenders() {
+    try (Harness h = new Harness(Holders::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "add")));
+      assertTrue(sent.contains("held [x]"), sent);
+    }
+  }
+
   static java.util.concurrent.CountDownLatch gate;
 
   static final class Leaf extends ComponentTag {
