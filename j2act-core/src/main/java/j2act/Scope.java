@@ -341,6 +341,7 @@ final class Scope implements Observer {
       tab.cells.remove(cell.address);
     }
     tab.dirty.remove(this);
+    tab.keptPatches.remove(anchor);
     if (routeOverride != null) {
       routeOverride.unfollow();
     }

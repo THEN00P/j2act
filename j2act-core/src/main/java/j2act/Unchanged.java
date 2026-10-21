@@ -236,7 +236,7 @@ final class Unchanged {
   }
 
   /**
-   * Whether value can never change in place: null, a final value type, an enum, java.time, or an
+   * Whether value can never change in place: null, a final value type, an enum, a java.time value, or an
    * Optional, record or List.of, Set.of, Map.of, Collections.empty* or singleton* collection
    * holding only such values. Unmodifiable views are not: what they show can change underneath.
    */
@@ -250,7 +250,8 @@ final class Unchanged {
     }
     Class<?> type = value.getClass();
     String name = type.getName();
-    if (name.startsWith("java.time.")) {
+    // The java.time package holds only immutable values; its subpackages also hold builders.
+    if ("java.time".equals(type.getPackageName())) {
       return true;
     }
     if (depth >= 4) {

@@ -507,17 +507,64 @@ class KeepTest {
   }
 
   @Test
-  void aResyncRendersThePatchInFull() {
-    try (Harness h = new Harness(Parent::new)) {
+  void aResyncRendersThePatchInFullOnceEvenWhenRateLimited() {
+    try (Harness h = new Harness(Parent::new, b -> b.withRateLimit(auth -> RateLimit.perSecond(1)))) {
       h.load();
       h.connect();
       String root = Harness.find(h.html, "<html data-j2-scope=\"([^\"]+)\"");
       int from = h.conn.size();
       h.send("type", "resync", "anchor", root);
-      String sent = h.awaitPatch(from, html -> true).get("sent");
+      String sent = sent(h.click(Harness.clickOn(h.html, "bump")));
+      assertTrue(sent.contains("data-j2-unchanged"), sent);
+      assertEquals(0, h.engine.stats.resyncs.get(), "a resync before any patch kept a child is ignored");
+
+      from = h.conn.size();
+      h.send("type", "resync", "anchor", root);
+      sent = h.awaitPatch(from, html -> true).get("sent");
       assertTrue(sent.contains("A n0 0:0"), sent);
       assertFalse(sent.contains("data-j2-unchanged"), sent);
+
+      h.send("type", "resync", "anchor", root);
+      Harness.eventually(() -> h.engine.stats.resyncs.get() == 1, "one resync");
       assertEquals(1, h.engine.stats.resyncs.get());
+    }
+  }
+
+  static final class Dated extends ComponentTag {
+    private java.time.format.DateTimeFormatterBuilder builder;
+
+    Dated withBuilder(java.time.format.DateTimeFormatterBuilder b) {
+      builder = b;
+      return this;
+    }
+
+    @Override protected Tag<?> render() {
+      return T.span("format " + builder.toFormatter());
+    }
+  }
+
+  static final class Dates extends LiveComponent {
+    private final java.time.format.DateTimeFormatterBuilder builder = new java.time.format.DateTimeFormatterBuilder();
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        new Dated().withBuilder(builder),
+        T.button("year").onClick(e -> {
+          builder.appendPattern("yyyy");
+          bump.set(bump.get() + 1);
+        })));
+    }
+  }
+
+  @Test
+  void aJavaTimeBuilderChangedInPlaceRendersTheChild() {
+    try (Harness h = new Harness(Dates::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "year")));
+      assertTrue(sent.contains("Value(YearOfEra"), sent);
     }
   }
 }

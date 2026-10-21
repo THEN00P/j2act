@@ -174,6 +174,11 @@ final class Renderer {
     }
   }
 
+  /** Whether this pass kept a child, so its patch holds a placeholder the client fills in. */
+  boolean keptAny() {
+    return !kept.isEmpty();
+  }
+
   /** After the patch went out: what this pass rendered is what the client shows (ADR 0031). */
   void sent() {
     for (Scope scope : rendered) {
