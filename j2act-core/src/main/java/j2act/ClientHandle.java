@@ -45,7 +45,7 @@ final class ClientHandle extends Primitive implements InvocationHandler {
     return cell instanceof ClientCell && ((ClientCell) cell).type == type;
   }
 
-  @Override boolean configuresCell() {
+  @Override boolean carriesSettings() {
     return false;
   }
 

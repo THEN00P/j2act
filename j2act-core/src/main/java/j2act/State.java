@@ -54,7 +54,7 @@ public final class State<T> extends Primitive implements Supplier<T> {
     return cell instanceof ValueCell;
   }
 
-  @Override boolean configuresCell() {
+  @Override boolean carriesSettings() {
     return false;
   }
 

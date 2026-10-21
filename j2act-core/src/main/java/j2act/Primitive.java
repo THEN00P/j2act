@@ -17,10 +17,11 @@ abstract class Primitive {
   abstract boolean accepts(Cell cell);
 
   /**
-   * Whether attach() hands an existing cell this object's code or settings, such as a query's
-   * loader, so that a fresh description with other ones has to be bound (ADR 0031).
+   * Whether this object holds code or settings beyond its cell, such as a query's loader or a
+   * query state's parameter name, which a kept child's last object would go on using instead of
+   * a fresh description's (ADR 0031). Only a handle whose cell is all that matters once it exists says no.
    */
-  boolean configuresCell() {
+  boolean carriesSettings() {
     return true;
   }
 

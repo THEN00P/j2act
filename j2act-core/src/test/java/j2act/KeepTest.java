@@ -221,6 +221,64 @@ class KeepTest {
     }
   }
 
+  static final class Param extends ComponentTag {
+    private final QueryState<String> value;
+
+    Param(String name) {
+      value = queryState(name, "-");
+    }
+
+    @Override protected Tag<?> render() {
+      return T.span("param " + value.get());
+    }
+  }
+
+  static final class Params extends LiveComponent {
+    private final State<String> name = state("a");
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        new Param(name.get()),
+        T.button("switch").onClick(e -> name.set("b"))));
+    }
+  }
+
+  @Test
+  void aChildWhoseQueryStateNamesAnotherParameterRenders() {
+    try (Harness h = new Harness(Params::new)) {
+      h.load("/?a=1&b=2", Exchange.empty());
+      assertTrue(h.html.contains("param 1"), h.html);
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "switch")));
+      assertTrue(sent.contains("param 2"), sent);
+    }
+  }
+
+  static final class Labels extends LiveComponent {
+    private final State<Integer> n = state(1);
+
+    @Override public Tag<?> render() {
+      String label = "label " + n.get();
+      return T.page("t", T.div(
+        new ComponentTag() {
+          @Override protected Tag<?> render() {
+            return T.span(label);
+          }
+        },
+        T.button("next").onClick(e -> n.set(n.get() + 1))));
+    }
+  }
+
+  @Test
+  void anAnonymousChildWhoseCapturesChangedRenders() {
+    try (Harness h = new Harness(Labels::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "next")));
+      assertTrue(sent.contains("label 2"), sent);
+    }
+  }
+
   static java.util.concurrent.CountDownLatch gate;
 
   static final class Leaf extends ComponentTag {

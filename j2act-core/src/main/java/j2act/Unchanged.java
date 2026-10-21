@@ -24,7 +24,8 @@ final class Unchanged {
       List<Field> fields = new ArrayList<>();
       for (Class<?> c = type; c != null && c != ComponentTag.class; c = c.getSuperclass()) {
         for (Field field : c.getDeclaredFields()) {
-          if (Modifier.isStatic(field.getModifiers()) || field.isSynthetic()) {
+          // Synthetic fields count: an anonymous or local component keeps its captured values in them.
+          if (Modifier.isStatic(field.getModifiers())) {
             continue;
           }
           if (!field.trySetAccessible()) {
@@ -111,7 +112,7 @@ final class Unchanged {
             return false;
           }
         } else if (!samePrimitive(last.primitives.get(i), primitive, last, component)) {
-          // Binding would hand the cell this object's loader, body or callbacks (ADR 0031).
+          // The kept object would go on using its own loader, body, callbacks or settings (ADR 0031).
           return false;
         }
       }
@@ -167,7 +168,7 @@ final class Unchanged {
     if (last.getClass() != fresh.getClass()) {
       return false;
     }
-    if (!fresh.configuresCell()) {
+    if (!fresh.carriesSettings()) {
       return true;
     }
     return sameFields(PRIMITIVE_FIELDS.get(last.getClass()), last, fresh, lastOwner, freshOwner, 0);
