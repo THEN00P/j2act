@@ -115,6 +115,10 @@ public final class QueryState<T> extends Primitive implements Supplier<T> {
     return cell instanceof Slot;
   }
 
+  @Override boolean configuresCell() {
+    return false;
+  }
+
   @Override void attach(Cell cell, boolean created) {
     this.cell = cell;
   }

@@ -16,6 +16,14 @@ abstract class Primitive {
   /** Whether an existing cell at this index is of this primitive's kind. */
   abstract boolean accepts(Cell cell);
 
+  /**
+   * Whether attach() hands an existing cell this object's code or settings, such as a query's
+   * loader, so that a fresh description with other ones has to be bound (ADR 0031).
+   */
+  boolean configuresCell() {
+    return true;
+  }
+
   /** Binds this handle to an existing or freshly created cell. Lane-only. */
   abstract void attach(Cell cell, boolean created);
 

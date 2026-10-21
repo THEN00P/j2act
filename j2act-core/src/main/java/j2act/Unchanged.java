@@ -95,7 +95,9 @@ final class Unchanged {
     }
     if (component != child.instance) {
       // A fresh description: compare what its builders set with the cells, without binding it.
-      if (component.getClass() != child.instance.getClass() || component.primitives.size() > child.cells.size()) {
+      ComponentTag last = child.instance;
+      if (component.getClass() != last.getClass() || component.primitives.size() > child.cells.size()
+          || component.primitives.size() != last.primitives.size()) {
         return false;
       }
       for (int i = 0; i < component.primitives.size(); i++) {
@@ -104,7 +106,12 @@ final class Unchanged {
         if (!primitive.accepts(cell)) {
           return false;
         }
-        if (primitive instanceof Prop && !Objects.equals(((Prop<?>) primitive).described(), cell.peek())) {
+        if (primitive instanceof Prop) {
+          if (!Objects.equals(((Prop<?>) primitive).described(), cell.peek())) {
+            return false;
+          }
+        } else if (!samePrimitive(last.primitives.get(i), primitive, last, component)) {
+          // Binding would hand the cell this object's loader, body or callbacks (ADR 0031).
           return false;
         }
       }
@@ -119,5 +126,104 @@ final class Unchanged {
       }
     }
     return true;
+  }
+
+  /** Fields of a primitive class below Primitive itself, whose cell and store are the slot's, not its code. */
+  private static final ClassValue<Field[]> PRIMITIVE_FIELDS = new ClassValue<Field[]>() {
+    @Override protected Field[] computeValue(Class<?> type) {
+      return instanceFields(type, Primitive.class);
+    }
+  };
+
+  /** Captured values of a lambda, anonymous or local class; null if one is not readable. */
+  private static final ClassValue<Field[]> CAPTURES = new ClassValue<Field[]>() {
+    @Override protected Field[] computeValue(Class<?> type) {
+      return instanceFields(type, Object.class);
+    }
+  };
+
+  private static Field[] instanceFields(Class<?> type, Class<?> stop) {
+    List<Field> fields = new ArrayList<>();
+    for (Class<?> c = type; c != null && c != stop; c = c.getSuperclass()) {
+      for (Field field : c.getDeclaredFields()) {
+        if (Modifier.isStatic(field.getModifiers())) {
+          continue;
+        }
+        if (!field.trySetAccessible()) {
+          return null;
+        }
+        fields.add(field);
+      }
+    }
+    return fields.toArray(new Field[0]);
+  }
+
+  /**
+   * Whether a fresh description's primitive would bind the same code and settings as the last
+   * object's: a loader, body or callback is the same when it is a lambda of the same class that
+   * captured equal values, the component itself counting as equal to its last object.
+   */
+  private static boolean samePrimitive(Primitive last, Primitive fresh, ComponentTag lastOwner, ComponentTag freshOwner) {
+    if (last.getClass() != fresh.getClass()) {
+      return false;
+    }
+    if (!fresh.configuresCell()) {
+      return true;
+    }
+    return sameFields(PRIMITIVE_FIELDS.get(last.getClass()), last, fresh, lastOwner, freshOwner, 0);
+  }
+
+  private static boolean sameFields(Field[] fields, Object last, Object fresh, ComponentTag lastOwner,
+      ComponentTag freshOwner, int depth) {
+    if (fields == null) {
+      return false;
+    }
+    try {
+      for (Field field : fields) {
+        if (!same(field.get(last), field.get(fresh), lastOwner, freshOwner, depth)) {
+          return false;
+        }
+      }
+    } catch (IllegalAccessException e) {
+      return false;
+    }
+    return true;
+  }
+
+  private static boolean same(Object last, Object fresh, ComponentTag lastOwner, ComponentTag freshOwner, int depth) {
+    if (last == lastOwner && fresh == freshOwner) {
+      return true;
+    }
+    Object a = ownIndex(lastOwner, last);
+    Object b = ownIndex(freshOwner, fresh);
+    if (a != null || b != null) {
+      return Objects.equals(a, b);
+    }
+    if (Objects.equals(last, fresh)) {
+      return true;
+    }
+    if (last == null || fresh == null || last.getClass() != fresh.getClass() || depth >= 3) {
+      return false;
+    }
+    Class<?> type = last.getClass();
+    if (!type.isSynthetic() && !type.isAnonymousClass() && !type.isLocalClass()) {
+      return false;
+    }
+    return sameFields(CAPTURES.get(type), last, fresh, lastOwner, freshOwner, depth + 1);
+  }
+
+  /** The creation index of one of owner's own primitives (or a client handle's proxy), else null. */
+  private static Integer ownIndex(ComponentTag owner, Object value) {
+    ClientHandle handle = ClientHandle.of(value);
+    Object primitive = handle != null ? handle : value;
+    if (!(primitive instanceof Primitive)) {
+      return null;
+    }
+    for (int i = 0; i < owner.primitives.size(); i++) {
+      if (owner.primitives.get(i) == primitive) {
+        return i;
+      }
+    }
+    return null;
   }
 }

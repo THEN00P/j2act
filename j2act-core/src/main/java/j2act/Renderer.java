@@ -418,7 +418,7 @@ final class Renderer {
         + child.instance.getClass().getName());
     }
     child.renderedEpoch = epoch;
-    offerQueries(child);
+    offerQueries(child, true, true);
     kept.add(child);
     out.append('<').append(child.rootName);
     attribute("data-j2-unchanged", child.anchor);
@@ -428,11 +428,29 @@ final class Renderer {
     }
   }
 
-  /** A kept subtree's queries still count for the boundaries around it. */
-  private void offerQueries(Scope scope) {
-    ownQueries(scope);
+  /**
+   * A kept subtree's queries still count for the boundaries around it, up to a boundary inside it,
+   * which owns its own and its descendants' queries, as when it renders.
+   */
+  private void offerQueries(Scope scope, boolean loading, boolean error) {
+    Class<?> type = scope.instance.getClass();
+    loading &= !Boundaries.isLoading(type) && !loadingOwners.isEmpty();
+    error &= !Boundaries.isError(type) && !errorOwners.isEmpty();
+    if (!loading && !error) {
+      return;
+    }
+    for (Cell cell : scope.cells) {
+      if (cell instanceof QueryCell) {
+        if (loading) {
+          loadingOwners.peek().add((QueryCell) cell);
+        }
+        if (error) {
+          errorOwners.peek().add((QueryCell) cell);
+        }
+      }
+    }
     for (Scope child : scope.children.values()) {
-      offerQueries(child);
+      offerQueries(child, loading, error);
     }
   }
 

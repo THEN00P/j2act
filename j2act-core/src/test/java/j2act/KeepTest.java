@@ -181,6 +181,110 @@ class KeepTest {
     }
   }
 
+  static final class Editor extends ComponentTag {
+    private final Mutation<Integer, String> save;
+
+    Editor(int id) {
+      save = mutation((Integer v) -> "saved " + id);
+    }
+
+    @Override protected Tag<?> render() {
+      return T.button(save.data() == null ? "save" : save.data()).onClick(e -> save.mutate(0));
+    }
+  }
+
+  static final class Editors extends LiveComponent {
+    private final State<Integer> id = state(1);
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        new Editor(id.get()),
+        T.button("next").onClick(e -> id.set(2)),
+        T.button("bump").onClick(e -> bump.set(bump.get() + 1))));
+    }
+  }
+
+  @Test
+  void aChildWhosePrimitiveCapturedAnotherValueIsBoundAgain() {
+    try (Harness h = new Harness(Editors::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "bump")));
+      assertTrue(sent.contains("<button data-j2-unchanged="), sent);
+      String page = h.click(Harness.clickOn(h.html, "next")).get(0).get("html");
+      int from = h.conn.size();
+      h.click(Harness.clickOn(page, "save"));
+      String saved = h.awaitPatch(from, html -> html.contains("saved")).get("html");
+      assertTrue(saved.contains("saved 2"), saved);
+    }
+  }
+
+  static java.util.concurrent.CountDownLatch gate;
+
+  static final class Leaf extends ComponentTag {
+    private final Query<String> data = query(() -> {
+      gate.await();
+      return "data";
+    }).withDefer();
+
+    @Override protected Tag<?> render() {
+      return T.span(data.isPending() ? "leaf pending" : data.get());
+    }
+  }
+
+  static final class InnerBoundary extends ComponentTag {
+    @Override protected Tag<?> loading() {
+      return T.span("inner loading");
+    }
+
+    @Override protected Tag<?> render() {
+      return T.div(new Leaf());
+    }
+  }
+
+  static final class OuterBoundary extends ComponentTag {
+    private final State<Integer> bump = state(0);
+
+    @Override protected Tag<?> loading() {
+      return T.span("outer loading");
+    }
+
+    @Override protected Tag<?> render() {
+      return T.div(
+        T.span("bump " + bump.get()),
+        new InnerBoundary(),
+        T.button("bump").onClick(e -> bump.set(bump.get() + 1)));
+    }
+  }
+
+  static final class Boundaries extends LiveComponent {
+    @Override public Tag<?> render() {
+      return T.page("t", new OuterBoundary());
+    }
+  }
+
+  @Test
+  void aKeptBoundaryKeepsTheQueriesUnderIt() {
+    gate = new java.util.concurrent.CountDownLatch(1);
+    try (Harness h = new Harness(Boundaries::new)) {
+      h.load();
+      assertTrue(h.html.contains("inner loading"), h.html);
+      h.connect();
+      java.util.List<java.util.Map<String, String>> patches = h.click(Harness.clickOn(h.html, "bump"));
+      String sent = sent(patches);
+      assertTrue(sent.contains("bump 1"), sent);
+      assertFalse(sent.contains("outer loading"), sent);
+      assertTrue(patches.get(0).get("html").contains("inner loading"), patches.get(0).get("html"));
+      int from = h.conn.size();
+      gate.countDown();
+      h.awaitPatch(from, html -> html.contains("data"));
+    } finally {
+      gate.countDown();
+    }
+  }
+
   @Test
   void aReconnectRendersInFullOnce() {
     try (Harness h = new Harness(Parent::new)) {
