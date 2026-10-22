@@ -465,6 +465,32 @@ class KeepTest {
     }
   }
 
+  static final class HeldFilters extends LiveComponent {
+    private final java.util.List<String> defaults = new java.util.ArrayList<>(java.util.List.of("a"));
+    private final Filter filter = new Filter(defaults);
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        filter,
+        T.button("more").onClick(e -> {
+          defaults.add("b");
+          bump.set(bump.get() + 1);
+        })));
+    }
+  }
+
+  @Test
+  void aHeldChildsQueryStateWithAMutableInitialValueRendersIt() {
+    try (Harness h = new Harness(HeldFilters::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "more")));
+      assertTrue(sent.contains("tags [a, b]"), sent);
+    }
+  }
+
   static java.util.concurrent.CountDownLatch gate;
 
   static final class Leaf extends ComponentTag {

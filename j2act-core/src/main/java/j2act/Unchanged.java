@@ -216,9 +216,11 @@ final class Unchanged {
         }
       }
     } else {
-      // A held object's builders wrote its Prop cells, where a value changed in place looks equal.
+      // A held object's builders wrote its Prop cells, where a value changed in place looks equal;
+      // its query states render their default while the parameter is absent.
       for (Primitive primitive : component.primitives) {
-        if (primitive instanceof Prop && primitive.cell != null && !immutable(primitive.cell.peek())) {
+        if (primitive instanceof Prop && primitive.cell != null && !immutable(primitive.cell.peek())
+            || primitive instanceof QueryState && !immutable(((QueryState<?>) primitive).initial())) {
           return false;
         }
       }

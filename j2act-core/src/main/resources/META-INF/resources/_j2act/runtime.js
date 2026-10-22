@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-3860aa575b714b061e798c0897e258f4e37a00fb3ebac50b9eca665bc31ebaf9 */
+* sources: sha256-a6a4a100a8742bf3e7a7861c8334b3fd945d72d651956a02383c93b72c3112d3 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1619,20 +1619,26 @@
 	function createMorpher(pending, syncClient) {
 		/** Copies standing in for kept elements, and the live element each copies. */
 		const kept = /* @__PURE__ */ new WeakMap();
-		/**
-		* An unchanged child arrives as an empty element marked data-j2-unchanged (ADR 0031): a copy of
-		* the element the page shows for it takes its place, so the morph leaves that element as it is.
-		* False when one is missing.
-		*/
-		function keep(fresh) {
+		/** The live element of each unchanged child in fresh (ADR 0031), or null when one is missing. */
+		function keptElements(fresh) {
+			const found = [];
 			for (const stub of Array.from(fresh.querySelectorAll("[data-j2-unchanged]"))) {
 				const live = document.querySelector("[data-j2-scope=\"" + stub.getAttribute("data-j2-unchanged") + "\"]");
-				if (!live) return false;
+				if (!live) return null;
+				found.push([stub, live]);
+			}
+			return found;
+		}
+		/**
+		* An unchanged child arrives as an empty element marked data-j2-unchanged: a copy of the element
+		* the page shows for it takes its place, so the morph leaves that element as it is.
+		*/
+		function keep(found) {
+			for (const [stub, live] of found) {
 				const copy = live.cloneNode(true);
 				kept.set(copy, live);
 				stub.replaceWith(copy);
 			}
-			return true;
 		}
 		/**
 		* Idiomorph matches elements by id alone, so a component that moved would get another one's
@@ -1705,11 +1711,10 @@
 			patch(anchor, html, isRoot) {
 				if (isRoot) {
 					const doc = new DOMParser().parseFromString(html, "text/html");
+					const found = keptElements(doc.body);
+					if (!found) return "resync";
 					const tagged = pair(document.body, doc.body);
-					if (!keep(doc.body)) {
-						untag(tagged);
-						return "resync";
-					}
+					keep(found);
 					document.documentElement.setAttribute("data-j2-scope", anchor);
 					head(doc.head.innerHTML);
 					body(doc.body);
@@ -1720,11 +1725,10 @@
 				if (!el) return "gone";
 				const template = document.createElement("template");
 				template.innerHTML = html;
+				const found = keptElements(template.content);
+				if (!found) return "resync";
 				const tagged = pair(el, template.content);
-				if (!keep(template.content)) {
-					untag(tagged);
-					return "resync";
-				}
+				keep(found);
 				const fresh = template.content.firstElementChild;
 				if (fresh) Idiomorph.morph(el, fresh, config);
 				untag(tagged);

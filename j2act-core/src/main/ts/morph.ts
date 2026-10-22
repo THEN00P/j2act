@@ -16,22 +16,29 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
   /** Copies standing in for kept elements, and the live element each copies. */
   const kept = new WeakMap<Node, Element>();
 
-  /**
-   * An unchanged child arrives as an empty element marked data-j2-unchanged (ADR 0031): a copy of
-   * the element the page shows for it takes its place, so the morph leaves that element as it is.
-   * False when one is missing.
-   */
-  function keep(fresh: ParentNode): boolean {
+  /** The live element of each unchanged child in fresh (ADR 0031), or null when one is missing. */
+  function keptElements(fresh: ParentNode): [Element, Element][] | null {
+    const found: [Element, Element][] = [];
     for (const stub of Array.from(fresh.querySelectorAll("[data-j2-unchanged]"))) {
       const live = document.querySelector('[data-j2-scope="' + stub.getAttribute("data-j2-unchanged") + '"]');
       if (!live) {
-        return false;
+        return null;
       }
+      found.push([stub, live]);
+    }
+    return found;
+  }
+
+  /**
+   * An unchanged child arrives as an empty element marked data-j2-unchanged: a copy of the element
+   * the page shows for it takes its place, so the morph leaves that element as it is.
+   */
+  function keep(found: [Element, Element][]): void {
+    for (const [stub, live] of found) {
       const copy = live.cloneNode(true) as Element;
       kept.set(copy, live);
       stub.replaceWith(copy);
     }
-    return true;
   }
 
   /**
@@ -125,11 +132,13 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
     patch(anchor: string, html: string, isRoot: boolean): PatchResult {
       if (isRoot) {
         const doc = new DOMParser().parseFromString(html, "text/html");
-        const tagged = pair(document.body, doc.body);
-        if (!keep(doc.body)) {
-          untag(tagged);
+        // Checked before pairing, so a rejected patch leaves every id as it was.
+        const found = keptElements(doc.body);
+        if (!found) {
           return "resync";
         }
+        const tagged = pair(document.body, doc.body);
+        keep(found);
         document.documentElement.setAttribute("data-j2-scope", anchor);
         head(doc.head.innerHTML);
         body(doc.body);
@@ -142,11 +151,12 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
       }
       const template = document.createElement("template");
       template.innerHTML = html;
-      const tagged = pair(el, template.content);
-      if (!keep(template.content)) {
-        untag(tagged);
+      const found = keptElements(template.content);
+      if (!found) {
         return "resync";
       }
+      const tagged = pair(el, template.content);
+      keep(found);
       const fresh = template.content.firstElementChild;
       if (fresh) {
         Idiomorph.morph(el, fresh, config);
