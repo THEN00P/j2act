@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-6ca400660938cb453974d042b564ad9cb649ebf90788e47cec86e3aa05f10b8b */
+* sources: sha256-0d0d91ee6e35e5e302524e907b00b2425e10daf6e20fe9014256318548d43ef2 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1669,13 +1669,14 @@
 			return tagged;
 		}
 		/**
-		* Gives each paired component its authored id back. Looked up by anchor, since a component whose
-		* root tag changed was replaced rather than moved, and the page now shows the fresh element.
+		* Gives each paired component its authored id back. Looked up by its temporary id, which nothing
+		* else on the page has: a component whose root tag changed was replaced rather than moved, and the
+		* fresh element now carries it.
 		*/
 		function untag(tagged) {
-			for (const [anchor, authored, temporary] of tagged) {
-				const el = document.querySelector("[data-j2-scope=\"" + anchor + "\"]");
-				if (el && el.id === temporary) {
+			for (const [, authored, temporary] of tagged) {
+				const el = document.getElementById(temporary);
+				if (el) {
 					if (authored) el.id = authored;
 					else el.removeAttribute("id");
 				}

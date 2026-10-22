@@ -744,6 +744,34 @@ class KeepTest {
     }
   }
 
+  @Test
+  void aResyncWithoutAKeptPatchNeverReachesTheLane() throws Exception {
+    try (Harness h = new Harness(Parent::new)) {
+      h.load();
+      h.connect();
+      Tab tab = h.engine.tab(h.sid);
+      java.util.concurrent.CountDownLatch busy = new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+      tab.post(() -> {
+        busy.countDown();
+        try {
+          release.await();
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+      });
+      try {
+        busy.await();
+        for (int i = 0; i < 100; i++) {
+          h.send("type", "resync", "anchor", "s" + i);
+        }
+        assertEquals(0, tab.lane.backlog(), "no resync was queued");
+      } finally {
+        release.countDown();
+      }
+    }
+  }
+
   static final class Dated extends ComponentTag {
     private java.time.format.DateTimeFormatterBuilder builder;
 

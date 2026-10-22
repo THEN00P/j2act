@@ -73,13 +73,14 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
   }
 
   /**
-   * Gives each paired component its authored id back. Looked up by anchor, since a component whose
-   * root tag changed was replaced rather than moved, and the page now shows the fresh element.
+   * Gives each paired component its authored id back. Looked up by its temporary id, which nothing
+   * else on the page has: a component whose root tag changed was replaced rather than moved, and the
+   * fresh element now carries it.
    */
   function untag(tagged: [string, string, string][]): void {
-    for (const [anchor, authored, temporary] of tagged) {
-      const el = document.querySelector('[data-j2-scope="' + anchor + '"]');
-      if (el && el.id === temporary) {
+    for (const [, authored, temporary] of tagged) {
+      const el = document.getElementById(temporary);
+      if (el) {
         if (authored) {
           el.id = authored;
         } else {

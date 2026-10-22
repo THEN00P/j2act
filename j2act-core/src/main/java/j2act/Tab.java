@@ -81,7 +81,7 @@ public final class Tab {
   private Scope heldScope;
   /** Scopes rendered but not sent during a hold; all re-render when it ends. */
   /** Anchors whose latest patch kept a child: the only patches a client may ask to resync, once each (ADR 0031). */
-  final Set<String> keptPatches = new java.util.HashSet<>();
+  final Set<String> keptPatches = java.util.concurrent.ConcurrentHashMap.newKeySet();
   private final Set<Scope> heldRenders = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
 
   /** A notFound()/redirect() raised before the socket attached, for the SSR loop to act on. */
@@ -921,14 +921,15 @@ public final class Tab {
         if (!sending) {
           heldRenders.add(scope);
         } else {
-          send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope == root ? true : null,
-            "html", renderer.out.toString()));
-          renderer.sent();
+          // Recorded before the patch goes out, so the client's resync for it cannot arrive first.
           if (renderer.keptAny()) {
             keptPatches.add(scope.anchor);
           } else {
             keptPatches.remove(scope.anchor);
           }
+          send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope == root ? true : null,
+            "html", renderer.out.toString()));
+          renderer.sent();
           engine.stats.patches.incrementAndGet();
           engine.stats.patchChars.addAndGet(renderer.out.length());
         }
@@ -950,9 +951,7 @@ public final class Tab {
    * the patched scope again in full. Expected only when client code removed a component's element.
    */
   void resync(String anchor) {
-    if (!keptPatches.remove(anchor)) {
-      return; // no patch of ours to recover, or recovered already
-    }
+    // The socket thread took anchor out of keptPatches, so this runs once per patch that kept a child.
     Scope scope = root == null ? null : root.find(anchor);
     if (scope == null || scope.disposed) {
       return;

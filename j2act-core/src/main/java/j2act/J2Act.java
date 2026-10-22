@@ -902,9 +902,9 @@ public final class J2Act implements AutoCloseable {
       tab.post(() -> tab.clients.onLiveGone(message.get("anchor")));
     } else if ("resync".equals(type)) {
       // Recovery from a patch the page could not apply, so not counted against the rate limit:
-      // the tab honors it once per patch that kept a child, which bounds it to what we sent.
-      if (tab.lane.backlog() < maxQueuedEvents) {
-        String anchor = message.get("anchor");
+      // honored once per patch of ours that kept a child, checked here, so no other resync reaches the lane.
+      String anchor = message.get("anchor");
+      if (anchor != null && tab.keptPatches.remove(anchor)) {
         tab.post(() -> tab.resync(anchor));
       }
     } else if ("preload".equals(type)) {
