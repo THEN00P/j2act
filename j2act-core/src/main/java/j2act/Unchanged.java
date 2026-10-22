@@ -161,7 +161,10 @@ final class Unchanged {
       if (handle != null) {
         value = handle;
       }
-      if (injected[i] || value instanceof ComponentTag || value instanceof Store || isClosure(value)) {
+      if (isClosure(value) && !injected[i]) {
+        // As Blazor treats delegates: even the same closure may read something changed in place.
+        value = new Mutable();
+      } else if (injected[i] || value instanceof ComponentTag || value instanceof Store) {
         value = new Same(value);
       } else if (value instanceof Primitive) {
         Primitive primitive = (Primitive) value;

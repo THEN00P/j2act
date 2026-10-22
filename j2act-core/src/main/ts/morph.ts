@@ -16,11 +16,15 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
   /** Copies standing in for kept elements, and the live element each copies. */
   const kept = new WeakMap<Node, Element>();
 
-  /** The live element of each unchanged child in fresh (ADR 0031), or null when one is missing. */
-  function keptElements(fresh: ParentNode): [Element, Element][] | null {
+  /**
+   * The live element under root of each unchanged child in fresh (ADR 0031), or null when one is
+   * missing there: one client code moved elsewhere would otherwise be copied, and the page would
+   * show two elements for one component.
+   */
+  function keptElements(root: Element, fresh: ParentNode): [Element, Element][] | null {
     const found: [Element, Element][] = [];
     for (const stub of Array.from(fresh.querySelectorAll("[data-j2-unchanged]"))) {
-      const live = document.querySelector('[data-j2-scope="' + stub.getAttribute("data-j2-unchanged") + '"]');
+      const live = root.querySelector('[data-j2-scope="' + stub.getAttribute("data-j2-unchanged") + '"]');
       if (!live) {
         return null;
       }
@@ -138,7 +142,7 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
       if (isRoot) {
         const doc = new DOMParser().parseFromString(html, "text/html");
         // Checked before pairing, so a rejected patch leaves every id as it was.
-        const found = keptElements(doc.body);
+        const found = keptElements(document.body, doc.body);
         if (!found) {
           return "resync";
         }
@@ -156,7 +160,7 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
       }
       const template = document.createElement("template");
       template.innerHTML = html;
-      const found = keptElements(template.content);
+      const found = keptElements(el, template.content);
       if (!found) {
         return "resync";
       }

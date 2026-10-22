@@ -151,6 +151,44 @@ class KeepTest {
     }
   }
 
+  static final class Shower extends ComponentTag {
+    private final java.util.function.Supplier<String> text;
+
+    Shower(java.util.function.Supplier<String> text) {
+      this.text = text;
+    }
+
+    @Override protected Tag<?> render() {
+      return T.span("shows " + text.get());
+    }
+  }
+
+  static final class Showing extends LiveComponent {
+    private final java.util.List<String> items = new java.util.ArrayList<>(java.util.List.of("a"));
+    private final java.util.function.Supplier<String> text = () -> String.join(",", items);
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        new Shower(text),
+        T.button("more").onClick(e -> {
+          items.add("b");
+          bump.set(bump.get() + 1);
+        })));
+    }
+  }
+
+  @Test
+  void aChildGivenTheSameLambdaAgainRenders() {
+    try (Harness h = new Harness(Showing::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "more")));
+      assertTrue(sent.contains("shows a,b"), sent);
+    }
+  }
+
   static final class Dial extends ComponentTag {
     private final ClientTest.Meter meter = client(ClientTest.Meter.class);
     private final Upload export = upload();

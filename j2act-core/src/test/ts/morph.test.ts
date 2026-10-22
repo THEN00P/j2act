@@ -124,6 +124,15 @@ describe("Morpher keeping unchanged children (ADR 0031)", () => {
     expect(document.querySelector('[data-j2-scope="s2"]')!.id).toBe("old");
   });
 
+  it("asks for a full render when client code moved a kept element out of the patch", () => {
+    document.body.append(document.querySelector('[data-j2-scope="s3"]')!);
+
+    const result = morpher.patch("s1", '<div data-j2-scope="s1"><h2>Page 2</h2><button data-j2-unchanged="s3"></button></div>', false);
+
+    expect(result).toBe("resync");
+    expect(document.querySelectorAll('[data-j2-scope="s3"]').length).toBe(1);
+  });
+
   it("reports a patch whose anchor is gone", () => {
     expect(morpher.patch("s9", '<p data-j2-scope="s9"></p>', false)).toBe("gone");
   });

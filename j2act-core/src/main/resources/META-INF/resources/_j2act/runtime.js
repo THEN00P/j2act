@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-a324a86de327a7d76319754163a632b2262cd9ccfabbd23b974a8c3543f92704 */
+* sources: sha256-6ca400660938cb453974d042b564ad9cb649ebf90788e47cec86e3aa05f10b8b */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1619,11 +1619,15 @@
 	function createMorpher(pending, syncClient) {
 		/** Copies standing in for kept elements, and the live element each copies. */
 		const kept = /* @__PURE__ */ new WeakMap();
-		/** The live element of each unchanged child in fresh (ADR 0031), or null when one is missing. */
-		function keptElements(fresh) {
+		/**
+		* The live element under root of each unchanged child in fresh (ADR 0031), or null when one is
+		* missing there: one client code moved elsewhere would otherwise be copied, and the page would
+		* show two elements for one component.
+		*/
+		function keptElements(root, fresh) {
 			const found = [];
 			for (const stub of Array.from(fresh.querySelectorAll("[data-j2-unchanged]"))) {
-				const live = document.querySelector("[data-j2-scope=\"" + stub.getAttribute("data-j2-unchanged") + "\"]");
+				const live = root.querySelector("[data-j2-scope=\"" + stub.getAttribute("data-j2-unchanged") + "\"]");
 				if (!live) return null;
 				found.push([stub, live]);
 			}
@@ -1722,7 +1726,7 @@
 			patch(anchor, html, isRoot) {
 				if (isRoot) {
 					const doc = new DOMParser().parseFromString(html, "text/html");
-					const found = keptElements(doc.body);
+					const found = keptElements(document.body, doc.body);
 					if (!found) return "resync";
 					const tagged = pair(document.body, doc.body);
 					keep(found);
@@ -1736,7 +1740,7 @@
 				if (!el) return "gone";
 				const template = document.createElement("template");
 				template.innerHTML = html;
-				const found = keptElements(template.content);
+				const found = keptElements(el, template.content);
 				if (!found) return "resync";
 				const tagged = pair(el, template.content);
 				keep(found);
