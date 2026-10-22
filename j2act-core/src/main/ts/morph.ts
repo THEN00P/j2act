@@ -45,14 +45,14 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
    * Idiomorph matches elements by id alone, so a component that moved would get another one's
    * content morphed into its node, and the user's input and focus with it. Each component in fresh
    * and its live element under root get a shared temporary id, so Idiomorph moves the node instead.
-   * Returns the live elements to untag after the morph, each with the id the render gave it.
+   * Returns what untag needs after the morph: each anchor, the id its render gave it and its temporary id.
    */
-  function pair(root: Element, fresh: ParentNode): [Element, string][] {
-    const tagged: [Element, string][] = [];
+  function pair(root: Element, fresh: ParentNode): [string, string, string][] {
+    const tagged: [string, string, string][] = [];
     // A fresh prefix per patch, so no id the page has can collide with ours.
     const prefix = "j2k" + Math.random().toString(36).slice(2, 10) + "-";
     for (const el of Array.from(fresh.querySelectorAll("[data-j2-scope],[data-j2-unchanged]"))) {
-      const anchor = el.getAttribute("data-j2-scope") ?? el.getAttribute("data-j2-unchanged");
+      const anchor = el.getAttribute("data-j2-scope") ?? el.getAttribute("data-j2-unchanged")!;
       const live = root.querySelector('[data-j2-scope="' + anchor + '"]');
       if (!live) {
         continue;
@@ -63,14 +63,19 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
         continue; // already matched by its own id
       }
       el.id = live.id = prefix + anchor;
-      tagged.push([live, authored]);
+      tagged.push([anchor, authored, el.id]);
     }
     return tagged;
   }
 
-  function untag(tagged: [Element, string][]): void {
-    for (const [el, authored] of tagged) {
-      if (el.id.startsWith("j2k")) {
+  /**
+   * Gives each paired component its authored id back. Looked up by anchor, since a component whose
+   * root tag changed was replaced rather than moved, and the page now shows the fresh element.
+   */
+  function untag(tagged: [string, string, string][]): void {
+    for (const [anchor, authored, temporary] of tagged) {
+      const el = document.querySelector('[data-j2-scope="' + anchor + '"]');
+      if (el && el.id === temporary) {
         if (authored) {
           el.id = authored;
         } else {

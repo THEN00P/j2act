@@ -86,6 +86,17 @@ describe("Morpher keeping unchanged children (ADR 0031)", () => {
     expect(document.getElementById("j2k-s2")!.textContent).toBe("authored");
   });
 
+  it("gives a component whose root tag changed the id its render gave it", () => {
+    document.body.innerHTML = '<div data-j2-scope="s1"><p id="old" data-j2-scope="s2">a</p>'
+      + '<p data-j2-scope="s3">b</p></div>';
+
+    morpher.patch("s1", '<div data-j2-scope="s1"><section id="new" data-j2-scope="s2">a</section>'
+      + '<span data-j2-scope="s3">b</span></div>', false);
+
+    expect(document.querySelector('[data-j2-scope="s2"]')!.id).toBe("new");
+    expect(document.querySelector('[data-j2-scope="s3"]')!.hasAttribute("id")).toBe(false);
+  });
+
   it("leaves the ids components have of their own", () => {
     document.body.innerHTML = '<div data-j2-scope="s1"><p id="note" data-j2-scope="s2">a</p></div>';
 

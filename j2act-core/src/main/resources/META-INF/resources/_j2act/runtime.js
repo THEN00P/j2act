@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-a6a4a100a8742bf3e7a7861c8334b3fd945d72d651956a02383c93b72c3112d3 */
+* sources: sha256-a324a86de327a7d76319754163a632b2262cd9ccfabbd23b974a8c3543f92704 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1644,7 +1644,7 @@
 		* Idiomorph matches elements by id alone, so a component that moved would get another one's
 		* content morphed into its node, and the user's input and focus with it. Each component in fresh
 		* and its live element under root get a shared temporary id, so Idiomorph moves the node instead.
-		* Returns the live elements to untag after the morph, each with the id the render gave it.
+		* Returns what untag needs after the morph: each anchor, the id its render gave it and its temporary id.
 		*/
 		function pair(root, fresh) {
 			const tagged = [];
@@ -1656,14 +1656,25 @@
 				const authored = el.hasAttribute("data-j2-unchanged") ? live.id : el.id;
 				if (authored && authored === live.id) continue;
 				el.id = live.id = prefix + anchor;
-				tagged.push([live, authored]);
+				tagged.push([
+					anchor,
+					authored,
+					el.id
+				]);
 			}
 			return tagged;
 		}
+		/**
+		* Gives each paired component its authored id back. Looked up by anchor, since a component whose
+		* root tag changed was replaced rather than moved, and the page now shows the fresh element.
+		*/
 		function untag(tagged) {
-			for (const [el, authored] of tagged) if (el.id.startsWith("j2k")) {
-				if (authored) el.id = authored;
-				else el.removeAttribute("id");
+			for (const [anchor, authored, temporary] of tagged) {
+				const el = document.querySelector("[data-j2-scope=\"" + anchor + "\"]");
+				if (el && el.id === temporary) {
+					if (authored) el.id = authored;
+					else el.removeAttribute("id");
+				}
 			}
 		}
 		const callbacks = {
