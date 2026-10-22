@@ -696,6 +696,41 @@ class KeepTest {
     }
   }
 
+  enum Plain { A }
+
+  enum Labelled {
+    A("a");
+
+    final String label;
+
+    Labelled(String label) {
+      this.label = label;
+    }
+  }
+
+  enum Relabelled {
+    A;
+
+    String label = "a";
+  }
+
+  enum Listed {
+    A;
+
+    final java.util.List<String> labels = new java.util.ArrayList<>();
+  }
+
+  @Test
+  void enumsAreImmutableOnlyWhenTheirOwnFieldsAre() {
+    assertTrue(Unchanged.immutable(Plain.A));
+    assertTrue(Unchanged.immutable(Labelled.A));
+    assertFalse(Unchanged.immutable(Relabelled.A));
+    assertFalse(Unchanged.immutable(Listed.A));
+    assertTrue(Unchanged.immutable(java.util.List.of(java.util.List.of(java.util.List.of(java.util.List.of(Plain.A))))));
+    assertTrue(Unchanged.immutable(java.util.concurrent.TimeUnit.SECONDS));
+    assertTrue(Unchanged.immutable(java.math.RoundingMode.HALF_UP));
+  }
+
   @Test
   void javaTimeValuesAreImmutableButClocksAndBuildersAreNot() {
     assertTrue(Unchanged.immutable(java.time.LocalDate.of(2026, 10, 21)));

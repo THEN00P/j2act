@@ -95,6 +95,13 @@ final class Unchanged {
     }
   };
 
+  /** An enum constant's own fields, from its constant body's class up to Enum; null if one is not readable. */
+  private static final ClassValue<Field[]> ENUM_FIELDS = new ClassValue<Field[]>() {
+    @Override protected Field[] computeValue(Class<?> type) {
+      return instanceFields(type, Enum.class);
+    }
+  };
+
   private Unchanged() {
   }
 
@@ -250,7 +257,7 @@ final class Unchanged {
   }
 
   private static boolean immutable(Object value, int depth) {
-    if (value == null || VALUES.contains(value.getClass()) || value instanceof Enum || value instanceof Class) {
+    if (value == null || VALUES.contains(value.getClass()) || value instanceof Class) {
       return true;
     }
     Class<?> type = value.getClass();
@@ -258,6 +265,28 @@ final class Unchanged {
     // The java.time package holds only immutable values, except a Clock, whose time moves on;
     // its subpackages also hold builders.
     if ("java.time".equals(type.getPackageName()) && !(value instanceof java.time.Clock)) {
+      return true;
+    }
+    if (value instanceof Enum) {
+      // A Java enum constant can carry fields of its own: only final ones holding such values keep it
+      // still. The JDK's enums, whose fields are closed to reflection, hold none that change.
+      String module = type.getModule().getName();
+      if (module != null && module.startsWith("java.")) {
+        return true;
+      }
+      Field[] fields = ENUM_FIELDS.get(type);
+      if (fields == null) {
+        return false;
+      }
+      try {
+        for (Field field : fields) {
+          if (!Modifier.isFinal(field.getModifiers()) || !immutable(field.get(value), depth + 1)) {
+            return false;
+          }
+        }
+      } catch (IllegalAccessException e) {
+        return false;
+      }
       return true;
     }
     if (depth >= 4) {
