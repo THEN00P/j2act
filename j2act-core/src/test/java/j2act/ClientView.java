@@ -1,39 +1,41 @@
 package j2act;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * What the page shows, as far as patches go: the last HTML of every component element, so a
- * patch that keeps an unchanged child reads as the full HTML the browser ends up with (ADR 0031).
- * Placeholders the page could not fill are collected in {@link #missing}.
+ * What the page shows, as far as patches go: one HTML string that every patch is spliced into, as
+ * the browser morphs its DOM, so a patch that keeps an unchanged child reads as the full HTML the
+ * browser ends up with (ADR 0031). Patches whose anchor the page does not show (components passed
+ * to client actions) are kept as fragments of their own. Placeholders the page could not fill are
+ * collected in {@link #missing}.
  */
 final class ClientView {
 
-  private static final Pattern SCOPE = Pattern.compile("data-j2-scope=\"([^\"]+)\"");
   private static final Pattern KEPT = Pattern.compile("<([a-zA-Z][\\w-]*) data-j2-unchanged=\"([^\"]+)\">(?:</\\1>)?");
 
   private static final java.util.Set<String> VOID = new java.util.HashSet<>(java.util.Arrays.asList(
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"));
 
-  private final Map<String, String> byAnchor = new HashMap<>();
+  private String page = "";
+  private final Map<String, String> fragments = new LinkedHashMap<>();
   final List<String> missing = new ArrayList<>();
 
-  synchronized void reset(String page) {
-    byAnchor.clear();
-    index(page);
+  synchronized void reset(String html) {
+    page = html;
+    fragments.clear();
   }
 
-  /** The patch's HTML with every kept child filled in from what the page shows. */
-  synchronized String apply(String html) {
+  /** The patch's HTML with every kept child filled in from what the page shows; the page then shows it. */
+  synchronized String apply(String anchor, boolean root, String html) {
     Matcher m = KEPT.matcher(html);
     StringBuilder out = new StringBuilder();
     while (m.find()) {
-      String shown = byAnchor.get(m.group(2));
+      String shown = shown(m.group(2));
       if (shown == null) {
         missing.add(m.group(2));
         shown = m.group();
@@ -42,21 +44,58 @@ final class ClientView {
     }
     m.appendTail(out);
     String resolved = out.toString();
-    index(resolved);
+    if (root) {
+      page = resolved;
+    } else if (!splice(anchor, resolved)) {
+      fragments.put(anchor, resolved);
+    }
     return resolved;
   }
 
-  private void index(String html) {
-    Matcher m = SCOPE.matcher(html);
-    while (m.find()) {
-      int start = html.lastIndexOf('<', m.start());
-      int nameEnd = start + 1;
-      while (nameEnd < html.length() && !Character.isWhitespace(html.charAt(nameEnd)) && html.charAt(nameEnd) != '>') {
-        nameEnd++;
-      }
-      String name = html.substring(start + 1, nameEnd);
-      byAnchor.put(m.group(1), html.substring(start, end(html, start, name)));
+  /** The element the page or a fragment shows for anchor, or null. */
+  private String shown(String anchor) {
+    String found = element(page, anchor);
+    for (java.util.Iterator<String> it = fragments.values().iterator(); found == null && it.hasNext(); ) {
+      found = element(it.next(), anchor);
     }
+    return found;
+  }
+
+  /** Replaces anchor's element wherever it shows; false when nothing shows it. */
+  private boolean splice(String anchor, String html) {
+    int[] at = bounds(page, anchor);
+    if (at != null) {
+      page = page.substring(0, at[0]) + html + page.substring(at[1]);
+      return true;
+    }
+    for (Map.Entry<String, String> fragment : fragments.entrySet()) {
+      at = bounds(fragment.getValue(), anchor);
+      if (at != null) {
+        String f = fragment.getValue();
+        fragment.setValue(f.substring(0, at[0]) + html + f.substring(at[1]));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static String element(String html, String anchor) {
+    int[] at = bounds(html, anchor);
+    return at == null ? null : html.substring(at[0], at[1]);
+  }
+
+  /** Where the element marked data-j2-scope="anchor" starts and ends in html, or null. */
+  private static int[] bounds(String html, String anchor) {
+    int attr = html.indexOf("data-j2-scope=\"" + anchor + "\"");
+    if (attr < 0) {
+      return null;
+    }
+    int start = html.lastIndexOf('<', attr);
+    int nameEnd = start + 1;
+    while (nameEnd < html.length() && !Character.isWhitespace(html.charAt(nameEnd)) && html.charAt(nameEnd) != '>') {
+      nameEnd++;
+    }
+    return new int[] {start, end(html, start, html.substring(start + 1, nameEnd))};
   }
 
   /** Where the element starting at start ends; server HTML is well formed, so counting its tag name suffices. */

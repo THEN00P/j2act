@@ -174,7 +174,7 @@ final class Harness implements AutoCloseable {
       if ("patch".equals(m.get("type"))) {
         m = new java.util.LinkedHashMap<>(m);
         m.put("sent", m.get("html"));
-        m.put("html", view.apply(m.get("html")));
+        m.put("html", view.apply(m.get("anchor"), "true".equals(m.get("root")), m.get("html")));
       }
       messages.add(m);
       notifyAll();

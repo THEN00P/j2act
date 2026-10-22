@@ -189,6 +189,43 @@ class KeepTest {
     }
   }
 
+  static final class Tally extends ComponentTag {
+    private final State<Integer> count = state(0);
+
+    @Override protected Tag<?> render() {
+      return T.button("tally " + count.get()).onClick(e -> count.set(count.get() + 1));
+    }
+  }
+
+  static final class Panel extends ComponentTag {
+    @Override protected Tag<?> render() {
+      return T.div(new Tally());
+    }
+  }
+
+  static final class Panels extends LiveComponent {
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        new Panel(),
+        T.button("bump").onClick(e -> bump.set(bump.get() + 1))));
+    }
+  }
+
+  @Test
+  void aKeptChildShowsWhatItsOwnChildRenderedSince() {
+    try (Harness h = new Harness(Panels::new)) {
+      h.load();
+      h.connect();
+      h.click(Harness.clickOn(h.html, "tally 0"));
+      java.util.List<java.util.Map<String, String>> patches = h.click(Harness.clickOn(h.html, "bump"));
+      assertTrue(sent(patches).contains("data-j2-unchanged"), sent(patches));
+      assertTrue(patches.get(0).get("html").contains("tally 1"), patches.get(0).get("html"));
+    }
+  }
+
   static final class Dial extends ComponentTag {
     private final ClientTest.Meter meter = client(ClientTest.Meter.class);
     private final Upload export = upload();
