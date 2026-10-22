@@ -175,6 +175,11 @@ final class Unchanged {
       } else if (value instanceof ComponentTag && !outer(fields[i])) {
         // A component handed in: it may have changed in place, and it is only placed if this one renders.
         value = new Mutable();
+      } else if (value instanceof ComponentTag) {
+        // An inner or anonymous component reads the fields of the one around it, so those count as its own.
+        ComponentTag around = (ComponentTag) value;
+        Object[] seen = around.scope == null ? null : fieldValues(around, around.scope.injected);
+        value = seen == null ? new Mutable() : Arrays.asList(seen);
       } else if (injected[i] || value instanceof ComponentTag || value instanceof Store) {
         value = new Same(value);
       } else if (value instanceof Primitive) {

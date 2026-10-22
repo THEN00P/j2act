@@ -430,6 +430,35 @@ class KeepTest {
     }
   }
 
+  static final class Captioned extends LiveComponent {
+    private String caption = "A";
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        new ComponentTag() {
+          @Override protected Tag<?> render() {
+            return T.span("caption " + caption);
+          }
+        },
+        T.button("recaption").onClick(e -> {
+          caption = "B";
+          bump.set(bump.get() + 1);
+        })));
+    }
+  }
+
+  @Test
+  void anAnonymousChildRendersWhenAFieldOfTheComponentAroundItChanged() {
+    try (Harness h = new Harness(Captioned::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "recaption")));
+      assertTrue(sent.contains("caption B"), sent);
+    }
+  }
+
   static final class Picker extends ComponentTag {
     private final State<String> a = state("first");
     private final State<String> b = state("second");
