@@ -824,6 +824,12 @@ class KeepTest {
     final java.util.List<String> labels = new java.util.ArrayList<>();
   }
 
+  enum Looped {
+    A;
+
+    final Looped peer = this;
+  }
+
   @Test
   void enumsAreImmutableOnlyWhenTheirOwnFieldsAre() {
     assertTrue(Unchanged.immutable(Plain.A));
@@ -833,6 +839,7 @@ class KeepTest {
     assertTrue(Unchanged.immutable(java.util.List.of(java.util.List.of(java.util.List.of(java.util.List.of(Plain.A))))));
     assertTrue(Unchanged.immutable(java.util.concurrent.TimeUnit.SECONDS));
     assertTrue(Unchanged.immutable(java.math.RoundingMode.HALF_UP));
+    assertFalse(Unchanged.immutable(Looped.A), "an enum leading back to itself ends at the depth limit");
   }
 
   @Test

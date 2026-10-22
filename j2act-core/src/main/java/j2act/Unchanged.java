@@ -279,7 +279,8 @@ final class Unchanged {
         return true;
       }
       Field[] fields = ENUM_FIELDS.get(type);
-      if (fields == null) {
+      // A field may lead back to this enum, so its fields count toward the depth like a record's.
+      if (fields == null || fields.length > 0 && depth >= 4) {
         return false;
       }
       try {
