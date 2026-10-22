@@ -226,6 +226,56 @@ class KeepTest {
     }
   }
 
+  static final class Label extends ComponentTag {
+    private String text = "a";
+
+    Label withText(String text) {
+      this.text = text;
+      return this;
+    }
+
+    @Override protected Tag<?> render() {
+      return T.span("label " + text);
+    }
+  }
+
+  static final class Frame extends ComponentTag {
+    private final Label label;
+
+    Frame(Label label) {
+      this.label = label;
+    }
+
+    @Override protected Tag<?> render() {
+      return T.div(label);
+    }
+  }
+
+  static final class Framing extends LiveComponent {
+    private final Label label = new Label();
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        new Frame(label),
+        T.button("relabel").onClick(e -> {
+          label.withText("b");
+          bump.set(bump.get() + 1);
+        })));
+    }
+  }
+
+  @Test
+  void aChildHandedAComponentChangedInPlaceRendersIt() {
+    try (Harness h = new Harness(Framing::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "relabel")));
+      assertTrue(sent.contains("label b"), sent);
+    }
+  }
+
   static final class Dial extends ComponentTag {
     private final ClientTest.Meter meter = client(ClientTest.Meter.class);
     private final Upload export = upload();
@@ -351,6 +401,32 @@ class KeepTest {
       h.connect();
       String sent = sent(h.click(Harness.clickOn(h.html, "next")));
       assertTrue(sent.contains("label 2"), sent);
+    }
+  }
+
+  static final class Greeting extends LiveComponent {
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      String greeting = "hello";
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        new ComponentTag() {
+          @Override protected Tag<?> render() {
+            return T.span(greeting);
+          }
+        },
+        T.button("bump").onClick(e -> bump.set(bump.get() + 1))));
+    }
+  }
+
+  @Test
+  void anAnonymousChildWhoseCapturesDidNotChangeIsKept() {
+    try (Harness h = new Harness(Greeting::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "bump")));
+      assertTrue(sent.contains("data-j2-unchanged"), sent);
     }
   }
 

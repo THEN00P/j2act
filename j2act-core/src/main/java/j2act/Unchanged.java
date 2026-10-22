@@ -161,6 +161,7 @@ final class Unchanged {
     if (values == null || injected == null || injected.length != values.length) {
       return null;
     }
+    Field[] fields = FIELDS.get(component.getClass());
     for (int i = 0; i < values.length; i++) {
       Object value = values[i];
       // A client(...) field holds a proxy whose handle is the primitive.
@@ -170,6 +171,9 @@ final class Unchanged {
       }
       if (isClosure(value) && !injected[i]) {
         // As Blazor treats delegates: even the same closure may read something changed in place.
+        value = new Mutable();
+      } else if (value instanceof ComponentTag && !outer(fields[i])) {
+        // A component handed in: it may have changed in place, and it is only placed if this one renders.
         value = new Mutable();
       } else if (injected[i] || value instanceof ComponentTag || value instanceof Store) {
         value = new Same(value);
@@ -326,6 +330,11 @@ final class Unchanged {
       return true;
     }
     return false;
+  }
+
+  /** The field through which an inner or anonymous component reaches the object around it. */
+  private static boolean outer(Field field) {
+    return field.isSynthetic() && field.getName().startsWith("this$");
   }
 
   private static boolean isClosure(Object value) {
