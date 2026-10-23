@@ -30,7 +30,11 @@ final class Unchanged {
   /** Final value types whose instances never change. */
   private static final Set<Class<?>> VALUES = new HashSet<>(Arrays.asList(String.class, Integer.class,
     Long.class, Short.class, Byte.class, Double.class, Float.class, Boolean.class, Character.class,
-    BigDecimal.class, BigInteger.class, UUID.class, URI.class, Locale.class));
+    BigDecimal.class, BigInteger.class, UUID.class, URI.class, Locale.class,
+    // java.time's value types; its enums are enums, a ZoneId's subclasses are not public.
+    java.time.Duration.class, java.time.Instant.class, java.time.LocalDate.class, java.time.LocalDateTime.class,
+    java.time.LocalTime.class, java.time.MonthDay.class, java.time.OffsetDateTime.class, java.time.OffsetTime.class,
+    java.time.Period.class, java.time.Year.class, java.time.YearMonth.class, java.time.ZonedDateTime.class));
 
   /**
    * A field that holds one of the component's own primitives, by creation index: which one it
@@ -257,9 +261,9 @@ final class Unchanged {
   }
 
   /**
-   * Whether value can never change in place: null, a final value type, an enum, a java.time value, or an
-   * Optional, record or List.of, Set.of, Map.of, Collections.empty* or singleton* collection
-   * holding only such values. Unmodifiable views are not: what they show can change underneath.
+   * Whether value can never change in place: null, a final value type (java.time's included), a
+   * zone, an enum, or an Optional, record or List.of, Set.of, Map.of, Collections.empty* or
+   * singleton* collection holding only such values. Unmodifiable views are not: what they show can change underneath.
    */
   static boolean immutable(Object value) {
     return immutable(value, 0);
@@ -271,9 +275,7 @@ final class Unchanged {
     }
     Class<?> type = value.getClass();
     String name = type.getName();
-    // The java.time package holds only immutable values, except a Clock, whose time moves on;
-    // its subpackages also hold builders.
-    if ("java.time".equals(type.getPackageName()) && !(value instanceof java.time.Clock)) {
+    if (value instanceof java.time.ZoneId) {
       return true;
     }
     if (value instanceof Enum) {

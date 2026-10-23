@@ -875,7 +875,11 @@ class KeepTest {
   void javaTimeValuesAreImmutableButClocksAndBuildersAreNot() {
     assertTrue(Unchanged.immutable(java.time.LocalDate.of(2026, 10, 21)));
     assertTrue(Unchanged.immutable(java.time.Duration.ofSeconds(3)));
+    assertTrue(Unchanged.immutable(java.time.ZoneId.of("Europe/Berlin")));
+    assertTrue(Unchanged.immutable(java.time.ZoneOffset.UTC));
+    assertTrue(Unchanged.immutable(java.time.DayOfWeek.MONDAY));
     assertFalse(Unchanged.immutable(java.time.Clock.systemUTC()));
+    assertFalse(Unchanged.immutable(new java.time.DateTimeException("bad date")));
     assertFalse(Unchanged.immutable(new java.time.format.DateTimeFormatterBuilder()));
   }
 
