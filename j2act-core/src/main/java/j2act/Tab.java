@@ -930,9 +930,13 @@ public final class Tab {
           } else {
             keptPatches.remove(scope.anchor);
           }
-          send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope == root ? true : null,
-            "html", renderer.out.toString()));
-          renderer.sent();
+          if (send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope == root ? true : null,
+              "html", renderer.out.toString()))) {
+            renderer.sent();
+          } else {
+            // The client lacks this render, so a parent's later patch must not keep it.
+            keptPatches.remove(scope.anchor);
+          }
           engine.stats.patches.incrementAndGet();
           engine.stats.patchChars.addAndGet(renderer.out.length());
         }
@@ -1166,15 +1170,18 @@ public final class Tab {
     }
   }
 
-  void send(String message) {
+  /** Sends message to the client; false when there is no connection or it failed to take it. */
+  boolean send(String message) {
     Connection c = connection;
     if (c == null) {
-      return;
+      return false;
     }
     try {
       c.send(message);
+      return true;
     } catch (Exception e) {
       engine.log(System.Logger.Level.DEBUG, "send failed", e);
+      return false;
     }
   }
 

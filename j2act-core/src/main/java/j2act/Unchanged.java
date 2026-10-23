@@ -453,7 +453,16 @@ final class Unchanged {
     if (last == null || fresh == null || last.getClass() != fresh.getClass() || depth >= 3 || !isClosure(last)) {
       return false;
     }
-    return sameFields(CAPTURES.get(last.getClass()), last, fresh, lastOwner, freshOwner, depth + 1);
+    Field[] captures = CAPTURES.get(last.getClass());
+    if (last == fresh && captures != null) {
+      // One object read on both sides: a field it can reassign shows only its value as of now.
+      for (Field field : captures) {
+        if (!Modifier.isFinal(field.getModifiers())) {
+          return false;
+        }
+      }
+    }
+    return sameFields(captures, last, fresh, lastOwner, freshOwner, depth + 1);
   }
 
   /** The creation index of one of owner's own primitives (or a client handle's proxy), else null. */

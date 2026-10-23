@@ -168,9 +168,15 @@ final class Harness implements AutoCloseable {
     private final List<Map<String, String>> messages = new ArrayList<>();
     final ClientView view = new ClientView();
     volatile boolean closed;
+    /** The next patch fails to send, as on a broken socket. */
+    volatile boolean failNextPatch;
 
     @Override public synchronized void send(String message) {
       Map<String, String> m = Json.parseFlat(message);
+      if ("patch".equals(m.get("type")) && failNextPatch) {
+        failNextPatch = false;
+        throw new IllegalStateException("the socket broke");
+      }
       if ("patch".equals(m.get("type"))) {
         m = new java.util.LinkedHashMap<>(m);
         m.put("sent", m.get("html"));

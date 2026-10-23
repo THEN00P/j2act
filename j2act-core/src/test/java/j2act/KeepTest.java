@@ -67,6 +67,70 @@ class KeepTest {
     }
   }
 
+  @Test
+  void aRenderWhosePatchFailedToSendIsNotKept() {
+    try (Harness h = new Harness(Parent::new)) {
+      h.load();
+      h.connect();
+      h.conn.failNextPatch = true;
+      h.click(Harness.clickOn(h.html, "note"));
+      String sent = sent(h.click(Harness.clickOn(h.html, "bump")));
+      assertTrue(sent.contains("A n1 0:0"), sent);
+    }
+  }
+
+  static final class Numbered extends ComponentTag {
+    private final QueryState<String> word;
+
+    Numbered(java.util.function.Function<String, String> parse) {
+      word = queryState("w", "none", parse, v -> v);
+    }
+
+    @Override protected Tag<?> render() {
+      return T.span("numbered " + word.get());
+    }
+  }
+
+  static final class Numbering extends LiveComponent {
+    private final State<Integer> bump = state(0);
+    private final java.util.function.Function<String, String> parse;
+    private final Runnable renumber;
+
+    Numbering() {
+      class Suffix implements java.util.function.Function<String, String> {
+        int times = 1;
+
+        @Override public String apply(String s) {
+          return s + times;
+        }
+      }
+      Suffix suffix = new Suffix();
+      parse = suffix;
+      renumber = () -> suffix.times = 2;
+    }
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        new Numbered(parse),
+        T.button("renumber").onClick(e -> {
+          renumber.run();
+          bump.set(bump.get() + 1);
+        })));
+    }
+  }
+
+  @Test
+  void aChildReusingASettingWhoseOwnFieldChangedRenders() {
+    try (Harness h = new Harness(Numbering::new)) {
+      h.load("/?w=x", Exchange.empty());
+      assertTrue(h.html.contains("numbered x1"), h.html);
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "renumber")));
+      assertTrue(sent.contains("numbered x2"), sent);
+    }
+  }
+
   private static String sent(java.util.List<java.util.Map<String, String>> patches) {
     assertEquals(1, patches.size(), String.valueOf(patches));
     return patches.get(0).get("sent");
