@@ -272,7 +272,7 @@ final class Unchanged {
 
   /**
    * Whether value can never change in place: null, a final value type (java.time's included), a
-   * zone, an enum, or an Optional, record or List.of, Set.of, Map.of, Collections.empty* or
+   * zone or path, an enum, or an Optional, record or List.of, Set.of, Map.of, Collections.empty* or
    * singleton* collection holding only such values. Unmodifiable views are not: what they show can change underneath.
    */
   static boolean immutable(Object value) {
@@ -285,7 +285,7 @@ final class Unchanged {
     }
     Class<?> type = value.getClass();
     String name = type.getName();
-    if (value instanceof java.time.ZoneId) {
+    if (value instanceof java.time.ZoneId || value instanceof java.nio.file.Path) {
       return true;
     }
     if (value instanceof Enum) {
@@ -401,8 +401,9 @@ final class Unchanged {
   }
 
   /**
-   * A primitive's own settings compare with equals(); what its lambdas captured compares as plain
-   * fields do, so a captured value that may change in place counts as changed.
+   * A primitive's settings and what its lambdas captured compare as plain fields do: equals() for
+   * values that cannot change in place, captures for a lambda even when it is the same object, so
+   * a value that may have changed in place counts as changed.
    */
   private static boolean same(Object last, Object fresh, ComponentTag lastOwner, ComponentTag freshOwner, int depth) {
     if (last == lastOwner && fresh == freshOwner) {
@@ -413,14 +414,24 @@ final class Unchanged {
     if (a != null || b != null) {
       return Objects.equals(a, b);
     }
-    if (depth > 0) {
-      if (last instanceof Cell || last instanceof Store || last instanceof ComponentTag || last instanceof Primitive) {
-        return last == fresh;
+    if (last instanceof Cell || last instanceof Store || last instanceof ComponentTag || last instanceof Primitive) {
+      return last == fresh;
+    }
+    if (immutable(last) && immutable(fresh)) {
+      return Objects.equals(last, fresh);
+    }
+    if (last instanceof List && fresh instanceof List && last != fresh && depth < 3) {
+      // A list each primitive's builders fill, such as accepted types or the keys a mutation invalidates.
+      List<?> lastItems = (List<?>) last;
+      List<?> freshItems = (List<?>) fresh;
+      if (lastItems.size() != freshItems.size()) {
+        return false;
       }
-      if (immutable(last) && immutable(fresh)) {
-        return Objects.equals(last, fresh);
+      for (int i = 0; i < lastItems.size(); i++) {
+        if (!same(lastItems.get(i), freshItems.get(i), lastOwner, freshOwner, depth + 1)) {
+          return false;
+        }
       }
-    } else if (Objects.equals(last, fresh)) {
       return true;
     }
     if (last == null || fresh == null || last.getClass() != fresh.getClass() || depth >= 3 || !isClosure(last)) {

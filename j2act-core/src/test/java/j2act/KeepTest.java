@@ -713,6 +713,45 @@ class KeepTest {
     }
   }
 
+  static final class Mapped extends ComponentTag {
+    private final QueryState<String> word;
+
+    Mapped(java.util.function.Function<String, String> parse) {
+      word = queryState("w", "none", parse, v -> v);
+    }
+
+    @Override protected Tag<?> render() {
+      return T.span("word " + word.get());
+    }
+  }
+
+  static final class Mapping extends LiveComponent {
+    private final java.util.Map<String, String> words = new java.util.HashMap<>(java.util.Map.of("x", "one"));
+    private final java.util.function.Function<String, String> parse = words::get;
+    private final State<Integer> bump = state(0);
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        T.span("bump " + bump.get()),
+        new Mapped(parse),
+        T.button("remap").onClick(e -> {
+          words.put("x", "two");
+          bump.set(bump.get() + 1);
+        })));
+    }
+  }
+
+  @Test
+  void aChildReusingAParserThatCapturedAChangedValueRenders() {
+    try (Harness h = new Harness(Mapping::new)) {
+      h.load("/?w=x", Exchange.empty());
+      assertTrue(h.html.contains("word one"), h.html);
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "remap")));
+      assertTrue(sent.contains("word two"), sent);
+    }
+  }
+
   static java.util.concurrent.CountDownLatch gate;
 
   static final class Leaf extends ComponentTag {
