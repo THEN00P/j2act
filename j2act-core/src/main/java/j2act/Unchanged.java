@@ -182,7 +182,7 @@ final class Unchanged {
       } else if (value instanceof ComponentTag) {
         // An inner or anonymous component reads the fields of the one around it, so those count as its own.
         ComponentTag around = (ComponentTag) value;
-        Object[] seen = around.scope == null ? null : fieldValues(around, around.scope.injected);
+        Object[] seen = around.scope == null || mutableInputs(around) ? null : fieldValues(around, around.scope.injected);
         value = seen == null ? new Mutable() : Arrays.asList(seen);
       } else if (injected[i] || value instanceof ComponentTag || value instanceof Store) {
         value = new Same(value);
@@ -239,13 +239,8 @@ final class Unchanged {
         }
       }
     } else {
-      // A held object's builders wrote its Prop cells, where a value changed in place looks equal;
-      // its query states render their default while the parameter is absent.
-      for (Primitive primitive : component.primitives) {
-        if (primitive instanceof Prop && primitive.cell != null && !immutable(primitive.cell.peek())
-            || primitive instanceof QueryState && !immutable(((QueryState<?>) primitive).initial())) {
-          return false;
-        }
+      if (mutableInputs(component)) {
+        return false;
       }
     }
     Object[] now = fieldValues(component, injected);
@@ -258,6 +253,21 @@ final class Unchanged {
       }
     }
     return true;
+  }
+
+  /**
+   * Whether a bound object's own primitives hold a value that may have changed in place: its
+   * builders wrote its Prop cells, where such a value looks equal, and its query states render
+   * their default while the parameter is absent.
+   */
+  private static boolean mutableInputs(ComponentTag component) {
+    for (Primitive primitive : component.primitives) {
+      if (primitive instanceof Prop && primitive.cell != null && !immutable(primitive.cell.peek())
+          || primitive instanceof QueryState && !immutable(((QueryState<?>) primitive).initial())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -307,8 +317,9 @@ final class Unchanged {
     if (value instanceof Optional) {
       return immutable(((Optional<?>) value).orElse(null), depth + 1);
     }
-    if (name.startsWith("java.util.ImmutableCollections$") || name.startsWith("java.util.Collections$Empty")
-        || name.startsWith("java.util.Collections$Singleton")) {
+    // The same prefixes name their iterators, which are neither.
+    if ((value instanceof Iterable || value instanceof Map) && (name.startsWith("java.util.ImmutableCollections$")
+        || name.startsWith("java.util.Collections$Empty") || name.startsWith("java.util.Collections$Singleton"))) {
       Iterable<?> items = value instanceof Map ? ((Map<?, ?>) value).entrySet() : (Iterable<?>) value;
       for (Object item : items) {
         boolean ok = item instanceof Map.Entry

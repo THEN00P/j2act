@@ -459,6 +459,48 @@ class KeepTest {
     }
   }
 
+  static final class Tagged extends ComponentTag {
+    private final Prop<java.util.List<String>> tags = prop(java.util.List.of());
+    private final State<Integer> bump = state(0);
+
+    Tagged withTags(java.util.List<String> value) {
+      tags.set(value);
+      return this;
+    }
+
+    @Override protected Tag<?> render() {
+      return T.div(
+        T.span("bump " + bump.get()),
+        new ComponentTag() {
+          @Override protected Tag<?> render() {
+            return T.span("tags " + tags.get());
+          }
+        },
+        T.button("tag").onClick(e -> {
+          tags.get().add("b");
+          bump.set(bump.get() + 1);
+        }));
+    }
+  }
+
+  static final class Tagging extends LiveComponent {
+    private final java.util.List<String> tags = new java.util.ArrayList<>(java.util.List.of("a"));
+
+    @Override public Tag<?> render() {
+      return T.page("t", new Tagged().withTags(tags));
+    }
+  }
+
+  @Test
+  void anInnerChildRendersWhenTheEnclosingPropChangedInPlace() {
+    try (Harness h = new Harness(Tagging::new)) {
+      h.load();
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "tag")));
+      assertTrue(sent.contains("tags [a, b]"), sent);
+    }
+  }
+
   static final class Picker extends ComponentTag {
     private final State<String> a = state("first");
     private final State<String> b = state("second");
@@ -880,6 +922,13 @@ class KeepTest {
     assertTrue(Unchanged.immutable(java.time.DayOfWeek.MONDAY));
     assertFalse(Unchanged.immutable(java.time.Clock.systemUTC()));
     assertFalse(Unchanged.immutable(new java.time.DateTimeException("bad date")));
+  }
+
+  @Test
+  void iteratorsOfImmutableCollectionsAreNotCollections() {
+    assertFalse(Unchanged.immutable(java.util.List.of("a").iterator()));
+    assertFalse(Unchanged.immutable(java.util.Collections.emptyIterator()));
+    assertTrue(Unchanged.immutable(java.util.Collections.emptyList()));
     assertFalse(Unchanged.immutable(new java.time.format.DateTimeFormatterBuilder()));
   }
 
