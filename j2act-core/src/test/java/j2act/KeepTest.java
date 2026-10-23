@@ -882,6 +882,38 @@ class KeepTest {
     }
   }
 
+  @Test
+  void resyncsStayWithinTheQueueBound() throws Exception {
+    try (Harness h = new Harness(Parent::new, b -> b.withMaxQueuedEvents(2))) {
+      h.load();
+      h.connect();
+      Tab tab = h.engine.tab(h.sid);
+      java.util.concurrent.CountDownLatch busy = new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+      tab.post(() -> {
+        busy.countDown();
+        try {
+          release.await();
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+      });
+      try {
+        busy.await();
+        for (int i = 0; i < 5; i++) {
+          tab.keptPatches.add("k" + i);
+        }
+        for (int i = 0; i < 5; i++) {
+          h.send("type", "resync", "anchor", "k" + i);
+        }
+        assertEquals(2, tab.lane.backlog(), "only as many resyncs as the queue holds");
+        assertEquals(3, tab.keptPatches.size(), "the rest keep their allowance");
+      } finally {
+        release.countDown();
+      }
+    }
+  }
+
   static final class Dated extends ComponentTag {
     private java.time.format.DateTimeFormatterBuilder builder;
 
