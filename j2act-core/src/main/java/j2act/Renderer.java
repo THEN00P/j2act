@@ -22,6 +22,16 @@ final class Renderer {
   /** Queries created under each open loading and error boundary, nearest on top (ADR 0007). */
   private final Deque<List<QueryCell>> loadingOwners = new ArrayDeque<>();
   private final Deque<List<QueryCell>> errorOwners = new ArrayDeque<>();
+  /**
+   * Whether an unchanged child may be kept rather than rendered (ADR 0031): only when the output
+   * goes to the client as a patch, so the kept element is the one the client already shows.
+   */
+  boolean keeping;
+  /** Inside a pending template or a client element's slot, whose elements the client may not have in place. */
+  private int noKeep;
+  /** Scopes rendered and kept by this pass, minus those a boundary's replacement dropped. */
+  private final List<Scope> rendered = new ArrayList<>();
+  private final List<Scope> kept = new ArrayList<>();
 
   Renderer(Tab tab, long epoch) {
     this.tab = tab;
@@ -36,6 +46,10 @@ final class Renderer {
     scope.renderedEpoch = epoch;
     tab.dirty.remove(scope);
     scope.dirty = false;
+    scope.synced = false;
+    rendered.add(scope);
+    int renderedMark = rendered.size();
+    int keptMark = kept.size();
     scope.unsubscribeAll();
     tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
@@ -74,16 +88,8 @@ final class Renderer {
       Tracking.swap(previous);
     }
     scope.activatePending();
-    for (Cell cell : scope.cells) {
-      if (cell instanceof QueryCell) {
-        if (!loadingOwners.isEmpty()) {
-          loadingOwners.peek().add((QueryCell) cell);
-        }
-        if (!errorOwners.isEmpty()) {
-          errorOwners.peek().add((QueryCell) cell);
-        }
-      }
-    }
+    scope.fieldValues = Unchanged.fieldValues(scope.instance, scope.injected);
+    ownQueries(scope);
     emit(scope, root);
 
     List<QueryCell> loadingOwned = loadingBoundary ? loadingOwners.pop() : null;
@@ -110,6 +116,12 @@ final class Renderer {
     if (replacement != null) {
       // The subtree stays mounted so its queries keep running; only its markup is swapped.
       out.setLength(start);
+      // What was rendered or kept under it never reaches the client.
+      rendered.subList(renderedMark, rendered.size()).clear();
+      for (Scope dropped : kept.subList(keptMark, kept.size())) {
+        dropped.unsync();
+      }
+      kept.subList(keptMark, kept.size()).clear();
       emit(scope, replacement);
       for (QueryCell query : watched) {
         query.observers.add(scope);
@@ -131,15 +143,46 @@ final class Renderer {
     scope.previousChildren = new java.util.LinkedHashMap<>();
   }
 
+  /** Offers the scope's queries to the open loading and error boundaries. */
+  private void ownQueries(Scope scope) {
+    for (Cell cell : scope.cells) {
+      if (cell instanceof QueryCell) {
+        if (!loadingOwners.isEmpty()) {
+          loadingOwners.peek().add((QueryCell) cell);
+        }
+        if (!errorOwners.isEmpty()) {
+          errorOwners.peek().add((QueryCell) cell);
+        }
+      }
+    }
+  }
+
   private void emit(Scope scope, Tag<?> root) {
     if ("html".equals(root.name) && root instanceof ContainerTag) {
       if (scope == tab.root) {
+        scope.rootName = "html";
         renderDocument(scope, (ContainerTag<?>) root);
       } else {
+        scope.rootName = "div";
+        scope.rootVoid = false;
         renderOutlet(scope, (ContainerTag<?>) root);
       }
     } else {
+      scope.rootName = root.name;
+      scope.rootVoid = root.isVoid();
       renderTag(scope, "", root, scope.anchor);
+    }
+  }
+
+  /** Whether this pass kept a child, so its patch holds a placeholder the client fills in. */
+  boolean keptAny() {
+    return !kept.isEmpty();
+  }
+
+  /** After the patch went out: what this pass rendered is what the client shows (ADR 0031). */
+  void sent() {
+    for (Scope scope : rendered) {
+      scope.synced = true;
     }
   }
 
@@ -264,6 +307,7 @@ final class Renderer {
       return;
     }
     if (client != null) {
+      noKeep++;
       for (Clients.Slot slot : client.slots) {
         out.append("<div");
         attribute("data-j2-slot", slot.id);
@@ -272,13 +316,23 @@ final class Renderer {
         renderNode(scope, path + "/slot:" + slot.name, slot.content, false);
         out.append("</div>");
       }
+      noKeep--;
     }
     if (tag.pending != null) {
+      noKeep++;
       out.append("<template data-j2-pending>");
       renderNode(scope, path + "/pending", tag.pending, false);
       out.append("</template>");
+      noKeep--;
+    }
+    boolean template = "template".equals(tag.name);
+    if (template) {
+      noKeep++;
     }
     renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(tag.name));
+    if (template) {
+      noKeep--;
+    }
     out.append("</").append(tag.name).append('>');
   }
 
@@ -318,12 +372,14 @@ final class Renderer {
   private void place(Scope parent, String path, ComponentTag component) {
     Scope child;
     String local = path + "@" + component.getClass().getName();
+    boolean keep;
     if (component.scope != null) {
       child = component.scope;
       if (child.parent == parent && child.localPath == null) {
         // An adopted preloaded page (ADR 0011): its slot is where it renders now.
         child.localPath = local;
       }
+      keep = keepable() && Unchanged.check(child, component, child.injected);
     } else {
       String address = parent.address + local;
       if (parent.children.containsKey(address)) {
@@ -337,10 +393,70 @@ final class Renderer {
         child = new Scope(tab, parent, address);
       }
       child.localPath = local;
-      child.bind(component);
+      boolean[] injected = Unchanged.inject(tab.engine.injector, component);
+      // An unchanged fresh description is dropped unbound; the object that rendered last stays (ADR 0031).
+      keep = keepable() && Unchanged.check(child, component, injected);
+      if (!keep) {
+        child.bindInjected(component, injected);
+      }
     }
     parent.children.put(child.address, child);
-    renderScope(child);
+    if (keep) {
+      keep(child);
+    } else {
+      renderScope(child);
+    }
+  }
+
+  private boolean keepable() {
+    return keeping && noKeep == 0;
+  }
+
+  /**
+   * Leaves an unchanged child as the client shows it: an empty element of its root's tag stands
+   * in for it, which the client replaces with the element it has (ADR 0031). Its handlers, heads
+   * and children stay as they are.
+   */
+  private void keep(Scope child) {
+    if (child.renderedEpoch == epoch) {
+      throw new IllegalStateException("one component object was rendered twice in the same pass: "
+        + child.instance.getClass().getName());
+    }
+    child.renderedEpoch = epoch;
+    offerQueries(child, true, true);
+    kept.add(child);
+    out.append('<').append(child.rootName);
+    attribute("data-j2-unchanged", child.anchor);
+    out.append('>');
+    if (!child.rootVoid) {
+      out.append("</").append(child.rootName).append('>');
+    }
+  }
+
+  /**
+   * A kept subtree's queries still count for the boundaries around it, up to a boundary inside it,
+   * which owns its own and its descendants' queries, as when it renders.
+   */
+  private void offerQueries(Scope scope, boolean loading, boolean error) {
+    Class<?> type = scope.instance.getClass();
+    loading &= !Boundaries.isLoading(type) && !loadingOwners.isEmpty();
+    error &= !Boundaries.isError(type) && !errorOwners.isEmpty();
+    if (!loading && !error) {
+      return;
+    }
+    for (Cell cell : scope.cells) {
+      if (cell instanceof QueryCell) {
+        if (loading) {
+          loadingOwners.peek().add((QueryCell) cell);
+        }
+        if (error) {
+          errorOwners.peek().add((QueryCell) cell);
+        }
+      }
+    }
+    for (Scope child : scope.children.values()) {
+      offerQueries(child, loading, error);
+    }
   }
 
   private static Object keyOf(DomContent node) {

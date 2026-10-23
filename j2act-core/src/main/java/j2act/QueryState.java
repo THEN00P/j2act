@@ -34,6 +34,11 @@ public final class QueryState<T> extends Primitive implements Supplier<T> {
     this.format = Objects.requireNonNull(format, "format");
   }
 
+  /** The value read when the parameter is absent. */
+  T initial() {
+    return initial;
+  }
+
   /** The parsing for initial's type: String, Integer, Long, Double, Boolean or an enum. */
   @SuppressWarnings({"unchecked", "rawtypes"})
   static <T> QueryState<T> of(String name, T initial) {

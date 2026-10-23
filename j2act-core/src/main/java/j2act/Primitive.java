@@ -16,6 +16,15 @@ abstract class Primitive {
   /** Whether an existing cell at this index is of this primitive's kind. */
   abstract boolean accepts(Cell cell);
 
+  /**
+   * Whether this object holds code or settings beyond its cell, such as a query's loader or a
+   * query state's parameter name, which a kept child's last object would go on using instead of
+   * a fresh description's (ADR 0031). Only a handle whose cell is all that matters once it exists says no.
+   */
+  boolean carriesSettings() {
+    return true;
+  }
+
   /** Binds this handle to an existing or freshly created cell. Lane-only. */
   abstract void attach(Cell cell, boolean created);
 

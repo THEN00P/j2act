@@ -59,6 +59,7 @@ final class Harness implements AutoCloseable {
       fail("expected a page for " + url + " but got " + result.status() + " " + result.location());
     }
     html = result.html();
+    conn.view.reset(html);
     sid = find(html, "name=\"j2-tab\" content=\"([^\"]+)\"");
     token = find(html, "name=\"j2-token\" content=\"([^\"]+)\"");
     return html;
@@ -156,15 +157,32 @@ final class Harness implements AutoCloseable {
   @Override public void close() {
     engine.close();
     pool.shutdownNow();
+    assertTrue(conn.view.missing.isEmpty(), "patches kept elements the page never had: " + conn.view.missing);
   }
 
-  /** Records every message the server sends. */
+  /**
+   * Records every message the server sends. A patch's "html" is what the page shows after it,
+   * with kept children filled in as the browser does; "sent" is the patch as sent (ADR 0031).
+   */
   static final class FakeConnection implements Connection {
     private final List<Map<String, String>> messages = new ArrayList<>();
+    final ClientView view = new ClientView();
     volatile boolean closed;
+    /** The next patch fails to send, as on a broken socket. */
+    volatile boolean failNextPatch;
 
     @Override public synchronized void send(String message) {
-      messages.add(Json.parseFlat(message));
+      Map<String, String> m = Json.parseFlat(message);
+      if ("patch".equals(m.get("type")) && failNextPatch) {
+        failNextPatch = false;
+        throw new IllegalStateException("the socket broke");
+      }
+      if ("patch".equals(m.get("type"))) {
+        m = new java.util.LinkedHashMap<>(m);
+        m.put("sent", m.get("html"));
+        m.put("html", view.apply(m.get("anchor"), "true".equals(m.get("root")), m.get("html")));
+      }
+      messages.add(m);
       notifyAll();
     }
 

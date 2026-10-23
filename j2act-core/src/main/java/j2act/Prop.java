@@ -35,7 +35,8 @@ public final class Prop<T> extends Primitive implements Supplier<T> {
     }
   }
 
-  private T described() {
+  /** The value a fresh object was described with: the builder's, else the default. */
+  T described() {
     return hasPending ? pending : fallback;
   }
 

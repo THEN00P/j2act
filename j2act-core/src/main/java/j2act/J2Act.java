@@ -900,6 +900,13 @@ public final class J2Act implements AutoCloseable {
       tab.post(() -> tab.clients.onError(message));
     } else if ("liveGone".equals(type)) {
       tab.post(() -> tab.clients.onLiveGone(message.get("anchor")));
+    } else if ("resync".equals(type)) {
+      // Recovery from a patch the page could not apply, so neither rate limited nor dropped: the tab
+      // honors it once per patch of ours that kept a child and renders all it accepted in one task.
+      String anchor = message.get("anchor");
+      if (anchor != null) {
+        tab.requestResync(anchor);
+      }
     } else if ("preload".equals(type)) {
       String target = appUrl(message.get("url"));
       if (target != null && admit(tab, connection)) {
@@ -1312,6 +1319,10 @@ public final class J2Act implements AutoCloseable {
     public final AtomicLong committedRuns = new AtomicLong();
     public final AtomicLong supersededRuns = new AtomicLong();
     public final AtomicLong patches = new AtomicLong();
+    /** Characters of patch HTML sent, unchanged children counted as their placeholders (ADR 0031). */
+    public final AtomicLong patchChars = new AtomicLong();
+    /** Patches the client could not apply because a kept element was missing, rendered again in full. */
+    public final AtomicLong resyncs = new AtomicLong();
     public final AtomicLong rejectedEvents = new AtomicLong();
     public final AtomicLong failedTasks = new AtomicLong();
     public final AtomicLong rateLimited = new AtomicLong();

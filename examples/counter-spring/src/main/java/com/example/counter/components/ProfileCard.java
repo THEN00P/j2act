@@ -32,7 +32,8 @@ public final class ProfileCard extends ComponentTag {
       profile.isPending()
         ? p("Loading profile…")
         : p(profile.get()),
-      small("directory calls so far: " + directory.calls())
+      // Not tracked, so it is current only because each profile load re-renders this card (ADR 0031).
+      small("profile loads so far: " + directory.profileCalls())
     ).withClass("card");
   }
 }

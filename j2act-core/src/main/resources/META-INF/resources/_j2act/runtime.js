@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-3817f5ef490819b98a9529391bdaa5b40343ccf00124a614a2de76d55923a9e2 */
+* sources: sha256-0d0d91ee6e35e5e302524e907b00b2425e10daf6e20fe9014256318548d43ef2 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1617,6 +1617,71 @@
 	* element's node and children (ADR 0022), and what the runtime added to the head.
 	*/
 	function createMorpher(pending, syncClient) {
+		/** Copies standing in for kept elements, and the live element each copies. */
+		const kept = /* @__PURE__ */ new WeakMap();
+		/**
+		* The live element under root of each unchanged child in fresh (ADR 0031), or null when one is
+		* missing there: one client code moved elsewhere would otherwise be copied, and the page would
+		* show two elements for one component.
+		*/
+		function keptElements(root, fresh) {
+			const found = [];
+			for (const stub of Array.from(fresh.querySelectorAll("[data-j2-unchanged]"))) {
+				const live = root.querySelector("[data-j2-scope=\"" + stub.getAttribute("data-j2-unchanged") + "\"]");
+				if (!live) return null;
+				found.push([stub, live]);
+			}
+			return found;
+		}
+		/**
+		* An unchanged child arrives as an empty element marked data-j2-unchanged: a copy of the element
+		* the page shows for it takes its place, so the morph leaves that element as it is.
+		*/
+		function keep(found) {
+			for (const [stub, live] of found) {
+				const copy = live.cloneNode(true);
+				kept.set(copy, live);
+				stub.replaceWith(copy);
+			}
+		}
+		/**
+		* Idiomorph matches elements by id alone, so a component that moved would get another one's
+		* content morphed into its node, and the user's input and focus with it. Each component in fresh
+		* and its live element under root get a shared temporary id, so Idiomorph moves the node instead.
+		* Returns what untag needs after the morph: each anchor, the id its render gave it and its temporary id.
+		*/
+		function pair(root, fresh) {
+			const tagged = [];
+			const prefix = "j2k" + Math.random().toString(36).slice(2, 10) + "-";
+			for (const el of Array.from(fresh.querySelectorAll("[data-j2-scope],[data-j2-unchanged]"))) {
+				const anchor = el.getAttribute("data-j2-scope") ?? el.getAttribute("data-j2-unchanged");
+				const live = root.querySelector("[data-j2-scope=\"" + anchor + "\"]");
+				if (!live) continue;
+				const authored = el.hasAttribute("data-j2-unchanged") ? live.id : el.id;
+				if (authored && authored === live.id) continue;
+				el.id = live.id = prefix + anchor;
+				tagged.push([
+					anchor,
+					authored,
+					el.id
+				]);
+			}
+			return tagged;
+		}
+		/**
+		* Gives each paired component its authored id back. Looked up by its temporary id, which nothing
+		* else on the page has: a component whose root tag changed was replaced rather than moved, and the
+		* fresh element now carries it.
+		*/
+		function untag(tagged) {
+			for (const [, authored, temporary] of tagged) {
+				const el = document.getElementById(temporary);
+				if (el) {
+					if (authored) el.id = authored;
+					else el.removeAttribute("id");
+				}
+			}
+		}
 		const callbacks = {
 			beforeAttributeUpdated: (name, el) => {
 				if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) return false;
@@ -1624,6 +1689,7 @@
 				return true;
 			},
 			beforeNodeMorphed: (oldNode, newNode) => {
+				if (kept.get(newNode) === oldNode) return false;
 				if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.hasAttribute("data-j2-client") && oldNode.getAttribute("data-j2-client") === newNode.getAttribute("data-j2-client")) {
 					syncClient(oldNode, newNode);
 					return false;
@@ -1655,21 +1721,34 @@
 			head,
 			body,
 			/**
-			* Morphs the component at anchor; false when it is not in the document. The tab root may
-			* be a new component after a navigation, with a new anchor, so it replaces head and body.
+			* Morphs the component at anchor. The tab root may be a new component after a navigation,
+			* with a new anchor, so it replaces head and body.
 			*/
 			patch(anchor, html, isRoot) {
 				if (isRoot) {
 					const doc = new DOMParser().parseFromString(html, "text/html");
+					const found = keptElements(document.body, doc.body);
+					if (!found) return "resync";
+					const tagged = pair(document.body, doc.body);
+					keep(found);
 					document.documentElement.setAttribute("data-j2-scope", anchor);
 					head(doc.head.innerHTML);
 					body(doc.body);
-					return true;
+					untag(tagged);
+					return "applied";
 				}
 				const el = document.querySelector("[data-j2-scope=\"" + anchor + "\"]");
-				if (!el) return false;
-				Idiomorph.morph(el, html, config);
-				return true;
+				if (!el) return "gone";
+				const template = document.createElement("template");
+				template.innerHTML = html;
+				const found = keptElements(el, template.content);
+				if (!found) return "resync";
+				const tagged = pair(el, template.content);
+				keep(found);
+				const fresh = template.content.firstElementChild;
+				if (fresh) Idiomorph.morph(el, fresh, config);
+				untag(tagged);
+				return "applied";
 			},
 			slot(live, html) {
 				Idiomorph.morph(live, html, slotConfig);
@@ -2199,7 +2278,12 @@
 				retained.connected();
 			},
 			patch: (m) => {
-				if (!morpher.patch(m.anchor, m.html, m.root === true)) clients.anchorGone(m.anchor);
+				const result = morpher.patch(m.anchor, m.html, m.root === true);
+				if (result === "gone") clients.anchorGone(m.anchor);
+				else if (result === "resync") send({
+					type: "resync",
+					anchor: m.anchor
+				});
 				clients.scan();
 			},
 			head: (m) => morpher.head(m.html),

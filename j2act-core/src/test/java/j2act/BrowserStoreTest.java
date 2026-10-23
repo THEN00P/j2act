@@ -161,8 +161,12 @@ class BrowserStoreTest {
   }
 
   static Harness harness(java.util.function.Supplier<? extends LiveComponent> page) {
+    return harness(page, Duration.ofMillis(150));
+  }
+
+  static Harness harness(java.util.function.Supplier<? extends LiveComponent> page, Duration grace) {
     return new Harness(page, b -> b
-      .withReconnectGrace(Duration.ofMillis(150))
+      .withReconnectGrace(grace)
       .withIdentity(ex -> ex.cookie("user").map(u -> AuthCtx.of(u, Collections.emptySet())).orElse(AuthCtx.anonymous())));
   }
 
@@ -245,7 +249,8 @@ class BrowserStoreTest {
 
   @Test
   void aReloadInsideTheGraceWindowKeepsPlainBrowserState() {
-    try (Harness h = harness(PlayerPage::new)) {
+    // A grace window no slow runner can overshoot between the goodbye and the reload.
+    try (Harness h = harness(PlayerPage::new, Duration.ofSeconds(5))) {
       Page first = new Page(h.engine, "/", Exchange.empty());
       String cookie = cookieValue(first.result.setCookies());
       first.connect();

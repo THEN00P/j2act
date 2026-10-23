@@ -80,6 +80,11 @@ public final class Tab {
   private String heldUrl;
   private Scope heldScope;
   /** Scopes rendered but not sent during a hold; all re-render when it ends. */
+  /** Anchors whose latest patch kept a child: the only patches a client may ask to resync, once each (ADR 0031). */
+  final Set<String> keptPatches = java.util.concurrent.ConcurrentHashMap.newKeySet();
+  /** Anchors whose resync was accepted and not rendered yet; one lane task renders them all. */
+  final Set<String> pendingResyncs = java.util.concurrent.ConcurrentHashMap.newKeySet();
+  private final java.util.concurrent.atomic.AtomicBoolean resyncQueued = new java.util.concurrent.atomic.AtomicBoolean();
   private final Set<Scope> heldRenders = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
 
   /** A notFound()/redirect() raised before the socket attached, for the SSR loop to act on. */
@@ -87,6 +92,8 @@ public final class Tab {
 
   Scope root;
   volatile Connection connection;
+  /** A socket was attached before, so the page may have missed patches sent into it. */
+  private boolean attachedBefore;
   volatile long lastActivity;
   volatile long disconnectedAt;
   volatile boolean disposed;
@@ -799,6 +806,8 @@ public final class Tab {
       onRouteException(e);
       return null;
     }
+    // The served page is what the client shows when it connects; the last pass is the one served.
+    renderer.sent();
     runEffects();
     lastHead = mergedHead();
     return "<!DOCTYPE html>" + renderer.out;
@@ -905,6 +914,7 @@ public final class Tab {
           continue;
         }
         Renderer renderer = new Renderer(this, passEpoch);
+        renderer.keeping = sending;
         try {
           renderer.renderScope(scope);
         } catch (RouteException e) {
@@ -914,9 +924,21 @@ public final class Tab {
         if (!sending) {
           heldRenders.add(scope);
         } else {
-          send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope == root ? true : null,
-            "html", renderer.out.toString()));
+          // Recorded before the patch goes out, so the client's resync for it cannot arrive first.
+          if (renderer.keptAny()) {
+            keptPatches.add(scope.anchor);
+          } else {
+            keptPatches.remove(scope.anchor);
+          }
+          if (send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope == root ? true : null,
+              "html", renderer.out.toString()))) {
+            renderer.sent();
+          } else {
+            // The client lacks this render, so a parent's later patch must not keep it.
+            keptPatches.remove(scope.anchor);
+          }
           engine.stats.patches.incrementAndGet();
+          engine.stats.patchChars.addAndGet(renderer.out.length());
         }
       }
       runEffects();
@@ -929,6 +951,45 @@ public final class Tab {
       lastHead = head;
       send(Json.object("type", "head", "html", head));
     }
+  }
+
+  /**
+   * Socket thread. Accepts a client's resync once per patch of ours that kept a child (ADR 0031).
+   * However many arrive, at most one task for them waits on the lane, so they neither crowd it nor
+   * get dropped at its bound.
+   */
+  void requestResync(String anchor) {
+    if (!keptPatches.remove(anchor)) {
+      return; // no patch of ours to recover, or recovered already
+    }
+    pendingResyncs.add(anchor);
+    if (resyncQueued.compareAndSet(false, true)) {
+      post(() -> {
+        resyncQueued.set(false);
+        for (Iterator<String> it = pendingResyncs.iterator(); it.hasNext(); ) {
+          String next = it.next();
+          it.remove();
+          resync(next);
+        }
+      });
+    }
+  }
+
+  /**
+   * Lane-only. The client could not find the element a patch kept at anchor (ADR 0031): render
+   * the patched scope again in full. Expected only when client code removed a component's element.
+   */
+  void resync(String anchor) {
+    Scope scope = root == null ? null : root.find(anchor);
+    if (scope == null || scope.disposed) {
+      return;
+    }
+    engine.stats.resyncs.incrementAndGet();
+    engine.log(System.Logger.Level.DEBUG, "the client lacks an element kept in the patch of "
+      + scope.instance.getClass().getName() + "; rendering it in full", null);
+    scope.unsync();
+    // The task flushes after rendering every pending resync, so a burst of them renders together.
+    markDirty(scope);
   }
 
   /** A detached scope (an action's live argument) is its own root: its owner's render never includes it. */
@@ -1093,6 +1154,11 @@ public final class Tab {
     }
     connection = next;
     disconnectedAt = 0;
+    // Patches sent into an earlier socket may never have arrived: render in full until the client has ours (ADR 0031).
+    if (attachedBefore && root != null) {
+      root.unsync();
+    }
+    attachedBefore = true;
     lastActivity = engine.clock.millis();
     send(Json.object("type", "ready"));
   }
@@ -1104,15 +1170,18 @@ public final class Tab {
     }
   }
 
-  void send(String message) {
+  /** Sends message to the client; false when there is no connection or it failed to take it. */
+  boolean send(String message) {
     Connection c = connection;
     if (c == null) {
-      return;
+      return false;
     }
     try {
       c.send(message);
+      return true;
     } catch (Exception e) {
       engine.log(System.Logger.Level.DEBUG, "send failed", e);
+      return false;
     }
   }
 

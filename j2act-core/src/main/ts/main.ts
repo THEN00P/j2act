@@ -58,8 +58,11 @@ function start(): void {
       retained.connected();
     },
     patch: (m) => {
-      if (!morpher.patch(m.anchor, m.html, m.root === true)) {
+      const result = morpher.patch(m.anchor, m.html, m.root === true);
+      if (result === "gone") {
         clients.anchorGone(m.anchor);
+      } else if (result === "resync") {
+        send({ type: "resync", anchor: m.anchor });
       }
       clients.scan();
     },
