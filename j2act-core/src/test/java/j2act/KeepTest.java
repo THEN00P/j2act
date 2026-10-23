@@ -379,6 +379,43 @@ class KeepTest {
     }
   }
 
+  static final class InnerParam extends ComponentTag {
+    private final QueryState<String> value;
+
+    InnerParam(String name) {
+      value = queryState(name, "-");
+    }
+
+    @Override protected Tag<?> render() {
+      return T.div(new ComponentTag() {
+        @Override protected Tag<?> render() {
+          return T.span("inner param " + value.get());
+        }
+      });
+    }
+  }
+
+  static final class InnerParams extends LiveComponent {
+    private final State<String> name = state("a");
+
+    @Override public Tag<?> render() {
+      return T.page("t", T.div(
+        new InnerParam(name.get()),
+        T.button("switch").onClick(e -> name.set("b"))));
+    }
+  }
+
+  @Test
+  void anInnerChildRendersWhenTheEnclosingQueryStateNamesAnotherParameter() {
+    try (Harness h = new Harness(InnerParams::new)) {
+      h.load("/?a=1&b=2", Exchange.empty());
+      assertTrue(h.html.contains("inner param 1"), h.html);
+      h.connect();
+      String sent = sent(h.click(Harness.clickOn(h.html, "switch")));
+      assertTrue(sent.contains("inner param 2"), sent);
+    }
+  }
+
   static final class Labels extends LiveComponent {
     private final State<Integer> n = state(1);
 
@@ -883,7 +920,7 @@ class KeepTest {
   }
 
   @Test
-  void resyncsStayWithinTheQueueBound() throws Exception {
+  void resyncsTakeOneQueueSlotAndAreNeverDropped() throws Exception {
     try (Harness h = new Harness(Parent::new, b -> b.withMaxQueuedEvents(2))) {
       h.load();
       h.connect();
@@ -903,14 +940,18 @@ class KeepTest {
         for (int i = 0; i < 5; i++) {
           tab.keptPatches.add("k" + i);
         }
+        tab.post(() -> { });
+        tab.post(() -> { });
         for (int i = 0; i < 5; i++) {
           h.send("type", "resync", "anchor", "k" + i);
         }
-        assertEquals(2, tab.lane.backlog(), "only as many resyncs as the queue holds");
-        assertEquals(3, tab.keptPatches.size(), "the rest keep their allowance");
+        assertEquals(3, tab.lane.backlog(), "one task for all five, though the queue was full");
+        assertEquals(5, tab.pendingResyncs.size());
+        assertTrue(tab.keptPatches.isEmpty());
       } finally {
         release.countDown();
       }
+      Harness.eventually(() -> tab.pendingResyncs.isEmpty(), "the resyncs ran");
     }
   }
 

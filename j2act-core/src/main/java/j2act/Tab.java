@@ -82,6 +82,9 @@ public final class Tab {
   /** Scopes rendered but not sent during a hold; all re-render when it ends. */
   /** Anchors whose latest patch kept a child: the only patches a client may ask to resync, once each (ADR 0031). */
   final Set<String> keptPatches = java.util.concurrent.ConcurrentHashMap.newKeySet();
+  /** Anchors whose resync was accepted and not rendered yet; one lane task renders them all. */
+  final Set<String> pendingResyncs = java.util.concurrent.ConcurrentHashMap.newKeySet();
+  private final java.util.concurrent.atomic.AtomicBoolean resyncQueued = new java.util.concurrent.atomic.AtomicBoolean();
   private final Set<Scope> heldRenders = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
 
   /** A notFound()/redirect() raised before the socket attached, for the SSR loop to act on. */
@@ -947,11 +950,32 @@ public final class Tab {
   }
 
   /**
+   * Socket thread. Accepts a client's resync once per patch of ours that kept a child (ADR 0031).
+   * However many arrive, at most one task for them waits on the lane, so they neither crowd it nor
+   * get dropped at its bound.
+   */
+  void requestResync(String anchor) {
+    if (!keptPatches.remove(anchor)) {
+      return; // no patch of ours to recover, or recovered already
+    }
+    pendingResyncs.add(anchor);
+    if (resyncQueued.compareAndSet(false, true)) {
+      post(() -> {
+        resyncQueued.set(false);
+        for (Iterator<String> it = pendingResyncs.iterator(); it.hasNext(); ) {
+          String next = it.next();
+          it.remove();
+          resync(next);
+        }
+      });
+    }
+  }
+
+  /**
    * Lane-only. The client could not find the element a patch kept at anchor (ADR 0031): render
    * the patched scope again in full. Expected only when client code removed a component's element.
    */
   void resync(String anchor) {
-    // The socket thread took anchor out of keptPatches, so this runs once per patch that kept a child.
     Scope scope = root == null ? null : root.find(anchor);
     if (scope == null || scope.disposed) {
       return;
@@ -960,7 +984,7 @@ public final class Tab {
     engine.log(System.Logger.Level.DEBUG, "the client lacks an element kept in the patch of "
       + scope.instance.getClass().getName() + "; rendering it in full", null);
     scope.unsync();
-    // Its task flushes once no other is queued, so a burst of resyncs renders together.
+    // The task flushes after rendering every pending resync, so a burst of them renders together.
     markDirty(scope);
   }
 

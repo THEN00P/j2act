@@ -38,17 +38,28 @@ final class Unchanged {
 
   /**
    * A field that holds one of the component's own primitives, by creation index: which one it
-   * holds is what counts, and the cell decides the value.
+   * holds is what counts, and the cell decides the value. For the component around an inner one,
+   * which may be a fresh object whose primitive carries other settings than the last one's, the
+   * primitive and its owner come along so those settings compare too.
    */
   private static final class Own {
     final int index;
+    final Primitive primitive;
+    final ComponentTag owner;
 
-    Own(int index) {
+    Own(int index, Primitive primitive, ComponentTag owner) {
       this.index = index;
+      this.primitive = primitive;
+      this.owner = owner;
     }
 
     @Override public boolean equals(Object other) {
-      return other instanceof Own && ((Own) other).index == index;
+      if (!(other instanceof Own) || ((Own) other).index != index) {
+        return false;
+      }
+      Own last = (Own) other;
+      return primitive == null || last.primitive == null || primitive == last.primitive
+        || samePrimitive(last.primitive, primitive, last.owner, owner);
     }
 
     @Override public int hashCode() {
@@ -161,6 +172,11 @@ final class Unchanged {
 
   /** The component's plain field values as of now, ready to compare; null if they cannot be read. */
   static Object[] fieldValues(ComponentTag component, boolean[] injected) {
+    return fieldValues(component, injected, false);
+  }
+
+  /** enclosing: component is the one around an inner component, whose primitives' settings count too. */
+  private static Object[] fieldValues(ComponentTag component, boolean[] injected, boolean enclosing) {
     Object[] values = raw(component);
     if (values == null || injected == null || injected.length != values.length) {
       return null;
@@ -182,7 +198,7 @@ final class Unchanged {
       } else if (value instanceof ComponentTag) {
         // An inner or anonymous component reads the fields of the one around it, so those count as its own.
         ComponentTag around = (ComponentTag) value;
-        Object[] seen = around.scope == null || mutableInputs(around) ? null : fieldValues(around, around.scope.injected);
+        Object[] seen = around.scope == null || mutableInputs(around) ? null : fieldValues(around, around.scope.injected, true);
         value = seen == null ? new Mutable() : Arrays.asList(seen);
       } else if (injected[i] || value instanceof ComponentTag || value instanceof Store) {
         value = new Same(value);
@@ -190,7 +206,7 @@ final class Unchanged {
         Primitive primitive = (Primitive) value;
         Integer own = ownIndex(component, primitive);
         if (own != null) {
-          value = new Own(own);
+          value = enclosing ? new Own(own, primitive, component) : new Own(own, null, null);
         } else {
           // Another component's State handed down: the same cell is the same value.
           Cell cell = primitive.cellOrNull();
