@@ -960,8 +960,8 @@ public final class Tab {
     engine.log(System.Logger.Level.DEBUG, "the client lacks an element kept in the patch of "
       + scope.instance.getClass().getName() + "; rendering it in full", null);
     scope.unsync();
+    // Its task flushes once no other is queued, so a burst of resyncs renders together.
     markDirty(scope);
-    flush();
   }
 
   /** A detached scope (an action's live argument) is its own root: its owner's render never includes it. */
