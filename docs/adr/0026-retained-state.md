@@ -1,5 +1,7 @@
 # Retained State
 
+Partly superseded by ADR 0031: retainedState() is createRetained(), keyed by its variable name through the processor rather than its field name, and onPersisting and onRestored are replaced by createRetained(save, restore). Snapshots, storage and pausing below still hold.
+
 ADR 0010 still holds: State is UI state, and anything worth keeping belongs in the app's database. What it leaves uncovered is the unsaved work in between, such as a half-filled form when the laptop lid stays shut past the 3-minute grace window, when the server restarts or when a redeploy lands. Retained State covers that gap and nothing more. It copies Blazor's circuit state persistence (.NET 10 `[PersistentState]`, .NET 11 pause and resume) as closely as our model allows, including its defaults. The deviations are listed at the end, each with its reason.
 
 ## The API
