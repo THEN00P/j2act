@@ -12,9 +12,11 @@ The client's `hello` carries the highest number it applied. The server drops the
 
 Client actions and window() calls are buffered like patches, so a call lost in flight is delivered on reconnect and runs exactly once. Its 30-second timeout counts from when it was delivered, not from when it was buffered behind a dead socket; a call still undelivered when the tab ends fails with a ClientException naming the disconnect, never silently.
 
+A call can also run in the browser and lose its result on the way back. So the browser keeps each call's result, by call id, until the server acknowledges it, and its `hello` after a reconnect resends the unacknowledged ones; the server ignores a result for a call it already settled. A call the browser already ran is never run again for a resend, since its id is applied at most once. This is the one piece of reliability in the client-to-server direction, and only for call results.
+
 ## The buffer is bounded by backpressure
 
-As Blazor does with `MaxBufferedUnacknowledgedRenderBatches`, the buffer has a cap (`withMaxUnacknowledged`, in bytes). When it is full the tab stops producing patches: components that change stay marked dirty instead of being rendered into the buffer. On reconnect the buffer is resent, and then the dirty components render once with their latest State, so a long drop costs one patch per changed component, not one per change. Client calls and URL and head messages are never held back by the cap, since they are small and dropping one is the drift this ADR exists to prevent.
+As Blazor does with `MaxBufferedUnacknowledgedRenderBatches`, the buffer has a cap (`withMaxUnacknowledged`, in bytes). When it is full the tab stops producing patches: components that change stay marked dirty instead of being rendered into the buffer. On reconnect the buffer is resent, and then the dirty components render once with their latest State, so a long drop costs one patch per changed component, not one per change. URL and head messages collapse instead of queueing: only the latest URL and the latest merged head stay buffered, so they cannot grow. Client calls are counted against their own limit (`withMaxPendingClientCalls`, 256 by default); a call past it fails at once with a ClientException naming the limit, instead of piling up behind a socket that is gone. A buffered call that targets markup whose patch is being held back by the cap waits behind that patch, so it never reaches the browser before its element.
 
 ## Full re-render as the last resort
 
@@ -22,11 +24,11 @@ If the client finds a gap it cannot fill, such as a number missing in the middle
 
 ## Client to server
 
-Events the client sends into a socket that has died are lost, as today; the runtime only queues what it sends while it knows the socket is down. The user sees the missed click and repeats it. Numbering that direction with the same scheme is possible later and needs no protocol change beyond an ack from the server. Uploads keep their own resumable chunks (ADR 0006).
+Apart from call results (above), events the client sends into a socket that has died are lost, as today; the runtime only queues what it sends while it knows the socket is down. The user sees the missed click and repeats it. Numbering that direction with the same scheme is possible later and needs no protocol change beyond an ack from the server. Uploads keep their own resumable chunks (ADR 0006).
 
 ## Before code
 
-A test in Harness that drops the socket after a patch is written but before it is read, then reconnects, and checks that the page matches the server: first failing on today's code, then passing. The same for a client action, and for a navigate() while disconnected. The browser check gains a reconnect step that kills the socket at the network layer.
+A test in Harness that drops the socket after a patch is written but before it is read, then reconnects, and checks that the page matches the server: first failing on today's code, then passing. The same for a client action, for a client action whose result is lost on the way back, and for a navigate() while disconnected. The browser check gains a reconnect step that kills the socket at the network layer.
 
 ## Rejected
 

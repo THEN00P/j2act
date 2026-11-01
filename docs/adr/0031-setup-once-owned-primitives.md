@@ -33,7 +33,7 @@ public final class Counter extends ComponentTag {
 }
 ```
 
-setup() is the only method a component overrides. It is Vue 3's `setup()`, and Solid's component function split in two because Java cannot re-run part of a method: setup is the part Solid runs once, the view is the part its compiler re-runs per expression. Here the whole view re-runs, until a later compile step narrows it to regions; lists stay small-ish until then.
+setup() is the only method a component overrides. It is Vue 3's `setup()`, and Solid's component function split in two because Java cannot re-run part of a method: setup is the part Solid runs once, the view is the part its compiler re-runs per expression. Here the whole view re-runs, so this first version is component-level reactivity: the view is rebuilt and morphed, work that Solid's expression-level updates skip. A later compile step narrows it to regions; lists stay small-ish until then.
 
 Because setup runs once, the creation-order rule is gone: an `if` around a createSignal is fine. Locals take `var`, and the description built on every parent render creates no primitives, so it costs one small object.
 
@@ -41,15 +41,15 @@ A layout's view takes the matched child: `return child -> div(nav(...), child);`
 
 ## Primitives are owned, not inherited
 
-The primitives become static functions in `j2act.Reactive`, imported once. Each one attaches to the current owner: the framework marks the component as owner, calls setup and unmarks it, so it always knows where setup starts and ends. A primitive created where no setup runs fails with a "no owner" error, as Solid's do outside a root.
+The primitives become static functions in `j2act.Reactive`, imported once. Each one attaches to the current owner: the framework marks the component as owner, calls setup and unmarks it, so it always knows where setup starts and ends. A primitive created where no setup runs fails with a "no owner" error. Solid lets a signal live without an owner; requiring one is a deliberate restriction here, since an unowned cell on a tab would never be disposed.
 
 Reusable stateful logic is then a plain static method:
 
 ```java
 public static Supplier<String> createDebounced(Supplier<String> source, Duration wait) {
-  var out = createSignal(source.get());
+  var out = createSignal(untrack(source));                 // read once on purpose
   createEffect(source::get, v -> {
-    var timer = schedule(wait, () -> out.set(v));
+    var timer = schedule(() -> out.set(v), wait);
     return timer::cancel;
   });
   return out;
@@ -90,6 +90,16 @@ The kept instance's Props are overwritten in place, so any read gives the curren
 ```java
 var greeting = "Hi " + name.get();                         // warns: read once
 var greeting2 = createMemo(() -> "Hi " + name.get());       // follows name
+var initial = untrack(name);                                 // read once on purpose: no warning
+```
+
+`untrack(fn)` reads without tracking, as Solid's does, and tells the processor the one-time read is meant.
+
+A signal can also be derived and still writable, Solid 2's function-form createSignal: it follows its source and takes writes until the source changes again, which suits an editable copy that resets when the selection changes.
+
+```java
+var draftName = createSignal(() -> selected.get().name());   // resets when selected changes
+input().withValue(draftName.get()).onInput(e -> draftName.set(e.value()));
 ```
 
 ## Boundaries are components
@@ -109,11 +119,34 @@ errored(
 
 Nearest boundary wins, as ADR 0007 had it.
 
+Java evaluates arguments before the call, so markup that reads a value directly would read it before the boundary exists: in `loading(p(user.get().name()))` the read happens first and the boundary cannot catch it. A component child is fine, since its view runs later, when the boundary is already rendering it. Plain markup takes the lambda form, whose contents the boundary renders itself:
+
+```java
+loading(() -> p(user.get().name())).withFallback(spinner())
+errored(() -> p(user.get().name())).withFallback(err -> p("Failed"))
+```
+
+The later compile step can insert the lambda; until then the processor reports a value read directly inside a boundary's arguments.
+
 ## Solid 2 semantics
 
 - `createEffect(track, apply)` splits the effect: track reads signals and is tracked, apply does the side effect with the tracked value and returns its cleanup or null.
 - Writes are batched. After `set(1)`, `get()` returns the old value until the batch applies; `flush()` applies it at once, mainly for tests.
 - Writing a signal inside a memo or an effect's track half throws; derive with a memo instead, and write in handlers or apply.
+- A write that makes an async value already on screen reload is held, as Solid 2's transitions hold it: every view that reads the written signal keeps showing the old value until the reload lands, then everything switches in one update, with isPending true meanwhile. Changing the selected id from A to B never shows B's heading beside A's profile:
+
+  ```java
+  var selectedId = createSignal("A");
+  var profile = createMemo(() -> async(() -> service.profile(selectedId.get())));
+  return () -> div(
+    h2(selectedId.get()),                                  // stays "A" until B's profile arrived
+    isPending(profile) ? span("Loading…") : null,
+    loading(profileCard().withProfile(profile)).withFallback(spinner())
+  );
+  // selectedId.set("B"): the page shows A, A's profile and "Loading…", then B and B's profile in one update
+  ```
+
+  Nothing is held for a value whose boundary still shows its fallback; the change shows at once. `latest(x)` reads the in-flight value ahead of the hold, for what must follow input at once, such as the text field being typed into. A newer write supersedes an older one still held: the older load's result is dropped, and the page keeps its current frame until the newest is ready. Writes held for the same async value commit together.
 
 When the batch applies on the lane, and how it meets ADR 0014's foreign-thread writes and ADR 0020's validated runs, is settled in code with tests; the rule above is the contract.
 
@@ -128,7 +161,7 @@ var summary = createDraft();    // NoteEditor ... #summary/draft
 
 Adding or reordering signals is harmless; renaming the variable starts it fresh, as renaming a field did. `createRetained("name", initial)` stays as an optional explicit name.
 
-Where there is no name, the key falls back to creation order plus type: a class built without the processor or without line numbers, a call in a loop or a lambda in setup, or a helper from a library built without the processor. A restore that does not line up is dropped and dev mode logs it. Two retained calls in one `a ? x : y` are reported by the processor. Dev mode re-reads the table when the debugger swaps classes (ADR 0025). A shaded jar that relocates packages must relocate the table with them.
+Where there is no name, the key falls back to creation order plus type: a class built without the processor or without line numbers, a call in a loop or a lambda in setup, or a helper from a library built without the processor. The fallback is only used where it cannot be wrong: when the unnamed retained values in one slot all have different types. Two of the same type are ambiguous, since swapping them is undetectable, so dev mode reports it as an error asking for an explicit name, and neither is retained. The snapshot also records the slot's list of unnamed types; if the new code's list differs, every unnamed value of that slot is dropped rather than matched. Two retained calls in one `a ? x : y` are reported by the processor. Dev mode re-reads the table when the debugger swaps classes (ADR 0025). A shaded jar that relocates packages must relocate the table with them.
 
 Store keys keep ADR 0030's class and field name.
 
@@ -251,7 +284,7 @@ Query, its loader type and createAsync go. So does ADR 0020's cache: the cache b
 public static void refreshEvery(Supplier<?> value, Duration every) {
   createEffect(() -> useTab().connected(), live -> {
     if (!live) return null;
-    var timer = schedule(every, () -> refresh(value), true);
+    var timer = schedule(() -> refresh(value), every, true);
     return timer::cancel;
   });
 }
@@ -285,7 +318,7 @@ A read outside any loading(...) stops the page, which waits for it as ADR 0016's
 
 Query's TanStack status reads go: isPending() as "no data yet" (a view can no longer see that state), isFetching(), isSuccess(), isError() and error(). What is left to say is said as in Solid 2.
 
-"Old data on screen, new data on its way" is one static function, `isPending(fn)`, Solid 2's: it takes a `Supplier<?>` and is true while a read inside it depends on a change that has not committed yet, an input that changed and is reloading or an action's held writes. It is false during the first load, which goes to loading(...) instead, and false once an error is shown. Signals and memos are Suppliers, so they pass directly, as Solid passes an accessor; a lambda probes any expression:
+"Old data on screen, new data on its way" is one static function, `isPending(fn)`, Solid 2's: it takes a `Supplier<?>` and is true while a read inside it depends on a change that has not committed yet, an input that changed and is reloading or an action's held writes. During the first load the probe reads a value that is not loaded yet, so it stops rendering up to the nearest loading(...) like any other read (Solid throws NotReadyError there); once an error is shown it is false. An optimistic write alone does not make it true (see Actions). Signals and memos are Suppliers, so they pass directly, as Solid passes an accessor; a lambda probes any expression:
 
 ```java
 return () -> div(
@@ -331,22 +364,27 @@ An optimistic value is the data source itself, as Solid 2's createOptimistic is:
 ```java
 var todos = createOptimistic(() -> async(() -> service.list()));
 
+var saving = createOptimistic(false);
+
 var add = action((String text) -> {
-  todos.update(list -> append(list, Todo.draft(text)));  // shows immediately
-  var saved = service.add(text);                          // blocking; another click runs its own action meanwhile
-  refresh(todos);                                         // held: the draft goes when the real list has arrived
+  saving.set(true);                                             // optimistic: undone when the action ends
+  todos.update(list -> append(list, Todo.draft(text)));       // shows immediately
+  var saved = retry(() -> service.add(text), 3, ofSeconds(1)); // only this call repeats
+  refresh(todos);                                              // held: the draft goes when the real list has arrived
   return saved;
-}).withRetry(3, ofSeconds(1));
+});
 
 return () -> div(
-  isPending(todos) ? span("Saving…") : null,
+  saving.get() ? span("Saving…") : null,
   each(todos.get(), t -> div(t.text())),
   button("Add").onClick(e -> add.run(input.get())
     .exceptionally(err -> { problem.set("Couldn't save"); return null; }))
 );
 ```
 
-Calls run concurrently, each its own transaction, as in Solid: two quick clicks show both draft rows at once, and since both touch the same list their results land together once both have finished. Running calls one after another would hold the second draft back until the first save returns. Success is the code after the call, failure is `.exceptionally` or a try/catch in the body; on failure the optimistic writes are undone and the held writes dropped. Pending UI comes from the data an action touches, `isPending(todos)`; the action has no status of its own. Reloading after a write is explicit, `refresh(x)`, as in Solid's core action; Solid Router's and Remix's reload everything, which hides what runs. `withRetry(times, backoff)` is an extra on top of Solid, for flaky services. createUpload and createDownload stay, as flavors of actions.
+Calls run concurrently, each its own transaction, as in Solid: two quick clicks show both draft rows at once, and since both touch the same list their results land together once both have finished. Running calls one after another would hold the second draft back until the first save returns. Success is the code after the call, failure is `.exceptionally` or a try/catch in the body; on failure the optimistic writes are undone and the held writes dropped. An optimistic write does not make isPending true; Solid keeps optimistic values and pending apart on purpose. "Saving…" is therefore an optimistic flag of its own, or `affects(todos)` in the body, which marks todos as about to change so isPending(todos) is true until the action commits. The action has no status of its own. Reloading after a write is explicit, `refresh(x)`, as in Solid's core action; Solid Router's and Remix's reload everything, which hides what runs.
+
+Retrying is not an option on the action: repeating a whole body would apply its optimistic writes again and repeat a call that succeeded but whose reply was lost, such as an insert. `retry(fn, times, backoff)` wraps the one call that may repeat, function first and timing last, as the JDK's `schedule(command, delay, unit)` and JavaScript's setTimeout have it; whether that call is safe to repeat is the app's to know, and the docs say so. It is an extra on top of Solid. createUpload and createDownload stay, as flavors of actions.
 
 Solid has no worker thread, so this needs specifying: while a body runs off the lane, the lane keeps handling events. Optimistic writes are posted to the lane at once, held writes are applied on the lane at commit, and reads inside the body see the current values plus the call's own held writes. A Harness test with two overlapping actions settles it before code.
 
@@ -376,6 +414,8 @@ The swap needs JavaScript. Crawlers that run it see the whole page; a visitor wi
 
 The servlet response streams asynchronously, so no thread is held while data loads. The swap scripts carry the page's CSP nonce. Proxies that buffer responses, nginx's default, hold chunks back, so the response sends `X-Accel-Buffering: no` and the docs say so. The page's script must run only once the whole response has arrived, so its socket connects after the stream ends; how runtime.js is loaded today is checked against that. If a socket ever does attach first, boundaries still pending continue as ordinary patches.
 
+Because the page's script waits for the end of the response, one load that hangs inside a boundary would keep the whole page from becoming interactive. So the stream has a deadline (`withStreamDeadline`, 10 seconds by default). It is not ADR 0016's budget and does not decide what waits or what shows a fallback: when it passes, the response closes with the fallbacks still in place, the script runs and the socket connects, and the loads still running keep going on the server, each boundary arriving as an ordinary update over the socket when its data lands. Nothing is cancelled or discarded.
+
 ## Rejected
 
 - Keeping held objects for imperative access to children. They were the second identity and made render impure; Solid has none.
@@ -384,10 +424,14 @@ The servlet response streams asynchronously, so no thread is held while data loa
 - Overridable lifecycle methods (onMount(), onUnmount()). They split one feature over several methods, which is the first reason React gave for leaving classes.
 - Requiring a name on every retained signal. It guards a rare case at every call site.
 - A `use` prefix on everything managed. React needs it for the rules of hooks, which setup-once does not have.
+- `withRetry` on an action. Repeating the whole body re-applies its optimistic writes and repeats calls that succeeded but lost their reply; `retry(...)` around one call says what repeats.
 - `init()`, `@PostConstruct` or `build()` instead of setup(): Java's init() returns nothing, @PostConstruct collides with the real one, and Flutter's build() runs every render.
 
 ## Deviations from Solid 2
 
+- Primitives need an owner; Solid lets a signal live without one.
+- Boundaries take a lambda for plain markup, since Java evaluates arguments first; JSX defers children for Solid.
+- `retry(fn, times, backoff)` and `withStaleOnError()`/`failed(x)` are extras Solid has no counterpart for.
 - A component is a class with Prop fields and setup(), since Java has no props object or JSX; with* builders replace attributes.
 - The view re-runs as a whole instead of per expression, until compile-time regions.
 - Retained signals, stores as container beans and the processor's name table have no Solid counterpart.
