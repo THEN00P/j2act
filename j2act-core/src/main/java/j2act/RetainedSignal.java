@@ -15,6 +15,6 @@ public final class RetainedSignal<T> extends Signal<T> {
 
   /** Whether this one came back from a snapshot, for a "your draft came back" message. */
   public boolean restored() {
-    return ((Node) requireCell()).restored;
+    return ((ValueCell) requireCell()).restored;
   }
 }

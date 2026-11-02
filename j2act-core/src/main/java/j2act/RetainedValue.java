@@ -24,15 +24,15 @@ public final class RetainedValue<T> extends Primitive {
 
   /** Whether this one came back from a snapshot, for a "your draft came back" message. */
   public boolean restored() {
-    return ((Node) requireCell()).restored;
+    return ((ValueCell) requireCell()).restored;
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    return Node.saved(tab, address, save, restore);
+    return ValueCell.saved(tab, address, save, restore);
   }
 
   @Override boolean accepts(Cell cell) {
-    return cell instanceof Node;
+    return cell instanceof ValueCell;
   }
 
   @Override void attach(Cell cell, boolean created) {

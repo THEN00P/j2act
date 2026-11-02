@@ -93,10 +93,13 @@ class AsyncMemoTest {
   static final class Reloads extends LiveComponent {
     @Override protected View setup() {
       var who = createSignal("ada");
-      var greeting = createMemo(() -> async(() -> {
-        LOADS.incrementAndGet();
-        return "hi " + who.get();
-      }));
+      var greeting = createMemo(() -> {
+        var name = who.get();
+        return async(() -> {
+          LOADS.incrementAndGet();
+          return "hi " + name;
+        });
+      });
       var derived = createMemo(() -> greeting.get().toUpperCase());
       return () -> T.page("t", T.div(
         T.span(derived.get()),
@@ -106,7 +109,7 @@ class AsyncMemoTest {
   }
 
   @Test
-  void aReadInsideAsyncIsTrackedAndARefreshLoadsAgain() {
+  void aReadBeforeAsyncIsTrackedAndARefreshLoadsAgain() {
     LOADS.set(0);
     try (Harness h = new Harness(Reloads::new)) {
       String html = h.load();

@@ -18,14 +18,16 @@ public class ItemPage extends LiveComponent {
 
   @Override protected View setup() {
     var likes = createSignal(0);
-    var item = createMemo(() -> async(() -> {
+    var item = createMemo(() -> {
       String id = pathParam("id");
-      if ("404".equals(id)) {
-        throw notFound();
-      }
-      Thread.sleep(150);
-      return "Item " + id;
-    }));
+      return async(() -> {
+        if ("404".equals(id)) {
+          throw notFound();
+        }
+        Thread.sleep(150);
+        return "Item " + id;
+      });
+    });
     return () -> html(
       head(
         title(item.get() + " · j2act")

@@ -3,6 +3,7 @@ package j2act.internal.signals;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 import java.util.function.BiPredicate;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -37,6 +38,7 @@ public final class Runtime {
   /** What a boundary does with its content's value, Solid's `flatten`. Java's content has nothing to flatten. */
   UnaryOperator<Object> flatten = UnaryOperator.identity();
   Signals.Timer timer = Runtime::defaultTimer;
+  java.util.function.BiPredicate<Node, Throwable> uncaught;
   /** Solid's console.error. */
   java.util.function.BiConsumer<String, Throwable> errorLog = (message, cause) ->
     System.getLogger("j2act").log(System.Logger.Level.ERROR, message, cause);
@@ -301,6 +303,220 @@ public final class Runtime {
 
   public <T> T flush(Supplier<T> fn) {
     return scheduler.flush(fn);
+  }
+
+  // ---- What j2act builds on (ADR 0033): the same functions, by node rather than by accessor.
+
+  /** A signal's node. `ownedWrite` lets computations write it, as a component's props need. */
+  public Node signalNode(Object value, boolean ownedWrite) {
+    Core.NodeOptions options = new Core.NodeOptions();
+    options.ownedWrite = ownedWrite;
+    return core.signal(value, options);
+  }
+
+  public Node memoNode(Node.Compute compute) {
+    return core.computed(compute, null);
+  }
+
+  /** createSignal(fn): writable, and following compute until that gives something new. */
+  public Node derivedNode(Node.Compute compute) {
+    Node node = core.computed(compute, null);
+    node.config &= ~Constants.CONFIG_AUTO_DISPOSE;
+    return node;
+  }
+
+  public Node deferredNode(Node.Compute compute) {
+    return deferred.createDeferred(compute, null);
+  }
+
+  public Object read(Node node) {
+    return core.read(node);
+  }
+
+  public Object write(Node node, Object value) {
+    return node.fn != null ? core.setMemo(node, value, null) : core.setSignal(node, value);
+  }
+
+  public Object update(Node node, UnaryOperator<Object> fn) {
+    return node.fn != null ? core.setMemo(node, null, fn) : core.updateSignal(node, fn);
+  }
+
+  public Object guess(Node node, UnaryOperator<Object> fn) {
+    return lanes.optimisticWrite(node, null, fn);
+  }
+
+  /** The newest value there is, nothing tracked and nothing held back: staged if there is one, else committed. */
+  public Object peek(Node node) {
+    return node.pendingValue != Constants.NOT_PENDING ? node.pendingValue : node.value;
+  }
+
+  /** What is committed. */
+  public Object committed(Node node) {
+    return node.value;
+  }
+
+  /** A value put in place before anything read it, as a restored snapshot is: nothing is told. */
+  public void initialize(Node node, Object value) {
+    node.value = value;
+    node.statusFlags &= ~Constants.STATUS_UNINITIALIZED;
+  }
+
+  public boolean pending(Node node) {
+    return (node.statusFlags & Constants.STATUS_PENDING) != 0;
+  }
+
+  public boolean failed(Node node) {
+    return (node.statusFlags & Constants.STATUS_ERROR) != 0;
+  }
+
+  public boolean uninitialized(Node node) {
+    return (node.statusFlags & Constants.STATUS_UNINITIALIZED) != 0;
+  }
+
+  /** The error a failed node holds, as it was thrown. */
+  public Throwable errorOf(Node node) {
+    return node.x == null ? null : Errors.unwrapStatusError(node.x.error);
+  }
+
+  /** The node a pending read stopped on. */
+  public static Throwable unwrap(Throwable error) {
+    return Errors.unwrapStatusError(error);
+  }
+
+  public void effectNode(Node.Compute compute, Node.EffectFn effect, Node.ErrorFn error, boolean user, Consumer<Node> created) {
+    Effects.EffectOptions options = new Effects.EffectOptions();
+    options.user = user;
+    effects.effect(prev -> {
+      if (created != null && core.context instanceof Node) {
+        created.accept((Node) core.context);
+      }
+      return compute.apply(prev);
+    }, effect, error, options);
+  }
+
+  /** Runs an effect or memo again in the next flush, as if something it read changed. */
+  public void rerun(Node node) {
+    if ((node.flags & Constants.REACTIVE_DISPOSED) == 0) {
+      scheduler.dirtyQueue.enqueueSub(node);
+      scheduler.schedule();
+    }
+  }
+
+  /** Runs a kept child's effect now, inside the pass of the view placing it, as a read of a dirty node would. */
+  public void recomputeNow(Node node) {
+    if ((node.flags & Constants.REACTIVE_DISPOSED) == 0) {
+      core.recompute(node, false);
+    }
+  }
+
+  /**
+   * An owner that outlives the computation creating it, Solid's row owner in mapArray: a child of `parent`,
+   * in the context of what is running, which a re-run leaves alone. Its nodes run after that computation.
+   */
+  public Owner createSlotOwner(Owner parent) {
+    Owner running = core.context;
+    Owner owner = core.runWithOwner(parent, owners::createOwner);
+    if (running != null) {
+      owner.ctx = running.ctx;
+      owner.parentComputed = running instanceof Node ? (Node) running : running.parentComputed;
+    }
+    return owner;
+  }
+
+  /** Who runs this owner's nodes after it now: the view placing it again. */
+  public void reparentSlotOwner(Owner owner) {
+    Owner running = core.context;
+    if (running != null) {
+      owner.parentComputed = running instanceof Node ? (Node) running : running.parentComputed;
+    }
+  }
+
+  public boolean isPending(Supplier<?> fn) {
+    return verdict.isPending(fn);
+  }
+
+  public <T> T latest(Supplier<T> fn) {
+    return verdict.latest(fn);
+  }
+
+  public void affects(Node node) {
+    marks.affects(node);
+  }
+
+  public java.util.concurrent.CompletionStage<Object> refresh(Node node) {
+    return signals.refresh(node);
+  }
+
+  public java.util.concurrent.CompletionStage<Object> resolve(Supplier<Object> fn) {
+    return signals.resolve(fn);
+  }
+
+  public java.util.concurrent.CompletionStage<Object> until(Supplier<Object> fn, Long timeoutMillis) {
+    return signals.until(fn, timeoutMillis, null);
+  }
+
+  public void onSupersede(Runnable fn) {
+    async.onSupersede(fn);
+  }
+
+  public void setTimer(Signals.Timer timer) {
+    this.timer = timer;
+  }
+
+  /** Takes an error no boundary caught, which Solid halts on; true means it was dealt with. */
+  public void setUncaught(java.util.function.BiPredicate<Node, Throwable> uncaught) {
+    this.uncaught = uncaught;
+  }
+
+  public void setErrorLog(java.util.function.BiConsumer<String, Throwable> log) {
+    this.errorLog = log;
+  }
+
+  /** Whether a change is held waiting for something: a transaction not landed yet. */
+  public boolean holding() {
+    return scheduler.transactionsOpen();
+  }
+
+  public boolean flushing() {
+    return scheduler.running;
+  }
+
+  public boolean halted() {
+    return scheduler.halted();
+  }
+
+  public void resetErrorHalt() {
+    scheduler.resetErrorHalt();
+  }
+
+  public Node boundaryNode(boolean loading, Node.Compute content, Supplier<Object> fallback,
+    java.util.function.BiFunction<Throwable, Runnable, Object> errorFallback) {
+    return loading ? boundaries.createLoadingBoundary(content, fallback, null)
+      : boundaries.createErrorBoundary(content, (error, reset) -> errorFallback.apply((Throwable) core.read(error), reset));
+  }
+
+  /** One action run: what its body's reads and writes join, wherever they run (ADR 0033). */
+  public final class ActionRun {
+    private final Action.Handle handle;
+
+    ActionRun(Action.Handle handle) {
+      this.handle = handle;
+    }
+
+    /** On the lane: runs fn in this action's transaction. */
+    public <T> T enter(Supplier<T> fn) {
+      return action.enter(handle, fn);
+    }
+
+    /** On the lane: the body ended. */
+    public void end(Object value, Throwable failure) {
+      action.end(handle, value, failure);
+    }
+  }
+
+  /** On the lane: opens an action with no body of its own, for a body that runs on a thread. */
+  public ActionRun openAction(java.util.concurrent.CompletableFuture<Object> result) {
+    return new ActionRun(action.open(result));
   }
 
   /** A runtime on the calling thread, for tests: run() is the event loop's turn. */

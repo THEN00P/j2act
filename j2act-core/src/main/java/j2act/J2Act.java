@@ -289,6 +289,7 @@ public final class J2Act implements AutoCloseable {
       tab.browser = joined;
       tab.joinedBrowser();
       if (minted) {
+        hosts.put(cookie, tab.host);
         tab.browserCookie = cookie;
         tab.mintedBrowserCookie = tab.pendingBrowserCookie = browserCookieHeader(cookie);
         if (tab.connection != null) {
@@ -354,7 +355,8 @@ public final class J2Act implements AutoCloseable {
     } catch (RuntimeException e) {
       log(System.Logger.Level.WARNING, "a browser's retained state could not be restored", e);
     }
-    Tab hub = new Tab(this, "browser:" + newSecret(9), newSecret(18), tab.exchange, "/");
+    hosts.putIfAbsent(cookie, tab.host);
+    Tab hub = new Tab(this, tab.host, "browser:" + newSecret(9), newSecret(18), tab.exchange, "/");
     Browser browser = new Browser(this, cookie, hub, principal);
     hub.hubFor = browser;
     hub.snapshot.restore(entries);
@@ -679,7 +681,7 @@ public final class J2Act implements AutoCloseable {
    * (ADR 0016). notFound()/redirect() raised while rendering become a 404 or a 303.
    */
   public ServeResult serve(String url, Exchange exchange) {
-    Tab tab = new Tab(this, newSecret(18), newSecret(18), exchange, url);
+    Tab tab = new Tab(this, hostFor(browserCookie(exchange)), newSecret(18), newSecret(18), exchange, url);
     tab.snapshot.restore(snapshots.restore(exchange));
     tabs.put(tab.id, tab);
     checkBrowserCookie(tab);
@@ -1255,6 +1257,30 @@ public final class J2Act implements AutoCloseable {
       sweeper.schedule(() -> tab.post(task), millis, TimeUnit.MILLISECONDS);
     } catch (java.util.concurrent.RejectedExecutionException e) {
       // closing: nothing runs later any more
+    }
+  }
+
+  void later(ReactiveHost host, long millis, Runnable task) {
+    try {
+      sweeper.schedule(() -> host.job(task), millis, TimeUnit.MILLISECONDS);
+    } catch (java.util.concurrent.RejectedExecutionException e) {
+      // closing: nothing runs later any more
+    }
+  }
+
+  /** One runtime per browser (ADR 0033): by cookie while any tab uses it. A runtime never merges with another. */
+  private final Map<String, ReactiveHost> hosts = new java.util.concurrent.ConcurrentHashMap<>();
+
+  private ReactiveHost hostFor(String cookie) {
+    return cookie == null ? new ReactiveHost(this) : hosts.computeIfAbsent(cookie, c -> new ReactiveHost(this));
+  }
+
+  /** Lane-only. A tab ended: a runtime no tab uses is forgotten, and its cookie's next tab makes another. */
+  void leaveHost(Tab tab) {
+    ReactiveHost host = tab.host;
+    host.tabs.remove(tab);
+    if (host.tabs.isEmpty()) {
+      hosts.values().remove(host);
     }
   }
 

@@ -635,9 +635,9 @@ class BrowserStoreTest {
     }
   }
 
-  /** ADR 0031: each tab holds what its own load has not reached, so no tab ever shows B's id over A's data. */
+  /** ADR 0033: one graph per browser, so its visible tabs hold together and change in one flush. */
   @Test
-  void eachTabOfABrowserHoldsAWriteUntilItsOwnLoadLands() {
+  void theTabsOfABrowserHoldAWriteTogetherAndRevealItTogether() {
     HoldsPerTab.LOADS.clear();
     try (Harness h = harness(HoldsPerTab::new)) {
       Page first = new Page(h.engine, "/", Exchange.empty());
@@ -647,13 +647,13 @@ class BrowserStoreTest {
       int fromFirst = first.conn.size();
       int fromSecond = second.conn.size();
       first.click("select");
-      Harness.eventually(() -> HoldsPerTab.LOADS.size() == 2, "each tab loads for itself");
+      Harness.eventually(() -> HoldsPerTab.LOADS.size() == 2, "each tab's load runs");
       assertTrue(first.conn.since(fromFirst, m -> "patch".equals(m.get("type"))).isEmpty(), "the first tab holds");
       assertTrue(second.conn.since(fromSecond, m -> "patch".equals(m.get("type"))).isEmpty(), "the second tab holds");
 
       HoldsPerTab.LOADS.get(0).complete("b");
-      Harness.eventually(() -> !first.conn.since(fromFirst, m -> "patch".equals(m.get("type"))).isEmpty()
-        || !second.conn.since(fromSecond, m -> "patch".equals(m.get("type"))).isEmpty(), "one tab moves on");
+      assertTrue(first.conn.since(fromFirst, m -> "patch".equals(m.get("type"))).isEmpty(), "still held");
+      assertTrue(second.conn.since(fromSecond, m -> "patch".equals(m.get("type"))).isEmpty(), "still held");
       HoldsPerTab.LOADS.get(1).complete("b");
       first.awaitPatch(fromFirst, "id:b;loaded:B;");
       second.awaitPatch(fromSecond, "id:b;loaded:B;");

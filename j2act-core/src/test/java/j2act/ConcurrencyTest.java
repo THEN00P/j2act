@@ -119,7 +119,7 @@ class ConcurrencyTest {
       .build()) {
       assertEquals(200, engine.serve("/").status());
       AtomicReference<Object> leaked = new AtomicReference<>("unset");
-      single.submit(() -> leaked.set(Tab.current() != null ? Tab.current() : Tracking.observer())).get();
+      single.submit(() -> leaked.set(Tab.current() != null ? Tab.current() : Tracking.scope())).get();
       assertNull(leaked.get());
     } finally {
       single.shutdownNow();

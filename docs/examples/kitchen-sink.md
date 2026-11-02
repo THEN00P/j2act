@@ -36,7 +36,10 @@ public class UsersPage extends LiveComponent {
 
   @Override protected View setup() {
     var filter = createSignal("");
-    var users = createMemo(() -> async(() -> repo.search("%" + filter.get() + "%")));
+    var users = createMemo(() -> {
+      var like = "%" + filter.get() + "%";
+      return async(() -> repo.search(like));
+    });
     return () -> html(
       head(
         title("Users" + (filter.get().isEmpty() ? "" : " — " + filter.get())),
@@ -134,9 +137,10 @@ UI.button("Export CSV").withPending(spinner()).onClick(e -> export.mutate(filter
 
 ```java
 // Read outside every loading(...), so the page waits for it and this is a real 404.
-var user = createMemo(() -> async(() -> repo
-  .find(Long.parseLong(pathParam("id")))
-  .orElseThrow(() -> notFound())));
+var user = createMemo(() -> {
+  var id = Long.parseLong(pathParam("id"));
+  return async(() -> repo.find(id).orElseThrow(() -> notFound()));
+});
 ```
 
 ## Push from outside the session (ADR 0014)

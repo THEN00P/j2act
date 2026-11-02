@@ -12,7 +12,10 @@ public class UserTablePage extends LiveComponent {
 
   @Override protected View setup() {
     var nameFilter = createSignal("");
-    var list = createMemo(() -> async(() -> users.search("%" + nameFilter.get() + "%")));
+    var list = createMemo(() -> {
+      var like = "%" + nameFilter.get() + "%";
+      return async(() -> users.search(like));
+    });
     return () -> html(
       head(
         title("Users")

@@ -365,6 +365,10 @@ final class Scheduler {
     return halted;
   }
 
+  boolean transactionsOpen() {
+    return !transactions.isEmpty();
+  }
+
   void resetErrorHalt() {
     halted = false;
     haltNotified = false;

@@ -60,10 +60,16 @@ final class Handlers {
 
   /** Called at the end of a scope's render: ids of elements that did not render again are dropped. */
   void end(Scope scope) {
-    for (String handlerId : scope.previousHandlerIds.values()) {
+    scope.droppedHandlers.addAll(scope.previousHandlerIds.values());
+    scope.previousHandlerIds.clear();
+  }
+
+  /** The pass that stopped using these showed, so nothing on the page can send them any more. */
+  void drop(Scope scope) {
+    for (String handlerId : scope.droppedHandlers) {
       byId.remove(handlerId);
     }
-    scope.previousHandlerIds.clear();
+    scope.droppedHandlers.clear();
   }
 
   /** A render stopped partway, and its output is dropped: what was on screen keeps its handlers. */
@@ -82,6 +88,7 @@ final class Handlers {
     }
     scope.actionHandlerIds.clear();
     end(scope);
+    drop(scope);
   }
 
   /**

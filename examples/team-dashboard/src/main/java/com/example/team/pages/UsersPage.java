@@ -33,7 +33,10 @@ public class UsersPage extends LiveComponent {
 
   @Override protected View setup() {
     var filter = createSignal("");
-    var list = createMemo(() -> async(() -> users.search("%" + filter.get() + "%")));
+    var list = createMemo(() -> {
+      var like = "%" + filter.get() + "%";
+      return async(() -> users.search(like));
+    });
     var export = createDownload((String like, OutputStream out) -> users.writeCsv(like, out))
       .withFileName("users.csv")
       .withContentType("text/csv");

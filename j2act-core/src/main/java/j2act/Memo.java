@@ -34,7 +34,7 @@ public final class Memo<T> extends Primitive implements Supplier<T> {
       }
       return body.get();
     }
-    return (T) ((Node) bound).read();
+    return (T) ((ValueCell) bound).read();
   }
 
   /**
@@ -45,28 +45,25 @@ public final class Memo<T> extends Primitive implements Supplier<T> {
   public Memo<T> withStaleOnError() {
     staleOnError = true;
     if (cell != null) {
-      ((Node) cell).staleOnError = true;
+      ((ValueCell) cell).staleOnError = true;
     }
     return this;
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    return asyncBody != null ? Node.async(tab, address, asyncBody) : Node.memo(tab, address, body);
+    return asyncBody != null ? ValueCell.async(tab, address, asyncBody, staleOnError) : ValueCell.memo(tab, address, body);
   }
 
   @Override boolean accepts(Cell cell) {
-    return cell instanceof Node && ((Node) cell).isAsync() == (asyncBody != null);
+    return cell instanceof ValueCell && ((ValueCell) cell).isAsync() == (asyncBody != null);
   }
 
   @Override void attach(Cell cell, boolean created) {
     this.cell = cell;
-    Node node = (Node) cell;
+    ValueCell node = (ValueCell) cell;
     // A class swap's setup() brings the new code's lambda.
     node.body = body;
     node.asyncBody = asyncBody;
     node.staleOnError = staleOnError;
-    if (created && asyncBody != null) {
-      node.start(false);
-    }
   }
 }

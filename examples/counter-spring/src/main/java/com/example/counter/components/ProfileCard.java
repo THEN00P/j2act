@@ -28,7 +28,10 @@ public final class ProfileCard extends ComponentTag {
   }
 
   @Override protected View setup() {
-    var profile = createMemo(() -> async(() -> directory.profile(name.get())));
+    var profile = createMemo(() -> {
+      var who = name.get();
+      return async(() -> directory.profile(who));
+    });
     return () -> div(
       loading(() -> div(
         p(profile.get()),

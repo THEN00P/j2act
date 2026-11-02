@@ -61,6 +61,10 @@ final class Effects {
 
   private void escalate(Node node, Throwable cause) {
     if (!rt.scheduler.notify(node, STATUS_ERROR, STATUS_ERROR, null)) {
+      // A difference from Solid (ADR 0033): one runtime serves all of a browser's tabs and a server goes on.
+      if (rt.uncaught != null && rt.uncaught.test(node, cause)) {
+        return;
+      }
       rt.scheduler.haltReactivity(cause);
       throw Errors.<RuntimeException>sneak(cause);
     }

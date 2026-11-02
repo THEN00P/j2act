@@ -29,7 +29,10 @@ public final class SearchBox extends ComponentTag {
 
   @Override protected View setup() {
     var filter = createSignal("");
-    var people = createMemo(() -> async(() -> directory.search(filter.get())));
+    var people = createMemo(() -> {
+      var query = filter.get();
+      return async(() -> directory.search(query));
+    });
     return () -> div(
       input()
         .withId("search")

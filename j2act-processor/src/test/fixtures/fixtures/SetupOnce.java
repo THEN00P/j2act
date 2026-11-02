@@ -41,6 +41,8 @@ public class SetupOnce extends ComponentTag {
     var meant = untrack(label);
     var followed = createMemo(() -> "Hi " + label.get());
     var user = createMemo(() -> async(() -> "ada"));
+    var offLane = createMemo(() -> async(() -> label.get())); // expect: label is read inside async(...)
+    var routed = createMemo(() -> async(() -> pathParam("id"))); // expect: pathParam() is read inside async(...)
     var one = createRetained("one"); var two = createRetained("two"); // expect: two createRetained calls on one line
     return () -> div(
       loading(p(user.get())) // expect: user is read before loading(...) exists

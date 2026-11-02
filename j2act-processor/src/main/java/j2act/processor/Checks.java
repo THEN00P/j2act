@@ -39,6 +39,8 @@ final class Checks {
   private static final String STORE = "j2act.Store";
   private static final String STREAM = "java.util.stream.Stream";
 
+  private static final Set<String> ROUTE_READS = new HashSet<>(Arrays.asList("pathParam", "queryParam", "auth"));
+
   /** Setters of URL-valued attributes in the generated tags. */
   private static final Set<String> URL_SETTERS = new HashSet<>(Arrays.asList(
     "withHref", "withSrc", "withAction", "withFormaction", "withPoster", "withCite", "withData",
@@ -101,6 +103,7 @@ final class Checks {
       }
       missingKeys(node, scope);
       retainedChangedInPlace(node, scope);
+      readsInAsync(node, scope);
       transactionalSelfCall(node, scope);
     } else if (node.kind == Node.Kind.REF) {
       transactionalSelfCall(node, scope);
@@ -221,6 +224,24 @@ final class Checks {
           + "lambda, or say it is meant with untrack(...) (ADR 0031)");
       }
       readOnceInSetup(child, scope);
+    }
+  }
+
+  /** async(...) runs off the lane, where nothing follows a read: as in Solid, reads go before it (ADR 0033). */
+  private void readsInAsync(Node call, Scope scope) {
+    if (!call.name.equals("async") || call.args.size() != 1 || call.args.get(0).kind != Node.Kind.LAMBDA
+        || !scope.isOwnedBy(scope.candidates(call), REACTIVE)) {
+      return;
+    }
+    for (Node read : descendants(call.args.get(0), Node.Kind.CALL)) {
+      if (isPrimitiveRead(read, scope)) {
+        report(read, scope, read.receiver.name + " is read inside async(...), off the lane, where nothing follows it: "
+          + "read it in the memo before async(...), or say it is meant with untrack(...) (ADR 0033)");
+      } else if (ROUTE_READS.contains(read.name) && read.receiver == null
+          && scope.isOwnedBy(scope.candidates(read), REACTIVE)) {
+        report(read, scope, read.name + "() is read inside async(...), off the lane, where nothing follows it: "
+          + "read it in the memo before async(...) (ADR 0033)");
+      }
     }
   }
 

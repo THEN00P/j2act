@@ -16,8 +16,8 @@ public final class Errors {
     }
   }
 
-  /** A failure, wrapped with the node it came from. */
-  public static final class StatusError extends RuntimeException {
+  /** A failure, wrapped with the node it came from. An Error, so that a plain catch (Exception e) does not swallow it. */
+  public static final class StatusError extends Error {
     private static final long serialVersionUID = 1L;
     public final transient Node source;
 

@@ -11,7 +11,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /** Port of the imperative half of @solidjs/signals signals.ts at 9449845: resolve, refresh, until, reaction, onSettled, onFlush. */
-final class Signals {
+public final class Signals {
   /** Solid's AbortSignal, as much as until reads of it. */
   public interface Abort {
     boolean aborted();

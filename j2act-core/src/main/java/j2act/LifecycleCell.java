@@ -22,13 +22,11 @@ final class LifecycleCell extends Cell {
   /** Lane-only. Runs the settled callback; what it returns runs on unmount. */
   void fire() {
     Scope previousScope = Tracking.swapScope(owner);
-    Observer previous = Tracking.swap(null);
     try {
       cleanup = settled.get();
     } catch (Throwable t) {
       tab.engine.log(System.Logger.Level.WARNING, "onSettled failed at " + address, t);
     } finally {
-      Tracking.swap(previous);
       Tracking.swapScope(previousScope);
     }
   }

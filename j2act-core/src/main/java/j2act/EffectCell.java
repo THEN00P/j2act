@@ -1,25 +1,20 @@
 package j2act;
 
-import java.util.HashSet;
-import java.util.Objects;
-import java.util.Set;
+import j2act.internal.signals.Node;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 /**
- * Backs createEffect() (ADR 0031). Its first run waits for the tab's socket. It watches on the
- * lane and acts when the watched value changed, running its cleanup first; its cleanup also runs
- * on unmount.
+ * Backs createEffect() (ADR 0031): an effect of the engine's, which starts when its tab first has a socket,
+ * or for a preloaded subtree when the navigation adopts it. A failure in either half is logged: an
+ * uncaught one would halt every tab of the browser.
  */
-final class EffectCell extends Cell implements Observer {
+final class EffectCell extends Cell {
 
   Supplier<?> track;
   BiFunction<Object, Object, Runnable> apply;
-  private Runnable cleanup;
-  private boolean queued;
-  private boolean ran;
-  private Object last;
-  private final Set<Cell> deps = new HashSet<>();
+  private Node node;
+  private boolean started;
 
   EffectCell(Tab tab, String address) {
     super(tab, address);
@@ -29,98 +24,49 @@ final class EffectCell extends Cell implements Observer {
     return null;
   }
 
+  /** Lane-only. Starts it, or leaves it for when its tab is live and its subtree is on the page. */
   void schedule() {
-    if (!queued && !disposed) {
-      queued = true;
-      tab.pendingEffects.add(this);
-    }
-  }
-
-  void run() {
-    if (disposed) {
-      queued = false;
+    if (disposed || started) {
       return;
     }
-    if (owner != null && owner.preloading()) {
-      // Effects wait for the navigation to commit (ADR 0011); still queued, so no duplicates.
+    if (!tab.live() || owner != null && owner.preloading()) {
       tab.parkedEffects.add(this);
       return;
     }
-    queued = false;
-    Scope previousScope = Tracking.swapScope(owner);
-    try {
-      runTwoHalves();
-    } finally {
-      Tracking.swapScope(previousScope);
-    }
-  }
-
-  private void runTwoHalves() {
-    unsubscribe();
-    Object value;
-    Observer previous = Tracking.swap(this);
-    try {
-      value = track.get();
-    } catch (Throwable t) {
-      tab.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, t);
-      return;
-    } finally {
-      Tracking.swap(previous);
-    }
-    if (ran && Objects.equals(last, value)) {
-      return;
-    }
-    Object before = last;
-    boolean first = !ran;
-    last = value;
-    ran = true;
-    runCleanup();
-    previous = Tracking.swap(null);
-    try {
-      cleanup = apply.apply(value, first ? null : before);
-    } catch (Throwable t) {
-      tab.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, t);
-    } finally {
-      Tracking.swap(previous);
-    }
-  }
-
-  /** Lane-only. Its subtree was navigated to: run as if just mounted. */
-  void unpark() {
-    queued = false;
-    schedule();
-  }
-
-  @Override public void invalidate() {
-    schedule();
-  }
-
-  @Override public void dependsOn(Cell cell) {
-    deps.add(cell);
-  }
-
-  private void runCleanup() {
-    Runnable c = cleanup;
-    cleanup = null;
-    if (c != null) {
-      try {
-        c.run();
-      } catch (Throwable t) {
-        tab.engine.log(System.Logger.Level.WARNING, "effect cleanup failed at " + address, t);
-      }
-    }
-  }
-
-  private void unsubscribe() {
-    for (Cell cell : deps) {
-      cell.unsubscribe(this);
-    }
-    deps.clear();
+    started = true;
+    Scope scope = owner;
+    tab.rt.runWithOwner(scope != null ? scope.slot : null, () -> {
+      tab.rt.effectNode(prev -> {
+        Scope previous = Tracking.swapScope(scope);
+        Tab previousTab = Tab.swapCurrent(tab);
+        try {
+          return track.get();
+        } finally {
+          Tracking.swapScope(previous);
+          Tab.swapCurrent(previousTab);
+        }
+      }, (value, previousValue) -> {
+        Scope previous = Tracking.swapScope(scope);
+        Tab previousTab = Tab.swapCurrent(tab);
+        try {
+          return apply.apply(value, previousValue);
+        } catch (RuntimeException | Error t) {
+          tab.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, t);
+          return null;
+        } finally {
+          Tracking.swapScope(previous);
+          Tab.swapCurrent(previousTab);
+        }
+      }, (error, cleanup) -> tab.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, error), true,
+        created -> node = created);
+      return null;
+    });
   }
 
   @Override void dispose() {
-    runCleanup();
-    unsubscribe();
+    if (node != null) {
+      node.dispose();
+    }
     super.dispose();
   }
 }

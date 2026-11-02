@@ -25,9 +25,10 @@ public class UserPage extends LiveComponent {
   @Inject private Users users;
 
   @Override protected View setup() {
-    var user = createMemo(() -> async(() -> users
-    .find(Long.parseLong(pathParam("id")))
-    .orElseThrow(() -> notFound())));
+    var user = createMemo(() -> {
+      var id = Long.parseLong(pathParam("id"));
+      return async(() -> users.find(id).orElseThrow(() -> notFound()));
+    });
     return () -> html(
       head(
         title(user.get().getName())

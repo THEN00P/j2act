@@ -61,6 +61,57 @@ final class Action {
     s.question = prevQ;
   }
 
+  /** What a body on a thread hops into: its transaction and question. */
+  static final class Handle {
+    final Transaction t;
+    final int q;
+    final CompletableFuture<Object> result;
+
+    Handle(Transaction t, int q, CompletableFuture<Object> result) {
+      this.t = t;
+      this.q = q;
+      this.result = result;
+    }
+  }
+
+  Handle open(CompletableFuture<Object> result) {
+    Owner owner = rt.core.context;
+    if (owner != null && (owner.config & CONFIG_CHILDREN_FORBIDDEN) == 0) {
+      throw new IllegalStateException(ACTION_CALLED_IN_OWNED_SCOPE_MESSAGE);
+    }
+    Scheduler s = rt.scheduler;
+    Transaction t = s.newTransaction(false, null);
+    t.open = 1;
+    t.acted = true;
+    return new Handle(t, s.nextQuestion(), result);
+  }
+
+  /** One hop of the body: the same as a generator step between two yields. */
+  <T> T enter(Handle h, Supplier<T> fn) {
+    Scheduler s = rt.scheduler;
+    int prevQ = s.question;
+    s.question = h.q;
+    s.joinFuture(h.t);
+    s.actionDepth++;
+    try {
+      return fn.get();
+    } finally {
+      s.actionDepth--;
+      s.question = prevQ;
+    }
+  }
+
+  void end(Handle h, Object value, Throwable failure) {
+    Scheduler s = rt.scheduler;
+    Scheduler.resolveTx(h.t).open--;
+    s.schedule();
+    if (failure != null) {
+      h.result.completeExceptionally(failure);
+    } else {
+      h.result.complete(value);
+    }
+  }
+
   CompletionStage<Object> run(Supplier<Generator> genFn) {
     Owner owner = rt.core.context;
     if (owner != null && (owner.config & CONFIG_CHILDREN_FORBIDDEN) == 0) {

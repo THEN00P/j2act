@@ -72,14 +72,16 @@ class RoutingTest {
 
   @Override protected View setup() {
     var visits = createSignal(0);
-    var user = createMemo(() -> async(() -> {
-      userLoads.incrementAndGet();
+    var user = createMemo(() -> {
       String id = pathParam("id");
-      if ("404".equals(id)) {
-        throw notFound();
-      }
-      return "user " + id;
-    }));
+      return async(() -> {
+        userLoads.incrementAndGet();
+        if ("404".equals(id)) {
+          throw notFound();
+        }
+        return "user " + id;
+      });
+    });
     return () -> html(
         head(title(user.get() == null ? "…" : user.get())),
         body(

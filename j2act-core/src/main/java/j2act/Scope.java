@@ -1,18 +1,19 @@
 package j2act;
 
+import j2act.internal.signals.Errors.NotReadyError;
+import j2act.internal.signals.Node;
+import j2act.internal.signals.Owner;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * One mounted component, or one store of a tab (ADR 0030), which has no parent and never
  * renders: its tree slot, its cells in creation order, the cells its
  * last render read, and the child scopes it placed. Lane-only.
  */
-final class Scope implements Observer {
+final class Scope {
 
   final Tab tab;
   final Scope parent;
@@ -33,7 +34,33 @@ final class Scope implements Observer {
   /** The store this scope holds instead of a component. */
   Store store;
   final List<Cell> cells = new ArrayList<>();
-  final Set<Cell> deps = new HashSet<>();
+  /** What owns this scope's nodes: Solid's row owner, which a parent's re-run leaves alone (ADR 0033). */
+  Owner slot;
+  /** This scope's view as a render effect: its first half renders, its second puts the result on the page. */
+  Node effect;
+  /** What the last pass of the first half gave. */
+  String rendered;
+  /** What the last pass of the second half showed. */
+  String html;
+  /** What a parent's pass carried inside its own patch, so this scope has no patch of its own to send. */
+  String embedded;
+  /** What the page has, so a pass that changed nothing sends nothing. */
+  String sent;
+  private boolean inParent;
+  /** The element its parent's pass is inside at this scope's place. */
+  String placedInside;
+  /** What a loading(...) or errored(...) shows, rendered as a scope of its own. */
+  Scope fallbackScope;
+  /** The fallback's HTML, by identity, to tell whether what a boundary shows is its fallback. */
+  String fallbackHtml;
+  /** A boundary's engine node, and what renders its content. */
+  Node boundaryOutput;
+  Node contentNode;
+  /** A view failed with nothing to catch it: the page keeps what it shows, and a served page reports it. */
+  Throwable renderFailure;
+  /** Children no pass placed again and handlers no element uses: they go when the pass shows (ADR 0033). */
+  final List<Scope> removing = new ArrayList<>();
+  final List<String> droppedHandlers = new ArrayList<>();
   Map<String, Scope> children = new LinkedHashMap<>();
   Map<String, Scope> previousChildren = new LinkedHashMap<>();
   /** Handler id per element position and event ("path|event"), kept while that element keeps rendering. */
@@ -66,6 +93,9 @@ final class Scope implements Observer {
     this.address = address;
     this.anchor = tab.nextAnchor();
     this.codeEpoch = tab.engine.codeEpoch;
+    // Nothing with no parent, such as a store, belongs to the view that happened to make it first.
+    this.slot = parent != null ? tab.rt.createSlotOwner(parent.slot)
+      : tab.rt.runWithOwner(null, () -> tab.rt.createSlotOwner(null));
   }
 
   /**
@@ -156,7 +186,6 @@ final class Scope implements Observer {
   void startOver(String reason) {
     tab.engine.log(System.Logger.Level.INFO, "j2act dev: " + instance.getClass().getName()
       + " starts over with fresh state, since the new code changed it: " + reason, null);
-    unsubscribeAll();
     for (Cell cell : cells) {
       try {
         cell.dispose();
@@ -202,17 +231,16 @@ final class Scope implements Observer {
     setupIndex = instance.primitives.size();
     Scope previousSetup = SETTING_UP.get();
     Scope previousScope = Tracking.swapScope(this);
-    Observer previous = Tracking.swap(null);
     SETTING_UP.set(this);
     try {
-      view = instance.setup();
+      // Nothing tracks it and nothing owns it, as a handler: a setup may write, and what it creates says its owner.
+      view = tab.rt.runWithOwner(null, () -> tab.rt.untrack(instance::setup));
     } finally {
       if (previousSetup == null) {
         SETTING_UP.remove();
       } else {
         SETTING_UP.set(previousSetup);
       }
-      Tracking.swap(previous);
       Tracking.swapScope(previousScope);
     }
     if (view == null) {
@@ -285,7 +313,7 @@ final class Scope implements Observer {
     if (view == null && settledCount < 0) {
       try {
         runSetup();
-      } catch (NotReady | LoadFailed e) {
+      } catch (NotReadyError | j2act.internal.signals.Errors.StatusError e) {
         // It read a value not loaded yet. The render that follows runs setup again, where a
         // boundary can catch this; what it created so far is found again by creation order.
       }
@@ -304,22 +332,24 @@ final class Scope implements Observer {
     if (settledCount >= 0) {
       throw orderViolation(ownerClass().getName() + " created primitive #" + index + ", which it did not before");
     }
-    Cell cell = primitive.createCell(tab, address + "#" + index);
+    Scope previousScope = Tracking.swapScope(this);
+    Cell cell;
+    try {
+      cell = tab.rt.runWithOwner(slot, () -> tab.rt.untrack(() -> primitive.createCell(tab, address + "#" + index)));
+    } finally {
+      Tracking.swapScope(previousScope);
+    }
     cell.owner = this;
     cells.add(cell);
     tab.cells.put(cell.address, cell);
     if (primitive instanceof RetainedSignal) {
       Signal<?> signal = (Signal<?>) primitive;
-      tab.snapshot.retain(this, primitive, signal.retainedName, signal.stackName, signal.initial(), (Node) cell);
+      tab.snapshot.retain(this, primitive, signal.retainedName, signal.stackName, signal.initial(), (ValueCell) cell);
     } else if (primitive instanceof RetainedValue) {
       RetainedValue<?> value = (RetainedValue<?>) primitive;
-      tab.snapshot.retain(this, primitive, value.name, value.stackName, cell.peek(), (Node) cell);
+      tab.snapshot.retain(this, primitive, value.name, value.stackName, cell.peek(), (ValueCell) cell);
     }
     primitive.attach(cell, true);
-  }
-
-  @Override public void invalidate() {
-    tab.markDirty(this);
   }
 
   /** Inside a preloaded subtree that has not been navigated to yet. */
@@ -333,17 +363,13 @@ final class Scope implements Observer {
   }
 
   /** The route cell pathParam()/queryParam() read here: a preloaded subtree's own, else the tab's. */
-  Node routeCell() {
+  ValueCell routeCell() {
     for (Scope s = this; s != null; s = s.parent) {
       if (s.routeOverride != null) {
         return s.routeOverride;
       }
     }
     return tab.routeCell;
-  }
-
-  @Override public void dependsOn(Cell cell) {
-    deps.add(cell);
   }
 
   /** A boundary at or above this scope shows its fallback, so this scope's output is not on screen. */
@@ -358,11 +384,11 @@ final class Scope implements Observer {
 
   /** Everything loading in this component and below finished, and it was rendered. */
   boolean settledBelow() {
-    if (dirty || disposed) {
+    if (dirty || disposed || effect != null && tab.rt.pending(effect)) {
       return false;
     }
     for (Cell cell : cells) {
-      if (cell instanceof Node && ((Node) cell).loading()) {
+      if (cell instanceof ValueCell && ((ValueCell) cell).loading()) {
         return false;
       }
     }
@@ -374,21 +400,108 @@ final class Scope implements Observer {
     return true;
   }
 
-  /** A render stopped partway: this scope renders again when the value it stopped on lands. */
-  void waitFor(Cell cell) {
-    if (cell == null || cell.disposed) {
-      return;
+  /** The first half of this scope's render effect. */
+  Object renderPass(Object previous) {
+    String out;
+    tab.enterRender();
+    Tab previousTab = Tab.swapCurrent(tab);
+    Scope previousScope = Tracking.swapScope(this);
+    try {
+      Renderer renderer = new Renderer(tab, tab.renderEpoch());
+      renderer.nonce = tab.nonceFor(this);
+      renderer.enclosing = placedInside;
+      renderer.renderScope(this);
+      out = renderer.out.toString();
+    } catch (RouteException e) {
+      tab.deferRoute(e);
+      return previous != null ? previous : "";
+    } catch (NotReadyError e) {
+      throw e;
+    } catch (RuntimeException | Error t) {
+      if (t.getCause() instanceof RouteException) {
+        tab.deferRoute((RouteException) t.getCause());
+        return previous != null ? previous : "";
+      }
+      if (errorCatcherAbove()) {
+        throw t;
+      }
+      renderFailure = t;
+      tab.engine.log(System.Logger.Level.WARNING, "a view failed with no errored(...) around it at " + address,
+        t instanceof j2act.internal.signals.Errors.StatusError && t.getCause() != null ? t.getCause() : t);
+      return previous != null ? previous : "";
+    } finally {
+      Tracking.swapScope(previousScope);
+      Tab.swapCurrent(previousTab);
+      tab.exitRender();
     }
-    Cell local = tab.local(cell);
-    local.observers.add(this);
-    dependsOn(local);
+    renderFailure = null;
+    rendered = out;
+    if (inParent) {
+      embedded = out;
+    }
+    return out;
   }
 
-  void unsubscribeAll() {
-    for (Cell cell : deps) {
-      cell.unsubscribe(this);
+  private boolean errorCatcherAbove() {
+    for (Scope s = this; s != null; s = s.parent) {
+      if (s.instance instanceof Errored) {
+        return true;
+      }
     }
-    deps.clear();
+    return false;
+  }
+
+  /** Makes this scope's render effect, whose first pass runs now. */
+  void startEffect() {
+    tab.rt.runWithOwner(slot, () -> {
+      tab.rt.effectNode(this::renderPass, (value, previous) -> {
+        shown((String) value);
+        return null;
+      }, null, false, created -> effect = created);
+      return null;
+    });
+  }
+
+  /** The second half: the frame can show, so what it replaced goes, and its patch is on its way. */
+  private void shown(String value) {
+    html = value;
+    for (Scope old : removing) {
+      old.dispose();
+    }
+    removing.clear();
+    tab.handlers.drop(this);
+    if (value == embedded) {
+      sent = value;
+      return;
+    }
+    if (!value.equals(sent)) {
+      tab.queuePatch(this);
+    }
+  }
+
+  /** The pass of a parent placing this scope: runs its effect inside that pass, and stops if it stopped. */
+  String renderInParent() {
+    boolean outer = inParent;
+    inParent = true;
+    try {
+      if (effect == null) {
+        startEffect();
+      } else {
+        tab.rt.recomputeNow(effect);
+      }
+    } finally {
+      inParent = outer;
+    }
+    if (effect != null && (tab.rt.pending(effect) || tab.rt.failed(effect))) {
+      tab.rt.read(effect);
+    }
+    if (renderFailure != null) {
+      if (renderFailure instanceof RuntimeException) {
+        throw (RuntimeException) renderFailure;
+      }
+      throw (Error) renderFailure;
+    }
+    return rendered;
   }
 
   void dispose() {
@@ -404,7 +517,14 @@ final class Scope implements Observer {
       live.dispose();
     }
     actionScopes.clear();
-    unsubscribeAll();
+    for (Scope old : removing) {
+      old.dispose();
+    }
+    removing.clear();
+    if (fallbackScope != null) {
+      fallbackScope.dispose();
+      fallbackScope = null;
+    }
     tab.handlers.remove(this);
     tab.heads.forget(this);
     tab.showingFallback.remove(this);
@@ -415,7 +535,10 @@ final class Scope implements Observer {
       cell.dispose();
       tab.cells.remove(cell.address);
     }
-    tab.dirty.remove(this);
+    if (slot != null) {
+      slot.dispose();
+    }
+    tab.forgetScope(this);
     if (routeOverride != null) {
       routeOverride.unfollow();
     }

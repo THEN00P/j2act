@@ -117,39 +117,96 @@ public final class Reactive {
   }
 
   /**
-   * Runs blocking code on j2act's executor and returns its future, for an async memo (ADR 0031).
-   * Unlike CompletableFuture.supplyAsync it runs where the container's context exists, its reads
-   * are tracked, what is around the caller works inside it, and a newer run stops it.
+   * Runs blocking code on j2act's executor and returns its future, for an async memo (ADR 0031). Reads go in
+   * the memo before it, as in Solid, where they are tracked: one in here reads the screen untracked. Unlike
+   * CompletableFuture.supplyAsync it runs where the container's context exists, what is around the caller
+   * works inside it, and a newer run stops it.
    */
   public static <R> CompletableFuture<R> async(Loader<R> work) {
-    Observer observer = Tracking.observer();
     Scope scope = Tracking.scope();
     Tab tab = scope != null ? scope.tab : Tab.ambient();
     if (tab == null) {
       throw new IllegalStateException("async(...) needs a tab: call it from a memo, a handler or an action");
     }
-    Node node = observer instanceof Node && ((Node) observer).isAsync() ? (Node) observer : null;
-    return Node.submit(tab, node, scope, Tracking.pass(), work);
+    CompletableFuture<R> result = new CompletableFuture<>();
+    LoadThread thread = new LoadThread();
+    if (tab.lane.isCurrent()) {
+      tab.rt.onSupersede(thread::interrupt);
+    }
+    try {
+      tab.engine.executor.execute(() -> {
+        if (!thread.begin()) {
+          result.cancel(false);
+          return;
+        }
+        Tab.LOADING.set(tab);
+        Scope previous = Tracking.swapScope(scope);
+        try {
+          result.complete(work.load());
+        } catch (Throwable t) {
+          result.completeExceptionally(t);
+        } finally {
+          Tab.LOADING.remove();
+          Tracking.swapScope(previous);
+          thread.end();
+        }
+      });
+    } catch (java.util.concurrent.RejectedExecutionException e) {
+      result.completeExceptionally(e);
+    }
+    return result;
+  }
+
+  /** The thread one async(...) runs on, so a newer run can stop its blocking work. */
+  private static final class LoadThread {
+    private Thread thread;
+    private boolean interrupted;
+
+    synchronized boolean begin() {
+      thread = Thread.currentThread();
+      return !interrupted;
+    }
+
+    /** An interrupt meant for this run stops here. */
+    synchronized void end() {
+      thread = null;
+      Thread.interrupted();
+    }
+
+    synchronized void interrupt() {
+      interrupted = true;
+      if (thread != null) {
+        thread.interrupt();
+      }
+    }
   }
 
   /**
-   * Loads an async memo again, quietly: its old value stays, what follows it reloads with it and
-   * changes in the same update, and isPending does not turn true (ADR 0031). In an action's body it is
-   * part of the transaction: the action commits, with its optimistic writes going, once the new
-   * value arrived, so its future finishes with what lands next, which the body can wait for. Elsewhere
-   * the future finishes once everything that followed it has landed too, in the update that shows it.
+   * Loads an async memo again, quietly: its old value stays, what follows it reloads with it and changes in
+   * the same update, and isPending does not turn true (ADR 0031). In an action's body it is part of the
+   * transaction. The future finishes with the value that landed, in the update that shows it.
    */
   @SuppressWarnings("unchecked")
   public static <T> CompletableFuture<T> refresh(Supplier<T> memo) {
-    Node node = asyncOf(memo, "refresh");
-    CompletableFuture<Object> landed = new CompletableFuture<>();
+    ValueCell cell = valueOf(memo, "refresh");
     Action.Call call = Action.Call.current();
-    if (node.tab.lane.isCurrent() && call == null) {
-      node.tab.refresh(node, landed);
-    } else if (call != null) {
-      call.refresh(node, landed);
+    CompletableFuture<Object> landed = new CompletableFuture<>();
+    Runnable start = () -> cell.rt.refresh(cell.node).whenComplete((value, failure) -> {
+      if (failure != null) {
+        landed.completeExceptionally(failure);
+      } else {
+        landed.complete(value);
+      }
+    });
+    if (call != null) {
+      call.enter(cell.tab, () -> {
+        start.run();
+        return null;
+      });
+    } else if (cell.tab.lane.isCurrent()) {
+      start.run();
     } else {
-      node.tab.post(() -> node.tab.refresh(node, landed));
+      cell.tab.post(start);
     }
     return (CompletableFuture<T>) landed;
   }
@@ -166,30 +223,62 @@ public final class Reactive {
 
   /** {@link #until(Supplier)}, failing with a TimeoutException if nothing confirms it in time. */
   public static <T> CompletableFuture<T> until(Supplier<T> fn, java.time.Duration timeout) {
-    return new Until<>(imperativeTab("until"), fn, true, timeout).result;
+    Long millis = timeout == null ? null : Long.valueOf(timeout.toMillis());
+    return waiting("until", rt -> rt.until(supplier(fn), millis), timeout);
   }
 
   /** Finishes with the first value fn settles on, whatever it is, once what it reads has loaded (ADR 0031). */
   public static <T> CompletableFuture<T> resolve(Supplier<T> fn) {
-    return new Until<>(imperativeTab("resolve"), fn, false, null).result;
+    return waiting("resolve", rt -> rt.resolve(supplier(fn)), null);
   }
 
-  private static Tab imperativeTab(String what) {
-    if (Tracking.observer() != null) {
-      throw new IllegalStateException(what + "(...) waits, so it cannot run inside something reactive:"
-        + " call it from a handler or an action (ADR 0031)");
-    }
+  @SuppressWarnings("unchecked")
+  private static Supplier<Object> supplier(Supplier<?> fn) {
+    return (Supplier<Object>) fn;
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <T> CompletableFuture<T> waiting(String what,
+      java.util.function.Function<j2act.internal.signals.Runtime, java.util.concurrent.CompletionStage<Object>> start,
+      java.time.Duration timeout) {
     Action.Call call = Action.Call.current();
     Tab tab = call != null ? call.tab : Tab.current();
     if (tab == null) {
       throw new IllegalStateException(what + "(...) needs a tab: call it from a handler or an action");
     }
-    return tab;
+    if (tab.lane.isCurrent() && tab.rt.getObserver() != null) {
+      throw new IllegalStateException(what + "(...) waits, so it cannot run inside something reactive:"
+        + " call it from a handler or an action (ADR 0031)");
+    }
+    CompletableFuture<Object> result = new CompletableFuture<>();
+    tab.waiters.add(result);
+    result.whenComplete((value, failure) -> tab.waiters.remove(result));
+    Runnable begin = () -> start.apply(tab.rt).whenComplete((value, failure) -> {
+      if (failure instanceof j2act.internal.signals.Errors.TimeoutError) {
+        result.completeExceptionally(new java.util.concurrent.TimeoutException(
+          what + "(...) was not satisfied within " + timeout));
+      } else if (failure != null) {
+        result.completeExceptionally(failure);
+      } else {
+        result.complete(value);
+      }
+    });
+    if (call != null) {
+      call.enter(tab, () -> {
+        begin.run();
+        return null;
+      });
+    } else if (tab.lane.isCurrent()) {
+      begin.run();
+    } else {
+      tab.post(begin);
+    }
+    return (CompletableFuture<T>) result;
   }
 
   /** Tracked: the last load of this async memo failed; for showing it beside a withStaleOnError() value. */
   public static boolean failed(Supplier<?> memo) {
-    return asyncOf(memo, "failed").readFailed();
+    return valueOf(memo, "failed").readFailed();
   }
 
   /**
@@ -201,19 +290,15 @@ public final class Reactive {
   public static boolean isPending(Supplier<?> fn) {
     Scope scope = Tracking.scope();
     Tab tab = scope != null ? scope.tab : Tab.current();
-    if (tab != null) {
-      tab.pendingCell.read();
+    if (tab == null) {
+      throw new IllegalStateException("isPending(...) needs a tab: call it from a view, a memo, a handler or an effect");
     }
-    boolean[] found = new boolean[1];
-    boolean[] previous = Tracking.swapProbe(found);
-    try {
-      fn.get();
-    } catch (LoadFailed e) {
-      return false;
-    } finally {
-      Tracking.swapProbe(previous);
+    if (tab.lane.isCurrent()) {
+      return tab.rt.isPending(fn);
     }
-    return found[0];
+    boolean[] answer = new boolean[1];
+    tab.host.hop(() -> answer[0] = tab.rt.isPending(fn));
+    return answer[0];
   }
 
   /**
@@ -221,29 +306,26 @@ public final class Reactive {
    * action around this call ends, for a refresh that should show (ADR 0031).
    */
   public static void affects(Supplier<?> memo) {
-    Node async = asyncOf(memo, "affects");
+    ValueCell cell = valueOf(memo, "affects");
     Action.Call call = Action.Call.current();
-    if (async.tab.lane.isCurrent()) {
-      async.affected = true;
-      async.tab.pendingChanged();
-    } else {
-      async.tab.post(() -> {
-        if (call != null) {
-          call.affects(async);
-        } else {
-          async.affected = true;
-          async.tab.pendingChanged();
-        }
+    if (call != null) {
+      call.enter(cell.tab, () -> {
+        cell.rt.affects(cell.node);
+        return null;
       });
+    } else if (cell.tab.lane.isCurrent()) {
+      cell.rt.affects(cell.node);
+    } else {
+      cell.tab.post(() -> cell.rt.affects(cell.node));
     }
   }
 
-  private static Node asyncOf(Supplier<?> value, String what) {
+  private static ValueCell valueOf(Supplier<?> value, String what) {
     Cell cell = value instanceof Primitive ? ((Primitive) value).requireCell() : null;
-    if (!(cell instanceof Node) || !((Node) cell).isAsync()) {
+    if (!(cell instanceof ValueCell) || !((ValueCell) cell).isAsync()) {
       throw new IllegalArgumentException(what + " takes an async memo or an optimistic value over a load");
     }
-    return (Node) cell;
+    return (ValueCell) cell;
   }
 
   /**
@@ -341,12 +423,12 @@ public final class Reactive {
 
   /** Reads ahead of a held write, for what must follow input at once, such as the text field being typed into. */
   public static <T> T latest(Supplier<T> read) {
-    Pass previous = Tracking.swapPass(Pass.LATEST);
-    try {
+    Scope scope = Tracking.scope();
+    Tab tab = scope != null ? scope.tab : Tab.current();
+    if (tab == null || !tab.lane.isCurrent()) {
       return read.get();
-    } finally {
-      Tracking.swapPass(previous);
     }
+    return tab.rt.latest(read);
   }
 
   /** Applies the writes of this lane task now instead of at its end; mainly for tests. */
@@ -356,7 +438,7 @@ public final class Reactive {
     }
     Tab tab = Tab.current();
     if (tab != null && tab.lane.isCurrent()) {
-      tab.applyWrites();
+      tab.flush();
     }
   }
 
@@ -385,14 +467,12 @@ public final class Reactive {
 
   /** Reads without subscribing whoever is running, and says the one-time read is meant. */
   public static <T> T untrack(Supplier<T> fn) {
-    Observer previous = Tracking.swap(null);
-    LoadRun run = Tracking.suspendRun();
-    try {
+    Scope scope = Tracking.scope();
+    Tab tab = scope != null ? scope.tab : Tab.current();
+    if (tab == null || !tab.lane.isCurrent()) {
       return fn.get();
-    } finally {
-      Tracking.swap(previous);
-      Tracking.resumeRun(run);
     }
+    return tab.rt.untrack(fn);
   }
 
   /** Rendering with no tab, as Tag.toString does: primitives stay unbound and read as their initial values. */
