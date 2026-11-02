@@ -1,6 +1,8 @@
 package j2act;
 
 import static j2act.Reactive.action;
+import static j2act.Reactive.affects;
+import static j2act.Reactive.isPending;
 import static j2act.Reactive.async;
 import static j2act.Reactive.createEffect;
 import static j2act.Reactive.createMemo;
@@ -285,6 +287,51 @@ class ActionTest {
       LoadReadsOptimistic.release.countDown();
       Harness.eventually(() -> LoadReadsOptimistic.LOADS.get() >= 1000, "the action finishes, with its load landed");
       assertTrue(LoadReadsOptimistic.LOADS.get() < 1010, "and no load kept restarting: " + LoadReadsOptimistic.LOADS.get());
+    }
+  }
+
+  static final class TwoAffect extends LiveComponent {
+    static final CompletableFuture<Void> FIRST = new CompletableFuture<>();
+    static final CompletableFuture<Void> SECOND = new CompletableFuture<>();
+    static final CompletableFuture<Void> FIRST_ENDED = new CompletableFuture<>();
+
+    @Override protected View setup() {
+      var value = createMemo(() -> CompletableFuture.completedFuture("v"));
+      var first = action((String v) -> {
+        affects(value);
+        FIRST.get();
+      });
+      var second = action((String v) -> {
+        affects(value);
+        SECOND.get();
+      });
+      return () -> T.page("t", T.div(
+        T.span(value.get() + ":pending=" + isPending(value) + ";"),
+        T.button("first").onClick(e -> first.run("x").thenRun(() -> FIRST_ENDED.complete(null))),
+        T.button("second").onClick(e -> second.run("x")),
+        T.button("sync").onClick(e -> { })));
+    }
+  }
+
+  @Test
+  void oneRunEndingLeavesAnothersAffectsPending() throws Exception {
+    try (Harness h = new Harness(TwoAffect::new)) {
+      String html = h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "first"));
+      h.click(Harness.clickOn(html, "second"));
+      h.awaitPatch(from, p -> p.contains("pending=true;"));
+
+      int mid = h.conn.size();
+      TwoAffect.FIRST.complete(null);
+      TwoAffect.FIRST_ENDED.get(5, java.util.concurrent.TimeUnit.SECONDS);
+      h.click(Harness.clickOn(html, "sync"));
+      assertTrue(h.conn.since(mid, m -> "patch".equals(m.get("type")) && m.get("html").contains("pending=false;")).isEmpty(),
+        "the second run still says it is affected");
+
+      TwoAffect.SECOND.complete(null);
+      h.awaitPatch(mid, p -> p.contains("pending=false;"));
     }
   }
 

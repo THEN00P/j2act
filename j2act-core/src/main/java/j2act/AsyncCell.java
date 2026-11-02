@@ -31,6 +31,8 @@ final class AsyncCell extends Cell implements Observer {
   private Throwable stagedError;
   /** affects(x): a change to it is on its way, until the next landing or the action's end. */
   boolean affected;
+  /** Action runs that said affects(x) and have not ended; each ends on its own. */
+  int affectingRuns;
   private final Set<Cell> deps = new HashSet<>();
   /** The async(...) runs of the current body, whose reads are validated when it lands. */
   private List<LoadRun> runs = new ArrayList<>();
@@ -58,18 +60,27 @@ final class AsyncCell extends Cell implements Observer {
 
   /** A load downstream of this one in a transition reads its new result, and waits for it. */
   private Object readAhead() {
-    onRead(isStaged ? stagedValue : value);
+    Object ahead = peekLatest();
+    onRead(ahead);
     if (!isStaged) {
       throw new NotReady(this);
     }
-    if (stagedError != null) {
+    if (stagedError != null && !keepsStale()) {
       throw new LoadFailed(this, stagedError);
     }
-    return stagedValue;
+    return ahead;
+  }
+
+  /** withStaleOnError(): a failed refresh leaves the old value, for what follows this load too. */
+  private boolean keepsStale() {
+    return staleOnError && hasValue;
   }
 
   @Override Object peekLatest() {
-    return isStaged ? stagedValue : value;
+    if (!isStaged) {
+      return value;
+    }
+    return stagedError != null && keepsStale() ? value : stagedValue;
   }
 
   /** Tracked: the last load failed. */
@@ -83,7 +94,7 @@ final class AsyncCell extends Cell implements Observer {
   }
 
   @Override boolean pendingChange() {
-    return transition != null || affected;
+    return transition != null || affected || affectingRuns > 0;
   }
 
   /** The value is on screen, so a write that reloads it holds the update instead of tearing it. */

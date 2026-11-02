@@ -154,10 +154,12 @@ public final class Action<V, R> {
       });
     }
 
-    /** Lane-only. affects(x) from the body: pending until the run's transaction ends. */
-    void releaseAffected(AsyncCell cell) {
+    /** Lane-only. affects(x) from the body: pending until this run's transaction ends, whatever others do. */
+    void affects(AsyncCell cell) {
+      cell.affectingRuns++;
+      tab.pendingChanged();
       transition().onCommit(() -> {
-        cell.affected = false;
+        cell.affectingRuns--;
         tab.pendingChanged();
       });
     }

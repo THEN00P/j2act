@@ -4,6 +4,7 @@ import static j2act.Reactive.affects;
 import static j2act.Reactive.async;
 import static j2act.Reactive.createMemo;
 import static j2act.Reactive.createSignal;
+import static j2act.Reactive.failed;
 import static j2act.Reactive.isPending;
 import static j2act.Reactive.latest;
 import static j2act.Reactive.refresh;
@@ -219,6 +220,43 @@ class TransitionTest {
       assertTrue(h.click(Harness.clickOn(html, "edit")).get(0).get("html").contains("parity:10;"));
       assertTrue(h.click(Harness.clickOn(html, "even")).isEmpty(), "0 % 2 and 2 % 2 are the same result");
       assertTrue(h.click(Harness.clickOn(html, "odd")).get(0).get("html").contains("parity:1;"));
+    }
+  }
+
+  static final class StaleInAChain extends LiveComponent {
+    static final java.util.concurrent.atomic.AtomicInteger ATTEMPT = new java.util.concurrent.atomic.AtomicInteger();
+
+    @Override protected View setup() {
+      var selected = createSignal("A");
+      var feed = createMemo(() -> async(() -> {
+        String id = selected.get();
+        if (ATTEMPT.incrementAndGet() == 2) {
+          throw new IllegalStateException("blip");
+        }
+        return "feed " + id;
+      })).withStaleOnError();
+      var summary = createMemo(() -> async(() -> "summary of " + feed.get()));
+      return () -> T.page("t", T.div(
+        T.span("selected:" + selected.get() + ";"),
+        T.span("feed:" + feed.get() + ";"),
+        T.span("failed:" + failed(feed) + ";"),
+        Reactive.errored(() -> T.span("summary:" + summary.get() + ";")).withFallback(err -> T.span("summary failed")),
+        T.button("pick B").onClick(e -> selected.set("B"))));
+    }
+  }
+
+  @Test
+  void aLoadFollowingAStaleOnErrorFailureReadsTheOldValue() {
+    StaleInAChain.ATTEMPT.set(0);
+    try (Harness h = new Harness(StaleInAChain::new)) {
+      String html = h.load();
+      h.connect();
+      assertTrue(html.contains("summary:summary of feed A;"), html);
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "pick B"));
+      String landed = h.awaitPatch(from, p -> p.contains("failed:true;")).get("html");
+      assertTrue(landed.contains("feed:feed A;"), landed);
+      assertFalse(landed.contains("summary failed"), "the old value stays for what follows it too: " + landed);
     }
   }
 

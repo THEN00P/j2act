@@ -184,10 +184,11 @@ public final class Reactive {
       async.tab.pendingChanged();
     } else {
       async.tab.post(() -> {
-        async.affected = true;
-        async.tab.pendingChanged();
         if (call != null) {
-          call.releaseAffected(async);
+          call.affects(async);
+        } else {
+          async.affected = true;
+          async.tab.pendingChanged();
         }
       });
     }
