@@ -473,10 +473,12 @@ public final class Tab {
     }
     Tab previous = MAKING_STORE.get();
     MAKING_STORE.set(this);
+    Store previousStore = Store.swapConstructing(null);
     T instance;
     try {
       instance = create.get();
     } finally {
+      Store.swapConstructing(previousStore);
       if (previous == null) {
         MAKING_STORE.remove();
       } else {

@@ -53,8 +53,10 @@ final class Renderer {
 
     Tag<?> root;
     Observer previous = Tracking.swap(scope);
+    Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
+      scope.refreshView();
       if (scope.shapeChanged(scope.instance.getClass())) {
         // Only a held object (a page, a layout, a field of its parent) reaches here: a fresh one
         // started over when it was bound, and dev mode mounts changed pages and layouts again.
@@ -62,16 +64,21 @@ final class Renderer {
           + " has new fields, but its object is held by its parent, so they stay unset until the page reloads", null);
         scope.shape = Scope.shapeOf(scope.instance.getClass());
       }
-      try {
-        root = scope.instance.runRender();
-      } catch (Scope.ShapeChanged e) {
-        // Before anything of this render was emitted: start over and render once more.
-        scope.startOver(e.getMessage());
-        root = scope.instance.runRender();
+      if (scope.view != null) {
+        root = scope.renderView();
+      } else {
+        try {
+          root = scope.instance.runRender();
+        } catch (Scope.ShapeChanged e) {
+          // Before anything of this render was emitted: start over and render once more.
+          scope.startOver(e.getMessage());
+          root = scope.instance.runRender();
+        }
       }
     } finally {
       scope.rendering = false;
       Tracking.swap(previous);
+      Tracking.swapScope(previousScope);
     }
     scope.activatePending();
     for (Cell cell : scope.cells) {

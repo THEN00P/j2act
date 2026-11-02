@@ -18,7 +18,26 @@ public abstract class ComponentTag implements DomContent {
   Object key;
   private int renderIndex;
 
-  protected abstract Tag<?> render();
+  /**
+   * Runs once per slot, after injection: creates what this component needs and returns its view
+   * (ADR 0031). Null until every component is migrated: then render() is the view.
+   */
+  protected View setup() {
+    return null;
+  }
+
+  protected Tag<?> render() {
+    throw new IllegalStateException(getClass().getName() + " overrides neither setup() nor render()");
+  }
+
+  /** On a re-render: takes the Props of this render's description, which is then dropped (ADR 0031). */
+  final void adoptProps(ComponentTag description) {
+    for (int i = 0; i < primitives.size() && i < description.primitives.size(); i++) {
+      if (primitives.get(i) instanceof Prop && description.primitives.get(i) instanceof Prop) {
+        ((Prop<?>) primitives.get(i)).adopt((Prop<?>) description.primitives.get(i));
+      }
+    }
+  }
 
   /**
    * Override to make this component a loading boundary (ADR 0007): shown instead of

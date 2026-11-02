@@ -35,6 +35,11 @@ public final class Prop<T> extends Primitive implements Supplier<T> {
     }
   }
 
+  /** Lane-only. Takes the value of the same Prop on a newer description of this component. */
+  void adopt(Prop<?> description) {
+    ((ValueCell) requireCell()).setOnLane(description.described());
+  }
+
   private T described() {
     return hasPending ? pending : fallback;
   }

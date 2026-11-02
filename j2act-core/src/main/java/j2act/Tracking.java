@@ -9,6 +9,8 @@ final class Tracking {
 
   private static final ThreadLocal<Observer> OBSERVER = new ThreadLocal<>();
   private static final ThreadLocal<QueryRun> RUN = new ThreadLocal<>();
+  /** The component or store scope whose code is running, for what is read around it (ADR 0031). */
+  private static final ThreadLocal<Scope> SCOPE = new ThreadLocal<>();
 
   private Tracking() {
   }
@@ -24,6 +26,21 @@ final class Tracking {
       OBSERVER.remove();
     } else {
       OBSERVER.set(next);
+    }
+    return previous;
+  }
+
+  static Scope scope() {
+    return SCOPE.get();
+  }
+
+  /** Installs the running scope and returns the previous one, to restore in a finally. */
+  static Scope swapScope(Scope next) {
+    Scope previous = SCOPE.get();
+    if (next == null) {
+      SCOPE.remove();
+    } else {
+      SCOPE.set(next);
     }
     return previous;
   }

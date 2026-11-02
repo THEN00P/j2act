@@ -32,8 +32,34 @@ public abstract class Store {
   Scope scope;
   /** The tab making this store, until it is bound; null for a container's proxy, which never binds. */
   private Tab pending = Tab.MAKING_STORE.get();
+  /**
+   * The store whose field initializers are running on this thread, which owns what they create
+   * (ADR 0031). A container's proxy sets it too: its primitives stay unbound, as it never binds.
+   */
+  private static final ThreadLocal<Store> CONSTRUCTING = new ThreadLocal<>();
 
   protected Store() {
+    CONSTRUCTING.set(this);
+  }
+
+  static Store constructing() {
+    return CONSTRUCTING.get();
+  }
+
+  /** Returns the constructing store to restore once a nested construction ended. */
+  static Store swapConstructing(Store next) {
+    Store previous = CONSTRUCTING.get();
+    if (next == null) {
+      CONSTRUCTING.remove();
+    } else {
+      CONSTRUCTING.set(next);
+    }
+    return previous;
+  }
+
+  /** A primitive of this store's field initializers, or of a helper they called. */
+  void own(Primitive primitive) {
+    register(primitive);
   }
 
   /** Binds this store to the tab making it, if that has not happened yet: a lifecycle callback needs its values. */

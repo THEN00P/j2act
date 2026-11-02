@@ -14,5 +14,13 @@ public abstract class Layout extends ComponentTag {
     return render(content);
   }
 
-  public abstract Tag<?> render(DomContent content);
+  public Tag<?> render(DomContent content) {
+    throw new IllegalStateException(getClass().getName() + " overrides neither setup() nor render(DomContent)");
+  }
+
+  /** Its view takes the matched child. */
+  @Override
+  protected LayoutView setup() {
+    return null;
+  }
 }

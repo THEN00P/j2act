@@ -27,6 +27,11 @@ final class Scope implements Observer {
   boolean restored;
   final String anchor;
   ComponentTag instance;
+  /** What setup() returned, called on every render (ADR 0031); null for a component still using render(). */
+  View view;
+  /** Where the next primitive of a running setup() goes: re-running it after a class swap finds its cells again. */
+  private int setupIndex;
+  private static final ThreadLocal<Scope> SETTING_UP = new ThreadLocal<>();
   /** The store this scope holds instead of a component. */
   Store store;
   final List<Cell> cells = new ArrayList<>();
@@ -165,11 +170,80 @@ final class Scope implements Observer {
     cells.clear();
     settledCount = -1;
     shape = null;
+    view = null;
     bindFields(instance);
+  }
+
+  /** The scope whose setup() is running on this thread, or null. */
+  static Scope settingUp() {
+    return SETTING_UP.get();
+  }
+
+  /** A primitive of the running setup() or a helper it called: bound to its cell by creation order. */
+  void own(Primitive primitive) {
+    bindPrimitive(primitive, setupIndex++);
+  }
+
+  /**
+   * Calls setup() with nothing tracked. Run again after a class swap, it finds the cells it made
+   * by creation order, so state survives and the view is the new code's; a primitive that no
+   * longer lines up is ShapeChanged.
+   */
+  private void runSetup() {
+    setupIndex = instance.primitives.size();
+    Scope previousSetup = SETTING_UP.get();
+    Scope previousScope = Tracking.swapScope(this);
+    Observer previous = Tracking.swap(null);
+    SETTING_UP.set(this);
+    try {
+      view = instance.setup();
+    } finally {
+      if (previousSetup == null) {
+        SETTING_UP.remove();
+      } else {
+        SETTING_UP.set(previousSetup);
+      }
+      Tracking.swap(previous);
+      Tracking.swapScope(previousScope);
+    }
+    if (view != null) {
+      if (settledCount >= 0 && setupIndex != cells.size()) {
+        throw orderViolation(ownerClass().getName() + " creates " + setupIndex + " primitives now but "
+          + cells.size() + " before");
+      }
+      settledCount = cells.size();
+      settled();
+    }
+  }
+
+  /** Before a render: after a class swap the view must be the new code's. */
+  void refreshView() {
+    if (view != null && swapped()) {
+      try {
+        runSetup();
+      } catch (ShapeChanged e) {
+        startOver(e.getMessage());
+      }
+    }
+  }
+
+  /** Runs the view, its reads subscribing this scope. */
+  Tag<?> renderView() {
+    Tag<?> root = view instanceof LayoutView
+      ? ((LayoutView) view).render(((Layout) instance).content)
+      : view.render();
+    if (root == null) {
+      throw new IllegalStateException(instance.getClass().getName() + "'s view must return one root element");
+    }
+    return root;
   }
 
   /** Attaches a component object to this slot and binds its field primitives by creation order. */
   void bind(ComponentTag component) {
+    if (view != null && instance != component && !(swapped() && shapeChanged(component.getClass()))) {
+      instance.adoptProps(component);
+      return;
+    }
     if (instance != null && instance != component && instance.scope == this) {
       instance.scope = null;
     }
@@ -191,6 +265,9 @@ final class Scope implements Observer {
     List<Primitive> primitives = component.primitives;
     for (int i = 0; i < primitives.size(); i++) {
       bindPrimitive(primitives.get(i), i);
+    }
+    if (view == null && settledCount < 0) {
+      runSetup();
     }
     // Field queries are fully configured by now: hydrate them before the first render reads them.
     activatePending();

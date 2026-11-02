@@ -4,5 +4,7 @@ package j2act;
 public abstract class LiveComponent extends ComponentTag {
 
   @Override
-  public abstract Tag<?> render();
+  public Tag<?> render() {
+    return super.render();
+  }
 }
