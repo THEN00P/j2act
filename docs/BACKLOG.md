@@ -23,6 +23,10 @@ Deferred until core is solid (avoid rewrite hell). Signals plus button callbacks
 - **In-page overlay devtools (not a browser extension)**: react-scan-style perf overlay (which scopes re-ran, patch sizes), slow-event log, component-tree inspector for our scope tree.
 - **Reactive diagnostics and attribution**: Solid 2's coded runtime diagnostics (`UNTRACKED_READ_AFTER_AWAIT` and friends, `packages/signals/src/core/dev.ts`) and its attribution engine, which answers why something re-ran and what a hold is waiting on (`core/attribution.ts`, `documentation/solid-2.0/08-dev-diagnostics.md`). The overlay above is the natural place to show them.
 
+- **The database joins the graph**: record what a load read and what a transaction wrote, through Hibernate's events, and re-run what overlaps, as Convex does for its own database. Plain JPA code becomes reactive, and writes from outside j2act can come in through something like Debezium. Large enough to be its own library rather than part of this repo.
+
+- **Shared stores across a cluster**: the keyed form of `@BrowserScoped`, one reactive owner per key, such as a chat room, on one server of a cluster. Comes after the Solid engine port, in its own ADR. The spike and its open questions are in `docs/spikes/shared-scope.md`, on the engine branch until it merges. Then Solid's `broadcast(fn)`, which renders once per key and writes the same bytes to every viewer.
+
 - **Deep stores**: Solid 2's nested reactivity (`createStore`, `createProjection`, `reconcile`, `createOptimisticStore`, `packages/signals/src/store`): changing `user.address.city` re-renders only what read that path, and a setter edits a draft (`setStore(s => { s.list.push(x); })`). JS builds this on proxies, which Java has only for interfaces, so it needs its own design: generated accessors, bytecode, or a lens API over records. Until then a signal holds a whole value.
 
 - **Optimistic onMutate helpers**: snapshot/rollback conventions on Mutation, TanStack-style.
