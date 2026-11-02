@@ -384,12 +384,14 @@ public final class Reactive {
   }
 
   /** Reads without subscribing whoever is running, and says the one-time read is meant. */
-  public static <T> T untrack(Supplier<T> read) {
+  public static <T> T untrack(Supplier<T> fn) {
     Observer previous = Tracking.swap(null);
+    LoadRun run = Tracking.suspendRun();
     try {
-      return read.get();
+      return fn.get();
     } finally {
       Tracking.swap(previous);
+      Tracking.resumeRun(run);
     }
   }
 

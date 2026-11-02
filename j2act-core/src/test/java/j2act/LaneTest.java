@@ -9,6 +9,8 @@ import static j2act.Reactive.isPending;
 import static j2act.Reactive.refresh;
 import static j2act.Reactive.resolve;
 import static j2act.Reactive.until;
+import static j2act.Reactive.async;
+import static j2act.Reactive.untrack;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -635,6 +637,150 @@ class LaneTest {
       from = h.conn.size();
       SameValue.LANDING.complete("same");
       h.awaitPatch(from, p -> p.contains("loaded:same;pending:false;"));
+    }
+  }
+
+  static final class StaleHolds extends LiveComponent {
+    static final Map<String, CompletableFuture<String>> LOADS = new ConcurrentHashMap<>();
+    static volatile String attempt;
+
+    @Override protected View setup() {
+      var id = createSignal("a");
+      AsyncSupplier<String> body = () -> LOADS.computeIfAbsent(id.get() + attempt, k -> new CompletableFuture<>());
+      var loaded = createMemo(body).withStaleOnError();
+      return () -> T.page("t", T.div(
+        T.span("id:" + id.get() + ";loaded:" + loaded.get() + ";"),
+        T.button("again").onClick(e -> {
+          attempt = "2";
+          refresh(loaded);
+        }),
+        T.button("next").onClick(e -> {
+          attempt = "3";
+          id.set("b");
+        })));
+    }
+  }
+
+  /** Found by review: a value kept through a failure is still on screen, so a write holds for it. */
+  @Test
+  void aValueKeptThroughAFailureStillHoldsAWrite() {
+    StaleHolds.LOADS.clear();
+    StaleHolds.attempt = "1";
+    StaleHolds.LOADS.put("a1", CompletableFuture.completedFuture("A"));
+    try (Harness h = new Harness(StaleHolds::new)) {
+      String html = h.load();
+      h.connect();
+      h.click(Harness.clickOn(html, "again"));
+      Harness.eventually(() -> StaleHolds.LOADS.containsKey("a2"), "it loads again");
+      StaleHolds.LOADS.get("a2").completeExceptionally(new IllegalStateException("fails on purpose"));
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "next"));
+      Harness.eventually(() -> StaleHolds.LOADS.containsKey("b3"), "the write loads");
+      neverShown(h, from, "id:b;");
+      StaleHolds.LOADS.get("b3").complete("B");
+      h.awaitPatch(from, p -> p.contains("id:b;loaded:B;"));
+    }
+  }
+
+  static final class ThrowsOnRefresh extends LiveComponent {
+    static volatile boolean fail;
+    static volatile CompletableFuture<String> refreshed;
+
+    @Override protected View setup() {
+      AsyncSupplier<String> body = () -> {
+        if (fail) {
+          throw new IllegalStateException("fails on purpose");
+        }
+        return CompletableFuture.completedFuture("ok");
+      };
+      var loaded = createMemo(body);
+      return () -> T.page("t", T.div(
+        errored(() -> T.span("loaded:" + loaded.get() + ";")).withFallback(e -> T.span("failed;")),
+        T.button("again").onClick(e -> {
+          fail = true;
+          refreshed = refresh(loaded);
+        })));
+    }
+  }
+
+  /** Found by review: a body that throws at once finished its waiters before the refresh's was there. */
+  @Test
+  void aRefreshOfABodyThatThrowsAtOnceStillFinishes() {
+    ThrowsOnRefresh.fail = false;
+    try (Harness h = new Harness(ThrowsOnRefresh::new)) {
+      String html = h.load();
+      h.connect();
+      h.click(Harness.clickOn(html, "again"));
+      Harness.eventually(() -> ThrowsOnRefresh.refreshed != null && ThrowsOnRefresh.refreshed.isDone(), "it finishes");
+      assertTrue(ThrowsOnRefresh.refreshed.isCompletedExceptionally());
+    }
+  }
+
+  static final class RefreshesUnread extends LiveComponent {
+    static volatile CompletableFuture<String> landing = CompletableFuture.completedFuture("old");
+    static volatile CompletableFuture<String> result;
+
+    @Override protected View setup() {
+      var note = createOptimistic("idle");
+      AsyncSupplier<String> body = () -> landing;
+      var loaded = createMemo(body);
+      var save = action((String v) -> {
+        note.set("saving");
+        refresh(loaded);
+        return v;
+      });
+      return () -> T.page("t", T.div(
+        T.span("note:" + note.get() + ";"),
+        T.button("save").onClick(e -> result = save.run("go"))));
+    }
+  }
+
+  /** Found by review: nothing reads it, but the action asked for it, so the action waits for it. */
+  @Test
+  void anActionWaitsForALoadItRefreshesThatNothingReads() throws Exception {
+    RefreshesUnread.landing = CompletableFuture.completedFuture("old");
+    RefreshesUnread.result = null;
+    try (Harness h = new Harness(RefreshesUnread::new)) {
+      String html = h.load();
+      h.connect();
+      int from = h.conn.size();
+      RefreshesUnread.landing = new CompletableFuture<>();
+      h.click(Harness.clickOn(html, "save"));
+      h.awaitPatch(from, p -> p.contains("note:saving;"));
+      Thread.sleep(50);
+      assertFalse(RefreshesUnread.result.isDone(), "its load has not landed");
+      RefreshesUnread.landing.complete("new");
+      Harness.eventually(() -> RefreshesUnread.result.isDone(), "now it has");
+    }
+  }
+
+  static final class UntracksOffTheLane extends LiveComponent {
+    static final java.util.concurrent.atomic.AtomicInteger LOADS = new java.util.concurrent.atomic.AtomicInteger();
+
+    @Override protected View setup() {
+      var ignored = createSignal("a");
+      AsyncSupplier<String> body = () -> async(() -> {
+        LOADS.incrementAndGet();
+        return untrack(ignored::get);
+      });
+      var loaded = createMemo(body);
+      return () -> T.page("t", T.div(
+        T.span("loaded:" + loaded.get() + ";"),
+        T.button("change").onClick(e -> ignored.set("b"))));
+    }
+  }
+
+  /** Found by review: untrack in a loader still recorded the read, so a change reloaded it. */
+  @Test
+  void untrackInALoaderFollowsNothing() throws Exception {
+    UntracksOffTheLane.LOADS.set(0);
+    try (Harness h = new Harness(UntracksOffTheLane::new)) {
+      String html = h.load();
+      h.connect();
+      assertEquals(1, UntracksOffTheLane.LOADS.get());
+      h.click(Harness.clickOn(html, "change"));
+      Thread.sleep(100);
+      assertEquals(1, UntracksOffTheLane.LOADS.get());
     }
   }
 }

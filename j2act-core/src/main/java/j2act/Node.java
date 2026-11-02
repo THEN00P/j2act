@@ -435,7 +435,7 @@ class Node extends Cell implements Observer {
 
   /** The value is on screen, so a write that reloads it holds the update instead of tearing it. */
   final boolean holdsWrites() {
-    return isAsync() && (hasValue || hasDisplay) && error == null && !observers.isEmpty();
+    return isAsync() && (hasValue || hasDisplay) && (error == null || keepsStale()) && !observers.isEmpty();
   }
 
   /** Tracked: the last load failed. */

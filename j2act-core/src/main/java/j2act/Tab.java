@@ -1066,7 +1066,14 @@ public final class Tab {
   void refresh(Node load, java.util.concurrent.CompletableFuture<Object> landed) {
     refresh(load);
     if (load.transition == null) {
-      load.addWaiter(landed);
+      if (load.loading()) {
+        load.addWaiter(landed);
+      } else if (load.lastError() != null) {
+        // A body that threw at once has landed by now.
+        landed.completeExceptionally(load.lastError());
+      } else {
+        landed.complete(load.peek());
+      }
       return;
     }
     load.transition.current().onCommit(() -> {
@@ -1084,10 +1091,7 @@ public final class Tab {
     if (load.transition != null && load.transition.current() != transition) {
       transition.merge(load.transition.current());
     }
-    if (!load.holdsWrites()) {
-      load.start(false);
-      return;
-    }
+    // Even with nothing on screen: the action asked for it, so its commit waits for it.
     transition = transition.current();
     transition.addLoad(load, true);
     transition.enrollBelow(load.nodesBelow(), true);

@@ -65,6 +65,7 @@ final class Tracking {
 
   /** isPending(...) is probing what its expression reads (ADR 0031). */
   private static final ThreadLocal<boolean[]> PROBE = new ThreadLocal<>();
+  private static final ThreadLocal<Boolean> UNTRACKED = new ThreadLocal<>();
 
   static boolean[] probe() {
     return PROBE.get();
@@ -80,6 +81,11 @@ final class Tracking {
     return previous;
   }
 
+  /** On a run's thread, inside untrack(...): a read here is deliberately followed by nothing. */
+  static boolean untracked() {
+    return UNTRACKED.get() != null;
+  }
+
   static LoadRun run() {
     return RUN.get();
   }
@@ -90,5 +96,22 @@ final class Tracking {
 
   static void clearRun() {
     RUN.remove();
+  }
+
+  /** Stops recording this run's reads, and returns it to hand back to resumeRun. */
+  static LoadRun suspendRun() {
+    LoadRun run = RUN.get();
+    if (run != null) {
+      RUN.remove();
+      UNTRACKED.set(Boolean.TRUE);
+    }
+    return run;
+  }
+
+  static void resumeRun(LoadRun run) {
+    if (run != null) {
+      UNTRACKED.remove();
+      RUN.set(run);
+    }
   }
 }

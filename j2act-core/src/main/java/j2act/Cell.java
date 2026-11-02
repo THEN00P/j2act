@@ -60,7 +60,9 @@ abstract class Cell {
       run.record(this, seen);
       return;
     }
-    tab.warnForeignRead(address);
+    if (!Tracking.untracked()) {
+      tab.warnForeignRead(address);
+    }
   }
 
   /** Lane-only. Removes a reader; a cell nobody reads any more may let go of what it observes. */
