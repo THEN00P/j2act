@@ -56,14 +56,17 @@ public abstract class Store {
     return previous;
   }
 
-  /** A primitive of this store's field initializers, or of a helper they called. */
-  void own(Primitive primitive) {
-    if (scope != null) {
-      throw new IllegalStateException(getClass().getName()
+  /**
+   * A primitive of this store's field initializers, or of a helper they called. Static, since CDI's
+   * client proxy overrides every instance method it can see, and it cannot see Primitive.
+   */
+  static void own(Store store, Primitive primitive) {
+    if (store.scope != null) {
+      throw new IllegalStateException(store.getClass().getName()
         + " creates a primitive after it was created; declare a store's primitives as fields (ADR 0030)");
     }
-    primitive.store = this;
-    primitives.add(primitive);
+    primitive.store = store;
+    store.primitives.add(primitive);
   }
 
   /** Binds this store to the tab making it, if that has not happened yet: a lifecycle callback needs its values. */

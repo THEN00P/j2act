@@ -379,7 +379,7 @@ public final class Reactive {
     }
     Store store = Store.constructing();
     if (store != null) {
-      store.own(primitive);
+      Store.own(store, primitive);
       return primitive;
     }
     throw new IllegalStateException("no owner: primitives are created in a component's setup(), a store's fields"
