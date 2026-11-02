@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -18,16 +19,16 @@ import j2act.internal.json.Json;
 class RateLimitTest {
 
   static final class Clicks extends LiveComponent {
-    private final Signal<Integer> n = state(0);
 
-    @Override public Tag<?> render() {
-      return T.page("t", T.div(
+  @Override protected View setup() {
+    var n = createSignal(0);
+    var upload = createUpload();
+    return () -> T.page("t", T.div(
         T.span("clicks " + n.get()),
         T.button("add").onClick(e -> n.set(n.get() + 1)),
         T.input().withId("file").attr("type", "file").onChange(e -> upload.mutate(e.file()))));
-    }
+  }
 
-    private final Upload upload = upload();
   }
 
   /** Sends one click and returns whether the server accepted it. */

@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static j2act.router.Routes.*;
 import static j2act.html.TagCreator.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,10 +27,10 @@ class RoutingTest {
   static final AtomicInteger userLoads = new AtomicInteger();
 
   public static final class AdminLayout extends Layout {
-    private final Signal<Integer> clicks = state(0);
 
-    @Override public HtmlTag render(DomContent content) {
-      return html(
+  @Override protected LayoutView setup() {
+    var clicks = createSignal(0);
+    return content -> html(
         head(
           title("Admin"),
           link().withRel("stylesheet").withHref("/admin.css"),
@@ -44,71 +45,77 @@ class RoutingTest {
           content
         )
       );
-    }
+  }
   }
 
   public static final class UsersPage extends LiveComponent {
-    @Override public HtmlTag render() {
-      return html(
+
+  @Override protected View setup() {
+    return () -> html(
         head(title("Users")),
         body(h1("Users list"), button("go home").onClick(e -> { throw redirect("/"); }))
       );
-    }
+  }
   }
 
   public static final class SettingsPage extends LiveComponent {
-    @Override public HtmlTag render() {
-      return html(
+
+  @Override protected View setup() {
+    return () -> html(
         head(title("Settings"), meta().withName("description").withContent("settings")),
         body(h1("Settings for " + auth().name()))
       );
-    }
+  }
   }
 
   public static final class UserPage extends LiveComponent {
-    private final Signal<Integer> visits = state(0);
-    private final Query<String> user = query(() -> {
+
+  @Override protected View setup() {
+    var visits = createSignal(0);
+    var user = createMemo(() -> async(() -> {
       userLoads.incrementAndGet();
       String id = pathParam("id");
       if ("404".equals(id)) {
         throw notFound();
       }
       return "user " + id;
-    });
-
-    @Override public HtmlTag render() {
-      return html(
+    }));
+    return () -> html(
         head(title(user.get() == null ? "…" : user.get())),
         body(
           h1(String.valueOf(user.get())),
           button("visits " + visits.get()).onClick(e -> visits.set(visits.get() + 1))
         )
       );
-    }
+  }
   }
 
   public static final class SearchPage extends LiveComponent {
-    @Override public HtmlTag render() {
-      return html(head(title("Search")), body(p("q=" + queryParam("q"))));
-    }
+
+  @Override protected View setup() {
+    return () -> html(head(title("Search")), body(p("q=" + queryParam("q"))));
+  }
   }
 
   public static final class HomePage extends LiveComponent {
-    @Override public HtmlTag render() {
-      return html(head(title("Home")), body(h1("Home")));
-    }
+
+  @Override protected View setup() {
+    return () -> html(head(title("Home")), body(h1("Home")));
+  }
   }
 
   public static final class LoginPage extends LiveComponent {
-    @Override public HtmlTag render() {
-      return html(head(title("Login")), body(h1("Please log in")));
-    }
+
+  @Override protected View setup() {
+    return () -> html(head(title("Login")), body(h1("Please log in")));
+  }
   }
 
   public static final class NotFoundPage extends LiveComponent {
-    @Override public HtmlTag render() {
-      return html(head(title("Nope")), body(h1("Nothing here")));
-    }
+
+  @Override protected View setup() {
+    return () -> html(head(title("Nope")), body(h1("Nothing here")));
+  }
   }
 
   static final class AdminOnly implements Middleware {

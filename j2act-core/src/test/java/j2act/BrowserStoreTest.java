@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -25,15 +26,15 @@ class BrowserStoreTest {
 
   @BrowserScoped
   public static class Player extends Store {
-    final Signal<String> track = state("none");
-    final Signal<Integer> volume = retainedState(5);
-    final Memo<String> label = computed(() -> {
+    final Signal<String> track = createSignal("none");
+    final Signal<Integer> volume = createRetained(5);
+    final Memo<String> label = createMemo(() -> {
       computations.incrementAndGet();
       return track.get().toUpperCase();
     });
 
     public Player() {
-      effect(() -> {
+      createEffect(() -> 1, once -> {
         effectRuns.incrementAndGet();
         return null;
       });
@@ -42,15 +43,15 @@ class BrowserStoreTest {
 
   @TabScoped
   public static class Sidebar extends Store {
-    final Signal<Boolean> open = state(false);
+    final Signal<Boolean> open = createSignal(false);
   }
 
   @BrowserScoped
   public static class Reaching extends Store {
-    final Signal<String> seen = state("-");
+    final Signal<String> seen = createSignal("-");
 
     public Reaching() {
-      effect(() -> {
+      createEffect(() -> 1, once -> {
         try {
           StoreScope.get(TabScoped.class, Sidebar.class, Sidebar::new, null);
           seen.set("reached a tab store");
@@ -64,31 +65,35 @@ class BrowserStoreTest {
 
   /** Reads the player while rendering, so the page response sets the cookie. */
   static final class PlayerPage extends LiveComponent {
-    @Override public Tag<?> render() {
-      Player player = browser(Player.class);
+
+  @Override protected View setup() {
+    return () -> {
+      Player player = useBrowserStore(Player.class);
       return T.page("p", T.div(
         T.span("track=" + player.track.get() + ";label=" + player.label.get() + ";volume=" + player.volume.get() + ";"),
         T.input().withId("track").onChange(e -> player.track.set(e.value())),
         T.input().withId("volume").onChange(e -> player.volume.set(Integer.parseInt(e.value()))),
-        T.button("pause all").onClick(e -> browser().requestPause())));
-    }
+        T.button("pause all").onClick(e -> useBrowser().requestPause())));
+    };
+  }
   }
 
   /** Never reads the player while rendering; a click is its first use. */
   static final class LazyPage extends LiveComponent {
-    private final Signal<String> shown = state("-");
 
-    @Override public Tag<?> render() {
-      return T.page("l", T.div(
+  @Override protected View setup() {
+    var shown = createSignal("-");
+    return () -> T.page("l", T.div(
         T.span("shown=" + shown.get() + ";"),
-        T.button("use").onClick(e -> shown.set(browser(Player.class).track.get()))));
-    }
+        T.button("use").onClick(e -> shown.set(useBrowserStore(Player.class).track.get()))));
+  }
   }
 
   static final class ReachingPage extends LiveComponent {
-    @Override public Tag<?> render() {
-      return T.page("r", T.div(T.span("seen=" + browser(Reaching.class).seen.get() + ";")));
-    }
+
+  @Override protected View setup() {
+    return () -> T.page("r", T.div(T.span("seen=" + useBrowserStore(Reaching.class).seen.get() + ";")));
+  }
   }
 
   /** One browser tab: its page load, socket and events. */
@@ -333,7 +338,7 @@ class BrowserStoreTest {
   @BrowserScoped
   public static class Cleaned extends Store {
     public Cleaned() {
-      effect(() -> {
+      createEffect(() -> 1, once -> {
         cleanedStarts.incrementAndGet();
         return cleanups::incrementAndGet;
       });
@@ -345,10 +350,13 @@ class BrowserStoreTest {
     cleanups.set(0);
     cleanedStarts.set(0);
     Harness h = new Harness(() -> new LiveComponent() {
-      @Override public Tag<?> render() {
-        browser(Cleaned.class);
+
+  @Override protected View setup() {
+    return () -> {
+        useBrowserStore(Cleaned.class);
         return T.page("c", T.div(T.span("c")));
-      }
+    };
+  }
     });
     new Page(h.engine, "/", Exchange.empty()).connect();
     Harness.eventually(() -> cleanedStarts.get() == 1, "a browser store's effects start with its first socket");
@@ -359,13 +367,16 @@ class BrowserStoreTest {
   static final java.util.concurrent.atomic.AtomicReference<String> signedIn = new java.util.concurrent.atomic.AtomicReference<>();
 
   static final class TrackPage extends LiveComponent {
-    @Override public Tag<?> render() {
-      Player player = browser(Player.class);
+
+  @Override protected View setup() {
+    return () -> {
+      Player player = useBrowserStore(Player.class);
       return T.page("t", T.div(
         T.span("track=" + player.track.get() + ";"),
         T.input().withId("track").onChange(e -> player.track.set(e.value())),
         T.button("noop").onClick(e -> { })));
-    }
+    };
+  }
   }
 
   @Test
@@ -470,17 +481,17 @@ class BrowserStoreTest {
   }
 
   static final class OnceBrowser extends LiveComponent {
-    private final Signal<Boolean> used = state(false);
 
-    @Override public Tag<?> render() {
-      return T.page("o", T.div(
+  @Override protected View setup() {
+    var used = createSignal(false);
+    return () -> T.page("o", T.div(
         T.span("used=" + used.get() + ";"),
         T.button("use").onClick(e -> {
-          browser(Player.class).track.get();
+          useBrowserStore(Player.class).track.get();
           used.set(true);
         }),
         T.button("noop").onClick(e -> { })));
-    }
+  }
   }
 
   @Test
@@ -528,10 +539,13 @@ class BrowserStoreTest {
   }
 
   static final class RedirectingPage extends LiveComponent {
-    @Override public Tag<?> render() {
-      browser(Player.class).track.get();
+
+  @Override protected View setup() {
+    return () -> {
+      useBrowserStore(Player.class).track.get();
       throw RouteException.redirect("/elsewhere");
-    }
+    };
+  }
   }
 
   @Test
@@ -565,11 +579,12 @@ class BrowserStoreTest {
   void onCloseATabsCleanupStillReachesItsBrowserStore() {
     seenOnClose = null;
     Harness h = new Harness(() -> new LiveComponent() {
-      @Override public Tag<?> render() {
-        Player player = browser(Player.class);
-        effect(() -> () -> seenOnClose = player.track.get());
-        return T.page("c", T.div(T.span("c")));
-      }
+
+  @Override protected View setup() {
+    Player player = useBrowserStore(Player.class);
+    createEffect(() -> 1, once -> () -> seenOnClose = player.track.get());
+    return () -> T.page("c", T.div(T.span("c")));
+  }
     });
     new Page(h.engine, "/", Exchange.empty()).connect();
     h.close();

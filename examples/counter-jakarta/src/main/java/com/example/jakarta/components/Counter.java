@@ -1,7 +1,9 @@
 package com.example.jakarta.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.Prop;
 import j2act.Signal;
@@ -21,9 +23,9 @@ public final class Counter extends ComponentTag {
     return this;
   }
 
-  @Override protected ButtonTag render() {
-    Signal<Integer> count = state(0);
-    return button(label.get() + ": " + count.get())
+  @Override protected View setup() {
+    var count = createSignal(0);
+    return () -> button(label.get() + ": " + count.get())
       .onClick(e -> count.set(count.get() + 1));
   }
 }

@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -15,10 +16,10 @@ import j2act.web.ShareData;
 class WindowTest {
 
   static final class Page extends LiveComponent {
-    private final Signal<String> out = state("none");
 
-    @Override public Tag<?> render() {
-      return T.page("t",
+  @Override protected View setup() {
+    var out = createSignal("none");
+    return () -> T.page("t",
         T.button("save").onClick(e -> window().localStorage().setItem("k", "v")),
         T.button("title").onClick(e -> window().document().title().thenAccept(out::set)),
         T.button("perm").onClick(e -> window().navigator().permissions()
@@ -31,7 +32,7 @@ class WindowTest {
         T.button("focus").onClick(e -> window().document().getElementById("f").focus()),
         T.button("share").onClick(() -> window().navigator().share(new ShareData().title("t").url("/u"))),
         T.span("out " + out.get()));
-    }
+  }
   }
 
   private static Map<String, String> callAfterClick(Harness h, String label) {
@@ -112,10 +113,13 @@ class WindowTest {
   }
 
   static final class CallsInRender extends LiveComponent {
-    @Override public Tag<?> render() {
+
+  @Override protected View setup() {
+    return () -> {
       window().document().title();
       return T.page("t", T.span("never"));
-    }
+    };
+  }
   }
 
   @Test

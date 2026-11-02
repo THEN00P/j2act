@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -11,10 +12,10 @@ import org.junit.jupiter.api.Test;
 class BrowserAssetsTest {
 
   static final class Page extends LiveComponent {
-    private final Signal<Integer> clicks = state(0);
 
-    @Override public Tag<?> render() {
-      return T.tag("html",
+  @Override protected View setup() {
+    var clicks = createSignal(0);
+    return () -> T.tag("html",
         T.tag("head",
           T.tag("title", "clicks " + clicks.get()),
           T.tag("script")
@@ -22,7 +23,7 @@ class BrowserAssetsTest {
           T.tag("script")
             .attr("src", "/js/widget.js")),
         T.tag("body", T.button("more").onClick(e -> clicks.set(clicks.get() + 1))));
-    }
+  }
   }
 
   @Test

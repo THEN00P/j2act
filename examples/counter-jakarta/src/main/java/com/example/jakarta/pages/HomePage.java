@@ -1,5 +1,6 @@
 package com.example.jakarta.pages;
 
+import static j2act.Reactive.*;
 import static com.example.jakarta.components.Attachment.attachment;
 import static com.example.jakarta.components.BrowserApis.browserApis;
 import static com.example.jakarta.components.ClockFeed.clockFeed;
@@ -14,14 +15,15 @@ import static com.example.jakarta.components.PeopleCount.peopleCount;
 import static com.example.jakarta.components.SearchBox.searchBox;
 import static j2act.html.TagCreator.*;
 
+import j2act.View;
 import j2act.LiveComponent;
 import j2act.html.tags.HtmlTag;
 
 /** The slice on WildFly: every section exercises one container integration. */
 public class HomePage extends LiveComponent {
 
-  @Override public HtmlTag render() {
-    return html(
+  @Override protected View setup() {
+    return () -> html(
       head(
         // Classic scripts run in document order, before the client modules mount.
         script()

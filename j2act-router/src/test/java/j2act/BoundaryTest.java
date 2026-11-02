@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static j2act.router.Routes.*;
 import static j2act.html.TagCreator.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -15,108 +16,102 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
-import j2act.html.tags.DivTag;
-import j2act.html.tags.HtmlTag;
-
-/** loading()/error() boundaries (ADR 0007), withDefer (ADR 0016) and the navigation hold (ADR 0011). */
+/** loading(...) and errored(...) on real routes (ADR 0031), and the navigation hold (ADR 0011). */
 class BoundaryTest {
 
   static volatile CountDownLatch gate = new CountDownLatch(0);
   static final AtomicInteger attempts = new AtomicInteger();
   static volatile long slowMillis = 0;
 
-  public static final class DeferredPage extends LiveComponent {
-    private final Query<String> data = query(() -> {
-      gate.await(5, TimeUnit.SECONDS);
-      return "deferred data";
-    }).withDefer();
-
-    @Override public HtmlTag render() {
-      return html(head(title("Deferred")), body(p(data.get())));
-    }
-
-    @Override public HtmlTag loading() {
-      return html(head(title("Deferred…")), body(p("skeleton")));
+  public static final class StreamedPage extends LiveComponent {
+    @Override protected View setup() {
+      var data = createMemo(() -> async(() -> {
+        gate.await(5, TimeUnit.SECONDS);
+        return "deferred data";
+      }));
+      return () -> html(
+        head(title("Streamed")),
+        body(loading(() -> p(data.get())).withFallback(p("skeleton"))));
     }
   }
 
   public static final class FlakyPage extends LiveComponent {
-    private final Query<String> data = query(() -> {
-      if (attempts.incrementAndGet() == 1) {
-        throw new IllegalStateException("database unavailable");
-      }
-      return "recovered";
-    });
-
-    @Override public HtmlTag render() {
-      return html(head(title("Flaky")), body(p(data.get())));
-    }
-
-    @Override public HtmlTag error(PageError error) {
-      return html(head(title("Flaky failed")), body(
-        p("Failed: " + error.message()),
-        button("Retry").onClick(e -> error.retry())));
-    }
-
-    @Override public HtmlTag loading() {
-      return html(head(title("Flaky…")), body(p("retrying")));
+    @Override protected View setup() {
+      var data = createMemo(() -> async(() -> {
+        gate.await(5, TimeUnit.SECONDS);
+        if (attempts.incrementAndGet() == 1) {
+          throw new IllegalStateException("database unavailable");
+        }
+        return "recovered";
+      }));
+      return () -> html(
+        head(title("Flaky")),
+        body(
+          errored(loading(() -> p(data.get())).withFallback(p("retrying")))
+            .withFallback((err, reset) -> div(
+              p("Failed: " + err.getMessage()),
+              button("Retry").onClick(e -> reset.run())))));
     }
   }
 
-  /** A widget with its own boundary: nearest wins, so the page around it renders. */
   public static final class Widget extends ComponentTag {
-    private final Query<String> data = query(() -> {
-      gate.await(5, TimeUnit.SECONDS);
-      return "widget data";
-    }).withDefer();
-
-    @Override protected DivTag render() {
-      return div(p(data.get())).withId("widget");
-    }
-
-    @Override protected DivTag loading() {
-      return div(p("widget loading")).withId("widget");
+    @Override protected View setup() {
+      var data = createMemo(() -> async(() -> {
+        gate.await(5, TimeUnit.SECONDS);
+        return "widget data";
+      }));
+      return () -> div(loading(() -> p(data.get())).withFallback(p("widget loading"))).withId("widget");
     }
   }
 
   public static final class NestedPage extends LiveComponent {
-    @Override public HtmlTag render() {
-      return html(head(title("Nested")), body(h1("Page chrome"), new Widget()));
-    }
-
-    @Override public HtmlTag loading() {
-      return html(head(title("Nested…")), body(p("page loading")));
+    @Override protected View setup() {
+      return () -> html(
+        head(title("Nested")),
+        body(
+          h1("Page chrome"),
+          loading(new Widget()).withFallback(p("page loading"))));
     }
   }
 
   public static final class HomePage extends LiveComponent {
-    @Override public HtmlTag render() {
-      return html(head(title("Home")), body(h1("Home")));
+    @Override protected View setup() {
+      return () -> html(head(title("Home")), body(h1("Home")));
     }
   }
 
-  public static final class SlowPage extends LiveComponent {
-    private final Query<String> data = query(() -> {
-      Thread.sleep(slowMillis);
-      return "slow data";
-    });
-
-    @Override public HtmlTag render() {
-      return html(head(title("Slow")), body(p(data.get())));
+  /** A read outside every boundary: the page waits for it. */
+  public static final class WaitsPage extends LiveComponent {
+    @Override protected View setup() {
+      var data = createMemo(() -> async(() -> {
+        Thread.sleep(slowMillis);
+        return "slow data";
+      }));
+      return () -> html(head(title("Waits")), body(p(data.get())));
     }
+  }
 
-    @Override public HtmlTag loading() {
-      return html(head(title("Slow…")), body(p("slow loading")));
+  /** The same read inside loading(...): the page shows at once. */
+  public static final class ShowsPage extends LiveComponent {
+    @Override protected View setup() {
+      var data = createMemo(() -> async(() -> {
+        Thread.sleep(slowMillis);
+        return "slow data";
+      }));
+      return () -> html(
+        head(title("Shows")),
+        body(loading(() -> p(data.get())).withFallback(p("slow loading"))));
     }
   }
 
   static PageResolver router() {
     return routes(
       page("/", HomePage.class),
-      page("/deferred", DeferredPage.class),
+      page("/streamed", StreamedPage.class),
       page("/flaky", FlakyPage.class),
       page("/nested", NestedPage.class),
-      page("/slow", SlowPage.class));
+      page("/waits", WaitsPage.class),
+      page("/shows", ShowsPage.class));
   }
 
   static Harness harness(Duration pending) {
@@ -124,11 +119,11 @@ class BoundaryTest {
   }
 
   @Test
-  void deferredQueryShipsLoadingOnSsrAndTheSocketFillsItIn() {
+  void aReadInsideLoadingShowsItsFallbackAndTheSocketFillsItIn() {
     gate = new CountDownLatch(1);
     try (Harness h = harness(Duration.ofSeconds(1))) {
-      String html = h.load("/deferred", Exchange.empty());
-      assertTrue(html.contains("skeleton") && html.contains("<title>Deferred…</title>"), html);
+      String html = h.load("/streamed", Exchange.empty());
+      assertTrue(html.contains("skeleton") && html.contains("<title>Streamed</title>"), html);
       h.connect();
       int from = h.conn.size();
       gate.countDown();
@@ -139,11 +134,14 @@ class BoundaryTest {
   @Test
   void failedLoadShowsErrorAndRetryRecovers() {
     attempts.set(0);
+    gate = new CountDownLatch(1);
     try (Harness h = harness(Duration.ofSeconds(1))) {
-      String html = h.load("/flaky", Exchange.empty());
-      assertTrue(html.contains("Failed: database unavailable"), html);
+      assertTrue(h.load("/flaky", Exchange.empty()).contains("retrying"), h.html);
       h.connect();
       int from = h.conn.size();
+      gate.countDown();
+      String html = h.awaitPatch(from, p -> p.contains("Failed: database unavailable")).get("html");
+      from = h.conn.size();
       h.click(Harness.clickOn(html, "Retry"));
       h.awaitPatch(from, p -> p.contains("recovered"));
       assertEquals(2, attempts.get());
@@ -151,7 +149,7 @@ class BoundaryTest {
   }
 
   @Test
-  void nearestBoundaryWins() {
+  void nearestBoundaryWinsAndOnlyItPatches() {
     gate = new CountDownLatch(1);
     try (Harness h = harness(Duration.ofSeconds(1))) {
       String html = h.load("/nested", Exchange.empty());
@@ -161,36 +159,57 @@ class BoundaryTest {
       int from = h.conn.size();
       gate.countDown();
       String patch = h.awaitPatch(from, p -> p.contains("widget data")).get("html");
-      assertTrue(patch.startsWith("<div data-j2-scope=") && !patch.contains("Page chrome"), "only the widget patches: " + patch);
+      assertTrue(patch.startsWith("<div data-j2-scope=") && !patch.contains("Page chrome"), "only the widget's boundary: " + patch);
     }
   }
 
   @Test
-  void navigationWaitsForFastDataAndSendsTheUrlAfterThePage() {
+  void aServedPageWaitsForAReadOutsideEveryBoundary() {
+    slowMillis = 100;
+    try (Harness h = harness(Duration.ofSeconds(1))) {
+      String html = h.load("/waits", Exchange.empty());
+      assertTrue(html.contains("slow data"), html);
+    }
+  }
+
+  @Test
+  void navigationWaitsForAReadOutsideEveryBoundaryAndSendsTheUrlAfterThePage() {
     slowMillis = 150;
     try (Harness h = harness(Duration.ofSeconds(2))) {
       h.load("/", Exchange.empty());
       h.connect();
-      List<Map<String, String>> nav = h.nav("/slow");
+      List<Map<String, String>> nav = h.nav("/waits");
       List<String> order = new java.util.ArrayList<>();
       for (Map<String, String> m : nav) {
-        order.add(m.get("type") + (m.containsKey("html") && m.get("html").contains("slow loading") ? ":loading" : ""));
+        order.add(m.get("type"));
       }
-      assertFalse(order.contains("patch:loading"), "fast data never shows loading(): " + order);
       assertTrue(Harness.last(nav, "patch").contains("slow data"), order.toString());
       assertEquals("url", order.get(order.size() - 1), order.toString());
     }
   }
 
   @Test
-  void slowNavigationShowsLoadingAfterPendingTimeThenTheData() {
-    slowMillis = 700;
-    try (Harness h = harness(Duration.ofMillis(100))) {
+  void navigationToAReadInsideLoadingShowsTheFallbackThenTheData() {
+    slowMillis = 300;
+    try (Harness h = harness(Duration.ofSeconds(2))) {
       h.load("/", Exchange.empty());
       h.connect();
-      List<Map<String, String>> nav = h.nav("/slow");
+      List<Map<String, String>> nav = h.nav("/shows");
       assertTrue(Harness.last(nav, "patch").contains("slow loading"), nav.toString());
       int from = h.conn.size();
+      h.awaitPatch(from, p -> p.contains("slow data"));
+    }
+  }
+
+  @Test
+  void pastThePendingTimeTheUrlGoesAndTheOldPageStaysUntilTheDataLands() {
+    slowMillis = 500;
+    try (Harness h = harness(Duration.ofMillis(50))) {
+      h.load("/", Exchange.empty());
+      h.connect();
+      int from = h.conn.size();
+      List<Map<String, String>> nav = h.nav("/waits");
+      assertEquals("/waits", Harness.last(nav, "url"), nav.toString());
       h.awaitPatch(from, p -> p.contains("slow data"));
     }
   }

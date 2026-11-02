@@ -16,7 +16,7 @@ import java.util.function.Consumer;
  * button("Export CSV").withCondDisabled(export.isPending()).onClick(e -> export.mutate(filter.get()));
  * }</pre>
  */
-public final class Download<V> extends Mutation<V, Void> {
+public final class Download<V> extends Transfer<V, Void> {
 
   /** Writes the file for the given variables. Never reads State: it runs off the lane. */
   @FunctionalInterface
@@ -44,19 +44,9 @@ public final class Download<V> extends Mutation<V, Void> {
     return this;
   }
 
-  @Override public Download<V> withKey(Object... parts) {
-    super.withKey(parts);
-    return this;
-  }
-
   /** Not supported: the browser runs the fetch, so a retry is another mutate(). */
   @Override public Download<V> withRetry(int retries, Duration backoff) {
     throw new UnsupportedOperationException("a download is fetched by the browser; call mutate() again to retry");
-  }
-
-  @Override public Download<V> withInvalidates(Object... keyPrefix) {
-    super.withInvalidates(keyPrefix);
-    return this;
   }
 
   @Override public Download<V> onSuccess(Consumer<? super Void> callback) {

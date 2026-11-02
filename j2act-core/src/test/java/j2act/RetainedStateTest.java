@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -23,19 +24,19 @@ import org.junit.jupiter.api.Test;
 class RetainedStateTest {
 
   static final class Form extends LiveComponent {
-    private final Signal<String> name = retainedState("");
-    private final Signal<Integer> age = retainedState(0);
-    private final Signal<String> scratch = state("");
 
-    @Override public Tag<?> render() {
-      return T.page("form", T.div(
+  @Override protected View setup() {
+    var name = createRetained("name", "");
+    var age = createRetained("age", 0);
+    var scratch = createSignal("");
+    return () -> T.page("form", T.div(
         T.span("name=" + name.get() + ";"),
         T.span("age=" + age.get() + ";"),
         T.span("scratch=" + scratch.get() + ";"),
         T.input().withId("name").onChange(e -> name.set(e.value())),
         T.input().withId("age").onChange(e -> age.set(Integer.parseInt(e.value()))),
         T.input().withId("scratch").onChange(e -> scratch.set(e.value()))));
-    }
+  }
   }
 
   /** Counts what reaches storage, around the in-memory default. */
@@ -221,11 +222,11 @@ class RetainedStateTest {
   }
 
   static final class Plain extends LiveComponent {
-    private final Signal<String> text = state("");
 
-    @Override public Tag<?> render() {
-      return T.page("plain", T.input().withId("text").onChange(e -> text.set(e.value())));
-    }
+  @Override protected View setup() {
+    var text = createSignal("");
+    return () -> T.page("plain", T.input().withId("text").onChange(e -> text.set(e.value())));
+  }
   }
 
   @Test
@@ -257,17 +258,16 @@ class RetainedStateTest {
   }
 
   static final class NullableForm extends LiveComponent {
-    private final Signal<String> note = retainedState(null);
 
-    @Override public Tag<?> render() {
-      return T.page("n", T.span("note=" + note.get()));
-    }
+  @Override protected View setup() {
+    Signal<String> note = createRetained("note", null);
+    return () -> T.page("n", T.span("note=" + note.get()));
+  }
   }
 
   static List<String> rowIds = Arrays.asList("a", "b", "c");
 
   static final class Row extends ComponentTag {
-    private final Signal<String> draft = retainedState("");
     private String id;
 
     Row withId(String id) {
@@ -275,15 +275,17 @@ class RetainedStateTest {
       return this;
     }
 
-    @Override protected Tag<?> render() {
-      return T.div(T.span(id + "=" + draft.get() + ";"), T.input().withId("row-" + id).onChange(e -> draft.set(e.value())));
-    }
+  @Override protected View setup() {
+    var draft = createRetained("draft", "");
+    return () -> T.div(T.span(id + "=" + draft.get() + ";"), T.input().withId("row-" + id).onChange(e -> draft.set(e.value())));
+  }
   }
 
   static final class Rows extends LiveComponent {
-    @Override public Tag<?> render() {
-      return T.page("rows", T.div(T.each(rowIds, id -> new Row().withId(id).withKey(id))));
-    }
+
+  @Override protected View setup() {
+    return () -> T.page("rows", T.div(T.each(rowIds, id -> new Row().withId(id).withKey(id))));
+  }
   }
 
   @Test
@@ -313,13 +315,13 @@ class RetainedStateTest {
   }
 
   static final class Price extends LiveComponent {
-    private final Signal<Money> price = retainedState(new Money(0));
 
-    @Override public Tag<?> render() {
-      return T.page("p", T.div(
+  @Override protected View setup() {
+    var price = createRetained("price", new Money(0));
+    return () -> T.page("p", T.div(
         T.span("price=" + price.get().cents + ";"),
         T.input().withId("price").onChange(e -> price.set(new Money(Long.parseLong(e.value()))))));
-    }
+  }
   }
 
   @Test
@@ -340,26 +342,6 @@ class RetainedStateTest {
       type(h, "price", "1250");
       String old = evict(h, storage);
       assertTrue(h.load("/", remount(old)).contains("price=1250;"));
-    }
-  }
-
-  static final class LocalRetained extends LiveComponent {
-    @Override public Tag<?> render() {
-      Signal<String> text = retainedState("");
-      return T.page("l", T.div(T.span("text=" + text.get() + ";"), T.input().withId("text").onChange(e -> text.set(e.value()))));
-    }
-  }
-
-  @Test
-  void aRetainedLocalIsKeyedByCreationOrder() {
-    CountingStorage storage = new CountingStorage();
-    try (Harness h = harness(LocalRetained::new, storage)) {
-      h.load();
-      h.connect();
-      type(h, "text", "kept");
-      String old = evict(h, storage);
-      assertTrue(storage.inner.load(Retained.id(old)).get().contains("frame:page#@0"));
-      assertTrue(h.load("/", remount(old)).contains("text=kept;"));
     }
   }
 

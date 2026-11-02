@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -18,28 +19,32 @@ class TrackingTest {
 
   static final class Child extends ComponentTag {
     private final Prop<String> label = prop("");
-    private final Signal<Integer> clicks = state(0);
 
     Child withLabel(String l) {
       label.set(l);
       return this;
     }
 
-    @Override protected Tag<?> render() {
+  @Override protected View setup() {
+    var clicks = createSignal(0);
+    return () -> {
       childRenders.incrementAndGet();
       return T.button(label.get() + " " + clicks.get()).onClick(e -> clicks.set(clicks.get() + 1));
-    }
+    };
+  }
   }
 
   static final class Parent extends LiveComponent {
-    private final Signal<String> name = state("first");
 
-    @Override public Tag<?> render() {
+  @Override protected View setup() {
+    var name = createSignal("first");
+    return () -> {
       parentRenders.incrementAndGet();
       return T.page("t", T.div(
         T.button("rename").onClick(e -> name.set("second")),
         new Child().withLabel(name.get())));
-    }
+    };
+  }
   }
 
   @Test

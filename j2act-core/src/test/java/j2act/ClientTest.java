@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -30,23 +31,23 @@ class ClientTest {
 
   /** Live content for annotate(): re-renders on its own State. */
   static final class Badge extends ComponentTag {
-    private final Signal<Integer> clicks = state(0);
 
-    @Override protected Tag<?> render() {
-      return T.button("badge " + clicks.get()).onClick(e -> clicks.set(clicks.get() + 1));
-    }
+  @Override protected View setup() {
+    var clicks = createSignal(0);
+    return () -> T.button("badge " + clicks.get()).onClick(e -> clicks.set(clicks.get() + 1));
+  }
   }
 
   static final class Gauge extends LiveComponent {
-    private final Meter meter = client(Meter.class);
-    private final Upload export = upload().withMaxFileSize(100);
-    private final Signal<String> reading = state("none");
-    private final Signal<Integer> value = state(0);
-    private final Signal<String> label = state("volts");
-    private final Signal<Integer> resets = state(0);
 
-    @Override public Tag<?> render() {
-      return T.page("t",
+  @Override protected View setup() {
+    var meter = createClient(Meter.class);
+    var export = createUpload().withMaxFileSize(100);
+    var reading = createSignal("none");
+    var value = createSignal(0);
+    var label = createSignal("volts");
+    var resets = createSignal(0);
+    return () -> T.page("t",
         T.div()
           .withId("meter")
           .withClient(meter.mount(label.get(), value::set, T.span("legend " + value.get()), export)),
@@ -64,7 +65,7 @@ class ClientTest {
         T.span("reading " + reading.get()),
         T.span("value " + value.get()),
         T.span("resets " + resets.get()));
-    }
+  }
   }
 
   @Test
@@ -196,21 +197,25 @@ class ClientTest {
   }
 
   static final class CallsInRender extends LiveComponent {
-    private final Meter meter = client(Meter.class);
 
-    @Override public Tag<?> render() {
+  @Override protected View setup() {
+    var meter = createClient(Meter.class);
+    return () -> {
       meter.read();
       return T.page("t", T.span("never"));
-    }
+    };
+  }
   }
 
   static final class MountsTwice extends LiveComponent {
-    private final Meter meter = client(Meter.class);
 
-    @Override public Tag<?> render() {
+  @Override protected View setup() {
+    var meter = createClient(Meter.class);
+    return () -> {
       Mount<CustomTag> mount = meter.mount("a", v -> { }, T.span("x"), null);
       return T.page("t", T.div().withClient(mount), T.div().withClient(mount));
-    }
+    };
+  }
   }
 
   @Test

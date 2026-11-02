@@ -93,8 +93,7 @@ class ValueCell extends Cell {
 
   /** Derive with a memo instead; handlers and an effect's second half write (ADR 0031). */
   private static void refuseInReactiveScope() {
-    Observer observer = Tracking.observer();
-    if (observer != null && !(observer instanceof EffectCell && ((EffectCell) observer).track == null)) {
+    if (Tracking.observer() != null) {
       throw new IllegalStateException("a signal is written while something reactive runs: derive with createMemo,"
         + " and write in handlers or an effect's second half (ADR 0031)");
     }

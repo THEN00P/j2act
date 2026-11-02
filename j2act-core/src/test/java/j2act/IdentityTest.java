@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -23,11 +24,11 @@ class IdentityTest {
       return this;
     }
 
-    @Override protected Tag<?> render() {
-      Signal<Integer> count = state(0);
-      return T.button(label.get() + ":" + count.get())
+  @Override protected View setup() {
+    var count = createSignal(0);
+    return () -> T.button(label.get() + ":" + count.get())
         .onClick(e -> count.set(count.get() + 1));
-    }
+  }
   }
 
   static Counter counter() {
@@ -35,9 +36,10 @@ class IdentityTest {
   }
 
   static final class TwoCounters extends LiveComponent {
-    @Override public Tag<?> render() {
-      return T.page("t", T.div(counter().withLabel("A"), counter().withLabel("B")));
-    }
+
+  @Override protected View setup() {
+    return () -> T.page("t", T.div(counter().withLabel("A"), counter().withLabel("B")));
+  }
   }
 
   @Test
@@ -61,14 +63,14 @@ class IdentityTest {
   }
 
   static final class Toggle extends LiveComponent {
-    private final Signal<Boolean> show = state(false);
 
-    @Override public Tag<?> render() {
-      return T.page("t", T.div(
+  @Override protected View setup() {
+    var show = createSignal(false);
+    return () -> T.page("t", T.div(
         T.button("toggle").onClick(e -> show.set(!show.get())),
         show.get() ? counter().withLabel("X") : null,
         counter().withLabel("Y")));
-    }
+  }
   }
 
   @Test
@@ -91,36 +93,36 @@ class IdentityTest {
 
   static final class Row extends ComponentTag {
     private final Prop<String> name = prop();
-    private final Signal<Boolean> open = state(false);
 
     Row withName(String n) {
       name.set(n);
       return this;
     }
 
-    @Override protected Tag<?> render() {
-      return T.tag("li", T.button(name.get() + (open.get() ? " [open]" : ""))
+  @Override protected View setup() {
+    var open = createSignal(false);
+    return () -> T.tag("li", T.button(name.get() + (open.get() ? " [open]" : ""))
         .onClick(e -> open.set(!open.get())));
-    }
+  }
   }
 
   static final class Rows extends LiveComponent {
     private final boolean keyed;
-    private final Signal<List<String>> names = state(Arrays.asList("ann", "bob", "cid"));
 
     Rows(boolean keyed) {
       this.keyed = keyed;
     }
 
-    @Override public Tag<?> render() {
-      return T.page("t",
+  @Override protected View setup() {
+    var names = createSignal(Arrays.asList("ann", "bob", "cid"));
+    return () -> T.page("t",
         T.tag("ul", T.each(names.get(), n -> keyed ? new Row().withName(n).withKey(n) : new Row().withName(n))),
         T.button("reverse").onClick(e -> {
           List<String> reversed = new ArrayList<>(names.get());
           Collections.reverse(reversed);
           names.set(reversed);
         }));
-    }
+  }
   }
 
   @Test
@@ -150,14 +152,14 @@ class IdentityTest {
 
   static final class Held extends LiveComponent {
     private final Counter kept = counter().withLabel("H");
-    private final Signal<Integer> bump = state(0);
 
-    @Override public Tag<?> render() {
-      return T.page("t", T.div(
+  @Override protected View setup() {
+    var bump = createSignal(0);
+    return () -> T.page("t", T.div(
         T.span("bump " + bump.get()),
         kept,
         T.button("bump").onClick(e -> bump.set(bump.get() + 1))));
-    }
+  }
   }
 
   @Test
@@ -175,9 +177,9 @@ class IdentityTest {
   static final class HeldTwice extends LiveComponent {
     private final Counter kept = counter();
 
-    @Override public Tag<?> render() {
-      return T.page("t", T.div(kept, kept));
-    }
+  @Override protected View setup() {
+    return () -> T.page("t", T.div(kept, kept));
+  }
   }
 
   @Test
@@ -187,25 +189,4 @@ class IdentityTest {
     }
   }
 
-  static final class Conditional extends LiveComponent {
-    private final Signal<Boolean> extra = state(false);
-
-    @Override public Tag<?> render() {
-      if (extra.get()) {
-        state("sneaky");
-      }
-      return T.page("t", T.button("go").onClick(e -> extra.set(true)));
-    }
-  }
-
-  @Test
-  void creatingPrimitivesConditionallyFailsFast() {
-    try (Harness h = new Harness(Conditional::new)) {
-      h.load();
-      h.connect();
-      List<Map<String, String>> patches = h.click(Harness.clickOn(h.html, "go"));
-      assertTrue(patches.isEmpty());
-      assertEquals(1, h.engine.stats().failedTasks.get());
-    }
-  }
 }

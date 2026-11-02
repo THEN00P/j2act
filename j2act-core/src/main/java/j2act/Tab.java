@@ -59,15 +59,15 @@ public final class Tab {
   final List<Transition> transitions = new ArrayList<>();
   /** isPending reads this, so its readers re-render when a transition starts or ends. */
   final ValueCell pendingCell = new ValueCell(this, "tab:pending", 0L);
-  /** The last render stopped outside any loading(...) on a value not loaded yet: the page waits for it (ADR 0031). */
+  /** The served page's render stopped outside any loading(...) on a value not loaded yet: it waits for it (ADR 0031). */
   private boolean waitingOnRead;
+  /** Renders of a live page that stopped the same way: what it shows stays until they can finish. */
+  private final Set<Scope> stoppedRenders = new HashSet<>();
   /** Effects wait for this tab's first socket, or a browser's first tab with one (ADR 0031). */
   private boolean live;
   /** Whether a socket is attached, for effects that watch it (ADR 0031). */
   private ValueCell connectedCell;
   private PreloadedRoute preload;
-  final Set<QueryCell> inFlight = new HashSet<>();
-  private final Map<String, InactiveQuery> inactive = new LinkedHashMap<>();
   /** Event handlers of the elements on the page, by id (ADR 0013). */
   final Handlers handlers = new Handlers(this);
   /** Rate limits on its socket's events and upload chunks (ADR 0013). */
@@ -345,56 +345,6 @@ public final class Tab {
     return result;
   }
 
-  // ---- keyed queries and mutation queues
-
-  private final Map<List<Object>, QueryCell> queryLeaders = new HashMap<>();
-  private final Map<List<Object>, java.util.Deque<Runnable>> mutationQueues = new HashMap<>();
-
-  QueryCell queryLeader(List<Object> key) {
-    return queryLeaders.get(key);
-  }
-
-  void putQueryLeader(List<Object> key, QueryCell cell) {
-    queryLeaders.put(key, cell);
-  }
-
-  void removeQueryLeader(List<Object> key) {
-    queryLeaders.remove(key);
-  }
-
-  /** Lane-only. Refetches keyed queries whose key starts with the prefix. */
-  void invalidate(List<Object> prefix) {
-    for (Map.Entry<List<Object>, QueryCell> entry : new ArrayList<>(queryLeaders.entrySet())) {
-      List<Object> key = entry.getKey();
-      if (key.size() >= prefix.size() && key.subList(0, prefix.size()).equals(prefix)) {
-        entry.getValue().start(true);
-      }
-    }
-  }
-
-  /** Lane-only. Runs a keyed mutation now, or after the ones already queued for its key. */
-  void enqueueMutation(List<Object> key, Runnable run) {
-    java.util.Deque<Runnable> queue = mutationQueues.get(key);
-    if (queue == null) {
-      mutationQueues.put(key, new ArrayDeque<>());
-      run.run();
-    } else {
-      queue.add(run);
-    }
-  }
-
-  void mutationDone(List<Object> key) {
-    java.util.Deque<Runnable> queue = mutationQueues.get(key);
-    if (queue == null) {
-      return;
-    }
-    Runnable next = queue.poll();
-    if (next == null) {
-      mutationQueues.remove(key);
-    } else {
-      next.run();
-    }
-  }
 
   // ---- Retained State (ADR 0026)
 
@@ -780,15 +730,8 @@ public final class Tab {
 
   /** A query without data yet that the page is waiting on; withDefer() ones do not count. */
   private boolean awaitingData() {
-    if (waitingOnRead || !transitions.isEmpty()) {
-      return true;
-    }
-    for (QueryCell query : inFlight) {
-      if (!query.deferred && query.initiallyPending()) {
-        return true;
-      }
-    }
-    return false;
+    stoppedRenders.removeIf(scope -> scope.disposed);
+    return !stoppedRenders.isEmpty() || !transitions.isEmpty();
   }
 
   /** Renders the fallback (or a plain message) in place, keeping the URL. */
@@ -1144,7 +1087,6 @@ public final class Tab {
   }
 
   private void renderDirty(boolean sending) {
-    waitingOnRead = false;
     for (int pass = 0; pass < 8 && !dirty.isEmpty(); pass++) {
       List<Scope> roots = new ArrayList<>();
       for (Scope scope : dirty) {
@@ -1171,7 +1113,7 @@ public final class Tab {
             markDirty(boundary);
           } else {
             // Nothing to fall back on: the page keeps what it shows until the value lands (ADR 0031).
-            waitingOnRead = true;
+            stoppedRenders.add(scope);
           }
           continue;
         } catch (LoadFailed e) {
@@ -1185,6 +1127,7 @@ public final class Tab {
           }
           continue;
         }
+        stoppedRenders.remove(scope);
         if (!sending) {
           heldRenders.add(scope);
         } else if (connection == null && stream != null) {
@@ -1229,14 +1172,7 @@ public final class Tab {
 
   private void runEffects() {
     if (!live) {
-      // Before the first socket only what must see the first render runs (ADR 0031).
-      for (java.util.Iterator<EffectCell> it = pendingEffects.iterator(); it.hasNext();) {
-        EffectCell effect = it.next();
-        if (effect.immediate) {
-          it.remove();
-          effect.run();
-        }
-      }
+      // No effect runs for a page that never connects (ADR 0031).
       return;
     }
     int guard = 0;
@@ -1325,27 +1261,6 @@ public final class Tab {
   }
 
   // ---- query cache and SSR waiting
-
-  void putInactive(String address, InactiveQuery query) {
-    query.storedAt = engine.clock.millis();
-    inactive.remove(address);
-    inactive.put(address, query);
-    long now = engine.clock.millis();
-    for (Iterator<InactiveQuery> it = inactive.values().iterator(); it.hasNext(); ) {
-      InactiveQuery q = it.next();
-      if (inactive.size() > MAX_INACTIVE || now - q.storedAt > engine.queryGcMillis) {
-        it.remove();
-      }
-    }
-  }
-
-  InactiveQuery takeInactive(String address) {
-    InactiveQuery query = inactive.remove(address);
-    if (query == null || engine.clock.millis() - query.storedAt > engine.queryGcMillis) {
-      return null;
-    }
-    return query;
-  }
 
   void settled() {
     synchronized (settleLock) {
@@ -1448,8 +1363,6 @@ public final class Tab {
     clients.dispose();
     handlers.clear();
     cells.clear();
-    inactive.clear();
-    inFlight.clear();
     dirty.clear();
     pendingEffects.clear();
     heads.clear();
@@ -1670,8 +1583,8 @@ public final class Tab {
       this.title = title;
     }
 
-    @Override public Tag<?> render() {
-      return new CustomTag("html",
+    @Override protected View setup() {
+      return () -> new CustomTag("html",
         new CustomTag("head", new CustomTag("title", new Text(title))),
         new CustomTag("body", new CustomTag("h1", new Text(title))));
     }

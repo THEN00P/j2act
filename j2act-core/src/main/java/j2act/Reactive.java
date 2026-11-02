@@ -350,8 +350,28 @@ public final class Reactive {
     }
   }
 
+  /** Rendering with no tab, as Tag.toString does: primitives stay unbound and read as their initial values. */
+  private static final ThreadLocal<Boolean> STATIC = new ThreadLocal<>();
+
+  /** A component's view with no tab behind it, rendered once to static HTML. */
+  static Tag<?> staticView(ComponentTag component) {
+    Boolean previous = STATIC.get();
+    STATIC.set(Boolean.TRUE);
+    try {
+      View view = component.setup();
+      return view instanceof LayoutView ? ((LayoutView) view).render(null) : view.render();
+    } finally {
+      if (previous == null) {
+        STATIC.remove();
+      }
+    }
+  }
+
   /** Attaches a primitive to its owner; the one way primitives get created. */
   static <P extends Primitive> P own(P primitive) {
+    if (STATIC.get() != null) {
+      return primitive;
+    }
     Scope setup = Scope.settingUp();
     if (setup != null) {
       setup.own(primitive);
@@ -364,6 +384,59 @@ public final class Reactive {
     }
     throw new IllegalStateException("no owner: primitives are created in a component's setup(), a store's fields"
       + " or a helper they call, not in a view or a handler (ADR 0031)");
+  }
+
+  /**
+   * A value kept in the page's query string under name (ADR 0030): it survives a reload and can
+   * be shared, which suits filters and tabs within a page. initial's type picks the parsing
+   * (String, Integer, Long, Double, Boolean or an enum), and initial itself leaves the parameter
+   * out. Writes replace the URL after the current event.
+   */
+  public static <T> QueryState<T> createQueryState(String name, T initial) {
+    return own(QueryState.of(name, initial));
+  }
+
+  /** A query state of any type, read with parse and written with format; parse may return null for the initial value. */
+  public static <T> QueryState<T> createQueryState(String name, T initial, Function<String, T> parse,
+      Function<? super T, String> format) {
+    return own(new QueryState<>(name, initial, parse, format));
+  }
+
+  /**
+   * A write whose body streams a file to the browser (ADR 0012), e.g.
+   * createDownload((String like, OutputStream out) -> csv.write(like, out)).withFileName("users.csv").
+   */
+  public static <V> Download<V> createDownload(Download.Writer<V> writer) {
+    return own(new Download<>(writer));
+  }
+
+  /** A write that receives a file in resumable chunks, with server-enforced restrictions (ADR 0006). */
+  public static Upload createUpload() {
+    return own(new Upload());
+  }
+
+  /**
+   * A handle to a client module (ADR 0022): mount(...) gives props to withClient, and every other
+   * method is an action that runs in the browser.
+   *
+   * <pre>{@code
+   * var camera = createClient(Camera.class);
+   * video().withClient(camera.mount(deviceId.get(), size -> status.set("live " + size.width)))
+   * button("Snap").onClick(camera::snapshot, photo::set)
+   * }</pre>
+   */
+  public static <C extends Client> C createClient(Class<C> type) {
+    return type.cast(own(new ClientHandle(type)).proxy);
+  }
+
+  /**
+   * The browser's window, mirrored from WebIDL and run remotely (ADR 0022). Getters of interfaces
+   * only build a path; every other call returns a CompletionStage. Called from a handler or effect,
+   * it runs after the update's patch; bound with onClick(() -> ...), it runs inside the click, so
+   * gesture-gated APIs work.
+   */
+  public static j2act.web.Window window() {
+    return new j2act.web.Window(WebPath.root(Tracking.scope()));
   }
 
   // ---- what is around the caller

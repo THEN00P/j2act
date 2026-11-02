@@ -1,10 +1,12 @@
 package com.example.counter.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.Memo;
 import j2act.Download;
@@ -19,29 +21,28 @@ import j2act.html.tags.DivTag;
  */
 public final class Publisher extends ComponentTag {
 
-  private final Signal<Integer> paragraphs = state(0);
-  private final Signal<String> published = state("nothing yet");
-  private final Memo<String> length = computed(() -> paragraphs.get() >= 3 ? "long" : "short");
-  private final Mutation<Integer, String> publish = mutation((Integer count) -> {
+  public static Publisher publisher() {
+    return new Publisher();
+  }
+
+  @Override protected View setup() {
+    var paragraphs = createSignal(0);
+    var published = createSignal("nothing yet");
+    var length = createMemo(() -> paragraphs.get() >= 3 ? "long" : "short");
+    var publish = action((Integer count) -> {
     Thread.sleep(600);
     return count + " paragraphs";
   })
     .withKey("publish")
     .onSuccess(published::set);
-  private final Download<Integer> draft = download((Integer count, OutputStream out) -> {
+    var draft = createDownload((Integer count, OutputStream out) -> {
     for (int i = 1; i <= count; i++) {
       out.write(("Paragraph " + i + "\n").getBytes(StandardCharsets.UTF_8));
     }
   })
     .withFileName("draft.txt")
     .withContentType("text/plain;charset=UTF-8");
-
-  public static Publisher publisher() {
-    return new Publisher();
-  }
-
-  @Override protected DivTag render() {
-    return div(
+    return () -> div(
       button("Add paragraph").withId("draft-add").onClick(e -> paragraphs.set(paragraphs.get() + 1)),
       span(" draft: " + paragraphs.get() + " paragraphs, " + length.get() + " "),
       button(publish.isPending() ? "Publishing…" : "Publish")

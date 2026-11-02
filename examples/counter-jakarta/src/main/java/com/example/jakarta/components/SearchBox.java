@@ -1,5 +1,6 @@
 package com.example.jakarta.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import java.time.Duration;
@@ -8,6 +9,7 @@ import java.util.List;
 import jakarta.inject.Inject;
 
 import com.example.jakarta.model.People;
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.Query;
 import j2act.Signal;
@@ -21,15 +23,14 @@ public final class SearchBox extends ComponentTag {
 
   @Inject private People people;
 
-  private final Signal<String> filter = state("");
-  private final Query<List<String>> found = query(() -> people.search(filter.get()));
-
   public static SearchBox searchBox() {
     return new SearchBox();
   }
 
-  @Override protected DivTag render() {
-    return div(
+  @Override protected View setup() {
+    var filter = createSignal("");
+    var found = createMemo(() -> async(() -> people.search(filter.get())));
+    return () -> div(
       input()
         .withId("search")
         .withPlaceholder("Filter people")

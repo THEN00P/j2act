@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -39,20 +40,20 @@ class ConcurrencyTest {
 
   static final class Feed extends LiveComponent {
     private final Bus bus;
-    private final Signal<List<String>> entries = state(Collections.emptyList());
 
     Feed(Bus bus) {
       this.bus = bus;
     }
 
-    @Override public Tag<?> render() {
-      effect(() -> bus.subscribe(entry -> entries.update(current -> {
+  @Override protected View setup() {
+    Signal<List<String>> entries = createSignal(Collections.emptyList());
+    createEffect(() -> 1, once -> bus.subscribe(entry -> entries.update(current -> {
         List<String> next = new ArrayList<>(current);
         next.add(entry);
         return next;
       })));
-      return T.page("feed", T.span("count=" + entries.get().size()));
-    }
+    return () -> T.page("feed", T.span("count=" + entries.get().size()));
+  }
   }
 
   @Test
@@ -100,12 +101,14 @@ class ConcurrencyTest {
 
   static final class Holder extends LiveComponent {
     static final AtomicReference<Signal<Integer>> handle = new AtomicReference<>();
-    private final Signal<Integer> n = state(0);
 
-    @Override public Tag<?> render() {
+  @Override protected View setup() {
+    var n = createSignal(0);
+    return () -> {
       handle.set(n);
       return T.page("t", T.span("n=" + n.get()));
-    }
+    };
+  }
   }
 
   @Test

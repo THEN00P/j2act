@@ -1,10 +1,12 @@
 package com.example.counter.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 
+import j2act.View;
 import j2act.Client;
 import j2act.ComponentTag;
 import j2act.DomContent;
@@ -53,13 +55,13 @@ public final class Countdown extends ComponentTag {
 
   /** Handed to note(): it keeps re-rendering on its own State inside the client's DOM. */
   static final class NoteBadge extends ComponentTag {
-    private final Signal<Integer> clicks = state(0);
 
-    @Override protected ButtonTag render() {
-      return button("notes " + clicks.get())
+  @Override protected View setup() {
+    var clicks = createSignal(0);
+    return () -> button("notes " + clicks.get())
         .withClass("note-badge")
         .onClick(e -> clicks.set(clicks.get() + 1));
-    }
+  }
   }
 
   public static Countdown countdown() {

@@ -1,9 +1,11 @@
 package com.example.counter.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import java.util.Locale;
 
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.Signal;
 import j2act.html.tags.DivTag;
@@ -14,16 +16,15 @@ import j2act.html.tags.DivTag;
  */
 public final class GreetingForm extends ComponentTag {
 
-  private final Signal<String> greeting = state("nobody greeted yet");
-  private final Signal<String> focus = state("idle");
-  private final Signal<String> lastKey = state("none");
-
   public static GreetingForm greetingForm() {
     return new GreetingForm();
   }
 
-  @Override protected DivTag render() {
-    return div(
+  @Override protected View setup() {
+    var greeting = createSignal("nobody greeted yet");
+    var focus = createSignal("idle");
+    var lastKey = createSignal("none");
+    return () -> div(
       form(
         label(
           text("Name "),

@@ -24,6 +24,7 @@ final class PageStream {
   private ServeResult.ChunkSink sink;
   private boolean ended;
   private boolean finished;
+  private boolean done;
 
   PageStream(Tab tab, String nonce, String tail) {
     this.tab = tab;
@@ -63,8 +64,10 @@ final class PageStream {
 
   /** The adapter's sink, on the request thread: what is waiting goes out now. */
   synchronized void attach(ServeResult.ChunkSink next) {
-    sink = next;
-    drain();
+    if (!done) {
+      sink = next;
+      drain();
+    }
   }
 
   private void drain() {
@@ -78,6 +81,7 @@ final class PageStream {
       if (finished) {
         ServeResult.ChunkSink last = sink;
         sink = null;
+        done = true;
         last.end();
       }
     } catch (IOException | RuntimeException e) {
@@ -85,6 +89,7 @@ final class PageStream {
       ServeResult.ChunkSink last = sink;
       sink = null;
       ended = true;
+      done = true;
       buffered.clear();
       try {
         last.end();

@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -21,8 +22,10 @@ import org.junit.jupiter.api.Test;
 class DownloadTest {
 
   static final class Export extends LiveComponent {
-    private final Signal<String> filter = state("ad");
-    private final Download<String> csv = download((String like, OutputStream out) -> {
+
+  @Override protected View setup() {
+    var filter = createSignal("ad");
+    var csv = createDownload((String like, OutputStream out) -> {
       if ("boom".equals(like)) {
         throw new IllegalStateException("export broke");
       }
@@ -30,13 +33,11 @@ class DownloadTest {
     })
       .withFileName("Übersicht 2026.csv")
       .withContentType("text/csv");
-
-    @Override public Tag<?> render() {
-      return T.page("t", T.div(
+    return () -> T.page("t", T.div(
         T.span("export " + csv.status() + (csv.isError() ? " " + csv.error().getMessage() : "")),
         T.button("export").onClick(e -> csv.mutate(filter.get())),
         T.button("broken").onClick(e -> csv.mutate("boom"))));
-    }
+  }
   }
 
   private static String token(Harness h, int from) {

@@ -13,10 +13,8 @@ import java.util.function.Supplier;
  */
 final class EffectCell extends Cell implements Observer {
 
-  Supplier<Runnable> body;
   Supplier<?> track;
   BiFunction<Object, Object, Runnable> apply;
-  boolean immediate;
   private Runnable cleanup;
   private boolean queued;
   private boolean ran;
@@ -51,11 +49,7 @@ final class EffectCell extends Cell implements Observer {
     queued = false;
     Scope previousScope = Tracking.swapScope(owner);
     try {
-      if (track != null) {
-        runTwoHalves();
-      } else {
-        runBody();
-      }
+      runTwoHalves();
     } finally {
       Tracking.swapScope(previousScope);
     }
@@ -84,19 +78,6 @@ final class EffectCell extends Cell implements Observer {
     previous = Tracking.swap(null);
     try {
       cleanup = apply.apply(value, first ? null : before);
-    } catch (Throwable t) {
-      tab.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, t);
-    } finally {
-      Tracking.swap(previous);
-    }
-  }
-
-  private void runBody() {
-    runCleanup();
-    unsubscribe();
-    Observer previous = Tracking.swap(this);
-    try {
-      cleanup = body.get();
     } catch (Throwable t) {
       tab.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, t);
     } finally {

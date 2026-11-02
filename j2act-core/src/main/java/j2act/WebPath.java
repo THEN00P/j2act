@@ -30,15 +30,15 @@ public final class WebPath {
     T decode(Object json);
   }
 
-  private final ComponentTag owner;
+  private final Scope owner;
   private final List<Object> steps;
 
-  private WebPath(ComponentTag owner, List<Object> steps) {
+  private WebPath(Scope owner, List<Object> steps) {
     this.owner = owner;
     this.steps = steps;
   }
 
-  static WebPath root(ComponentTag owner) {
+  static WebPath root(Scope owner) {
     return new WebPath(owner, Collections.emptyList());
   }
 

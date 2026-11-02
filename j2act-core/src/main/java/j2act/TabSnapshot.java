@@ -77,11 +77,9 @@ final class TabSnapshot {
    * Lane-only. Names a new retained value (ADR 0031): explicitly, by the field holding it, or by
    * the variables the processor recorded. With none of those it waits for the end of setup.
    */
-  void retain(Scope scope, String explicit, String stackName, Object initial, ValueCell cell) {
-    String name = explicit != null ? explicit : fieldName(scope, cell);
-    if (name == null) {
-      name = stackName;
-    }
+  void retain(Scope scope, Primitive primitive, String explicit, String stackName, Object initial, ValueCell cell) {
+    java.lang.reflect.Field field = explicit != null ? null : Retained.fieldHolding(scope.owner(), primitive);
+    String name = explicit != null ? explicit : field != null ? field.getName() : stackName;
     if (name == null) {
       unnamed.computeIfAbsent(scope, s -> new ArrayList<>()).add(new Unnamed(cell, initial));
       return;
@@ -95,12 +93,8 @@ final class TabSnapshot {
       }
     }
     warnIfKeyless(scope, component);
-    fill(scope, cell, name, initial == null ? Object.class : initial.getClass());
-  }
-
-  /** The field of a store or a component holding this cell's primitive, or null for a local. */
-  private String fieldName(Scope scope, ValueCell cell) {
-    return Retained.fieldHolding(scope.owner(), cell);
+    java.lang.reflect.Type type = field == null ? null : Retained.valueType(field);
+    fill(scope, cell, name, type != null ? type : initial == null ? Object.class : initial.getClass());
   }
 
   /**
@@ -153,7 +147,6 @@ final class TabSnapshot {
     if (json != null) {
       try {
         cell.restoreValue(tab.engine.snapshots.readValue(json, type));
-        scope.restored = true;
       } catch (RuntimeException e) {
         tab.engine.log(System.Logger.Level.WARNING, "retained " + scope.ownerClass().getName() + "#" + name
           + " no longer reads as " + type.getTypeName() + "; it starts from its initial value (ADR 0026)", e);
@@ -175,72 +168,8 @@ final class TabSnapshot {
     }
   }
 
-  /** Lane-only. Names a new retained cell after its field, and fills it from the snapshot being restored. */
-  void retain(Scope scope, Signal<?> state, ValueCell cell, int index) {
-    Object instance = scope.owner();
-    String component = scope.ownerClass().getName();
-    java.lang.reflect.Field field = Retained.fieldOf(instance, state);
-    String name = state.retainedName != null ? state.retainedName : field != null ? field.getName() : null;
-    if (name == null) {
-      name = "@" + index;
-      tab.engine.warnOnce("local " + component + name, component + " creates retainedState #" + index
-        + " outside a field, so it is keyed by creation order and a state added above it takes its value;"
-        + " declare it as a field (ADR 0026)");
-    }
-    for (Cell other : scope.cells) {
-      if (other != cell && other instanceof ValueCell && name.equals(((ValueCell) other).retainedName)) {
-        tab.engine.warnOnce("name " + component + "#" + name, component + " has two retained states named \""
-          + name + "\"; the second one is not retained (ADR 0026)");
-        return;
-      }
-    }
-    if (scope.instance != null && scope.instance.key == null && scope.parent != null) {
-      for (Scope sibling : scope.parent.children.values()) {
-        if (sibling != scope && sibling.instance != null && sibling.instance.getClass() == instance.getClass()
-          && sibling.instance.key == null) {
-          tab.engine.warnOnce("keyless " + scope.parent.address + "@" + component, component
-            + " has retained state and repeats without withKey under " + scope.parent.instance.getClass().getName()
-            + ", so a restore puts values back by position; give each row a stable withKey (ADR 0026)");
-          break;
-        }
-      }
-    }
-    java.lang.reflect.Type type = field == null ? null : Retained.valueType(field);
-    if (type == null) {
-      Object initial = state.initial();
-      type = initial == null ? Object.class : initial.getClass();
-    }
-    cell.retainedName = name;
-    cell.retainedType = type;
-    // A store outlives pages, so its entries wait for its first use in the tab (ADR 0030).
-    Map<String, String> entries = scope.store != null ? restoringStores : restoring;
-    String json = entries == null ? null : entries.remove(scope.slotPath() + "#" + name);
-    if (json != null) {
-      try {
-        cell.initialize(tab.engine.snapshots.readValue(json, type));
-        scope.restored = true;
-      } catch (RuntimeException e) {
-        tab.engine.log(System.Logger.Level.WARNING, "retained " + component + "#" + name
-          + " no longer reads as " + type.getTypeName() + "; it starts from its initial value (ADR 0026)", e);
-      }
-    }
-  }
-
-  /** Lane-only. Runs the onPersisting callbacks of mounted components, before their values are taken. */
+  /** Lane-only. This lane task's writes belong in the values about to be taken. */
   void persisting() {
-    for (Cell c : new ArrayList<>(tab.cells.values())) {
-      if (!(c instanceof PersistCell) || c.disposed || c.owner == null || c.owner.disposed || c.owner.preloading()) {
-        continue;
-      }
-      Observer previous = Tracking.swap(null);
-      try {
-        ((PersistCell) c).callback.run();
-      } catch (RuntimeException e) {
-        tab.engine.log(System.Logger.Level.WARNING, "onPersisting failed at " + c.address + " (ADR 0026)", e);
-      } finally {
-        Tracking.swap(previous);
-      }
-    }
     tab.applyWrites();
   }
 

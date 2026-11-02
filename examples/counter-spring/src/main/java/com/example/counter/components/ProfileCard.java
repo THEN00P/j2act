@@ -1,10 +1,12 @@
 package com.example.counter.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import jakarta.inject.Inject;
 
 import com.example.counter.services.Directory;
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.html.tags.DivTag;
 import j2act.Prop;
@@ -16,7 +18,6 @@ public final class ProfileCard extends ComponentTag {
   @Inject private Directory directory;
 
   private final Prop<String> name = prop();
-  private final Query<String> profile = query(() -> directory.profile(name.get()));
 
   public static ProfileCard profileCard() {
     return new ProfileCard();
@@ -27,8 +28,9 @@ public final class ProfileCard extends ComponentTag {
     return this;
   }
 
-  @Override protected DivTag render() {
-    return div(
+  @Override protected View setup() {
+    var profile = createMemo(() -> async(() -> directory.profile(name.get())));
+    return () -> div(
       profile.isPending()
         ? p("Loading profile…")
         : p(profile.get()),

@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -13,17 +14,17 @@ class QueryStateTest {
   enum Sort { NAME, DATE }
 
   static final class Search extends LiveComponent {
-    private final QueryState<String> q = queryState("q", "");
-    private final QueryState<Integer> page = queryState("page", 1);
-    private final QueryState<Sort> sort = queryState("sort", Sort.NAME);
 
-    @Override public Tag<?> render() {
-      return T.page("s", T.div(
+  @Override protected View setup() {
+    var q = createQueryState("q", "");
+    var page = createQueryState("page", 1);
+    var sort = createQueryState("sort", Sort.NAME);
+    return () -> T.page("s", T.div(
         T.span("q=" + q.get() + ";page=" + page.get() + ";sort=" + sort.get() + ";"),
         T.input().withId("q").onChange(e -> q.set(e.value())),
         T.button("next").onClick(e -> page.update(p -> p + 1)),
         T.button("by date").onClick(e -> sort.set(Sort.DATE))));
-    }
+  }
   }
 
   private static Map<String, String> urlAfter(Harness h, Runnable action) {

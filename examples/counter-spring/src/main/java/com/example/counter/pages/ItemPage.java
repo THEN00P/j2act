@@ -1,8 +1,10 @@
 package com.example.counter.pages;
 
+import static j2act.Reactive.*;
 import static j2act.router.Routes.notFound;
 import static j2act.html.TagCreator.*;
 
+import j2act.View;
 import j2act.LiveComponent;
 import j2act.Query;
 import j2act.Signal;
@@ -14,18 +16,19 @@ import j2act.html.tags.HtmlTag;
  * loading() is a boundary (ADR 0007).
  */
 public class ItemPage extends LiveComponent {
+  private Query<String> item;
 
-  private final Signal<Integer> likes = state(0);
-  private final Query<String> item = query(() -> {
+  @Override protected View setup() {
+    var likes = createSignal(0);
+    item = createMemo(() -> async(() -> {
     String id = pathParam("id");
     if ("404".equals(id)) {
       throw notFound();
     }
     Thread.sleep(150);
     return "Item " + id;
-  });
-
-  @Override public HtmlTag render() {
+  }));
+    return () -> {
     String name = item.get() == null ? "Loading…" : item.get();
     return html(
       head(
@@ -39,6 +42,7 @@ public class ItemPage extends LiveComponent {
           .onClick(e -> likes.set(likes.get() + 1))
       )
     );
+    };
   }
 
   /** Shown only if an item takes longer than the navigation hold (1s); fast loads never flash it. */

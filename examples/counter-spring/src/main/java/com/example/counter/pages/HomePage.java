@@ -1,5 +1,6 @@
 package com.example.counter.pages;
 
+import static j2act.Reactive.*;
 import static com.example.counter.components.BrowserApis.browserApis;
 import static com.example.counter.components.ClockFeed.clockFeed;
 import static com.example.counter.components.NoteEditor.noteEditor;
@@ -15,6 +16,7 @@ import static com.example.counter.components.SearchBox.searchBox;
 import static j2act.html.TagCreator.*;
 
 import com.example.counter.components.Counter;
+import j2act.View;
 import j2act.html.tags.HtmlTag;
 import j2act.LiveComponent;
 import j2act.Signal;
@@ -23,12 +25,12 @@ import j2act.Signal;
 public class HomePage extends LiveComponent {
 
   private final Counter pinned = counter().withLabel("Held instance");
-  private final Signal<Integer> pageRenders = state(0);
-  private final Signal<Boolean> showProfile = state(true);
-  private final Signal<String> saved = state("never");
 
-  @Override public HtmlTag render() {
-    return html(
+  @Override protected View setup() {
+    var pageRenders = createSignal(0);
+    var showProfile = createSignal(true);
+    var saved = createSignal("never");
+    return () -> html(
       head(
         title("j2act · first slice")
       ),

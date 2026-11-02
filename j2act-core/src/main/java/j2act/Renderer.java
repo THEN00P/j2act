@@ -19,9 +19,6 @@ final class Renderer {
   StringBuilder out = new StringBuilder(1024);
   /** The CSP nonce for the bootstrap tags, set only when rendering the served page. */
   String nonce;
-  /** Queries created under each open loading and error boundary, nearest on top (ADR 0007). */
-  private final Deque<List<QueryCell>> loadingOwners = new ArrayDeque<>();
-  private final Deque<List<QueryCell>> errorOwners = new ArrayDeque<>();
 
   Renderer(Tab tab, long epoch) {
     this.tab = tab;
@@ -30,8 +27,6 @@ final class Renderer {
 
   /** Renders a scope; a read that stops it unwinds up to a boundary, with what is mounted kept (ADR 0031). */
   void renderScope(Scope scope) {
-    int loadingDepth = loadingOwners.size();
-    int errorDepth = errorOwners.size();
     try {
       if (scope.instance instanceof Boundary) {
         renderBoundary(scope);
@@ -40,12 +35,6 @@ final class Renderer {
       }
     } catch (NotReady | LoadFailed e) {
       unwind(scope);
-      while (loadingOwners.size() > loadingDepth) {
-        loadingOwners.pop();
-      }
-      while (errorOwners.size() > errorDepth) {
-        errorOwners.pop();
-      }
       throw e;
     }
   }
@@ -116,7 +105,6 @@ final class Renderer {
       Tracking.swapScope(previousScope);
     }
     out.append("</div>");
-    scope.activatePending();
     finish(scope);
   }
 
@@ -145,16 +133,6 @@ final class Renderer {
     scope.previousChildren = scope.children;
     scope.children = new java.util.LinkedHashMap<>();
 
-    boolean loadingBoundary = Boundaries.isLoading(scope.instance.getClass());
-    boolean errorBoundary = Boundaries.isError(scope.instance.getClass());
-    if (loadingBoundary) {
-      loadingOwners.push(new ArrayList<>());
-    }
-    if (errorBoundary) {
-      errorOwners.push(new ArrayList<>());
-    }
-    int start = out.length();
-
     Tag<?> root;
     Observer previous = Tracking.swap(scope);
     Scope previousScope = Tracking.swapScope(scope);
@@ -162,71 +140,19 @@ final class Renderer {
     try {
       scope.refreshView();
       if (scope.shapeChanged(scope.instance.getClass())) {
-        // Only a held object (a page, a layout, a field of its parent) reaches here: a fresh one
-        // started over when it was bound, and dev mode mounts changed pages and layouts again.
+        // Only a page or a layout reaches here: any other starts over when its next description
+        // binds, and dev mode mounts changed pages and layouts again.
         tab.engine.log(System.Logger.Level.WARNING, "j2act dev: " + scope.instance.getClass().getName()
-          + " has new fields, but its object is held by its parent, so they stay unset until the page reloads", null);
+          + " has new fields, which stay unset until the page reloads", null);
         scope.shape = Scope.shapeOf(scope.instance.getClass());
       }
-      if (scope.view != null) {
-        root = scope.renderView();
-      } else {
-        try {
-          root = scope.instance.runRender();
-        } catch (Scope.ShapeChanged e) {
-          // Before anything of this render was emitted: start over and render once more.
-          scope.startOver(e.getMessage());
-          root = scope.instance.runRender();
-        }
-      }
+      root = scope.renderView();
     } finally {
       scope.rendering = false;
       Tracking.swap(previous);
       Tracking.swapScope(previousScope);
     }
-    scope.activatePending();
-    for (Cell cell : scope.cells) {
-      if (cell instanceof QueryCell) {
-        if (!loadingOwners.isEmpty()) {
-          loadingOwners.peek().add((QueryCell) cell);
-        }
-        if (!errorOwners.isEmpty()) {
-          errorOwners.peek().add((QueryCell) cell);
-        }
-      }
-    }
     emit(scope, root);
-
-    List<QueryCell> loadingOwned = loadingBoundary ? loadingOwners.pop() : null;
-    List<QueryCell> errorOwned = errorBoundary ? errorOwners.pop() : null;
-    Tag<?> replacement = null;
-    List<QueryCell> watched = null;
-    if (loadingOwned != null && loadingOwned.stream().anyMatch(QueryCell::initiallyPending)) {
-      replacement = withTracking(scope, () -> scope.instance.loading());
-      watched = loadingOwned;
-    }
-    if (replacement == null && errorOwned != null) {
-      List<QueryCell> failed = new ArrayList<>();
-      for (QueryCell query : errorOwned) {
-        if (query.initiallyFailed()) {
-          failed.add(query);
-        }
-      }
-      if (!failed.isEmpty()) {
-        PageError error = new PageError(failed, failed.get(0).failure());
-        replacement = withTracking(scope, () -> scope.instance.error(error));
-        watched = errorOwned;
-      }
-    }
-    if (replacement != null) {
-      // The subtree stays mounted so its queries keep running; only its markup is swapped.
-      out.setLength(start);
-      emit(scope, replacement);
-      for (QueryCell query : watched) {
-        query.observers.add(scope);
-        scope.dependsOn(query);
-      }
-    }
     finish(scope);
   }
 
@@ -256,15 +182,6 @@ final class Renderer {
       }
     } else {
       renderTag(scope, "", root, scope.anchor);
-    }
-  }
-
-  private static Tag<?> withTracking(Scope scope, java.util.function.Supplier<Tag<?>> body) {
-    Observer previous = Tracking.swap(scope);
-    try {
-      return body.get();
-    } finally {
-      Tracking.swap(previous);
     }
   }
 
@@ -430,13 +347,17 @@ final class Renderer {
     }
   }
 
-  /** Finds or creates the child's scope: by reference for held objects, by slot for fresh ones. */
+  /** Finds or creates the child's scope: a route's frame is its own, anything else matches by slot (ADR 0031). */
   private void place(Scope parent, String path, ComponentTag component) {
     Scope child;
     String local = path + "@" + component.getClass().getName();
     if (component.scope != null) {
       child = component.scope;
-      if (child.parent == parent && child.localPath == null) {
+      if (child.parent != parent) {
+        throw new IllegalStateException("one " + component.getClass().getName() + " was rendered in two places;"
+          + " call its factory for each (ADR 0031)");
+      }
+      if (child.localPath == null) {
         // An adopted preloaded page (ADR 0011): its slot is where it renders now.
         child.localPath = local;
       }

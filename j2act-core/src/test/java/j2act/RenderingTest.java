@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -9,14 +10,15 @@ import org.junit.jupiter.api.Test;
 class RenderingTest {
 
   static final class Plain extends LiveComponent {
-    @Override public Tag<?> render() {
-      return T.page("A & B",
+
+  @Override protected View setup() {
+    return () -> T.page("A & B",
         T.div(
           T.span("<b>x</b>"),
           null,
           T.tag("p", "after").withKey("secret-key"),
           T.input().attr("value", "\"q\"").attr("disabled")));
-    }
+  }
   }
 
   @Test
@@ -33,14 +35,15 @@ class RenderingTest {
   }
 
   static final class Fields extends LiveComponent {
-    @Override public Tag<?> render() {
-      return T.page("t", T.div(
+
+  @Override protected View setup() {
+    return () -> T.page("t", T.div(
         T.input().withId("free"),
         T.input().withId("bound").attr("value", "x"),
         T.input().withId("unticked").attr("checked", null),
         T.tag("textarea").withId("empty"),
         T.tag("textarea", "hi").withId("filled")));
-    }
+  }
   }
 
   @Test

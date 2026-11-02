@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -30,21 +31,25 @@ class HotSwapRenderTest {
   static volatile boolean extraPrimitive;
 
   static final class Child extends ComponentTag {
-    @Override protected Tag<?> render() {
-      Signal<Integer> count = state(0);
-      String extra = extraPrimitive ? " " + state("fresh").get() : "";
+
+  @Override protected View setup() {
+    var count = createSignal(0);
+    Signal<String> fresh = extraPrimitive ? createSignal("fresh") : null;
+    return () -> {
+      String extra = fresh != null ? " " + fresh.get() : "";
       return T.button("child:" + count.get() + extra).onClick(e -> count.set(count.get() + 1));
-    }
+    };
+  }
   }
 
   static final class Page extends LiveComponent {
-    private final Signal<Integer> count = state(0);
 
-    @Override public Tag<?> render() {
-      return T.page("t", T.div(
+  @Override protected View setup() {
+    var count = createSignal(0);
+    return () -> T.page("t", T.div(
         T.button(greeting + ":" + count.get()).onClick(e -> count.set(count.get() + 1)),
         new Child()));
-    }
+  }
   }
 
   private static Harness started() {

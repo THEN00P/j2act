@@ -23,11 +23,9 @@ final class Scope implements Observer {
    * keys use slotPath() instead of the address.
    */
   String localPath;
-  /** A Retained State of this component came back from a snapshot; onRestored callbacks run (ADR 0026). */
-  boolean restored;
   final String anchor;
   ComponentTag instance;
-  /** What setup() returned, called on every render (ADR 0031); null for a component still using render(). */
+  /** What setup() returned, called on every render (ADR 0031). */
   View view;
   /** Where the next primitive of a running setup() goes: re-running it after a class swap finds its cells again. */
   private int setupIndex;
@@ -71,7 +69,7 @@ final class Scope implements Observer {
   }
 
   /**
-   * A primitive-order violation (ADR 0019). After a class swap in dev mode it is the new code's
+   * What setup() creates changed. After a class swap in dev mode it is the new code's
    * shape rather than a bug, and the component starts over with fresh state, as React Fast Refresh
    * does when a component's hooks change.
    */
@@ -118,7 +116,6 @@ final class Scope implements Observer {
     }
     settledCount = cells.size();
     tab.snapshot.settleUnnamed(this);
-    activatePending();
   }
 
   IllegalStateException orderViolation(String message) {
@@ -207,15 +204,16 @@ final class Scope implements Observer {
       Tracking.swap(previous);
       Tracking.swapScope(previousScope);
     }
-    if (view != null) {
-      if (settledCount >= 0 && setupIndex != cells.size()) {
-        throw orderViolation(ownerClass().getName() + " creates " + setupIndex + " primitives now but "
-          + cells.size() + " before");
-      }
-      settledCount = cells.size();
-      settled();
-      tab.snapshot.settleUnnamed(this);
+    if (view == null) {
+      throw new IllegalStateException(instance.getClass().getName() + ".setup() must return its view");
     }
+    if (settledCount >= 0 && setupIndex != cells.size()) {
+      throw orderViolation(ownerClass().getName() + " creates " + setupIndex + " primitives now but "
+        + cells.size() + " before");
+    }
+    settledCount = cells.size();
+    settled();
+    tab.snapshot.settleUnnamed(this);
   }
 
   /** Before a render: after a class swap the view must be the new code's. */
@@ -274,33 +272,19 @@ final class Scope implements Observer {
     if (view == null && settledCount < 0) {
       runSetup();
     }
-    // Field queries are fully configured by now: hydrate them before the first render reads them.
-    activatePending();
-  }
-
-  /** Lane-only. Activates queries created since the last call, once their withKey/withDefer chain ran. */
-  void activatePending() {
-    for (Cell cell : cells) {
-      if (cell instanceof QueryCell && ((QueryCell) cell).needsActivation) {
-        ((QueryCell) cell).needsActivation = false;
-        ((QueryCell) cell).activate();
-      }
-    }
   }
 
   void bindPrimitive(Primitive primitive, int index) {
     if (index < cells.size()) {
       Cell cell = cells.get(index);
       if (!primitive.accepts(cell)) {
-        throw orderViolation(ownerClass().getName() + " primitive #" + index
-          + " changed kind between renders; primitives must be created in the same order every time (ADR 0019)");
+        throw orderViolation(ownerClass().getName() + " primitive #" + index + " changed kind");
       }
       primitive.attach(cell, false);
       return;
     }
     if (settledCount >= 0) {
-      throw orderViolation(ownerClass().getName() + " created primitive #" + index
-        + " that earlier renders did not; primitives must not be created conditionally (ADR 0019)");
+      throw orderViolation(ownerClass().getName() + " created primitive #" + index + ", which it did not before");
     }
     Cell cell = primitive.createCell(tab, address + "#" + index);
     cell.owner = this;
@@ -308,12 +292,10 @@ final class Scope implements Observer {
     tab.cells.put(cell.address, cell);
     if (primitive instanceof RetainedSignal) {
       Signal<?> signal = (Signal<?>) primitive;
-      tab.snapshot.retain(this, signal.retainedName, signal.stackName, signal.initial(), (ValueCell) cell);
+      tab.snapshot.retain(this, primitive, signal.retainedName, signal.stackName, signal.initial(), (ValueCell) cell);
     } else if (primitive instanceof RetainedValue) {
       RetainedValue<?> value = (RetainedValue<?>) primitive;
-      tab.snapshot.retain(this, value.name, value.stackName, cell.peek(), (ValueCell) cell);
-    } else if (primitive instanceof Signal && ((Signal<?>) primitive).retained) {
-      tab.snapshot.retain(this, (Signal<?>) primitive, (ValueCell) cell, index);
+      tab.snapshot.retain(this, primitive, value.name, value.stackName, cell.peek(), (ValueCell) cell);
     }
     primitive.attach(cell, true);
   }
@@ -352,8 +334,7 @@ final class Scope implements Observer {
       return false;
     }
     for (Cell cell : cells) {
-      if (cell instanceof QueryCell && ((QueryCell) cell).loading()
-        || cell instanceof AsyncCell && ((AsyncCell) cell).loading()
+      if (cell instanceof AsyncCell && ((AsyncCell) cell).loading()
         || cell instanceof OptimisticCell && ((OptimisticCell) cell).loading()) {
         return false;
       }

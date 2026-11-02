@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static j2act.router.Routes.*;
 import static j2act.html.TagCreator.*;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -20,25 +21,27 @@ import j2act.internal.json.Json;
 class RetainedRoutingTest {
 
   public static final class Shell extends Layout {
-    @Override public HtmlTag render(DomContent content) {
-      return html(head(title("app")), body(nav(a("Form").withHref("/form").withPreload(Preload.INTENT)), content));
-    }
+
+  @Override protected LayoutView setup() {
+    return content -> html(head(title("app")), body(nav(a("Form").withHref("/form").withPreload(Preload.INTENT)), content));
+  }
   }
 
   public static final class Home extends LiveComponent {
-    @Override public HtmlTag render() {
-      return html(head(title("Home")), body(h1("Home")));
-    }
+
+  @Override protected View setup() {
+    return () -> html(head(title("Home")), body(h1("Home")));
+  }
   }
 
   public static final class FormPage extends LiveComponent {
-    private final Signal<String> name = retainedState("");
 
-    @Override public HtmlTag render() {
-      return html(head(title("Form")), body(
+  @Override protected View setup() {
+    var name = createRetained("");
+    return () -> html(head(title("Form")), body(
         span("name=" + name.get() + ";"),
         input().withId("name").onChange(e -> name.set(e.value()))));
-    }
+  }
   }
 
   static Harness harness(RetainedStateTest.CountingStorage storage) {

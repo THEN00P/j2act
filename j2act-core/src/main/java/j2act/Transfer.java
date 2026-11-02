@@ -1,9 +1,6 @@
 package j2act;
 
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -18,7 +15,7 @@ import java.util.function.Consumer;
  * button("Delete").withDisabled(delete.isPending()).onClick(e -> delete.mutate(user.getId()));
  * }</pre>
  */
-public class Mutation<V, R> extends Primitive {
+public class Transfer<V, R> extends Primitive {
 
   /** The write itself. Runs on the executor; inputs arrive as variables. */
   @FunctionalInterface
@@ -27,43 +24,29 @@ public class Mutation<V, R> extends Primitive {
   }
 
   final Body<V, R> body;
-  List<Object> key;
   int retries;
   Duration backoff = Duration.ofMillis(200);
-  final List<List<Object>> invalidates = new ArrayList<>();
   Consumer<? super R> onSuccess;
   Consumer<Throwable> onError;
 
-  Mutation(Body<V, R> body) {
+  Transfer(Body<V, R> body) {
     this.body = body;
   }
 
-  /** Runs sharing this key execute one at a time, in order, per tab. */
-  public Mutation<V, R> withKey(Object... parts) {
-    this.key = Arrays.asList(parts);
-    return configure();
-  }
-
   /** Retries a failed run up to this many times, backing off exponentially from the given delay. */
-  public Mutation<V, R> withRetry(int retries, Duration backoff) {
+  public Transfer<V, R> withRetry(int retries, Duration backoff) {
     this.retries = retries;
     this.backoff = backoff;
     return configure();
   }
 
-  /** After success, refetches keyed queries whose key starts with these parts (ADR 0020). */
-  public Mutation<V, R> withInvalidates(Object... keyPrefix) {
-    this.invalidates.add(Arrays.asList(keyPrefix));
-    return configure();
-  }
-
   /** Runs on the lane after a successful run, e.g. to set State. */
-  public Mutation<V, R> onSuccess(Consumer<? super R> callback) {
+  public Transfer<V, R> onSuccess(Consumer<? super R> callback) {
     this.onSuccess = callback;
     return configure();
   }
 
-  public Mutation<V, R> onError(Consumer<Throwable> callback) {
+  public Transfer<V, R> onError(Consumer<Throwable> callback) {
     this.onError = callback;
     return configure();
   }
@@ -120,7 +103,7 @@ public class Mutation<V, R> extends Primitive {
     return (MutationCell) requireCell();
   }
 
-  private Mutation<V, R> configure() {
+  private Transfer<V, R> configure() {
     if (cell != null) {
       ((MutationCell) cell).config = this;
     }

@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -28,29 +29,29 @@ class UploadTest {
   static volatile String naming = "ok";
 
   static final class Avatar extends LiveComponent {
-    private final Upload up = upload()
+
+  @Override protected View setup() {
+    var up = createUpload()
       .withTarget(target)
       .withNaming((original, ctx) -> "ok".equals(naming) ? ctx.username() + "_" + original : naming)
       .withAccept("image/*", ".txt")
       .withMaxFileSize("1KB");
-
-    @Override public Tag<?> render() {
-      return T.page("t", T.div(
+    return () -> T.page("t", T.div(
         T.input().withId("avatar").attr("type", "file").onChange(e -> up.mutate(e.file())),
         T.span("upload " + up.status() + " " + up.progress() + "%"
           + (up.isSuccess() ? " at " + up.data().path().getFileName() + " as " + up.data().contentType() : "")
           + (up.isError() ? " failed: " + up.error().getMessage() : ""))));
-    }
+  }
   }
 
   static final class Scratch extends LiveComponent {
-    private final Upload up = upload();
 
-    @Override public Tag<?> render() {
-      return T.page("t", T.div(
+  @Override protected View setup() {
+    var up = createUpload();
+    return () -> T.page("t", T.div(
         T.input().withId("avatar").attr("type", "file").onChange(e -> up.mutate(e.file())),
         T.span("upload " + up.status() + (up.isSuccess() ? " at " + up.data().path() : ""))));
-    }
+  }
   }
 
   private static String pick(Harness h, String name, long size, String type) {

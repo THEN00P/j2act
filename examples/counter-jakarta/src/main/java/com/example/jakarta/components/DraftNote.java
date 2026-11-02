@@ -1,9 +1,11 @@
 package com.example.jakarta.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import jakarta.inject.Inject;
 
+import j2act.View;
 import j2act.Client;
 import j2act.ComponentTag;
 import j2act.Mount;
@@ -24,15 +26,14 @@ public final class DraftNote extends ComponentTag {
 
   @Inject private Signature signature;
 
-  private final Signal<String> draft = retainedState("");
-  private final PauseControls pauseControls = client(PauseControls.class);
-
   public static DraftNote draftNote() {
     return new DraftNote();
   }
 
-  @Override protected DivTag render() {
-    return div(
+  @Override protected View setup() {
+    var draft = createRetained("");
+    var pauseControls = createClient(PauseControls.class);
+    return () -> div(
       label(
         text("Draft "),
         input()
@@ -53,8 +54,8 @@ public final class DraftNote extends ComponentTag {
       p("Signer: " + (signature.signer().isEmpty() ? "none" : signature.signer())).withId("signer-echo"),
       div().withId("pause-controls").withClient(pauseControls.mount()),
       // The server can ask too: this tab, or every tab as before a deploy. Each then pauses as if Pause was clicked.
-      button("Pause this tab from the server").withId("pause-tab").onClick(e -> tab().requestPause()),
-      button("Pause every tab from the server").withId("pause-all").onClick(e -> application().requestPause())
+      button("Pause this tab from the server").withId("pause-tab").onClick(e -> useTab().requestPause()),
+      button("Pause every tab from the server").withId("pause-all").onClick(e -> useApplication().requestPause())
     );
   }
 }

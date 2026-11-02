@@ -1,10 +1,12 @@
 package com.example.vite.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import java.util.ArrayList;
 import java.util.List;
 
+import j2act.View;
 import j2act.Client;
 import j2act.ComponentTag;
 import j2act.Mount;
@@ -13,6 +15,8 @@ import j2act.html.tags.DivTag;
 
 /** Chart.js from npm in a JavaScript client module, styled by a CSS module. */
 public final class SalesChart extends ComponentTag {
+  private Signal<List<Integer>> sales;
+
 
   interface Bars extends Client {
     Mount<DivTag> mount(List<String> months, List<Integer> sales);
@@ -20,14 +24,14 @@ public final class SalesChart extends ComponentTag {
 
   private static final List<String> MONTHS = List.of("Jan", "Feb", "Mar", "Apr", "May", "Jun");
 
-  private final Bars bars = client(Bars.class);
-  private final Signal<List<Integer>> sales = state(List.of(10, 20, 30));
-
   public static SalesChart salesChart() {
     return new SalesChart();
   }
 
-  @Override protected DivTag render() {
+  @Override protected View setup() {
+    var bars = createClient(Bars.class);
+    sales = createSignal(List.of(10, 20, 30));
+    return () -> {
     List<Integer> values = sales.get();
     return div(
       div()
@@ -43,5 +47,6 @@ public final class SalesChart extends ComponentTag {
           sales.set(next);
         })
     );
+    };
   }
 }

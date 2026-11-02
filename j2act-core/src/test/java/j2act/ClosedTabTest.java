@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static j2act.RetainedStateTest.harness;
 import static j2act.RetainedStateTest.remount;
 import static j2act.RetainedStateTest.type;
@@ -119,11 +120,11 @@ class ClosedTabTest {
   void aTabWithoutRetainedValuesSavesNothingOnBye() {
     CountingStorage storage = new CountingStorage();
     try (Harness h = harness(() -> new LiveComponent() {
-      private final Signal<String> plain = state("");
 
-      @Override public Tag<?> render() {
-        return T.page("p", T.div(T.input().withId("plain").onChange(e -> plain.set(e.value()))));
-      }
+  @Override protected View setup() {
+    var plain = createSignal("");
+    return () -> T.page("p", T.div(T.input().withId("plain").onChange(e -> plain.set(e.value()))));
+  }
     }, storage, b -> { })) {
       h.load();
       h.connect();

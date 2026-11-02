@@ -1,9 +1,11 @@
 package com.example.counter.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import java.time.Duration;
 
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.Signal;
 import j2act.html.tags.DivTag;
@@ -14,15 +16,14 @@ import j2act.html.tags.DivTag;
  */
 public final class Volume extends ComponentTag {
 
-  private final Signal<String> level = state("50");
-  private final Signal<Integer> received = state(0);
-
   public static Volume volume() {
     return new Volume();
   }
 
-  @Override protected DivTag render() {
-    return div(
+  @Override protected View setup() {
+    var level = createSignal("50");
+    var received = createSignal(0);
+    return () -> div(
       input()
         .withId("volume")
         .withType("range")

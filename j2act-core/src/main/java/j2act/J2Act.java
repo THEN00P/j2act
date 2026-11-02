@@ -73,10 +73,7 @@ public final class J2Act implements AutoCloseable {
   final Clock clock;
   final long reconnectGraceMillis;
   final long idleTimeoutMillis;
-  final long ssrAwaitMillis;
   final long streamDeadlineMillis;
-  final long queryStaleMillis;
-  final long queryGcMillis;
   final long pendingMillis;
   final long pendingMinMillis;
   final long downloadTtlMillis;
@@ -557,10 +554,7 @@ public final class J2Act implements AutoCloseable {
     this.clock = b.clock;
     this.reconnectGraceMillis = b.reconnectGrace.toMillis();
     this.idleTimeoutMillis = b.idleTimeout.toMillis();
-    this.ssrAwaitMillis = b.ssrAwaitBudget.toMillis();
     this.streamDeadlineMillis = b.streamDeadline.toMillis();
-    this.queryStaleMillis = b.queryStaleTime.toMillis();
-    this.queryGcMillis = b.queryGcTime.toMillis();
     this.pendingMillis = b.pendingTime.toMillis();
     this.pendingMinMillis = b.pendingMinTime.toMillis();
     this.downloadTtlMillis = b.downloadTtl.toMillis();
@@ -714,7 +708,6 @@ public final class J2Act implements AutoCloseable {
         }
         return SsrPass.of(tab);
       }));
-      long deadline = clock.millis() + ssrAwaitMillis;
       while (true) {
         RouteException route = tab.pendingRoute;
         if (route != null) {
@@ -738,12 +731,7 @@ public final class J2Act implements AutoCloseable {
           pass = await(tab.call(() -> SsrPass.of(tab)));
           continue;
         }
-        long left = deadline - clock.millis();
-        if (pass.settleCount < 0 || left <= 0) {
-          break;
-        }
-        tab.awaitSettleAfter(pass.settleCount, left);
-        pass = await(tab.call(() -> SsrPass.of(tab)));
+        break;
       }
       String shell = pass.html;
       PageStream stream = await(tab.call(() -> tab.openStream(shell)));
@@ -1300,16 +1288,12 @@ public final class J2Act implements AutoCloseable {
     };
   }
 
-  /** One full render plus whether queries are still running (-1 when none are). */
+  /** One full render, or a read outside any loading(...) it stopped on, which the page waits for. */
   private static final class SsrPass {
     final String html;
     final long settleCount;
     /** The render stopped on a read outside any loading(...): the page waits for it, with no budget (ADR 0031). */
     final boolean waitingOnRead;
-
-    private SsrPass(String html, long settleCount) {
-      this(html, settleCount, false);
-    }
 
     private SsrPass(String html, long settleCount, boolean waitingOnRead) {
       this.html = html;
@@ -1319,12 +1303,7 @@ public final class J2Act implements AutoCloseable {
 
     static SsrPass of(Tab tab) {
       String html = tab.renderFull();
-      if (html == null) {
-        return tab.waitingOnRead() ? new SsrPass(null, tab.settleCount(), true) : new SsrPass(null, 0);
-      }
-      // withDefer() queries finish over the socket; SSR waits only for the rest (ADR 0016).
-      boolean waiting = tab.inFlight.stream().anyMatch(q -> !q.deferred);
-      return new SsrPass(html, waiting ? tab.settleCount() : -1L);
+      return new SsrPass(html, tab.settleCount(), html == null && tab.waitingOnRead());
     }
   }
 
@@ -1350,9 +1329,6 @@ public final class J2Act implements AutoCloseable {
     private Duration reconnectGrace = Duration.ofMinutes(3);
     private Duration streamDeadline = Duration.ofSeconds(10);
     private Duration idleTimeout = Duration.ofHours(12);
-    private Duration ssrAwaitBudget = Duration.ofSeconds(3);
-    private Duration queryStaleTime = Duration.ofSeconds(30);
-    private Duration queryGcTime = Duration.ofMinutes(5);
     private Duration sweepInterval = Duration.ofSeconds(10);
     private Duration pendingTime = Duration.ofSeconds(1);
     private Duration pendingMinTime = Duration.ofMillis(500);
@@ -1461,21 +1437,6 @@ public final class J2Act implements AutoCloseable {
      */
     public Builder withStreamDeadline(Duration deadline) {
       this.streamDeadline = deadline;
-      return this;
-    }
-
-    public Builder withSsrAwaitBudget(Duration budget) {
-      this.ssrAwaitBudget = budget;
-      return this;
-    }
-
-    public Builder withQueryStaleTime(Duration staleTime) {
-      this.queryStaleTime = staleTime;
-      return this;
-    }
-
-    public Builder withQueryGcTime(Duration gcTime) {
-      this.queryGcTime = gcTime;
       return this;
     }
 

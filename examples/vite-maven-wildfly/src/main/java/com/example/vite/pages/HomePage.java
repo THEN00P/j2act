@@ -1,9 +1,11 @@
 package com.example.vite.pages;
 
+import static j2act.Reactive.*;
 import static com.example.vite.components.SalesChart.salesChart;
 import static j2act.Vite.vite;
 import static j2act.html.TagCreator.*;
 
+import j2act.View;
 import j2act.LiveComponent;
 import j2act.Signal;
 import j2act.html.tags.HtmlTag;
@@ -11,10 +13,9 @@ import j2act.html.tags.HtmlTag;
 /** Tailwind from Java class names, a JS client module, and a counter whose state must survive a re-import. */
 public class HomePage extends LiveComponent {
 
-  private final Signal<Integer> count = state(0);
-
-  @Override public HtmlTag render() {
-    return html(
+  @Override protected View setup() {
+    var count = createSignal(0);
+    return () -> html(
       head(
         title("j2act · Vite, Maven on WildFly"),
         vite("src/main/frontend/app.css")

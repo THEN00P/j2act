@@ -191,9 +191,8 @@ final class Clients {
    * A window() call from a handler or an effect (ADR 0022): sent after this update's patch,
    * in the same queue as client actions, so calls start in the order Java made them.
    */
-  static CompletableFuture<Object> callWindow(ComponentTag owner, String name, String json,
+  static CompletableFuture<Object> callWindow(Scope scope, String name, String json,
                                               WebPath.Decoder<Object> decoder) {
-    Scope scope = owner.scope;
     Tab tab = scope != null ? scope.tab : Tab.current();
     if (tab == null) {
       throw new IllegalStateException(name + " needs a mounted component (ADR 0022)");

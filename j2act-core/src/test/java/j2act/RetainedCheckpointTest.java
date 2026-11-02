@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static j2act.RetainedStateTest.harness;
 import static j2act.RetainedStateTest.remount;
 import static j2act.RetainedStateTest.type;
@@ -93,12 +94,12 @@ class RetainedCheckpointTest {
   }
 
   static final class Clearable extends LiveComponent {
-    private final Signal<String> note = retainedState("");
 
-    @Override public Tag<?> render() {
-      return T.page("c", T.div(T.span("note=" + note.get() + ";"),
+  @Override protected View setup() {
+    var note = createRetained("note", "");
+    return () -> T.page("c", T.div(T.span("note=" + note.get() + ";"),
         T.input().withId("note").onChange(e -> note.set(e.value().isEmpty() ? null : e.value()))));
-    }
+  }
   }
 
   @Test
