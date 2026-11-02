@@ -75,7 +75,7 @@ final class J2ActFilter implements Filter {
       return;
     }
     response.setContentType("text/html;charset=UTF-8");
-    response.getOutputStream().write(result.html().getBytes(StandardCharsets.UTF_8));
+    PageWriter.write(result, request, response);
   }
 
   /** Sets the browser cookie a page was offered over its socket (ADR 0030); 404 for a bad or used token. */

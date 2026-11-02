@@ -84,6 +84,7 @@ final class Renderer {
     try {
       try {
         renderChildren(scope, "/0", latest(boundary).children(), false);
+        tab.showingFallback.remove(scope);
       } catch (NotReady e) {
         if (!(boundary instanceof Loading)) {
           throw e;
@@ -91,6 +92,7 @@ final class Renderer {
         out.setLength(inner);
         keepMounted(scope);
         scope.waitFor(e.cell);
+        tab.showingFallback.add(scope);
         DomContent fallback = ((Loading) boundary).fallback;
         if (fallback != null) {
           renderNode(scope, "/fallback", fallback, false);

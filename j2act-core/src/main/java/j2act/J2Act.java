@@ -74,6 +74,7 @@ public final class J2Act implements AutoCloseable {
   final long reconnectGraceMillis;
   final long idleTimeoutMillis;
   final long ssrAwaitMillis;
+  final long streamDeadlineMillis;
   final long queryStaleMillis;
   final long queryGcMillis;
   final long pendingMillis;
@@ -557,6 +558,7 @@ public final class J2Act implements AutoCloseable {
     this.reconnectGraceMillis = b.reconnectGrace.toMillis();
     this.idleTimeoutMillis = b.idleTimeout.toMillis();
     this.ssrAwaitMillis = b.ssrAwaitBudget.toMillis();
+    this.streamDeadlineMillis = b.streamDeadline.toMillis();
     this.queryStaleMillis = b.queryStaleTime.toMillis();
     this.queryGcMillis = b.queryGcTime.toMillis();
     this.pendingMillis = b.pendingTime.toMillis();
@@ -743,13 +745,16 @@ public final class J2Act implements AutoCloseable {
         tab.awaitSettleAfter(pass.settleCount, left);
         pass = await(tab.call(() -> SsrPass.of(tab)));
       }
+      String shell = pass.html;
+      PageStream stream = await(tab.call(() -> tab.openStream(shell)));
+      String html = stream == null ? shell : shell.substring(0, shell.length() - "</body></html>".length());
       String cookie = tab.pendingBrowserCookie;
       if (cookie != null) {
         // The page used browser state while rendering: its response sets the cookie (ADR 0030).
         tab.pendingBrowserCookie = null;
-        return new ServeResult(status, pass.html, null, java.util.Collections.singletonList(cookie));
+        return new ServeResult(status, html, null, java.util.Collections.singletonList(cookie)).withStream(stream);
       }
-      return new ServeResult(status, pass.html);
+      return new ServeResult(status, html).withStream(stream);
     } catch (Exception e) {
       log(System.Logger.Level.ERROR, "render failed for " + url, e);
       discard(tab, false);
@@ -1343,6 +1348,7 @@ public final class J2Act implements AutoCloseable {
     private String contextPath = "";
     private Clock clock = Clock.systemUTC();
     private Duration reconnectGrace = Duration.ofMinutes(3);
+    private Duration streamDeadline = Duration.ofSeconds(10);
     private Duration idleTimeout = Duration.ofHours(12);
     private Duration ssrAwaitBudget = Duration.ofSeconds(3);
     private Duration queryStaleTime = Duration.ofSeconds(30);
@@ -1443,6 +1449,18 @@ public final class J2Act implements AutoCloseable {
         throw new IllegalArgumentException("idle timeout is capped at 24h (ADR 0010)");
       }
       this.idleTimeout = idleTimeout;
+      return this;
+    }
+
+    /**
+     * How long a served page's response stays open for its loading(...) boundaries (ADR 0031), 10
+     * seconds by default. Its script runs when the response ends, so one load that hangs would keep
+     * the page from becoming interactive. This does not decide what waits or what shows a fallback,
+     * and it discards nothing: past it the response closes with the fallbacks in place, the socket
+     * connects, and each boundary arrives over it when its data lands.
+     */
+    public Builder withStreamDeadline(Duration deadline) {
+      this.streamDeadline = deadline;
       return this;
     }
 

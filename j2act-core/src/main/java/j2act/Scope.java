@@ -399,6 +399,7 @@ final class Scope implements Observer {
     unsubscribeAll();
     tab.handlers.remove(this);
     tab.heads.forget(this);
+    tab.showingFallback.remove(this);
     // Children first, above; then this owner's, last created first, as Solid runs its cleanups.
     for (int i = cells.size() - 1; i >= 0; i--) {
       Cell cell = cells.get(i);

@@ -164,6 +164,16 @@ final class AsyncCell extends Cell implements Observer {
       watch(((NotReady) cause).cell);
       return;
     }
+    if (cause instanceof RouteException && tab.streamingShell()) {
+      // The status went out with the shell: this is an error at the nearest errored(...) (ADR 0031).
+      tab.engine.warnOnce("streamed route " + address, "notFound() or redirect() from a load read inside loading(...),"
+        + " after the response started: read it outside loading(...) for a real 404 or redirect (ADR 0031)");
+      loading = false;
+      error = cause;
+      notifyObservers();
+      tab.settled();
+      return;
+    }
     if (transition != null && !transition.over() && !(cause instanceof RouteException)) {
       // Waits with the writes that started it; everything changes in one update (ADR 0031).
       isStaged = true;

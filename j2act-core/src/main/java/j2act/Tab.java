@@ -47,6 +47,12 @@ public final class Tab {
   final List<EffectCell> parkedEffects = new ArrayList<>();
   /** onSettled callbacks that have not fired yet (ADR 0031). */
   final List<LifecycleCell> pendingSettled = new ArrayList<>();
+  /** The loading(...) boundaries showing their fallback: what a served page's stream waits for (ADR 0031). */
+  final Set<Scope> showingFallback = new HashSet<>();
+  /** The rest of the served page, while it streams. */
+  private PageStream stream;
+  /** The shell went out, so a load's notFound() can no longer change the response (ADR 0031). */
+  private boolean shellSent;
   /** This lane task's writes, applied together at its end (ADR 0031). */
   private final Map<ValueCell, Object> batch = new java.util.LinkedHashMap<>();
   /** Writes held until the loads they started landed (ADR 0031). */
@@ -909,6 +915,10 @@ public final class Tab {
       renderPreload(preload);
     }
     if (connection == null) {
+      if (stream != null) {
+        renderDirty(true);
+        endStreamIfDone();
+      }
       return;
     }
     if (hold == Hold.SHOWING_LOADING) {
@@ -925,6 +935,50 @@ public final class Tab {
     renderDirty(true);
     clients.sendOutbox();
     fireSettled();
+  }
+
+  /**
+   * Lane-only. After a page's render: if boundaries show fallbacks, the response stays open and
+   * their HTML follows down it. The html's closing tags wait for the end of the stream.
+   */
+  PageStream openStream(String html) {
+    shellSent = true;
+    if (showingFallback.isEmpty() || !html.endsWith("</body></html>")) {
+      return null;
+    }
+    stream = new PageStream(this, nonce, "</body></html>");
+    PageStream opened = stream;
+    engine.later(this, engine.streamDeadlineMillis, () -> {
+      // What is still loading carries on, and arrives over the socket (ADR 0031).
+      if (stream == opened) {
+        endStream();
+      }
+    });
+    return stream;
+  }
+
+  private void endStreamIfDone() {
+    if (stream != null && showingFallback.isEmpty()) {
+      endStream();
+    }
+  }
+
+  private void endStream() {
+    PageStream ending = stream;
+    stream = null;
+    if (ending != null) {
+      ending.end();
+    }
+  }
+
+  /** Lane-only. The response is gone, so nothing streams any more. */
+  void streamGone() {
+    stream = null;
+  }
+
+  /** Whether a load's notFound() can still change the response: no longer once the shell is out, with no socket. */
+  boolean streamingShell() {
+    return shellSent && connection == null && stream != null;
   }
 
   /** Lane-only. A write of this lane task, applied with the others at its end. */
@@ -1074,6 +1128,16 @@ public final class Tab {
     return connectedCell;
   }
 
+  /** The nearest boundary of this kind above a scope whose own patch stopped on a read. */
+  private static Scope boundaryAbove(Scope scope, Class<?> kind) {
+    for (Scope s = scope.parent; s != null; s = s.parent) {
+      if (kind.isInstance(s.instance)) {
+        return s;
+      }
+    }
+    return null;
+  }
+
   /** The last full render stopped on a read outside any loading(...), and the served page waits for it. */
   boolean waitingOnRead() {
     return waitingOnRead;
@@ -1101,18 +1165,32 @@ public final class Tab {
           onRouteException(e);
           return;
         } catch (NotReady e) {
-          // Nothing to fall back on: the page keeps what it shows until the value lands (ADR 0031).
-          waitingOnRead = true;
           scope.waitFor(e.cell);
+          Scope boundary = boundaryAbove(scope, Loading.class);
+          if (boundary != null) {
+            markDirty(boundary);
+          } else {
+            // Nothing to fall back on: the page keeps what it shows until the value lands (ADR 0031).
+            waitingOnRead = true;
+          }
           continue;
         } catch (LoadFailed e) {
-          engine.log(System.Logger.Level.WARNING, "a load failed with no errored(...) around its read at "
-            + scope.address, e.getCause());
           scope.waitFor(e.cell);
+          Scope boundary = boundaryAbove(scope, Errored.class);
+          if (boundary != null) {
+            markDirty(boundary);
+          } else {
+            engine.log(System.Logger.Level.WARNING, "a load failed with no errored(...) around its read at "
+              + scope.address, e.getCause());
+          }
           continue;
         }
         if (!sending) {
           heldRenders.add(scope);
+        } else if (connection == null && stream != null) {
+          if (scope != root) {
+            stream.patch(scope.anchor, renderer.out.toString());
+          }
         } else {
           send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope == root ? true : null,
             "html", renderer.out.toString()));
@@ -1121,7 +1199,7 @@ public final class Tab {
       }
       runEffects();
     }
-    if (!sending) {
+    if (!sending || connection == null) {
       return;
     }
     String head = mergedHead();
@@ -1305,6 +1383,8 @@ public final class Tab {
     connection = next;
     disconnectedAt = 0;
     lastActivity = engine.clock.millis();
+    // A socket takes over from a stream; with the script at the end of the page it comes after anyway.
+    endStream();
     goLive();
     if (connectedCell != null) {
       connectedCell.setOnLane(true);
@@ -1352,6 +1432,7 @@ public final class Tab {
     if (disposed) {
       return;
     }
+    endStream();
     if (root != null) {
       root.dispose();
     }

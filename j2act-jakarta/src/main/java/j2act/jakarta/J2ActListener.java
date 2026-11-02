@@ -4,6 +4,7 @@ import java.util.EnumSet;
 import java.util.concurrent.Executor;
 
 import jakarta.servlet.DispatcherType;
+import jakarta.servlet.FilterRegistration;
 import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletContextEvent;
 import jakarta.servlet.ServletContextListener;
@@ -79,8 +80,10 @@ public abstract class J2ActListener implements ServletContextListener {
     j2Act = builder.build();
     context.setAttribute(ATTRIBUTE, j2Act);
 
-    context.addFilter("j2act", new J2ActFilter(j2Act, resolver))
-      .addMappingForUrlPatterns(EnumSet.of(DispatcherType.REQUEST), true, "/*");
+    FilterRegistration.Dynamic filter = context.addFilter("j2act", new J2ActFilter(j2Act, resolver));
+    // A page streams its loading(...) boundaries without holding a thread (ADR 0031).
+    filter.setAsyncSupported(true);
+    filter.addMappingForUrlPatterns(EnumSet.of(DispatcherType.REQUEST), true, "/*");
 
     ServerContainer sockets = (ServerContainer) context.getAttribute(ServerContainer.class.getName());
     if (sockets == null) {
