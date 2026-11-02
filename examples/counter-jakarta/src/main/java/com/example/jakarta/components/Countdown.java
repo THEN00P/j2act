@@ -22,6 +22,8 @@ import j2act.html.tags.DivTag;
  * client's own DOM.
  */
 public final class Countdown extends ComponentTag {
+  private Signal<Integer> ticks;
+
 
   /** A bean prop: the host's JSON binding (Jackson or JSON-B) writes it, the basic one would refuse. */
   public static final class Labels {
@@ -46,13 +48,6 @@ public final class Countdown extends ComponentTag {
     void export(Upload into);
   }
 
-  private final Timer timer = client(Timer.class);
-  private final Signal<Integer> ticks = state(5);
-  private final Signal<String> status = state("running");
-  private final Upload log = upload()
-    .withAccept(".txt")
-    .withMaxFileSize("1KB");
-
   /** Handed to note(): it keeps re-rendering on its own State inside the client's DOM. */
   static final class NoteBadge extends ComponentTag {
 
@@ -68,8 +63,14 @@ public final class Countdown extends ComponentTag {
     return new Countdown();
   }
 
-  @Override protected DivTag render() {
-    return div(
+  @Override protected View setup() {
+    var timer = createClient(Timer.class);
+    ticks = createSignal(5);
+    var status = createSignal("running");
+    var log = createUpload()
+    .withAccept(".txt")
+    .withMaxFileSize("1KB");
+    return () -> div(
       div()
         .withId("timer")
         .withClient(timer.mount(5, new Labels(), ticks::set, () -> status.set("done"), span("server saw " + ticks.get() + " left"))),

@@ -27,7 +27,7 @@ public final class ClockFeed extends ComponentTag {
   @Override protected View setup() {
     var last = createSignal("waiting for the first tick");
     var ticks = createSignal(0);
-    effect(() -> bus.subscribe(time -> {
+    onSettled(() -> bus.subscribe(time -> {
       last.set(time);
       ticks.update(n -> n + 1);
     }));

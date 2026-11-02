@@ -12,7 +12,6 @@ import jakarta.persistence.PersistenceContext;
 import j2act.View;
 import j2act.ComponentTag;
 import j2act.Download;
-import j2act.Query;
 import j2act.html.tags.DivTag;
 
 /**
@@ -43,7 +42,8 @@ public final class PeopleCount extends ComponentTag {
     .withFileName("people.csv")
     .withContentType("text/csv;charset=UTF-8");
     return () -> div(
-      p(count.isPending() ? "counting…" : "people in ExampleDS: " + count.get()),
+      loading(() -> p("people in ExampleDS: " + count.get()))
+        .withFallback(p("counting…")),
       button("Export CSV").withId("people-export").onClick(e -> export.mutate(null)),
       small("export: " + export.status()).withId("export-status")
     );

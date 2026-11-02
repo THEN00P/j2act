@@ -1,6 +1,8 @@
 package com.example.counter.components;
 
 import static j2act.Reactive.*;
+
+import static j2act.Reactive.*;
 import j2act.BrowserScoped;
 import j2act.Signal;
 import j2act.Store;
@@ -13,7 +15,7 @@ import j2act.Store;
 public class NowPlaying extends Store {
 
   private final Signal<String> track = createSignal("");
-  private final Signal<Integer> volume = retainedState(5);
+  private final Signal<Integer> volume = createRetained(5);
 
   public String track() {
     return track.get();

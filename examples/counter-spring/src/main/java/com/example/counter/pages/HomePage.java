@@ -57,7 +57,7 @@ public class HomePage extends LiveComponent {
           clockFeed()
         ),
         section(
-          h2("Query cache across unmount"),
+          h2("A load lives as long as its slot"),
           button(showProfile.get() ? "Hide profile" : "Show profile")
             .onClick(e -> showProfile.set(!showProfile.get())),
           showProfile.get()

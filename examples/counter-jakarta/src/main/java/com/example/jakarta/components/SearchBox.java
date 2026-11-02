@@ -11,7 +11,6 @@ import jakarta.inject.Inject;
 import com.example.jakarta.model.People;
 import j2act.View;
 import j2act.ComponentTag;
-import j2act.Query;
 import j2act.Signal;
 import j2act.html.tags.DivTag;
 
@@ -34,15 +33,13 @@ public final class SearchBox extends ComponentTag {
       input()
         .withId("search")
         .withPlaceholder("Filter people")
-        .withValue(filter.get())
+        .withValue(latest(filter))
         .withDebounce(Duration.ofMillis(150))
         .onInput(e -> filter.set(e.value())),
-      span(found.isFetching() ? " searching…" : ""),
-      found.get() == null
-        ? p("Loading…")
-        : ul(
-            each(found.get(), name -> li(name))
-          )
+      span(isPending(found) ? " searching…" : ""),
+      loading(() -> ul(
+        each(found.get(), name -> li(name))
+      )).withFallback(p("Loading…"))
     );
   }
 }

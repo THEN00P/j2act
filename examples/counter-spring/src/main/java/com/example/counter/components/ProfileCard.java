@@ -10,9 +10,8 @@ import j2act.View;
 import j2act.ComponentTag;
 import j2act.html.tags.DivTag;
 import j2act.Prop;
-import j2act.Query;
 
-/** Remounted by an if on the page; the query result survives unmount at the same slot (ADR 0020). */
+/** Remounted by an if on the page: its load lives as long as its slot, so showing it again loads again (ADR 0031). */
 public final class ProfileCard extends ComponentTag {
 
   @Inject private Directory directory;
@@ -31,9 +30,8 @@ public final class ProfileCard extends ComponentTag {
   @Override protected View setup() {
     var profile = createMemo(() -> async(() -> directory.profile(name.get())));
     return () -> div(
-      profile.isPending()
-        ? p("Loading profile…")
-        : p(profile.get()),
+      loading(() -> p(profile.get()))
+        .withFallback(p("Loading profile…")),
       small("directory calls so far: " + directory.calls())
     ).withClass("card");
   }

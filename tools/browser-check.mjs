@@ -99,16 +99,14 @@ async function main() {
   // 6. scheduler pushes arrive
   check("scheduler-thread ticks are pushed", await until(`/[2-9] ticks pushed/.test(document.body.textContent)`, 4000));
 
-  // 7. query cache across unmount
+  // 7. a load lives as long as its slot: showing the card again loads again
   const callsBefore = await js(`(document.body.textContent.match(/directory calls so far: (\\d+)/) || [])[1]`);
   await js(`${btn("Hide profile")}.click(); true`);
   await until(`!!${btn("Show profile")}`);
   await js(`${btn("Show profile")}.click(); true`);
   await until(`document.body.textContent.includes('characters of legend')`);
-  const loadingShown = await js(`document.body.textContent.includes('Loading profile')`);
   const callsAfter = await js(`(document.body.textContent.match(/directory calls so far: (\\d+)/) || [])[1]`);
-  check("remount shows cached profile with no loading state", !loadingShown);
-  check("remount does not call the directory again", callsBefore === callsAfter, `${callsBefore} -> ${callsAfter}`);
+  check("a remount loads again, since data lives as long as what created it", Number(callsAfter) > Number(callsBefore), `${callsBefore} -> ${callsAfter}`);
 
   // 8. form events, key filter, focus/blur, and uncontrolled fields surviving re-renders
   const status = `([...document.querySelectorAll('small')].map(s => s.textContent).find(t => t.startsWith('focus:')) || '')`;
@@ -179,12 +177,12 @@ async function main() {
     await js(`document.getElementById('draft-add').click(); true`);
     await until(`document.body.textContent.includes('draft: ${i + 1} paragraphs')`);
   }
-  check("computed flips once its threshold is reached", await js(`document.body.textContent.includes('3 paragraphs, long')`));
+  check("a memo flips once its threshold is reached", await js(`document.body.textContent.includes('3 paragraphs, long')`));
   await js(`document.getElementById('publish').click(); true`);
-  check("mutation stays pending past the ack", await until(`document.getElementById('publish').disabled
-    && document.getElementById('publish-status').textContent.includes('PENDING')`));
-  check("mutation succeeds with its variables and runs onSuccess", await until(`!document.getElementById('publish').disabled
-    && document.getElementById('publish-status').textContent === 'publish status: SUCCESS · published: 3 paragraphs'`, 4000),
+  check("an optimistic flag stays up past the ack", await until(`document.getElementById('publish').disabled
+    && document.getElementById('publish').textContent === 'Publishing…'`));
+  check("the action lands its held write and the flag undoes itself", await until(`!document.getElementById('publish').disabled
+    && document.getElementById('publish-status').textContent === 'published: 3 paragraphs'`, 4000),
     await js(`document.getElementById('publish-status').textContent`));
   const downloads = mkdtempSync(join(tmpdir(), "j2act-dl-"));
   await cdp("Page.setDownloadBehavior", { behavior: "allow", downloadPath: downloads });
