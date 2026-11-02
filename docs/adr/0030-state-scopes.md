@@ -1,5 +1,7 @@
 # State scopes: component, tab, browser
 
+> ADR 0033 changes "Browser state" below: a browser's stores and tabs share one runtime and one lane, so state no longer crosses lanes inside a browser. The scopes, lifetimes and identity rules stand.
+
 State in a UI belongs to one of three owners, and the API should say which. A counter's count or a hover flag belongs to a component. An open sidebar or the filters of a dashboard belong to a browser tab. A shopping cart, a theme or a music player's queue belong to the browser, across all of its tabs. React and every signal library handle the first. The second is usually a store, which also outlives the tab in localStorage and leaves stale tabs behind. The third barely exists: SoundCloud and Spotify stop playback in every tab but the newest, because they have nothing that could share the player, the seek position and the queue between tabs. A server that already holds every tab's state can.
 
 `createStore` named none of this. A Store had one copy per session, so it was tab state under a name that suggests Redux-style global state, and it said nothing about who creates it or when it ends. This ADR replaces it, along with the internal name Session.
