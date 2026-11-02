@@ -119,13 +119,9 @@ What the discussion has settled:
 - A write's status crosses too. While a message is on its way, the other reader must be able to know its data is stale (`isPending`), even when the database or the connection is slow.
 - Ryan Carniato's "re-derivable projection of durable state" comes from servers that keep nothing between requests. j2act keeps every user's graph alive, so that constraint does not bind it.
 
-The direction being explored: `@BrowserScoped` is one runtime per key, and the key happens to be a cookie. The same scope with any key, such as a room id, gives one owner per key for state shared between people, one lane per key, ended by its last reader.
+The direction is settled, and the design comes in its own ADR after the swap. `@BrowserScoped` is one runtime per key, and the key happens to be a cookie. The same scope with any key, such as a room id, gives one owner per key for state shared between people, with one lane per key, ended by its last reader. Across servers there is one owner per key, as Orleans grains and Cloudflare Durable Objects have: writes go to the owner through the store's methods, and other servers hold live read edges to it. `docs/spikes/shared-scope.md` checked this shape and lists what it left open, above all membership and two owners for one key during a network split.
 
-Across servers, three options are on the table, and none is chosen:
-
-- One owner per key anywhere in the cluster, as Orleans grains and Cloudflare Durable Objects do. Writes go to the owner, and other servers hold live read edges to it.
-- Every server holds a copy, fed by an ordered log of operations. Writes are data, not lambdas.
-- The database joins the graph: j2act records what a load read and what a transaction wrote, as Convex does, and re-runs what overlaps. This can complement either option above, for writes made outside j2act.
+Letting the database join the graph, by recording what a load read and what a transaction wrote as Convex does, is out of scope here and probably its own library. It is on the backlog.
 
 ## Licensing
 
