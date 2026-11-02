@@ -66,6 +66,12 @@ final class Handlers {
     scope.previousHandlerIds.clear();
   }
 
+  /** A render stopped partway, and its output is dropped: what was on screen keeps its handlers. */
+  void abort(Scope scope) {
+    scope.handlerIds.putAll(scope.previousHandlerIds);
+    scope.previousHandlerIds.clear();
+  }
+
   void remove(Scope scope) {
     for (String handlerId : scope.handlerIds.values()) {
       byId.remove(handlerId);

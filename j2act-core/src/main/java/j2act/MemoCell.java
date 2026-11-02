@@ -41,7 +41,13 @@ final class MemoCell extends Cell implements Observer {
       return v;
     }
     if (stale) {
-      recompute();
+      try {
+        recompute();
+      } catch (NotReady | LoadFailed e) {
+        // What it read is not there yet: the reader follows this memo, which tells it when it is.
+        onRead(value);
+        throw e;
+      }
     }
     Object v = value;
     onRead(v);
@@ -58,10 +64,12 @@ final class MemoCell extends Cell implements Observer {
     }
     deps.clear();
     Observer previous = Tracking.swap(this);
+    Scope previousScope = Tracking.swapScope(owner);
     try {
       value = body.get();
     } finally {
       Tracking.swap(previous);
+      Tracking.swapScope(previousScope);
     }
     stale = false;
   }
@@ -71,7 +79,13 @@ final class MemoCell extends Cell implements Observer {
       return;
     }
     Object before = value;
-    recompute();
+    try {
+      recompute();
+    } catch (NotReady | LoadFailed e) {
+      stale = true;
+      notifyObservers();
+      return;
+    }
     if (!Objects.equals(before, value)) {
       notifyObservers();
     }

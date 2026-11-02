@@ -241,6 +241,9 @@ final class Scope implements Observer {
   /** Attaches a component object to this slot and binds its field primitives by creation order. */
   void bind(ComponentTag component) {
     if (view != null && instance != component && !(swapped() && shapeChanged(component.getClass()))) {
+      if (instance instanceof Boundary) {
+        ((Boundary<?>) instance).adopt((Boundary<?>) component);
+      }
       instance.adoptProps(component);
       return;
     }
@@ -341,7 +344,8 @@ final class Scope implements Observer {
       return false;
     }
     for (Cell cell : cells) {
-      if (cell instanceof QueryCell && ((QueryCell) cell).loading()) {
+      if (cell instanceof QueryCell && ((QueryCell) cell).loading()
+        || cell instanceof AsyncCell && ((AsyncCell) cell).loading()) {
         return false;
       }
     }
@@ -351,6 +355,16 @@ final class Scope implements Observer {
       }
     }
     return true;
+  }
+
+  /** A render stopped partway: this scope renders again when the value it stopped on lands. */
+  void waitFor(Cell cell) {
+    if (cell == null || cell.disposed) {
+      return;
+    }
+    Cell local = cell.tab == tab ? cell : tab.mirror(cell, cell.peek());
+    local.observers.add(this);
+    dependsOn(local);
   }
 
   void unsubscribeAll() {

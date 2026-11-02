@@ -47,6 +47,8 @@ public final class Tab {
   final List<EffectCell> parkedEffects = new ArrayList<>();
   /** onSettled callbacks that have not fired yet (ADR 0031). */
   final List<LifecycleCell> pendingSettled = new ArrayList<>();
+  /** The last render stopped outside any loading(...) on a value not loaded yet: the page waits for it (ADR 0031). */
+  private boolean waitingOnRead;
   /** Effects wait for this tab's first socket, or a browser's first tab with one (ADR 0031). */
   private boolean live;
   /** Whether a socket is attached, for effects that watch it (ADR 0031). */
@@ -756,6 +758,9 @@ public final class Tab {
 
   /** A query without data yet that the page is waiting on; withDefer() ones do not count. */
   private boolean awaitingData() {
+    if (waitingOnRead) {
+      return true;
+    }
     for (QueryCell query : inFlight) {
       if (!query.deferred && query.initiallyPending()) {
         return true;
@@ -801,10 +806,15 @@ public final class Tab {
   String renderFull() {
     Renderer renderer = new Renderer(this, ++epoch);
     renderer.nonce = nonce;
+    waitingOnRead = false;
     try {
       renderer.renderScope(root);
     } catch (RouteException e) {
       onRouteException(e);
+      return null;
+    } catch (NotReady e) {
+      waitingOnRead = true;
+      root.waitFor(e.cell);
       return null;
     }
     runEffects();
@@ -948,7 +958,13 @@ public final class Tab {
     return connectedCell;
   }
 
+  /** The last full render stopped on a read outside any loading(...), and the served page waits for it. */
+  boolean waitingOnRead() {
+    return waitingOnRead;
+  }
+
   private void renderDirty(boolean sending) {
+    waitingOnRead = false;
     for (int pass = 0; pass < 8 && !dirty.isEmpty(); pass++) {
       List<Scope> roots = new ArrayList<>();
       for (Scope scope : dirty) {
@@ -968,6 +984,16 @@ public final class Tab {
         } catch (RouteException e) {
           onRouteException(e);
           return;
+        } catch (NotReady e) {
+          // Nothing to fall back on: the page keeps what it shows until the value lands (ADR 0031).
+          waitingOnRead = true;
+          scope.waitFor(e.cell);
+          continue;
+        } catch (LoadFailed e) {
+          engine.log(System.Logger.Level.WARNING, "a load failed with no errored(...) around its read at "
+            + scope.address, e.getCause());
+          scope.waitFor(e.cell);
+          continue;
         }
         if (!sending) {
           heldRenders.add(scope);

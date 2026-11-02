@@ -28,7 +28,109 @@ final class Renderer {
     this.epoch = epoch;
   }
 
+  /** Renders a scope; a read that stops it unwinds up to a boundary, with what is mounted kept (ADR 0031). */
   void renderScope(Scope scope) {
+    int loadingDepth = loadingOwners.size();
+    int errorDepth = errorOwners.size();
+    try {
+      if (scope.instance instanceof Boundary) {
+        renderBoundary(scope);
+      } else {
+        renderComponent(scope);
+      }
+    } catch (NotReady | LoadFailed e) {
+      unwind(scope);
+      while (loadingOwners.size() > loadingDepth) {
+        loadingOwners.pop();
+      }
+      while (errorOwners.size() > errorDepth) {
+        errorOwners.pop();
+      }
+      throw e;
+    }
+  }
+
+  /** The render stopped: what it placed stays mounted beside what it had not reached, and handlers stay valid. */
+  private void unwind(Scope scope) {
+    scope.rendering = false;
+    tab.handlers.abort(scope);
+    Map<String, Scope> merged = new java.util.LinkedHashMap<>(scope.previousChildren);
+    merged.putAll(scope.children);
+    scope.children = merged;
+    scope.previousChildren = new java.util.LinkedHashMap<>();
+  }
+
+  private void renderBoundary(Scope scope) {
+    if (scope.renderedEpoch == epoch) {
+      throw new IllegalStateException("one boundary was rendered twice in the same pass");
+    }
+    scope.renderedEpoch = epoch;
+    tab.dirty.remove(scope);
+    scope.dirty = false;
+    scope.unsubscribeAll();
+    tab.handlers.begin(scope);
+    scope.previousChildren = scope.children;
+    scope.children = new java.util.LinkedHashMap<>();
+    out.append("<div");
+    attribute("data-j2-scope", scope.anchor);
+    attribute("data-j2-boundary", "");
+    attribute("style", "display:contents");
+    out.append('>');
+    int inner = out.length();
+    Boundary<?> boundary = (Boundary<?>) scope.instance;
+    Observer previous = Tracking.swap(scope);
+    Scope previousScope = Tracking.swapScope(scope);
+    scope.rendering = true;
+    try {
+      try {
+        renderChildren(scope, "/0", latest(boundary).children(), false);
+      } catch (NotReady e) {
+        if (!(boundary instanceof Loading)) {
+          throw e;
+        }
+        out.setLength(inner);
+        keepMounted(scope);
+        scope.waitFor(e.cell);
+        DomContent fallback = ((Loading) boundary).fallback;
+        if (fallback != null) {
+          renderNode(scope, "/fallback", fallback, false);
+        }
+      } catch (LoadFailed e) {
+        if (!(boundary instanceof Errored)) {
+          throw e;
+        }
+        out.setLength(inner);
+        keepMounted(scope);
+        scope.waitFor(e.cell);
+        AsyncCell failed = e.cell;
+        java.util.function.BiFunction<Throwable, Runnable, ? extends DomContent> fallback = ((Errored) boundary).fallback;
+        if (fallback != null) {
+          renderNode(scope, "/fallback", fallback.apply(e.getCause(), () -> tab.post(failed::retry)), false);
+        }
+      }
+    } finally {
+      scope.rendering = false;
+      Tracking.swap(previous);
+      Tracking.swapScope(previousScope);
+    }
+    out.append("</div>");
+    scope.activatePending();
+    finish(scope);
+  }
+
+  private static Boundary<?> latest(Boundary<?> boundary) {
+    return boundary instanceof Loading ? ((Loading) boundary).latest : ((Errored) boundary).latest;
+  }
+
+  /** The children stopped partway and their output is gone: what they placed so far stays mounted, hidden. */
+  private static void keepMounted(Scope scope) {
+    Map<String, Scope> merged = new java.util.LinkedHashMap<>(scope.previousChildren);
+    merged.putAll(scope.children);
+    scope.children = merged;
+    scope.previousChildren = new java.util.LinkedHashMap<>();
+  }
+
+  private void renderComponent(Scope scope) {
     if (scope.renderedEpoch == epoch) {
       throw new IllegalStateException("one component object was rendered twice in the same pass: "
         + scope.instance.getClass().getName());
@@ -123,6 +225,11 @@ final class Renderer {
         scope.dependsOn(query);
       }
     }
+    finish(scope);
+  }
+
+  /** The scope rendered: handlers no element uses go, and so do children it did not place again. */
+  private void finish(Scope scope) {
     tab.handlers.end(scope);
     scope.codeEpoch = tab.engine.codeEpoch;
 

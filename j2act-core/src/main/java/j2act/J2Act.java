@@ -728,6 +728,14 @@ public final class J2Act implements AutoCloseable {
           }));
           continue;
         }
+        if (pass.waitingOnRead) {
+          tab.awaitSettleAfter(pass.settleCount, 60_000L);
+          if (tab.disposed) {
+            throw new IllegalStateException("the tab ended while its page waited for a load");
+          }
+          pass = await(tab.call(() -> SsrPass.of(tab)));
+          continue;
+        }
         long left = deadline - clock.millis();
         if (pass.settleCount < 0 || left <= 0) {
           break;
@@ -1291,16 +1299,23 @@ public final class J2Act implements AutoCloseable {
   private static final class SsrPass {
     final String html;
     final long settleCount;
+    /** The render stopped on a read outside any loading(...): the page waits for it, with no budget (ADR 0031). */
+    final boolean waitingOnRead;
 
     private SsrPass(String html, long settleCount) {
+      this(html, settleCount, false);
+    }
+
+    private SsrPass(String html, long settleCount, boolean waitingOnRead) {
       this.html = html;
       this.settleCount = settleCount;
+      this.waitingOnRead = waitingOnRead;
     }
 
     static SsrPass of(Tab tab) {
       String html = tab.renderFull();
       if (html == null) {
-        return new SsrPass(null, 0);
+        return tab.waitingOnRead() ? new SsrPass(null, tab.settleCount(), true) : new SsrPass(null, 0);
       }
       // withDefer() queries finish over the socket; SSR waits only for the rest (ADR 0016).
       boolean waiting = tab.inFlight.stream().anyMatch(q -> !q.deferred);

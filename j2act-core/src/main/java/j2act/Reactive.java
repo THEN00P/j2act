@@ -1,5 +1,6 @@
 package j2act;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -62,6 +63,77 @@ public final class Reactive {
    */
   public static void onSettled(Supplier<Runnable> settled) {
     own(new Lifecycle(null, settled));
+  }
+
+  /**
+   * A memo whose body returns a future is async (ADR 0031): get() gives the future's value, and
+   * while there is none stops rendering at the nearest loading(...). Reloads when what it read
+   * changes, keeping the old value meanwhile; the newest run wins. Blocking code goes through
+   * {@link #async}.
+   */
+  public static <T> Memo<T> createMemo(AsyncSupplier<T> body) {
+    return own(new Memo<>(body));
+  }
+
+  /**
+   * Runs blocking code on j2act's executor and returns its future, for an async memo (ADR 0031).
+   * Unlike CompletableFuture.supplyAsync it runs where the container's context exists, its reads
+   * are tracked, what is around the caller works inside it, and a newer run stops it.
+   */
+  public static <R> CompletableFuture<R> async(Loader<R> work) {
+    Observer observer = Tracking.observer();
+    Scope scope = Tracking.scope();
+    Tab tab = scope != null ? scope.tab : Tab.ambient();
+    if (tab == null) {
+      throw new IllegalStateException("async(...) needs a tab: call it from a memo, a handler or an action");
+    }
+    return AsyncCell.submit(tab, observer instanceof AsyncCell ? (AsyncCell) observer : null, scope, work);
+  }
+
+  /** Loads an async memo again, quietly: its old value stays and isPending does not turn true (ADR 0031). */
+  public static void refresh(Supplier<?> memo) {
+    Cell cell = memo instanceof Primitive ? ((Primitive) memo).requireCell() : null;
+    if (!(cell instanceof AsyncCell)) {
+      throw new IllegalArgumentException("refresh takes an async memo");
+    }
+    AsyncCell async = (AsyncCell) cell;
+    if (async.tab.lane.isCurrent()) {
+      async.refresh();
+    } else {
+      async.tab.post(async::refresh);
+    }
+  }
+
+  /** Tracked: the last load of this async memo failed; for showing it beside a withStaleOnError() value. */
+  public static boolean failed(Supplier<?> memo) {
+    Cell cell = memo instanceof Primitive ? ((Primitive) memo).requireCell() : null;
+    if (!(cell instanceof AsyncCell)) {
+      throw new IllegalArgumentException("failed takes an async memo");
+    }
+    return ((AsyncCell) cell).readFailed();
+  }
+
+  /** A boundary showing a fallback while what it wraps reads a value not loaded yet; see {@link Loading}. */
+  public static Loading loading(DomContent... children) {
+    return new Loading(children);
+  }
+
+  /**
+   * Plain markup that reads a value goes in a lambda: Java evaluates arguments before the call,
+   * so a read in loading(p(user.get().name())) would happen before the boundary exists.
+   */
+  public static Loading loading(Supplier<? extends DomContent> child) {
+    return new Loading(child);
+  }
+
+  /** A boundary showing a fallback when what it wraps reads a failed value; see {@link Errored}. */
+  public static Errored errored(DomContent... children) {
+    return new Errored(children);
+  }
+
+  /** Plain markup that reads a value goes in a lambda, as with {@link #loading(Supplier)}. */
+  public static Errored errored(Supplier<? extends DomContent> child) {
+    return new Errored(child);
   }
 
   /** Reads without subscribing whoever is running, and says the one-time read is meant. */
