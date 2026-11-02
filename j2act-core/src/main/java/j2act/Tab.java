@@ -138,6 +138,15 @@ public final class Tab {
   /** Mirrors of browser cells this tab read, by source. */
   private final Map<Node, MirrorCell> mirrors = new java.util.concurrent.ConcurrentHashMap<>();
 
+  /**
+   * What this tab follows for a cell it read. A mirror that stopped a render has lost that render's
+   * subscription and let go of the browser's cell, so it goes through the current one.
+   */
+  Cell local(Cell cell) {
+    Cell target = cell instanceof MirrorCell ? ((MirrorCell) cell).source : cell;
+    return target.tab == this ? target : mirror((Node) target);
+  }
+
   /** This tab's copy of a browser cell, made and subscribed on first read. */
   MirrorCell mirror(Node source) {
     MirrorCell mirror = mirrors.get(source);

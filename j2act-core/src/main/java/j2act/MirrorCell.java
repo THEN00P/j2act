@@ -12,6 +12,7 @@ final class MirrorCell extends Node {
   private final Link link = new Link();
   private volatile Throwable sourceFailure;
   private volatile boolean sourceEmpty;
+  private volatile boolean sourceFailed;
 
   MirrorCell(Tab reader, Node source) {
     super(reader, "mirror:" + source.address, source.snapshotValue());
@@ -22,6 +23,7 @@ final class MirrorCell extends Node {
   private void takeState() {
     sourceFailure = source.snapshotError();
     sourceEmpty = source.snapshotEmpty();
+    sourceFailed = source.snapshotFailed();
   }
 
   @Override Object read() {
@@ -34,6 +36,16 @@ final class MirrorCell extends Node {
       throw new NotReady(this);
     }
     return super.read();
+  }
+
+  @Override boolean readFailed() {
+    onRead(peek());
+    return sourceFailed;
+  }
+
+  /** A reset at this tab's boundary: the load is the browser's, on its lane. */
+  @Override void retry() {
+    post(source.tab, source::retry);
   }
 
   /** Subscribes on the browser's lane; a change between the read and the subscription still reaches it. */
@@ -80,16 +92,20 @@ final class MirrorCell extends Node {
       Object now = source.snapshotValue();
       Throwable failure = source.snapshotError();
       boolean empty = source.snapshotEmpty();
+      boolean failed = source.snapshotFailed();
       post(tab, () -> {
         if (disposed) {
           return;
         }
-        boolean stateChanged = sourceFailure != failure || sourceEmpty != empty;
+        boolean stateChanged = sourceFailure != failure || sourceEmpty != empty || sourceFailed != failed;
         sourceFailure = failure;
         sourceEmpty = empty;
+        sourceFailed = failed;
         if (stateChanged) {
           setOnLane(now);
           notifyObservers();
+          // The load landed on the browser's lane; a response waiting on this tab has to hear of it.
+          tab.settled();
         } else {
           writeNow(now);
         }

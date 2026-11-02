@@ -379,7 +379,7 @@ final class Scope implements Observer {
     if (cell == null || cell.disposed) {
       return;
     }
-    Cell local = cell.tab == tab ? cell : tab.mirror((Node) cell);
+    Cell local = tab.local(cell);
     local.observers.add(this);
     dependsOn(local);
   }

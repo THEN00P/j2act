@@ -420,7 +420,13 @@ class Node extends Cell implements Observer {
   }
 
   /** Tracked: the last load failed. */
-  final boolean readFailed() {
+  boolean readFailed() {
+    if (!tab.lane.isCurrent() && tab.hubFor != null) {
+      Tab reader = Tab.current();
+      if (reader != null && reader != tab) {
+        return reader.mirror(this).readFailed();
+      }
+    }
     onRead(value);
     return error != null;
   }
@@ -631,7 +637,7 @@ class Node extends Cell implements Observer {
     if (cell.disposed) {
       return;
     }
-    Cell local = cell.tab == tab ? cell : tab.mirror((Node) cell);
+    Cell local = tab.local(cell);
     local.observers.add(this);
     deps.add(local);
   }
@@ -829,7 +835,7 @@ class Node extends Cell implements Observer {
   }
 
   /** Lane-only. A reset of an errored(...): forgets the failure and loads again. */
-  final void retry() {
+  void retry() {
     error = null;
     start(false);
     notifyObservers();
@@ -1235,6 +1241,11 @@ class Node extends Cell implements Observer {
         stale = true;
       }
     }
+  }
+
+  /** The last load failed, whether or not the value stays through it. */
+  final boolean snapshotFailed() {
+    return error != null;
   }
 
   final Throwable snapshotError() {

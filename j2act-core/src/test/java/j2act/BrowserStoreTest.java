@@ -664,4 +664,93 @@ class BrowserStoreTest {
       }
     }
   }
+
+  @BrowserScoped
+  public static class Remote extends Store {
+    static final AtomicInteger ATTEMPTS = new AtomicInteger();
+    static volatile java.util.concurrent.CompletableFuture<String> landing;
+    private static final AsyncSupplier<String> LOAD = () -> {
+      ATTEMPTS.incrementAndGet();
+      return landing;
+    };
+    final Memo<String> value = createMemo(LOAD);
+  }
+
+  static final class ReadsRemote extends LiveComponent {
+    @Override protected View setup() {
+      Remote remote = useBrowserStore(Remote.class);
+      return () -> T.page("r", T.div(T.span("value:" + remote.value.get() + ";")));
+    }
+  }
+
+  /** The load lands on the browser's lane, and the response waiting on the tab's has to hear of it. */
+  @Test
+  void aPageWaitingOnABrowserLoadIsReleasedWhenItLands() {
+    Remote.ATTEMPTS.set(0);
+    Remote.landing = new java.util.concurrent.CompletableFuture<>();
+    // The default grace: a tab that waits for its first load has not connected yet.
+    try (Harness h = new Harness(ReadsRemote::new)) {
+      java.util.concurrent.atomic.AtomicReference<ServeResult> served = new java.util.concurrent.atomic.AtomicReference<>();
+      Thread request = new Thread(() -> served.set(h.engine.serve("/", Exchange.empty())));
+      request.setDaemon(true);
+      request.start();
+      Harness.eventually(() -> Remote.ATTEMPTS.get() > 0, "the load runs");
+      try {
+        Thread.sleep(200); // so the response is waiting when it lands
+      } catch (InterruptedException e) {
+        throw new IllegalStateException(e);
+      }
+      Remote.landing.complete("there");
+      Harness.eventually(() -> served.get() != null, "the response goes out");
+      assertTrue(served.get().html().contains("value:there;"), served.get().html());
+    }
+  }
+
+  static final class RetriesRemote extends LiveComponent {
+    @Override protected View setup() {
+      Remote remote = useBrowserStore(Remote.class);
+      return () -> T.page("r", T.div(
+        errored(() -> T.span("value:" + remote.value.get() + ";"))
+          .withFallback((e, reset) -> T.button("again").onClick(click -> reset.run()))));
+    }
+  }
+
+  @Test
+  void aResetAtABoundaryLoadsABrowserMemoAgain() {
+    Remote.ATTEMPTS.set(0);
+    Remote.landing = java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("fails on purpose"));
+    try (Harness h = harness(RetriesRemote::new)) {
+      Page page = new Page(h.engine, "/", Exchange.empty()).connect();
+      assertTrue(page.html.contains("again"), page.html);
+      assertEquals(1, Remote.ATTEMPTS.get());
+      int from = page.conn.size();
+      Remote.landing = java.util.concurrent.CompletableFuture.completedFuture("there");
+      page.click("again");
+      Harness.eventually(() -> Remote.ATTEMPTS.get() == 2, "the source loads again");
+      page.awaitPatch(from, "value:there;");
+    }
+  }
+
+  static final class ShowsRemoteFailure extends LiveComponent {
+    @Override protected View setup() {
+      Remote remote = useBrowserStore(Remote.class);
+      remote.value.withStaleOnError();
+      return () -> T.page("r", T.div(
+        T.span("value:" + remote.value.get() + ";failed:" + failed(remote.value) + ";"),
+        T.button("again").onClick(e -> refresh(remote.value))));
+    }
+  }
+
+  @Test
+  void failedFollowsABrowserMemoFromATab() {
+    Remote.landing = java.util.concurrent.CompletableFuture.completedFuture("one");
+    try (Harness h = harness(ShowsRemoteFailure::new)) {
+      Page page = new Page(h.engine, "/", Exchange.empty()).connect();
+      assertTrue(page.html.contains("value:one;failed:false;"), page.html);
+      int from = page.conn.size();
+      Remote.landing = java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("fails on purpose"));
+      page.click("again");
+      page.awaitPatch(from, "value:one;failed:true;");
+    }
+  }
 }
