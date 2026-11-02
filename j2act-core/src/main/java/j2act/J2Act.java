@@ -636,6 +636,8 @@ public final class J2Act implements AutoCloseable {
   /** Re-renders every tab with the current code (HotSwap in dev mode). */
   void hotSwapped() {
     codeEpoch++;
+    // Line numbers moved with the swap, and retained keys look calls up by line (ADR 0031).
+    j2act.internal.names.RetainedNames.forget();
     for (Tab tab : tabs.values()) {
       tab.post(tab::hotSwapped);
     }

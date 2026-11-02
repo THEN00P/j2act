@@ -1,11 +1,13 @@
 package com.example.team.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import jakarta.inject.Inject;
 
 import com.example.team.db.Users;
 import com.example.team.stores.CurrentUser;
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.Upload;
 import j2act.html.tags.DivTag;
@@ -24,15 +26,16 @@ public final class AvatarUploader extends ComponentTag {
     return new AvatarUploader();
   }
 
-  @Override protected DivTag render() {
-    long userId = currentUser.userId();
-    Upload up = upload()
+  @Override protected View setup() {
+    var up = createUpload()
       .withTarget("/var/app/uploads/avatars")
       .withNaming((orig, ctx) -> ctx.username() + "_" + ctx.timestamp() + "_" + orig)
       .withAccept("image/*")
       .withMaxFileSize("10MB")
       .withInvalidates("user", userId)
       .onSuccess(ref -> users.updateAvatar(userId, ref.path()));
+    return () -> {
+    long userId = currentUser.userId();
 
     return div(
       input()
@@ -53,5 +56,6 @@ public final class AvatarUploader extends ComponentTag {
             .withAlt("Avatar preview")
         : null
     );
+    };
   }
 }

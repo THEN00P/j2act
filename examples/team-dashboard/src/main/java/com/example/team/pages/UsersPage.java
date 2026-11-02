@@ -1,5 +1,6 @@
 package com.example.team.pages;
 
+import static j2act.Reactive.*;
 import static com.example.team.components.UserRow.userRow;
 import static j2act.html.TagCreator.*;
 import static j2act.ui.Ui.*;
@@ -11,6 +12,7 @@ import java.util.List;
 import jakarta.inject.Inject;
 
 import com.example.team.db.Users;
+import j2act.View;
 import j2act.Download;
 import j2act.LiveComponent;
 import j2act.PageError;
@@ -29,15 +31,13 @@ public class UsersPage extends LiveComponent {
 
   @Inject private Users users;
 
-  private final State<String> filter = state("");
-  private final Query<List<Users.User>> list = query(() -> users.search("%" + filter.get() + "%"));
-
-  @Override public HtmlTag render() {
-    Download<String> export = download((String like, OutputStream out) -> users.writeCsv(like, out))
+  @Override protected View setup() {
+    var filter = createSignal("");
+    var list = createMemo(() -> async(() -> users.search("%" + filter.get() + "%")));
+    var export = createDownload((String like, OutputStream out) -> users.writeCsv(like, out))
       .withFileName("users.csv")
       .withContentType("text/csv");
-
-    return html(
+    return () -> html(
       head(
         title("Users" + (filter.get().isEmpty() ? "" : " — " + filter.get())),
         meta()

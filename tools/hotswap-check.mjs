@@ -41,9 +41,9 @@ function compile(edit) {
   }
   if (edit === "field") {
     text = text
-      .replace("private final State<Integer> count = state(0);",
-        `private final State<Integer> count = state(0);
-  private final State<String> note = state("a new field");`)
+      .replace("var count = createSignal(0);",
+        `var count = createSignal(0);
+    var note = createSignal("a new primitive");`)
       .replace("        salesChart()", `        p(note.get()).withId("note"),
         salesChart()`);
   }

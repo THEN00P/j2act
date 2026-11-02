@@ -4,15 +4,15 @@ Deferred until core is solid (avoid rewrite hell). Signals plus button callbacks
 
 ## Deferred libraries
 
-- **Forms (react-hook-form port)**: field states, validation display, submit wiring. Built on signals/mutations later, by us or anyone.
+- **Forms (react-hook-form port)**: field states, validation display, submit wiring. Built on signals and actions later, by us or anyone.
 - **Base UI + Shadcn port**: copy-own components on withClass/cn/cva. Same area as below view transitions.
-- **Test harness**: headless session/event/guard/mutation testing. Core stays plain-Java testable (render-to-string) meanwhile.
+- **Test harness**: headless session/event/guard/action testing. Core stays plain-Java testable (render-to-string) meanwhile.
 
 ## Nice-to-haves
 
 - **Browser cookie as page-session proof (ADR 0030)**: The `j2-browser` cookie exists and identifies the browser, but the DOM-exposed `j2-token` is still what proves a page's session. Making a socket, a remount and a snapshot restore also carry the cookie that matches its tab needs the old list walked first: the Spring and Jakarta handshakes, upload chunks, reconnect and remount, cookie lifetime and scope, Origin and CSRF checks, anonymous pages before their first use of browser state (which have no cookie yet), and islands inside a host app's own authentication.
 
-- **Transactional mutations**: `mutation(...).withTransaction()`, one implementation per adapter (Spring's `TransactionTemplate`, a small `@Transactional` bean in j2act-jakarta), if calling a store's write methods through its self-injected proxy (ADR 0030) proves annoying.
+- **Transactional actions**: `action(...).withTransaction()`, one implementation per adapter (Spring's `TransactionTemplate`, a small `@Transactional` bean in j2act-jakarta), if calling a store's write methods through its self-injected proxy (ADR 0030) proves annoying.
 
 - **Browser hub across nodes**: ADR 0030 keeps one browser on one node by routing on its cookie. A pub/sub seam would let its tabs spread across nodes.
 

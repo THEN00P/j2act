@@ -64,7 +64,7 @@ var search = createDebounced(filter, ofMillis(300));
 var people = createMemo(() -> async(() -> directory.search(search.get())));
 ```
 
-Signal, Memo and Prop implement `Supplier<T>`, so a helper takes and returns Suppliers and needs no accessor type of its own; a signal and a lambda both pass. The ambient reads (pathParam, queryParam, auth, tab(), browser(), navigate) become static functions too, so helpers can use them.
+Signal, Memo and Prop implement `Supplier<T>`, so a helper takes and returns Suppliers and needs no accessor type of its own; a signal and a lambda both pass. The ambient reads (pathParam, queryParam, auth, navigate, window, useTab, useBrowser, useApplication) become static functions too, so helpers can use them.
 
 Stores keep fields. A store's API is its methods, and they need fields to reach its signals. The framework builds stores itself, inside its Spring Scope and CDI context, so it marks the store as owner around the container's factory call and the store's field initializers attach to it. Helpers work in stores the same way.
 
@@ -82,6 +82,8 @@ Primitives that create something owned take Solid's `create` prefix, for Ryan Ca
 | `query(loader)`, `Query<T>` | `createMemo(() -> future)`, an async memo (see Async below) |
 | `mutation(body)`, `Mutation<V, R>` | `action(body)` (see Actions below) |
 | `upload`, `download` | `createUpload`, `createDownload` |
+| `queryState`, `client` | `createQueryState`, `createClient` |
+| `tab()`, `browser()`, `application()` | `useTab()`, `useBrowser()`, `useApplication()` |
 | `tab(X.class)`, `browser(X.class)` | `useTabStore(X.class)`, `useBrowserStore(X.class)` |
 
 The glossary words "Retained State", "tab state" and "browser state" keep naming the concept; the type is Signal. User helpers follow the prefix by convention; nothing enforces it.
@@ -174,7 +176,7 @@ After a debugger swaps a component's class (ADR 0025), each slot's next descript
 
 ## Before code
 
-These spikes must pass before implementation commits to this:
+These spikes had to pass before implementation committed to this, and did; each stayed as a test:
 
 - Owner tracking through setup(), and through store construction behind Spring's and CDI's proxies.
 - The name table and stack lookup, including a helper used twice, under javac and ECJ.

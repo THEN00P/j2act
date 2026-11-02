@@ -1,8 +1,10 @@
 package com.example.team.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 import static j2act.ui.Ui.*;
 
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.Prop;
 import j2act.State;
@@ -27,9 +29,9 @@ public final class Counter extends ComponentTag {
     return this;
   }
 
-  @Override protected DivTag render() {
-    State<Integer> count = state(0);
-    return div(
+  @Override protected View setup() {
+    var count = createSignal(0);
+    return () -> div(
       UI.button(label.get() + " " + count.get() + " times")
         .withVariant(Variant.PRIMARY)
         .onClick(e -> count.set(count.get() + 1)),

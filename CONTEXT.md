@@ -4,20 +4,20 @@ Server-driven reactive UI in pure Java. No IDE plugins, no templating language �
 
 ## Language
 
-**State**:
-Server-side reactive value owned by a component, a tab or a browser (ADR 0030). Writes to it are serialized on its owner's lane: a component's and a tab's on the tab's, a browser's on the browser hub's.
-_Avoid_: Signal, Atom, SharedVar
+**Signal**:
+Server-side reactive value, created with createSignal() and owned by a component, a tab or a browser (ADR 0030, 0031). Writes batch until the end of the lane task: a read after set() still sees the old value. A write that makes an async memo on screen reload is held until it landed, so everything changes in one update. "State" stays the general word: tab state, browser state, Retained State.
+_Avoid_: Atom, SharedVar
 
 **Tab**:
-The server side of one page load, reached with tab(): created when the page's HTML renders, kept across socket drops and reconnects, ended by unload, idle timeout or pause. A reload starts a new tab. Blazor calls it a circuit and Vaadin a UI (ADR 0030).
+The server side of one page load, reached with useTab(): created when the page's HTML renders, kept across socket drops and reconnects, ended by unload, idle timeout or pause. A reload starts a new tab. Blazor calls it a circuit and Vaadin a UI (ADR 0030).
 _Avoid_: Session, Circuit, Connection, Page load
 
 **Browser**:
-Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with browser(). Its @BrowserScoped stores live on a hub with its own lane while any of its tabs lives, plus a grace window, and every tab that read a value re-renders when it changes. A logout or another user starts a new browser (ADR 0030).
+Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with useBrowser(). Its @BrowserScoped stores live on a hub with its own lane while any of its tabs lives, plus a grace window, and every tab that read a value re-renders when it changes. A logout or another user starts a new browser (ADR 0030).
 _Avoid_: Session, Device, Visitor, User
 
 **Retained State**:
-A State created with retainedState() whose value goes into its owner's Snapshot, so it outlives the in-memory tab or browser: grace expiry, pause, restart, redeploy, another node, and a closed tab reopened within 15 minutes. Keyed by its component's slot path and field name, or by its store's class and field name. A reload still starts empty. Unsaved work only; anything worth keeping still belongs in the app's database (ADR 0026).
+A value created with createRetained() that goes into its owner's Snapshot, so it outlives the in-memory tab or browser: grace expiry, pause, restart, redeploy, another node, and a closed tab reopened within 15 minutes. Keyed by its component's slot path and the variable it is assigned to, through the processor (ADR 0031), or by its store's class and field name. createRetained(save, restore) holds live data that needs converting. A reload still starts empty. Unsaved work only; anything worth keeping still belongs in the app's database (ADR 0026).
 _Avoid_: Persisted State, PersistentState, Saved State, Draft
 
 **Snapshot**:
@@ -25,11 +25,11 @@ The Retained State of one tab or one browser, saved to retained state storage wi
 _Avoid_: Checkpoint (that is the opt-in trigger that saves one while the tab is live), Backup
 
 **Store**:
-A class annotated @TabScoped or @BrowserScoped that extends Store: one instance per tab or per browser, a bean of the app's container that components @Inject, or reach with tab(X.class) and browser(X.class) without one. A browser store's computeds, queries and effects run once per browser and cannot use tab stores. It holds State, Retained State, Computeds, Queries and Mutations as fields, never plain values, and its methods are the actions. No middleware (ADR 0030).
+A class annotated @TabScoped or @BrowserScoped that extends Store: one instance per tab or per browser, a bean of the app's container that components @Inject, or reach with useTabStore(X.class) and useBrowserStore(X.class) without one. A browser store's memos and effects run once per browser and cannot use tab stores. It holds signals, memos and other primitives as fields, never plain values, and its methods are the actions. No middleware (ADR 0030).
 _Avoid_: GlobalState, Context, Singleton, Session, createStore
 
 **LiveComponent**:
-A Java class with a `render()` method returning J2HTML tags. Reactive state lives in State; events are Java lambdas.
+A component mounted at a route. Like every component it overrides setup(), which runs once per slot, creates what it needs with the create* functions of j2act.Reactive and returns its view (ADR 0031).
 _Avoid_: Controller, BackingBean, ViewModel
 
 **Island**:
@@ -37,31 +37,47 @@ A LiveComponent subtree mounted inside an existing non-J2ACT app, receiving oute
 _Avoid_: Portlet, Fragment, Widget
 
 **Query state**:
-A QueryState created with queryState(name, initial): a component's value that lives in the page's query string, so it survives a reload and can be shared. Reads are tracked; writes replace the URL (ADR 0030).
+A QueryState created with createQueryState(name, initial): a component's value that lives in the page's query string, so it survives a reload and can be shared. Reads are tracked; writes replace the URL (ADR 0030).
 _Avoid_: URL state, Search param, Route param
 
 **Prop**:
-Tracked component input. A with* builder writes it, render(), computed(), effect() and query loaders read it, and reads are tracked like State.
+Tracked component input, a field of the component. A with* builder writes it on the description a parent's view builds, and the slot's kept instance takes it (ADR 0031). Reads are tracked like a signal, and any read gives the current value.
 _Avoid_: Input, Attribute, Param
 
-**Computed**:
-Pure derived value recomputed when tracked State changes. No side-effects. Readers re-render only when the derived value itself changes.
-_Avoid_: Derived, Memo
+**Memo**:
+Derived value from createMemo(), recomputed when what it read changes. No side effects. Readers re-render only when the derived value itself changes. A memo whose body returns a future is an Async memo.
+_Avoid_: Derived, Computed
 
 **Effect**:
-Side-effect runner that auto-tracks State reads inside it and re-runs on change, with cleanup.
+createEffect(track, apply) (ADR 0031): track says what to watch and is the only tracked part; apply does the work with the watched value and returns its cleanup or null. It starts when the tab's socket connects, so a page that never connects runs none.
 _Avoid_: Watcher, Listener
 
-**Query**:
-Cached async loader written as one lambda: State read inside it is a dependency, no key needed. Runs on the executor and is validated on commit; the cache survives unmount by slot. withKey(parts...) opts into sharing across components (ADR 0020). TanStack-style status: isPending/isFetching/isError/isSuccess, error, refetch(). The loader is any Java code (EntityManager, REST, GraphQL) using injected fields; transactions are the user's own. Owned queries are awaited on SSR unless withDefer().
-_Avoid_: Deferred, Fetcher, TenStackQuery
+**Owner**:
+What a primitive attaches to: the component whose setup() is running, or the store being constructed. A primitive created anywhere else fails. Reusable stateful logic is a plain function that calls create* functions for its caller's owner (ADR 0031).
+_Avoid_: Parent, Context
 
-**Mutation**:
-Generic headless async write, Mutation<V, R>: mutate(variables) runs the body on the executor, and status(), isPending(), data(), error() and variables() are tracked reads. Retry with backoff, reset(), per-key serialization via withKey, withInvalidates query wiring, onSuccess/onError on the lane. upload() is the file flavor, an Upload (Mutation<UploadFile, UploadRef>) with progress(): chunked resumable transport, server-enforced restrictions, UploadCtx naming, temp cleanup owned by the framework.
-_Avoid_: Action, Command, Uploader
+**Boundary**:
+loading(...) or errored(...), a component wrapping what may stop rendering. Reading an async memo with no value yet stops rendering at the nearest loading(...) above the read; reading a failed one at the nearest errored(...). On a page load a read outside every loading(...) is waited for and is in the first HTML, and a read inside one streams down the same response (ADR 0031).
+_Avoid_: Suspense, Skeleton
+
+**Async memo**:
+A memo whose body returns a future, usually createMemo(() -> async(() -> service.load(id.get()))): get() gives the future's value. Reads, including those inside async(...), are its dependencies; the newest run wins, and it keeps its value while reloading. refresh(x) loads it again, isPending(fn) says a change has not committed yet. Caching is the app's own on its services (ADR 0031).
+_Avoid_: Query, Deferred, Fetcher, Resource
+
+**Action**:
+A write, action(body): each run() is one transaction on the executor, returning a CompletableFuture. Optimistic writes show at once, plain signal writes land together at its end with what it refreshed; on failure the optimistic ones are undone and the rest dropped. Runs are concurrent (ADR 0031).
+_Avoid_: Mutation, Command
+
+**Optimistic value**:
+createOptimistic(...), a value, memo or load that takes writes from an action's body, which show at once and are undone when that action ends. They do not make isPending true (ADR 0031).
+_Avoid_: Draft, Overlay
+
+**Upload**:
+createUpload(), an Upload (Transfer<UploadFile, UploadRef>) with progress() and status reads: chunked resumable transport, server-enforced restrictions, UploadCtx naming, temp cleanup owned by the framework.
+_Avoid_: Uploader
 
 **Download**:
-Download<V>, the Mutation flavor mirroring upload(): download((V v, OutputStream out) -> ...) streams on the servlet thread that fetches a single-use token URL served by the transport adapter, pending until the last byte is written.
+createDownload((V v, OutputStream out) -> ...), a Download<V> that streams on the servlet thread that fetches a single-use token URL served by the transport adapter, pending until the last byte is written.
 _Avoid_: Export, FileResponse
 
 **Client module**:
@@ -85,15 +101,15 @@ Generated Java facade mirroring the browser's Web APIs one to one, executed remo
 _Avoid_: Browser, JsRuntime
 
 **Page**:
-Any LiveComponent mounted at a route with page(path, Class); there is no Page type, and the route, not the class, makes it a page. It gets nested layouts/subroutes, plus optional loading() and error() boundary methods with nearest-defined-wins nesting. render() returns html(head(...), body(...)) for pages, bare content for island fragments. URL is read ambiently via pathParam()/queryParam(), never passed as props.
+Any LiveComponent mounted at a route with page(path, Class); there is no Page type, and the route, not the class, makes it a page. It gets nested layouts/subroutes. Its view returns html(head(...), body(...)) for pages, bare content for island fragments. URL is read ambiently via pathParam()/queryParam(), never passed as props.
 _Avoid_: View, Screen, Controller
 
 **Component**:
-Reusable LiveComponent taking props (values/State) via with* builders that write tracked Prop<T> fields, reading auth() and URL via pathParam()/queryParam() ambiently like Pages, so it works in Pages and Islands.
+Reusable class with setup() taking props through with* builders that write tracked Prop<T> fields, reading auth() and URL via pathParam()/queryParam() ambiently like Pages, so it works in Pages and Islands. A slot keeps one instance; a factory call in a parent's view is only a description of it, and a parent never holds its children (ADR 0031).
 _Avoid_: Widget, Partial
 
 **Application**:
-The deployment's j2act as components see it, reached with application(): what spans every tab of every browser, such as asking them all to pause. Never called session, which readers take for the HTTP session shared by every tab (ADR 0027).
+The deployment's j2act as components see it, reached with useApplication(): what spans every tab of every browser, such as asking them all to pause. Never called session, which readers take for the HTTP session shared by every tab (ADR 0027).
 _Avoid_: Session, Context
 
 **AuthCtx**:
@@ -101,7 +117,7 @@ Resolved identity for a tab (principal, roles, claims). Supplied by the host via
 _Avoid_: Principal, Session, User
 
 **Guard**:
-Check receiving AuthCtx, returning allow or redirect — per route, or per scope subtree (including nested scopes) via middleware(Class|fn). Component render branches on AuthCtx via ternary/iff, with automatic server re-check per event from render-captured reads.
+Check receiving AuthCtx, returning allow or redirect — per route, or per scope subtree (including nested scopes) via middleware(Class|fn). A component's view branches on AuthCtx via ternary/iff, with automatic server re-check per event from what it read.
 _Avoid_: Interceptor, Filter, on_mount
 
 **Route**:
@@ -109,5 +125,5 @@ Declared via page(path, component), scope(path, ...), layout(path, Layout, ...) 
 _Avoid_: Endpoint, Handler, FileRoute
 
 **Layout**:
-A LiveComponent subclass used in layout() route positions, rendering via render(DomContent) with the matched child as a plain child node. No named slots: sidebars and panels are ordinary compound components plus a tab Store (the Shadcn pattern), parallel route regions stay deferred.
+A component used in layout() route positions, whose view takes the matched child as a plain child node: setup() returns child -> div(nav(...), child). No named slots: sidebars and panels are ordinary compound components plus a tab Store (the Shadcn pattern), parallel route regions stay deferred.
 _Avoid_: Template, Frame, Outlet, Slots

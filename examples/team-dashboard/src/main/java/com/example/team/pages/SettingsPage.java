@@ -1,5 +1,6 @@
 package com.example.team.pages;
 
+import static j2act.Reactive.*;
 import static com.example.team.components.AvatarUploader.avatarUploader;
 import static j2act.html.TagCreator.*;
 import static j2act.ui.Ui.*;
@@ -8,6 +9,7 @@ import jakarta.inject.Inject;
 
 import com.example.team.db.Users;
 import com.example.team.stores.CurrentUser;
+import j2act.View;
 import j2act.LiveComponent;
 import j2act.State;
 import j2act.html.tags.HtmlTag;
@@ -23,10 +25,9 @@ public class SettingsPage extends LiveComponent {
   @Inject private Users users;
   @Inject private CurrentUser currentUser;
 
-  private final State<String> saved = state(null);
-
-  @Override public HtmlTag render() {
-    return html(
+  @Override protected View setup() {
+    State<String> saved = createSignal(null);
+    return () -> html(
       head(
         title("Settings")
       ),

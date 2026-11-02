@@ -1,5 +1,6 @@
 package com.example.team.pages;
 
+import static j2act.Reactive.*;
 import static j2act.router.Routes.*;
 import static j2act.html.TagCreator.*;
 import static j2act.ui.Ui.*;
@@ -7,6 +8,7 @@ import static j2act.ui.Ui.*;
 import jakarta.inject.Inject;
 
 import com.example.team.db.Users;
+import j2act.View;
 import j2act.LiveComponent;
 import j2act.Query;
 import j2act.html.tags.HtmlTag;
@@ -22,12 +24,11 @@ public class UserPage extends LiveComponent {
 
   @Inject private Users users;
 
-  private final Query<Users.User> user = query(() -> users
+  @Override protected View setup() {
+    var user = createMemo(() -> async(() -> users
     .find(Long.parseLong(pathParam("id")))
-    .orElseThrow(() -> notFound()));
-
-  @Override public HtmlTag render() {
-    return html(
+    .orElseThrow(() -> notFound())));
+    return () -> html(
       head(
         title(user.get().getName())
       ),
