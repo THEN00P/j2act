@@ -39,6 +39,8 @@ final class Scheduler {
     List<Node> marks;
     /** Solid's `folded`. */
     FoldedRead folded;
+    /** Solid's `latest`: opened by a latest() read of an unheld flight. */
+    boolean latest;
 
     Transaction(boolean lane, Transaction parent) {
       this.lane = lane;
@@ -90,6 +92,9 @@ final class Scheduler {
   java.util.function.BiPredicate<Node, Node> observeFlightHook;
   java.util.function.BiPredicate<Node, Node> holdWorkHook;
   java.util.function.BiConsumer<Node, Node> stageMarkHook;
+  java.util.function.Function<Node, Node> laggingHook;
+  Predicate<Node> markedHook;
+  Runnable witnessMarkHook;
 
   // ---- state
 
@@ -299,6 +304,15 @@ final class Scheduler {
         c.config |= CONFIG_HELD_FRAME;
       }
       holdFrame(c, t);
+    }
+  }
+
+  void heldUnder(Owner owner, Transaction t, Consumer<Node> fn) {
+    for (Owner c = owner.firstChild; c != null; c = c.nextSibling) {
+      if ((c.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD && txOf((Node) c) != t) {
+        fn.accept((Node) c);
+      }
+      heldUnder(c, t, fn);
     }
   }
 

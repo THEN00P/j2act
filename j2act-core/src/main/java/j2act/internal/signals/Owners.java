@@ -139,6 +139,34 @@ final class Owners {
     }
   }
 
+  // ---- Port of core/context.ts
+
+  /** A context is its key: `id` is the object createContext made, with the default kept beside it by the caller. */
+  Object getContext(Object id, Object defaultValue, Owner owner) {
+    Object value = null;
+    if (owner != null) {
+      value = owner.ctx.get(id);
+    } else {
+      throw new Errors.NoOwnerError();
+    }
+    if (value == null) {
+      value = defaultValue;
+    }
+    if (value == null) {
+      throw new Errors.ContextNotFoundError();
+    }
+    return value;
+  }
+
+  void setContext(Object id, Object value, Object defaultValue, Owner owner) {
+    if (owner == null) {
+      throw new Errors.NoOwnerError();
+    }
+    java.util.Map<Object, Object> next = new java.util.HashMap<>(owner.ctx);
+    next.put(id, value == null ? defaultValue : value);
+    owner.ctx = next;
+  }
+
   Owner getObserver() {
     return rt.core.tracking ? rt.core.context : null;
   }

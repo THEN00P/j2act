@@ -1,7 +1,9 @@
 package j2act.internal.signals;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Port of the Owner and Root shapes in @solidjs/signals core/types.ts at 9449845. Solid tells a root by
@@ -24,9 +26,15 @@ public class Owner {
 
   boolean root;
   Node parentComputed;
+  /** Solid's `_context`: copied on write, and inherited from the owner this was created under. */
+  Map<Object, Object> ctx;
+  /** Solid's ROOT_ERROR_HOOK on a root. */
+  java.util.function.BiConsumer<Throwable, Owner> errorHook;
 
   Owner(Runtime rt) {
     this.rt = rt;
+    Owner current = rt.core != null ? rt.core.context : null;
+    this.ctx = current != null ? current.ctx : Collections.emptyMap();
   }
 
   void addDisposal(Runnable fn) {

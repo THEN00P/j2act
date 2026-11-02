@@ -27,6 +27,33 @@ public final class Errors {
     }
   }
 
+  /** until() ran out of time. */
+  public static final class TimeoutError extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    public TimeoutError() {
+      super("until() timed out before the condition was met.");
+    }
+  }
+
+  /** Context needs an owner. */
+  public static final class NoOwnerError extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    public NoOwnerError() {
+      super("Context can only be accessed under a reactive root.");
+    }
+  }
+
+  /** A context with no default and no value. */
+  public static final class ContextNotFoundError extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    public ContextNotFoundError() {
+      super("Context must either be created with a default value or a value must be provided before accessing it.");
+    }
+  }
+
   static Throwable unwrapStatusError(Throwable error) {
     return error instanceof StatusError ? error.getCause() : error;
   }

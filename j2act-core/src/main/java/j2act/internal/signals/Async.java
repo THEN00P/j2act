@@ -62,6 +62,36 @@ final class Async {
     return value instanceof CompletionStage || value instanceof AsyncIterable;
   }
 
+  static boolean isThenable(Object value) {
+    return value instanceof CompletionStage;
+  }
+
+  /** What `parked.then()` gives: a new stage settling with the one it is given. */
+  @SuppressWarnings("unchecked")
+  static Object continuation(Object parked) {
+    return ((CompletionStage<Object>) parked).thenApply(v -> v);
+  }
+
+  /** Solid's `.then(fn, fn)`: at once when it is already settled here, otherwise on the lane. */
+  <V> void whenSettled(CompletionStage<V> stage, Runnable fn) {
+    whenResult(stage, (v, e) -> fn.run());
+  }
+
+  /** Solid's `.then(onValue, onError)`, with both as one callback. */
+  <V> void whenResult(CompletionStage<V> stage, BiConsumer<V, Throwable> fn) {
+    Thread me = Thread.currentThread();
+    boolean[] sync = {true};
+    stage.whenComplete((v, e) -> {
+      Throwable cause = e == null ? null : unwrap(e);
+      if (sync[0] && Thread.currentThread() == me) {
+        fn.accept(v, cause);
+      } else {
+        rt.post(() -> fn.accept(v, cause));
+      }
+    });
+    sync[0] = false;
+  }
+
   boolean addPendingSource(Node el, Node source) {
     if (el.x != null && el.x.pendingSources != null && el.x.pendingSources.contains(source)) {
       return false;
@@ -693,7 +723,7 @@ final class Async {
       }
       if (pendingSource != null && sub.x != null && sub.x.pendingSources != null && sub.x.pendingSources.contains(pendingSource)) {
         if (q.passLane == null && (sub.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD && q.running
-          && !(q.freshHook != null && q.freshHook.fresh(sub, pendingSource.time == q.clock) != null)) {
+          && !(q.freshHook != null && Signals.truthy(q.freshHook.fresh(sub, pendingSource.time == q.clock)))) {
           q.joinFuture(q.txOf(sub));
         }
         continue;

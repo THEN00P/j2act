@@ -22,8 +22,24 @@ public final class Runtime {
   final Owners owners;
   final Async async;
   final Effects effects;
+  final Lanes lanes;
+  final Verdict verdict;
+  final Boundaries boundaries;
+  final Reveal reveal;
+  final Deferred deferred;
+  final Marks marks;
+  final From from;
+  final Action action;
+  final Signals signals;
   final Executor microtasks;
   final Executor lane;
+  /** What a boundary does with its content's value, Solid's `flatten`. Java's content has nothing to flatten. */
+  UnaryOperator<Object> flatten = UnaryOperator.identity();
+  Signals.Timer timer = Runtime::defaultTimer;
+  /** Solid's ambient hook of configureClientErrors. */
+  java.util.function.BiConsumer<Throwable, Owner> clientErrorHook;
+  private final java.util.Set<Throwable> reportedErrors =
+    java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
   public Runtime(Executor lane, Executor microtasks) {
     this.lane = lane;
@@ -34,6 +50,49 @@ public final class Runtime {
     this.owners = new Owners(this);
     this.async = new Async(this);
     this.effects = new Effects(this);
+    this.lanes = new Lanes(this);
+    this.verdict = new Verdict(this);
+    this.boundaries = new Boundaries(this);
+    this.reveal = new Reveal(this);
+    this.deferred = new Deferred(this);
+    this.marks = new Marks(this);
+    this.from = new From(this);
+    this.action = new Action(this);
+    this.signals = new Signals(this);
+  }
+
+  private static final java.util.concurrent.ScheduledExecutorService TIMERS =
+    java.util.concurrent.Executors.newSingleThreadScheduledExecutor(task -> {
+      Thread t = new Thread(task, "j2act-signals-timer");
+      t.setDaemon(true);
+      return t;
+    });
+
+  private static Runnable defaultTimer(Runnable task, long millis) {
+    java.util.concurrent.Future<?> f = TIMERS.schedule(task, millis, java.util.concurrent.TimeUnit.MILLISECONDS);
+    return () -> f.cancel(false);
+  }
+
+  /** Port of reportClientError in core/error-hooks.ts: each error once, to the root's hook or the ambient one. */
+  void reportClientError(Throwable error, Owner owner, Owner thrower) {
+    if (error == null || !reportedErrors.add(error)) {
+      return;
+    }
+    java.util.function.BiConsumer<Throwable, Owner> hook = clientErrorHook;
+    for (Owner o = owner; o != null; o = o.parent) {
+      if (o.errorHook != null) {
+        hook = o.errorHook;
+        break;
+      }
+    }
+    if (hook == null) {
+      return;
+    }
+    try {
+      hook.accept(error, thrower != null ? thrower : owner);
+    } catch (RuntimeException | Error hookError) {
+      System.getLogger("j2act").log(System.Logger.Level.ERROR, "a client error hook failed", hookError);
+    }
   }
 
   void post(Runnable task) {
