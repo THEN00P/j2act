@@ -131,6 +131,74 @@ class TransitionTest {
     }
   }
 
+  static final class ThroughADerivedSignal extends LiveComponent {
+    @Override protected View setup() {
+      var selected = createSignal("A");
+      var copy = createSignal(() -> selected.get());
+      var profile = createMemo(() -> profile(copy.get()));
+      return () -> T.page("t", T.div(
+        T.span("copy:" + copy.get() + ";"),
+        T.span("profile:" + profile.get() + ";"),
+        T.button("pick B").onClick(e -> selected.set("B"))));
+    }
+  }
+
+  @Test
+  void aLoadBehindADerivedSignalReadsTheHeldValue() {
+    PROFILES.clear();
+    profile("A").complete("a!");
+    try (Harness h = new Harness(ThroughADerivedSignal::new)) {
+      String html = h.load();
+      h.connect();
+      h.click(Harness.clickOn(html, "pick B"));
+      Harness.eventually(() -> PROFILES.containsKey("B"), "the load asks for B, not A again");
+      int from = h.conn.size();
+      profile("B").complete("b!");
+      String landed = h.awaitPatch(from, p -> p.contains("profile:b!")).get("html");
+      assertTrue(landed.contains("copy:B;"), landed);
+    }
+  }
+
+  static final class ChainedLoads extends LiveComponent {
+    @Override protected View setup() {
+      var selected = createSignal("A");
+      var first = createMemo(() -> profile(selected.get()));
+      var second = createMemo(() -> {
+        String upstream = first.get();
+        return profile("then " + upstream);
+      });
+      return () -> T.page("t", T.div(
+        T.span("selected:" + selected.get() + ";"),
+        T.span("first:" + first.get() + ";"),
+        T.span("second:" + second.get() + ";"),
+        T.button("pick B").onClick(e -> selected.set("B"))));
+    }
+  }
+
+  @Test
+  void aLoadThatFollowsALoadJoinsTheHeldUpdate() {
+    PROFILES.clear();
+    profile("A").complete("a!");
+    profile("then a!").complete("second a");
+    try (Harness h = new Harness(ChainedLoads::new)) {
+      String html = h.load();
+      h.connect();
+      assertTrue(html.contains("second:second a;"), html);
+      h.click(Harness.clickOn(html, "pick B"));
+
+      int from = h.conn.size();
+      profile("B").complete("b!");
+      Harness.eventually(() -> PROFILES.containsKey("then b!"), "the second load runs on the first's new result");
+      assertTrue(h.conn.since(from, m -> "patch".equals(m.get("type")) && m.get("html").contains("first:b!")).isEmpty(),
+        "nothing changes until the second landed too");
+
+      from = h.conn.size();
+      profile("then b!").complete("second b");
+      String landed = h.awaitPatch(from, p -> p.contains("second:second b;")).get("html");
+      assertTrue(landed.contains("selected:B;") && landed.contains("first:b!;"), "one update: " + landed);
+    }
+  }
+
   static final class Batches extends LiveComponent {
     static volatile int seenAfterSet;
 

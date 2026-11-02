@@ -177,6 +177,17 @@ final class Scope implements Observer {
     return SETTING_UP.get();
   }
 
+  /** Returns the scope to restore once something that owns its own primitives was made. */
+  static Scope swapSettingUp(Scope next) {
+    Scope previous = SETTING_UP.get();
+    if (next == null) {
+      SETTING_UP.remove();
+    } else {
+      SETTING_UP.set(next);
+    }
+    return previous;
+  }
+
   /** A primitive of the running setup() or a helper it called: bound to its cell by creation order. */
   void own(Primitive primitive) {
     bindPrimitive(primitive, setupIndex++);

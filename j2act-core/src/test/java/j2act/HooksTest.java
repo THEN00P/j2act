@@ -114,6 +114,26 @@ class HooksTest {
     }
   }
 
+  static final class SettleWrites extends LiveComponent {
+    @Override protected View setup() {
+      var opened = createSignal("not yet");
+      onSettled(() -> {
+        opened.set("opened");
+        return null;
+      });
+      return () -> T.page("t", T.span(opened.get()));
+    }
+  }
+
+  @Test
+  void whatOnSettledWritesGoesOutWithoutAnotherEvent() {
+    try (Harness h = new Harness(SettleWrites::new)) {
+      h.load();
+      h.connect();
+      h.awaitPatch(0, p -> p.contains(">opened<"));
+    }
+  }
+
   static final class WatchesSocket extends LiveComponent {
     @Override protected View setup() {
       createEffect(() -> useTab().connected(), live -> {

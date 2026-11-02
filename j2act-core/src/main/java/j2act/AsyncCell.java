@@ -42,6 +42,9 @@ final class AsyncCell extends Cell implements Observer {
 
   /** The value; stops the reader while there is none, or when the last load failed (ADR 0031). */
   Object read() {
+    if (transition != null && (Tracking.latest() || Tracking.run() != null)) {
+      return readAhead();
+    }
     Object v = value;
     onRead(v);
     if (error != null && !(staleOnError && hasValue)) {
@@ -51,6 +54,22 @@ final class AsyncCell extends Cell implements Observer {
       throw new NotReady(this);
     }
     return v;
+  }
+
+  /** A load downstream of this one in a transition reads its new result, and waits for it. */
+  private Object readAhead() {
+    onRead(isStaged ? stagedValue : value);
+    if (!isStaged) {
+      throw new NotReady(this);
+    }
+    if (stagedError != null) {
+      throw new LoadFailed(this, stagedError);
+    }
+    return stagedValue;
+  }
+
+  @Override Object peekLatest() {
+    return isStaged ? stagedValue : value;
   }
 
   /** Tracked: the last load failed. */
@@ -178,11 +197,13 @@ final class AsyncCell extends Cell implements Observer {
       // Waits with the writes that started it; everything changes in one update (ADR 0031).
       isStaged = true;
       stagedValue = result;
-      stagedError = cause;
+      stagedError = cause instanceof LoadFailed && cause.getCause() != null ? cause.getCause() : cause;
       if (cause != null) {
         tab.engine.log(System.Logger.Level.WARNING, "load failed at " + address, cause);
       }
       tab.engine.stats.committedRuns.incrementAndGet();
+      // Loads downstream were waiting for this result, so they run on it before anything commits.
+      tab.restartBelow(this, transition.current());
       transition.current().commitIfDone();
       return;
     }

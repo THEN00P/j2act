@@ -151,6 +151,58 @@ class ActionTest {
     }
   }
 
+  static final class TwoRefreshes extends LiveComponent {
+    static final java.util.concurrent.CompletableFuture<Void> GATE_A = new CompletableFuture<>();
+    static final java.util.concurrent.CompletableFuture<Void> GATE_B = new CompletableFuture<>();
+    static final List<String> ENDED = new CopyOnWriteArrayList<>();
+    static final Map<Integer, CompletableFuture<String>> LOADS = new ConcurrentHashMap<>();
+    static final AtomicInteger RUN = new AtomicInteger();
+
+    @Override protected View setup() {
+      var value = createMemo(() -> LOADS.computeIfAbsent(RUN.incrementAndGet(), k -> new CompletableFuture<>()));
+      var first = action((String v) -> {
+        GATE_A.get();
+        refresh(value);
+        return v;
+      });
+      var second = action((String v) -> {
+        GATE_B.get();
+        refresh(value);
+        return v;
+      });
+      return () -> T.page("t", T.div(
+        Reactive.loading(() -> T.span("v:" + value.get() + ";")).withFallback(T.span("...")),
+        T.button("first").onClick(e -> first.run("first").thenAccept(ENDED::add)),
+        T.button("second").onClick(e -> second.run("second").thenAccept(ENDED::add))));
+    }
+  }
+
+  @Test
+  void twoRunsRefreshingOneMemoBothFinish() {
+    TwoRefreshes.ENDED.clear();
+    TwoRefreshes.LOADS.clear();
+    TwoRefreshes.RUN.set(0);
+    try (Harness h = new Harness(TwoRefreshes::new)) {
+      String html = h.load();
+      h.connect();
+      int from = h.conn.size();
+      TwoRefreshes.LOADS.get(1).complete("one");
+      h.awaitPatch(from, p -> p.contains("v:one;"));
+
+      h.click(Harness.clickOn(html, "first"));
+      h.click(Harness.clickOn(html, "second"));
+      TwoRefreshes.GATE_A.complete(null);
+      Harness.eventually(() -> TwoRefreshes.LOADS.containsKey(2), "the first run's refresh");
+      TwoRefreshes.GATE_B.complete(null);
+      Harness.eventually(() -> TwoRefreshes.LOADS.containsKey(3), "the second run's refresh");
+
+      from = h.conn.size();
+      TwoRefreshes.LOADS.get(3).complete("three");
+      h.awaitPatch(from, p -> p.contains("v:three;"));
+      Harness.eventually(() -> TwoRefreshes.ENDED.size() == 2, "both futures finish: " + TwoRefreshes.ENDED);
+    }
+  }
+
   static final class WritesOutsideAnAction extends LiveComponent {
     static volatile Throwable thrown;
 

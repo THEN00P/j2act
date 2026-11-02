@@ -190,6 +190,10 @@ public final class Action<V, R> {
         held = transition();
       }
       for (AsyncCell cell : refreshes) {
+        if (cell.transition != null && cell.transition.current() != held) {
+          // Another run is waiting for this load too: there is one landing, so they land together.
+          held.merge(cell.transition.current());
+        }
         held.load(cell);
         cell.start();
       }

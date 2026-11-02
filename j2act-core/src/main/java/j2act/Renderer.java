@@ -49,7 +49,19 @@ final class Renderer {
     scope.previousChildren = new java.util.LinkedHashMap<>();
   }
 
+  /** Where the HTML parser moves a div out of its parent, which would part a boundary from what it wraps. */
+  private static final java.util.Set<String> NO_DIV_INSIDE = new java.util.HashSet<>(java.util.Arrays.asList(
+    "table", "thead", "tbody", "tfoot", "tr", "colgroup", "select", "optgroup", "p"));
+
+  /** The element being rendered, outside any component's root. */
+  private String enclosing;
+
   private void renderBoundary(Scope scope) {
+    if (enclosing != null && NO_DIV_INSIDE.contains(enclosing)) {
+      throw new IllegalStateException(scope.instance.getClass().getSimpleName().toLowerCase() + "(...) cannot stand"
+        + " directly inside <" + enclosing + ">, whose parsing would move it out of there: put the boundary around the"
+        + " whole <" + enclosing + "> (ADR 0031)");
+    }
     if (scope.renderedEpoch == epoch) {
       throw new IllegalStateException("one boundary was rendered twice in the same pass");
     }
@@ -311,7 +323,13 @@ final class Renderer {
       renderNode(scope, path + "/pending", tag.pending, false);
       out.append("</template>");
     }
-    renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(tag.name));
+    String outer = enclosing;
+    enclosing = tag.name;
+    try {
+      renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(tag.name));
+    } finally {
+      enclosing = outer;
+    }
     out.append("</").append(tag.name).append('>');
   }
 

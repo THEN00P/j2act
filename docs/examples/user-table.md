@@ -22,15 +22,15 @@ public class UserTablePage extends LiveComponent {
           .withPlaceholder("Filter by name")
           .withValue(latest(nameFilter))
           .onChange(e -> nameFilter.set(e.value())),
-        table(
+        loading(() -> table(
           thead(tr(th("Name"), th("Email"))),
-          loading(() -> tbody(
+          tbody(
             each(list.get(), u -> tr(
               td(u.getName()),
               td(u.getEmail())
             ))
-          )).withFallback(tbody(tr(td("Loading…"))))
-        )
+          )
+        )).withFallback(p("Loading…"))
       )
     );
   }

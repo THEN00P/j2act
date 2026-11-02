@@ -109,10 +109,12 @@ final class Transition {
     for (Map.Entry<ValueCell, Object> write : writes.entrySet()) {
       write.getKey().setOnLane(write.getValue());
     }
-    // Only now may what these cells read start them again: the writes above were theirs already.
+    for (AsyncCell cell : loads) {
+      cell.notifyPublished();
+    }
+    // Only now may what these cells read start them again: the changes above were theirs already.
     for (AsyncCell cell : loads) {
       cell.transition = null;
-      cell.notifyPublished();
     }
     for (Runnable callback : atCommit) {
       callback.run();

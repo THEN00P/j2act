@@ -445,12 +445,15 @@ public final class Tab {
     MAKING_STORE.set(this);
     Store previousStore = Store.swapConstructing(null);
     Observer previousObserver = Tracking.swap(null);
+    // A store outlives the component that first asked for it, so it owns what it creates.
+    Scope previousSetup = Scope.swapSettingUp(null);
     T instance;
     try {
       instance = create.get();
       // What a container's @PostConstruct wrote is there before anyone reads the store.
       applyWrites();
     } finally {
+      Scope.swapSettingUp(previousSetup);
       Tracking.swap(previousObserver);
       Store.swapConstructing(previousStore);
       if (previous == null) {
@@ -987,7 +990,26 @@ public final class Tab {
     for (AsyncCell load : reloads) {
       load.start();
     }
-    transition.commitIfDone();
+    transition.current().commitIfDone();
+  }
+
+  /** Lane-only. A load of a transition landed: the loads that follow it run again on its new result. */
+  void restartBelow(AsyncCell landed, Transition transition) {
+    Set<AsyncCell> below = new java.util.LinkedHashSet<>();
+    Set<Cell> seen = new HashSet<>();
+    seen.add(landed);
+    for (Observer observer : new ArrayList<>(landed.observers)) {
+      if (observer instanceof AsyncCell) {
+        below.add((AsyncCell) observer);
+      } else if (observer instanceof Cell) {
+        collectReloads((Cell) observer, seen, below);
+      }
+    }
+    for (AsyncCell load : below) {
+      if (load.transition != null && load.transition.current() == transition) {
+        load.start();
+      }
+    }
   }
 
   private static Transition merged(Transition into, Transition other) {
@@ -1008,7 +1030,11 @@ public final class Tab {
       if (observer instanceof AsyncCell) {
         if (((AsyncCell) observer).holdsWrites()) {
           reloads.add((AsyncCell) observer);
+          // Its result changes too, so what follows it is part of the same update.
+          collectReloads((AsyncCell) observer, seen, reloads);
         }
+      } else if (observer instanceof OptimisticCell) {
+        collectReloads((OptimisticCell) observer, seen, reloads);
       } else if (observer instanceof MemoCell) {
         collectReloads((MemoCell) observer, seen, reloads);
       } else if (observer instanceof DerivedSignalCell) {
@@ -1035,7 +1061,10 @@ public final class Tab {
         hook.fire();
       }
     }
+    // What the callbacks wrote goes out with them.
+    applyWrites();
     runEffects();
+    applyWrites();
     renderDirty(true);
     clients.sendOutbox();
   }

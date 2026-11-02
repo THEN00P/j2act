@@ -147,6 +147,20 @@ class StreamingTest {
     }
   }
 
+  static final class BoundaryInATable extends LiveComponent {
+    @Override protected View setup() {
+      return () -> T.page("t", new CustomTag("table", Reactive.loading(T.span("x")).withFallback(T.span("..."))));
+    }
+  }
+
+  @Test
+  void aBoundaryWhereADivCannotStandSaysSo() {
+    try (Harness h = new Harness(BoundaryInATable::new)) {
+      ServeResult result = h.engine.serve("/", Exchange.empty());
+      assertEquals(500, result.status(), "the parser would move it out of the table, parting it from what it wraps");
+    }
+  }
+
   static final class MissingInside extends LiveComponent {
     @Override protected View setup() {
       var value = createMemo(() -> load("missing"));

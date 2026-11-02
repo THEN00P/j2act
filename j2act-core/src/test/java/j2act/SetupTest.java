@@ -157,6 +157,54 @@ class SetupTest {
     }
   }
 
+  static final java.util.concurrent.atomic.AtomicInteger CLEANUPS = new AtomicInteger();
+
+  @TabScoped
+  public static class Shared extends Store {
+    final Signal<Integer> n = createSignal(1);
+
+    public Shared() {
+      Reactive.onCleanup(CLEANUPS::incrementAndGet);
+    }
+  }
+
+  static final class FirstUser extends ComponentTag {
+    @Override protected View setup() {
+      var shared = Reactive.useTabStore(Shared.class);
+      return () -> T.span("first:" + shared.n.get() + ";");
+    }
+  }
+
+  static final class Shares extends LiveComponent {
+    @Override protected View setup() {
+      var shown = createSignal(true);
+      var seen = createSignal(0);
+      return () -> T.page("t", T.div(
+        shown.get() ? new FirstUser() : null,
+        T.span("page:" + seen.get() + ";"),
+        T.button("hide").onClick(e -> shown.set(false)),
+        T.button("read").onClick(e -> {
+          Signal<Integer> n = Reactive.useTabStore(Shared.class).n;
+          n.set(n.get() + 1);
+          seen.set(n.get() + 1);
+        })));
+    }
+  }
+
+  @Test
+  void aStoreOutlivesTheComponentThatFirstAskedForIt() {
+    CLEANUPS.set(0);
+    try (Harness h = new Harness(Shares::new)) {
+      String html = h.load();
+      assertTrue(html.contains("first:1;"), "the child's setup() is the store's first use: " + html);
+      h.connect();
+      h.click(Harness.clickOn(html, "hide"));
+      assertEquals(0, CLEANUPS.get(), "unmounting the first user ends nothing of the store");
+      String page = h.click(Harness.clickOn(html, "read")).get(0).get("html");
+      assertTrue(page.contains("page:2;"), "its values still work: " + page);
+    }
+  }
+
   static final class ReadsARoute extends LiveComponent {
     @Override protected View setup() {
       return () -> T.page("t", T.span(String.valueOf(pathParam("nope"))));
