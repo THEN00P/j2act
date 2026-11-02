@@ -98,7 +98,7 @@ public abstract class ComponentTag implements DomContent {
    */
   protected final void onRestored(Runnable callback) {
     java.util.Objects.requireNonNull(callback, "callback");
-    register(new Effect(() -> {
+    Effect restored = new Effect(() -> {
       if (scope != null && scope.restored) {
         Observer previous = Tracking.swap(null);
         try {
@@ -108,7 +108,9 @@ public abstract class ComponentTag implements DomContent {
         }
       }
       return null;
-    }));
+    });
+    restored.immediate = true;
+    register(restored);
   }
 
   /**

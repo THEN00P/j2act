@@ -1,5 +1,7 @@
 package j2act;
 
+import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -31,6 +33,35 @@ public final class Reactive {
   /** A pure derived value, recomputed when what it read changes; readers re-render only when it changes. */
   public static <T> Memo<T> createMemo(Supplier<T> body) {
     return own(new Memo<>(body));
+  }
+
+  /**
+   * Watches what track reads and acts with its value when it changes, starting once the tab's
+   * socket connects (ADR 0031). Only track is tracked. act returns its cleanup or null, which runs
+   * before it acts again and on unmount.
+   */
+  public static <T> void createEffect(Supplier<T> track, Function<? super T, Runnable> act) {
+    createEffect(track, (value, previous) -> act.apply(value));
+  }
+
+  /** An effect whose second half also gets the previous value, null on the first run. */
+  @SuppressWarnings("unchecked")
+  public static <T> void createEffect(Supplier<T> track, BiFunction<? super T, ? super T, Runnable> act) {
+    own(new Effect(track, (value, previous) -> act.apply((T) value, (T) previous)));
+  }
+
+  /** Runs when whatever is being set up unmounts; for undoing what is not an effect, such as a registration. */
+  public static void onCleanup(Runnable cleanup) {
+    own(new Lifecycle(cleanup, null));
+  }
+
+  /**
+   * Runs once, when the page is live and this component's data is on screen: the socket is
+   * connected, everything loading here and below finished, and the update showing it was sent
+   * (ADR 0031). What it returns, or null, runs on unmount.
+   */
+  public static void onSettled(Supplier<Runnable> settled) {
+    own(new Lifecycle(null, settled));
   }
 
   /** Reads without subscribing whoever is running, and says the one-time read is meant. */

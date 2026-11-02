@@ -76,6 +76,12 @@ final class QueryCell extends Cell implements Observer {
     return leader != null ? leader.snapshot : snapshot;
   }
 
+  /** A run is in flight, or the first one has not started. */
+  boolean loading() {
+    Snapshot s = current();
+    return s.status == Status.PENDING || s.fetching;
+  }
+
   /** No data yet and a run in flight: what a loading() boundary waits on. */
   boolean initiallyPending() {
     Snapshot s = current();

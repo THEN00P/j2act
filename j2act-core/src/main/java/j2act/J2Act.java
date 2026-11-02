@@ -289,6 +289,7 @@ public final class J2Act implements AutoCloseable {
         cookie = null; // logged out, or another user: a browser of its own
       }
       tab.browser = joined;
+      tab.joinedBrowser();
       if (minted) {
         tab.browserCookie = cookie;
         tab.mintedBrowserCookie = tab.pendingBrowserCookie = browserCookieHeader(cookie);

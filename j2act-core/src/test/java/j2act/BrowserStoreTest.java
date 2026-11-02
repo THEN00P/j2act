@@ -328,24 +328,30 @@ class BrowserStoreTest {
   }
 
   static final AtomicInteger cleanups = new AtomicInteger();
+  static final AtomicInteger cleanedStarts = new AtomicInteger();
 
   @BrowserScoped
   public static class Cleaned extends Store {
     public Cleaned() {
-      effect(() -> cleanups::incrementAndGet);
+      effect(() -> {
+        cleanedStarts.incrementAndGet();
+        return cleanups::incrementAndGet;
+      });
     }
   }
 
   @Test
   void closingWithoutSavingStillEndsBrowserStores() {
     cleanups.set(0);
+    cleanedStarts.set(0);
     Harness h = new Harness(() -> new LiveComponent() {
       @Override public Tag<?> render() {
         browser(Cleaned.class);
         return T.page("c", T.div(T.span("c")));
       }
     });
-    new Page(h.engine, "/", Exchange.empty());
+    new Page(h.engine, "/", Exchange.empty()).connect();
+    Harness.eventually(() -> cleanedStarts.get() == 1, "a browser store's effects start with its first socket");
     h.close();
     Harness.eventually(() -> cleanups.get() == 1, "the browser store's effect cleanup on close");
   }

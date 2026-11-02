@@ -335,6 +335,24 @@ final class Scope implements Observer {
     deps.add(cell);
   }
 
+  /** Everything loading in this component and below finished, and it was rendered. */
+  boolean settledBelow() {
+    if (dirty || disposed) {
+      return false;
+    }
+    for (Cell cell : cells) {
+      if (cell instanceof QueryCell && ((QueryCell) cell).loading()) {
+        return false;
+      }
+    }
+    for (Scope child : children.values()) {
+      if (!child.settledBelow()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   void unsubscribeAll() {
     for (Cell cell : deps) {
       cell.unsubscribe(this);
@@ -358,7 +376,9 @@ final class Scope implements Observer {
     unsubscribeAll();
     tab.handlers.remove(this);
     tab.heads.forget(this);
-    for (Cell cell : cells) {
+    // Children first, above; then this owner's, last created first, as Solid runs its cleanups.
+    for (int i = cells.size() - 1; i >= 0; i--) {
+      Cell cell = cells.get(i);
       cell.dispose();
       tab.cells.remove(cell.address);
     }

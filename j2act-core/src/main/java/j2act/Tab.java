@@ -45,6 +45,12 @@ public final class Tab {
   final Deque<EffectCell> pendingEffects = new ArrayDeque<>();
   /** Effects of preloaded subtrees, waiting for the navigation that adopts them (ADR 0011). */
   final List<EffectCell> parkedEffects = new ArrayList<>();
+  /** onSettled callbacks that have not fired yet (ADR 0031). */
+  final List<LifecycleCell> pendingSettled = new ArrayList<>();
+  /** Effects wait for this tab's first socket, or a browser's first tab with one (ADR 0031). */
+  private boolean live;
+  /** Whether a socket is attached, for effects that watch it (ADR 0031). */
+  private ValueCell connectedCell;
   private PreloadedRoute preload;
   final Set<QueryCell> inFlight = new HashSet<>();
   private final Map<String, InactiveQuery> inactive = new LinkedHashMap<>();
@@ -890,6 +896,56 @@ public final class Tab {
     }
     renderDirty(true);
     clients.sendOutbox();
+    fireSettled();
+  }
+
+  /** Lane-only. The update went out: onSettled callbacks whose subtree has finished loading run now. */
+  private void fireSettled() {
+    if (pendingSettled.isEmpty() || !live) {
+      return;
+    }
+    for (LifecycleCell hook : new ArrayList<>(pendingSettled)) {
+      if (hook.disposed) {
+        pendingSettled.remove(hook);
+      } else if (hook.owner == null || !hook.owner.preloading() && hook.owner.settledBelow()) {
+        pendingSettled.remove(hook);
+        hook.fire();
+      }
+    }
+    runEffects();
+    renderDirty(true);
+    clients.sendOutbox();
+  }
+
+  /** Lane-only. Effects may run now; a browser's start with its first tab that has a socket. */
+  void goLive() {
+    live = true;
+    if (browser != null && browser.hub != this) {
+      Tab hub = browser.hub;
+      hub.post(() -> {
+        hub.goLive();
+        hub.flush();
+      });
+    }
+  }
+
+  /** A tab already live joined its browser: the browser's effects start. */
+  void joinedBrowser() {
+    if (live) {
+      goLive();
+    }
+  }
+
+  /** Tracked: whether this tab has its socket right now. A drop runs no cleanup; an effect can watch this (ADR 0031). */
+  public boolean connected() {
+    return (Boolean) connectedCell().read();
+  }
+
+  private ValueCell connectedCell() {
+    if (connectedCell == null) {
+      connectedCell = new ValueCell(this, "tab:connected", connection != null);
+    }
+    return connectedCell;
   }
 
   private void renderDirty(boolean sending) {
@@ -952,6 +1008,17 @@ public final class Tab {
   }
 
   private void runEffects() {
+    if (!live) {
+      // Before the first socket only what must see the first render runs (ADR 0031).
+      for (java.util.Iterator<EffectCell> it = pendingEffects.iterator(); it.hasNext();) {
+        EffectCell effect = it.next();
+        if (effect.immediate) {
+          it.remove();
+          effect.run();
+        }
+      }
+      return;
+    }
     int guard = 0;
     while (!pendingEffects.isEmpty() && guard++ < 1000) {
       pendingEffects.poll().run();
@@ -1096,6 +1163,11 @@ public final class Tab {
     connection = next;
     disconnectedAt = 0;
     lastActivity = engine.clock.millis();
+    goLive();
+    if (connectedCell != null) {
+      connectedCell.setOnLane(true);
+    }
+    runEffects();
     send(Json.object("type", "ready"));
   }
 
@@ -1103,6 +1175,9 @@ public final class Tab {
     if (connection == closed) {
       connection = null;
       disconnectedAt = engine.clock.millis();
+      if (connectedCell != null) {
+        connectedCell.write(false);
+      }
     }
   }
 
