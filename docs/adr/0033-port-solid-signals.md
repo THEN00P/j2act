@@ -111,31 +111,21 @@ Done means the ported tests pass, every test not ported is listed with a reason,
 
 ## Not settled: state across browsers
 
-A chat message from one user has to reach another. Everything above stops at one browser's runtime, and this is the next decision. It sits above the line, so it does not hold up the port, and it comes after the swap in its own ADR.
+A chat message from one user has to reach another. Everything above stops at one browser's runtime. This is the next decision, in its own ADR. It sits above the line, so it does not hold up the port.
 
-What is agreed so far:
+What the discussion has settled:
 
-- Unrelated people do not share a runtime. That would put them on one thread, and one person's slow load would freeze the room.
-- Any user can write. A write runs on the runtime that owns the value, so two users' writes to one list apply one after the other. What does not cross runtimes is one transaction: the writer's guess and the room's list do not commit in one step, so the writer's guess lasts until the echo arrives (`until`).
-- Reads can cross runtimes in one JVM with no engine change. The owning runtime gets a render effect for the value, and its second half hands each frame to the reader as one change.
-- App code should not need `from` for this, since j2act is the server.
+- The reactive graph owns live data. A write is a signal write, and saving to the database is a step of the action or an effect. A `select` knows nothing about newer data, so reloading from the database on every change is not the model. The database is read when the owner wakes up.
+- A write's status crosses too. While a message is on its way, the other reader must be able to know its data is stale (`isPending`), even when the database or the connection is slow.
+- Ryan Carniato's "re-derivable projection of durable state" comes from servers that keep nothing between requests. j2act keeps every user's graph alive, so that constraint does not bind it.
 
-The working proposal, not yet agreed, follows Ryan Carniato's "The Grand Unifying Architecture of Frontend": writes go to the server's durable state, the server pushes reads, and "the server's live graph must be a re-derivable projection of durable state". So the shared value is a load from the database, and a write stores and then says the key changed. Across servers the only message needed is "this key changed, read it again", so a lost message means a stale value until the next change, never a wrong one.
+The direction being explored: `@BrowserScoped` is one runtime per key, and the key happens to be a cookie. The same scope with any key, such as a room id, gives one owner per key for state shared between people, one lane per key, ended by its last reader.
 
-```java
-public class Room extends SharedStore<String> {        // one per key on each server, ended by its last reader
-  final Memo<List<Message>> messages = createMemo(() -> {
-    var id = key();
-    return async(() -> db.messages(id));
-  });
-  public void post(Message m) {
-    db.insert(key(), m);
-    changed();          // reload here, and tell other servers to reload this key
-  }
-}
-```
+Across servers, three options are on the table, and none is chosen:
 
-The cross-server part would be a small seam with adapters such as Redis or Postgres `NOTIFY`, and with one server it does nothing. Questions still open are ephemeral values with no database row (presence, typing), the cost of reloading on every change, and Solid's `broadcast(fn)`, which renders once per key and writes the same bytes to every viewer. A dedicated sync engine stays the answer for offline work and conflict merging, as Ryan also says.
+- One owner per key anywhere in the cluster, as Orleans grains and Cloudflare Durable Objects do. Writes go to the owner, and other servers hold live read edges to it.
+- Every server holds a copy, fed by an ordered log of operations. Writes are data, not lambdas.
+- The database joins the graph: j2act records what a load read and what a transaction wrote, as Convex does, and re-runs what overlaps. This can complement either option above, for writes made outside j2act.
 
 ## Licensing
 
