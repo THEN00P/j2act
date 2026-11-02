@@ -6,7 +6,7 @@ A message the client never receives is worse than one the server never receives.
 
 ## Numbered, acknowledged, resent
 
-This is Blazor Server's scheme (`RemoteRenderer`), widened from render batches to every server message. Each message the server sends a tab carries a sequence number, and the server keeps it in the tab's buffer until the client acknowledges it. The client acknowledges after applying a message, and an acknowledgement covers every message up to its number, so acks may be batched. A tab whose socket is down still numbers and buffers what it would have sent; nothing is dropped for want of a connection.
+This is Blazor Server's scheme (`RemoteRenderer`), widened from render batches to every server message. Each message the server sends a tab carries a sequence number, and the server keeps it in the tab's buffer until the client acknowledges it. The client acknowledges after applying a message, and an acknowledgement covers every message up to its number, so acks may be batched. A tab whose socket is down still numbers and buffers what it would have sent; nothing is dropped for want of a connection. A numbered message never changes and never leaves the sequence except by an acknowledgement, so a resend has no gaps and the browser cannot have applied a different version of it.
 
 The client's `hello` carries the highest number it applied. The server drops the buffered messages up to it and sends the rest in order, then carries on. A message the client already has is applied at most once: the client ignores numbers it has passed, so a resend after an ack that crossed the drop is harmless.
 
@@ -16,7 +16,7 @@ A call can also run in the browser and lose its result on the way back. So the b
 
 ## The buffer is bounded by backpressure
 
-As Blazor does with `MaxBufferedUnacknowledgedRenderBatches`, the buffer has a cap (`withMaxUnacknowledged`, in bytes). When it is full the tab stops producing patches: components that change stay marked dirty instead of being rendered into the buffer. On reconnect the buffer is resent, and then the dirty components render once with their latest State, so a long drop costs one patch per changed component, not one per change. URL and head messages collapse instead of queueing: only the latest URL and the latest merged head stay buffered, so they cannot grow. Client calls are counted against their own limit (`withMaxPendingClientCalls`, 256 by default); a call past it fails at once with a ClientException naming the limit, instead of piling up behind a socket that is gone. A buffered call that targets markup whose patch is being held back by the cap waits behind that patch, so it never reaches the browser before its element.
+As Blazor does with `MaxBufferedUnacknowledgedRenderBatches`, the buffer has a cap (`withMaxUnacknowledged`, in bytes). When it is full the tab stops producing patches: components that change stay marked dirty instead of being rendered into the buffer. On reconnect the buffer is resent, and then the dirty components render once with their latest State, so a long drop costs one patch per changed component, not one per change. While the socket is known to be down or the buffer is full, a URL or head update does not take a number yet: it waits in a single slot per kind, where a newer update replaces it. It takes its number when any other message is admitted, and at reconnect after the buffered messages are resent, so collapsing only ever merges consecutive updates, never reorders them around a patch or a call, and never touches a message the browser may have applied. The numbered ones count against the cap and between them lie patches or calls, which are bounded themselves, so these cannot grow either. Client calls are counted against their own limit (`withMaxPendingClientCalls`, 256 by default); a call past it fails at once with a ClientException naming the limit, instead of piling up behind a socket that is gone. A buffered call that targets markup whose patch is being held back by the cap waits behind that patch, so it never reaches the browser before its element.
 
 ## Full re-render as the last resort
 
@@ -28,7 +28,7 @@ Apart from call results (above), events the client sends into a socket that has 
 
 ## Before code
 
-A test in Harness that drops the socket after a patch is written but before it is read, then reconnects, and checks that the page matches the server: first failing on today's code, then passing. The same for a client action, for a client action whose result is lost on the way back, and for a navigate() while disconnected. The browser check gains a reconnect step that kills the socket at the network layer.
+A test in Harness that drops the socket after a patch is written but before it is read, then reconnects, and checks that the page matches the server: first failing on today's code, then passing. The same for a client action, for a client action whose result is lost on the way back, for a navigate() while disconnected, and for several URL updates around a client call while disconnected, which must replay with no gap. The browser check gains a reconnect step that kills the socket at the network layer.
 
 ## Rejected
 

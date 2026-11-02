@@ -26,7 +26,10 @@ public final class Counter extends ComponentTag {
   @Override protected View setup() {
     var count = createSignal(0);
     var doubled = createMemo(() -> count.get() * 2);
-    createEffect(count::get, n -> log.info("count {}", n));
+    createEffect(count::get, n -> {
+      log.info("count {}", n);
+      return null;
+    });
     return () -> button(label.get() + ": " + count.get() + " / " + doubled.get())
       .onClick(e -> count.set(count.get() + 1));
   }
@@ -296,7 +299,7 @@ Until now get() returned null before the first load, and a boundary's contents s
 
 ```java
 return () -> loading(
-  p(user.get().name())
+  () -> p(user.get().name())
 ).withFallback(spinner());
 ```
 
