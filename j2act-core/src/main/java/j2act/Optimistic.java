@@ -19,7 +19,7 @@ public final class Optimistic<T> extends Primitive implements Supplier<T> {
   @Override
   @SuppressWarnings("unchecked")
   public T get() {
-    return (T) ((OptimisticCell) requireCell()).read();
+    return (T) ((Node) requireCell()).read();
   }
 
   /** From an action's body: shows this value until the action ends. */
@@ -35,31 +35,19 @@ public final class Optimistic<T> extends Primitive implements Supplier<T> {
       throw new IllegalStateException("an optimistic write is undone when its action ends, so it belongs in an"
         + " action's body (ADR 0031)");
     }
-    call.overlay((OptimisticCell) requireCell(), value -> change.apply((T) value));
+    call.overlay((Node) requireCell(), value -> change.apply((T) value));
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    Cell base = source.createCell(tab, address + "~");
-    return new OptimisticCell(tab, address, base);
+    return source.createCell(tab, address);
   }
 
   @Override boolean accepts(Cell cell) {
-    return cell instanceof OptimisticCell;
+    return source.accepts(cell);
   }
 
   @Override void attach(Cell cell, boolean created) {
     this.cell = cell;
-    OptimisticCell optimistic = (OptimisticCell) cell;
-    optimistic.base.owner = optimistic.owner;
-    source.attach(optimistic.base, created);
-  }
-
-  /** The load underneath, for refresh, affects and failed; null for a plain value. */
-  static AsyncCell asyncOf(Cell cell) {
-    if (cell instanceof OptimisticCell) {
-      Cell base = ((OptimisticCell) cell).base;
-      return base instanceof AsyncCell ? (AsyncCell) base : null;
-    }
-    return cell instanceof AsyncCell ? (AsyncCell) cell : null;
+    source.attach(cell, created);
   }
 }

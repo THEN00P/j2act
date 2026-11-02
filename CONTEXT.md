@@ -13,7 +13,7 @@ The server side of one page load, reached with useTab(): created when the page's
 _Avoid_: Session, Circuit, Connection, Page load
 
 **Browser**:
-Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with useBrowser(). Its @BrowserScoped stores live on a hub with its own lane while any of its tabs lives, plus a grace window, and every tab that read a value re-renders when it changes. A logout or another user starts a new browser (ADR 0030).
+Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with useBrowser(). Its @BrowserScoped stores live on a hub with its own lane while any of its tabs lives, plus a grace window, and every tab that read a value re-renders when it changes, holding the change until that tab's own loads have landed. A logout or another user starts a new browser (ADR 0030).
 _Avoid_: Session, Device, Visitor, User
 
 **Retained State**:
@@ -69,7 +69,7 @@ A write, action(body): each run() is one transaction on the executor, returning 
 _Avoid_: Mutation, Command
 
 **Optimistic value**:
-createOptimistic(...), a value, memo or load that takes writes from an action's body, which show at once and are undone when that action ends. They do not make isPending true (ADR 0031).
+createOptimistic(...), a value, memo or load that takes writes from an action's body, which show at once and are undone when that action ends; if what derives from one hits a load, it waits for that so it never shows beside an old derived value. They do not make isPending true (ADR 0031).
 _Avoid_: Draft, Overlay
 
 **Upload**:

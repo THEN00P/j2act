@@ -23,7 +23,7 @@ public final class Prop<T> extends Primitive implements Supplier<T> {
     if (cell == null) {
       return hasPending ? pending : fallback;
     }
-    return (T) ((ValueCell) cell).read();
+    return (T) ((Node) cell).read();
   }
 
   public void set(T value) {
@@ -31,13 +31,13 @@ public final class Prop<T> extends Primitive implements Supplier<T> {
       pending = value;
       hasPending = true;
     } else {
-      ((ValueCell) cell).write(value);
+      ((Node) cell).write(value);
     }
   }
 
   /** Lane-only. Takes the value of the same Prop on a newer description of this component. */
   void adopt(Prop<?> description) {
-    ((ValueCell) requireCell()).writeNow(description.described());
+    ((Node) requireCell()).writeNow(description.described());
   }
 
   private T described() {
@@ -45,17 +45,17 @@ public final class Prop<T> extends Primitive implements Supplier<T> {
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    return new ValueCell(tab, address, described());
+    return new Node(tab, address, described());
   }
 
   @Override boolean accepts(Cell cell) {
-    return cell instanceof ValueCell;
+    return cell instanceof Node;
   }
 
   @Override void attach(Cell cell, boolean created) {
     this.cell = cell;
     if (!created) {
-      ((ValueCell) cell).writeNow(described());
+      ((Node) cell).writeNow(described());
     }
   }
 }

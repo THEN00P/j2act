@@ -38,20 +38,20 @@ public class Signal<T> extends Primitive implements Supplier<T> {
   @SuppressWarnings("unchecked")
   public T get() {
     Cell bound = cellOrNull();
-    return bound == null ? initial : (T) ((ValueCell) bound).read();
+    return bound == null ? initial : (T) ((Node) bound).read();
   }
 
   public void set(T value) {
-    ((ValueCell) requireCell()).write(value);
+    ((Node) requireCell()).write(value);
   }
 
   /** Read-modify-write that runs on the lane, safe from foreign threads. */
   public void update(UnaryOperator<T> fn) {
-    ((ValueCell) requireCell()).update(fn);
+    ((Node) requireCell()).update(fn);
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    return source != null ? new DerivedSignalCell(tab, address, source) : new ValueCell(tab, address, initial);
+    return source != null ? Node.derived(tab, address, source) : new Node(tab, address, initial);
   }
 
   T initial() {
@@ -59,7 +59,7 @@ public class Signal<T> extends Primitive implements Supplier<T> {
   }
 
   @Override boolean accepts(Cell cell) {
-    return cell instanceof ValueCell;
+    return cell instanceof Node;
   }
 
   @Override void attach(Cell cell, boolean created) {

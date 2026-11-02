@@ -111,10 +111,11 @@ public final class Action<V, R> {
 
     final Tab tab;
     private Transition transition;
-    private final Map<ValueCell, Object> writes = new LinkedHashMap<>();
-    private final List<AsyncCell> refreshes = new ArrayList<>();
-    /** Lane-only: the optimistic values this run wrote to, undone when it ends. */
-    private final List<OptimisticCell> overlaid = new ArrayList<>();
+    private final Map<Node, Object> writes = new LinkedHashMap<>();
+    private final List<Node> refreshes = new ArrayList<>();
+    private final List<CompletableFuture<Object>> refreshed = new ArrayList<>();
+    /** Lane-only: where this run's optimistic writes live, made on its first one. */
+    private OptimisticLane lane;
 
     Call(Tab tab, Transition transition) {
       this.tab = tab;
@@ -126,36 +127,47 @@ public final class Action<V, R> {
     }
 
     /** On the body's thread. Held until the run ends. */
-    void write(ValueCell cell, Object next) {
+    void write(Node cell, Object next) {
       writes.put(cell, next);
     }
 
-    boolean wrote(ValueCell cell) {
+    boolean wrote(Node cell) {
       return writes.containsKey(cell);
     }
 
     /** On the body's thread. What it sees: its own held write, else the newest value. */
-    Object seen(ValueCell cell) {
+    Object seen(Node cell) {
       return writes.containsKey(cell) ? writes.get(cell) : cell.peekLatest();
     }
 
     /** On the body's thread. Part of the transaction: the run commits once the new value arrived. */
-    void refresh(AsyncCell cell) {
-      refreshes.add(cell);
+    void refresh(Node cell, CompletableFuture<Object> landed) {
+      // Starts at once, on the lane, so the body can wait for what it asked for.
+      tab.post(() -> {
+        Transition held = transition();
+        cell.addWaiter(landed);
+        tab.refreshInto(cell, held);
+      });
     }
 
-    /** On the body's thread. Shows on the lane at once; another run touching the value entangles with this one. */
-    void overlay(OptimisticCell cell, UnaryOperator<Object> change) {
+    /** On the body's thread. Shows on the lane at once, unless what follows it hits a load. */
+    void overlay(Node cell, UnaryOperator<Object> change) {
+      if (cell.tab != tab) {
+        throw new IllegalStateException("an optimistic value in a browser store is not supported: its action runs"
+          + " in one tab, and a guess would have to show in every tab of the browser (ADR 0031)");
+      }
       tab.post(() -> {
-        cell.overlay(this, change);
-        if (!overlaid.contains(cell)) {
-          overlaid.add(cell);
+        if (lane == null) {
+          lane = new OptimisticLane(transition());
+          transition().addLane(lane);
         }
+        cell.overlay(lane, change);
+        lane.guessed(cell);
       });
     }
 
     /** Lane-only. affects(x) from the body: pending until this run's transaction ends, whatever others do. */
-    void affects(AsyncCell cell) {
+    void affects(Node cell) {
       cell.affectingRuns++;
       tab.pendingChanged();
       transition().onCommit(() -> {
@@ -180,41 +192,20 @@ public final class Action<V, R> {
     <R> void end(R value, Throwable failure, CompletableFuture<R> result) {
       Transition held = transition();
       if (failure != null) {
-        undo();
+        if (lane != null) {
+          lane.fail();
+          lane = null;
+        }
         held.closeAction();
         result.completeExceptionally(failure);
         return;
       }
-      held.onCommit(this::undo);
       held.onCommit(() -> result.complete(value));
       if (!writes.isEmpty()) {
         tab.apply(writes, held);
         held = transition();
       }
-      for (AsyncCell cell : refreshes) {
-        if (cell.transition != null && cell.transition.current() != held) {
-          // Another run is waiting for this load too: there is one landing, so they land together.
-          held.merge(cell.transition.current());
-        }
-        held.load(cell);
-        // What follows it changes too: those run again on its result, and the run waits for them.
-        for (AsyncCell below : tab.loadsBelow(cell)) {
-          if (below.transition != null && below.transition.current() != held) {
-            held.merge(below.transition.current());
-          }
-          held.load(below);
-        }
-        cell.start();
-      }
       held.closeAction();
-    }
-
-    /** Lane-only. Its optimistic writes go, in the same update as whatever replaces them. */
-    private void undo() {
-      for (OptimisticCell cell : overlaid) {
-        cell.removeOverlays(this);
-      }
-      overlaid.clear();
     }
   }
 }

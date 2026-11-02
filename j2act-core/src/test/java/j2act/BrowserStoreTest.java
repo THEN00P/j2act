@@ -607,4 +607,61 @@ class BrowserStoreTest {
       Thread.currentThread().interrupt();
     }
   }
+
+  @BrowserScoped
+  public static class Selection extends Store {
+    final Signal<String> id = createSignal("a");
+  }
+
+  static final class HoldsPerTab extends LiveComponent {
+    static final java.util.List<java.util.concurrent.CompletableFuture<String>> LOADS =
+      new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    @Override protected View setup() {
+      Selection selection = useBrowserStore(Selection.class);
+      AsyncSupplier<String> body = () -> {
+        String id = selection.id.get();
+        if ("a".equals(id)) {
+          return java.util.concurrent.CompletableFuture.completedFuture("A");
+        }
+        java.util.concurrent.CompletableFuture<String> load = new java.util.concurrent.CompletableFuture<>();
+        LOADS.add(load);
+        return load.thenApply(String::toUpperCase);
+      };
+      var loaded = createMemo(body);
+      return () -> T.page("h", T.div(
+        T.span("id:" + selection.id.get() + ";loaded:" + loaded.get() + ";"),
+        T.button("select").onClick(e -> selection.id.set("b"))));
+    }
+  }
+
+  /** ADR 0031: each tab holds what its own load has not reached, so no tab ever shows B's id over A's data. */
+  @Test
+  void eachTabOfABrowserHoldsAWriteUntilItsOwnLoadLands() {
+    HoldsPerTab.LOADS.clear();
+    try (Harness h = harness(HoldsPerTab::new)) {
+      Page first = new Page(h.engine, "/", Exchange.empty());
+      String cookie = cookieValue(first.result.setCookies());
+      first.connect();
+      Page second = new Page(h.engine, "/", withCookie(cookie)).connect();
+      int fromFirst = first.conn.size();
+      int fromSecond = second.conn.size();
+      first.click("select");
+      Harness.eventually(() -> HoldsPerTab.LOADS.size() == 2, "each tab loads for itself");
+      assertTrue(first.conn.since(fromFirst, m -> "patch".equals(m.get("type"))).isEmpty(), "the first tab holds");
+      assertTrue(second.conn.since(fromSecond, m -> "patch".equals(m.get("type"))).isEmpty(), "the second tab holds");
+
+      HoldsPerTab.LOADS.get(0).complete("b");
+      Harness.eventually(() -> !first.conn.since(fromFirst, m -> "patch".equals(m.get("type"))).isEmpty()
+        || !second.conn.since(fromSecond, m -> "patch".equals(m.get("type"))).isEmpty(), "one tab moves on");
+      HoldsPerTab.LOADS.get(1).complete("b");
+      first.awaitPatch(fromFirst, "id:b;loaded:B;");
+      second.awaitPatch(fromSecond, "id:b;loaded:B;");
+      for (Page page : List.of(first, second)) {
+        for (Map<String, String> patch : page.conn.since(0, m -> "patch".equals(m.get("type")))) {
+          assertTrue(!patch.get("html").contains("id:b;loaded:A"), patch.get("html"));
+        }
+      }
+    }
+  }
 }

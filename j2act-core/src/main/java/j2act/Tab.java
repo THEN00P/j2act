@@ -56,11 +56,11 @@ public final class Tab {
   /** The shell went out, so a load's notFound() can no longer change the response (ADR 0031). */
   private boolean shellSent;
   /** This lane task's writes, applied together at its end (ADR 0031). */
-  private final Map<ValueCell, Object> batch = new java.util.LinkedHashMap<>();
+  private final Map<Node, Object> batch = new java.util.LinkedHashMap<>();
   /** Writes held until the loads they started landed (ADR 0031). */
   final List<Transition> transitions = new ArrayList<>();
   /** isPending reads this, so its readers re-render when a transition starts or ends. */
-  final ValueCell pendingCell = new ValueCell(this, "tab:pending", 0L);
+  final Node pendingCell = new Node(this, "tab:pending", 0L);
   /** The served page's render stopped outside any loading(...) on a value not loaded yet: it waits for it (ADR 0031). */
   private boolean waitingOnRead;
   /** Renders of a live page that stopped the same way: what it shows stays until they can finish. */
@@ -68,7 +68,7 @@ public final class Tab {
   /** Effects wait for this tab's first socket, or a browser's first tab with one (ADR 0031). */
   private boolean live;
   /** Whether a socket is attached, for effects that watch it (ADR 0031). */
-  private ValueCell connectedCell;
+  private Node connectedCell;
   private PreloadedRoute preload;
   /** Event handlers of the elements on the page, by id (ADR 0013). */
   final Handlers handlers = new Handlers(this);
@@ -80,9 +80,9 @@ public final class Tab {
   final Clients clients = new Clients(this);
 
   /** Current URL; reads of pathParam/queryParam are tracked through it (ADR 0020). */
-  final ValueCell routeCell;
+  final Node routeCell;
   /** Resolved identity, lazily; reads of auth() are tracked through it. */
-  final ValueCell authCell;
+  final Node authCell;
   private final Object authLock = new Object();
 
   /** Mounted route frames, outer layout first, and the route node id of each. */
@@ -136,17 +136,17 @@ public final class Tab {
   /** The token of this tab's latest cookie offer; a newer offer withdraws it, so an older one never lands last. */
   String browserCookieOffer;
   /** Mirrors of browser cells this tab read, by source. */
-  private final Map<Cell, MirrorCell> mirrors = new java.util.concurrent.ConcurrentHashMap<>();
+  private final Map<Node, MirrorCell> mirrors = new java.util.concurrent.ConcurrentHashMap<>();
 
-  /** This tab's mirror of a browser cell, made and subscribed on first read. */
-  MirrorCell mirror(Cell source, Object seen) {
+  /** This tab's copy of a browser cell, made and subscribed on first read. */
+  MirrorCell mirror(Node source) {
     MirrorCell mirror = mirrors.get(source);
     if (mirror == null) {
       MirrorCell made = new MirrorCell(this, source);
       mirror = mirrors.putIfAbsent(source, made);
       if (mirror == null) {
         mirror = made;
-        made.subscribe(seen);
+        made.subscribe();
       }
     }
     return mirror;
@@ -187,8 +187,8 @@ public final class Tab {
     this.lane = new Lane(engine.executor);
     this.exchange = exchange;
     this.nonce = engine.cspNonce == null ? null : engine.cspNonce.apply(exchange);
-    this.routeCell = new ValueCell(this, "route", new RouteInfo(url, new HashMap<>()));
-    this.authCell = new ValueCell(this, "auth", UNRESOLVED);
+    this.routeCell = new Node(this, "route", new RouteInfo(url, new HashMap<>()));
+    this.authCell = new Node(this, "auth", UNRESOLVED);
     cells.put(routeCell.address, routeCell);
     cells.put(authCell.address, authCell);
     long now = engine.clock.millis();
@@ -930,12 +930,12 @@ public final class Tab {
   }
 
   /** Lane-only. A write of this lane task, applied with the others at its end. */
-  void batch(ValueCell cell, Object next) {
+  void batch(Node cell, Object next) {
     batch.put(cell, next);
   }
 
   /** Lane-only. What an update starts from: this task's last write, else the newest value. */
-  Object batched(ValueCell cell) {
+  Object batched(Node cell) {
     return batch.containsKey(cell) ? batch.get(cell) : cell.peekLatest();
   }
 
@@ -944,13 +944,13 @@ public final class Tab {
     if (batch.isEmpty()) {
       return;
     }
-    Map<ValueCell, Object> writes = new java.util.LinkedHashMap<>(batch);
+    Map<Node, Object> writes = new java.util.LinkedHashMap<>(batch);
     batch.clear();
     apply(writes, null);
   }
 
   /** Lane-only. One write outside a batch: a parent's render passing a Prop, or a route. */
-  void applyWrite(ValueCell cell, Object next) {
+  void applyWrite(Node cell, Object next) {
     apply(java.util.Collections.singletonMap(cell, next), null);
   }
 
@@ -958,68 +958,60 @@ public final class Tab {
    * Lane-only. Applies writes. Those that make an async value on screen reload are held in a
    * transition until it landed, with everything sharing a load or a write entangled (ADR 0031).
    */
-  void apply(Map<ValueCell, Object> writes, Transition into) {
-    Set<AsyncCell> reloads = new java.util.LinkedHashSet<>();
-    Set<Cell> seen = new HashSet<>();
-    for (ValueCell cell : writes.keySet()) {
-      collectReloads(cell, seen, reloads);
+  void apply(Map<Node, Object> given, Transition into) {
+    Map<Node, Object> writes = new java.util.LinkedHashMap<>();
+    given.forEach((cell, next) -> {
+      if (cell.changedBy(next)) {
+        writes.put(cell, next);
+      }
+    });
+    if (writes.isEmpty()) {
+      return;
     }
+    Set<Node> below = new java.util.LinkedHashSet<>();
+    for (Node cell : writes.keySet()) {
+      below.addAll(cell.nodesBelow());
+    }
+    boolean reloads = false;
     Transition target = into;
-    for (ValueCell cell : writes.keySet()) {
+    for (Node node : below) {
+      reloads |= node.holdsWrites();
+      if (node.transition != null) {
+        target = merged(target, node.transition);
+      }
+    }
+    if (reloads) {
+      for (Node node : below) {
+        Transition lane = node.laneTransition();
+        if (lane != null) {
+          target = merged(target, lane);
+        }
+      }
+    }
+    for (Node cell : writes.keySet()) {
       if (cell.transition != null) {
         target = merged(target, cell.transition);
       }
     }
-    for (AsyncCell load : reloads) {
-      if (load.transition != null) {
-        target = merged(target, load.transition);
-      }
-    }
-    if (target == null && reloads.isEmpty()) {
-      writes.forEach(ValueCell::setOnLane);
+    if (target == null && !reloads) {
+      writes.forEach(Node::setOnLane);
       return;
     }
     if (target == null) {
       target = new Transition(this);
       transitions.add(target);
     }
-    Transition transition = target;
+    Transition transition = target.current();
     writes.forEach(transition::hold);
+    transition.enrollBelow(below, false);
+    Transition current = transition.current();
     pendingChanged();
-    for (AsyncCell load : reloads) {
-      transition.load(load);
-    }
-    for (AsyncCell load : reloads) {
-      load.start();
-    }
-    transition.current().commitIfDone();
-  }
-
-  /** Lane-only. The async values on screen that follow this load. */
-  Set<AsyncCell> loadsBelow(AsyncCell load) {
-    Set<AsyncCell> below = new java.util.LinkedHashSet<>();
-    Set<Cell> seen = new HashSet<>();
-    collectReloads(load, seen, below);
-    return below;
-  }
-
-  /** Lane-only. A load of a transition landed: the loads that follow it run again on its new result. */
-  void restartBelow(AsyncCell landed, Transition transition) {
-    Set<AsyncCell> below = new java.util.LinkedHashSet<>();
-    Set<Cell> seen = new HashSet<>();
-    seen.add(landed);
-    for (Observer observer : new ArrayList<>(landed.observers)) {
-      if (observer instanceof AsyncCell) {
-        below.add((AsyncCell) observer);
-      } else if (observer instanceof Cell) {
-        collectReloads((Cell) observer, seen, below);
+    for (Node load : new ArrayList<>(current.loads())) {
+      if (below.contains(load)) {
+        load.start(false);
       }
     }
-    for (AsyncCell load : below) {
-      if (load.transition != null && load.transition.current() == transition) {
-        load.start();
-      }
-    }
+    current.current().commitIfDone();
   }
 
   private static Transition merged(Transition into, Transition other) {
@@ -1031,26 +1023,39 @@ public final class Tab {
     return into.current();
   }
 
-  /** The async values on screen that follow this cell, through memos. */
-  private void collectReloads(Cell cell, Set<Cell> seen, Set<AsyncCell> reloads) {
-    if (!seen.add(cell)) {
+  /**
+   * Lane-only. Loads a value again, quietly: if it is on screen, what follows it reloads with it and
+   * everything changes in one update. Nothing on screen has nothing to hold.
+   */
+  void refresh(Node load) {
+    if (load.transition != null) {
+      load.start(false);
       return;
     }
-    for (Observer observer : cell.observers) {
-      if (observer instanceof AsyncCell) {
-        if (((AsyncCell) observer).holdsWrites()) {
-          reloads.add((AsyncCell) observer);
-          // Its result changes too, so what follows it is part of the same update.
-          collectReloads((AsyncCell) observer, seen, reloads);
-        }
-      } else if (observer instanceof OptimisticCell) {
-        collectReloads((OptimisticCell) observer, seen, reloads);
-      } else if (observer instanceof MemoCell) {
-        collectReloads((MemoCell) observer, seen, reloads);
-      } else if (observer instanceof DerivedSignalCell) {
-        collectReloads((DerivedSignalCell) observer, seen, reloads);
-      }
+    if (!load.holdsWrites()) {
+      load.start(false);
+      return;
     }
+    Transition transition = new Transition(this);
+    transitions.add(transition);
+    refreshInto(load, transition);
+  }
+
+  /** Lane-only. A load joins a transition, with everything that follows it. */
+  void refreshInto(Node load, Transition into) {
+    Transition transition = into.current();
+    if (load.transition != null && load.transition.current() != transition) {
+      transition.merge(load.transition.current());
+    }
+    if (!load.holdsWrites()) {
+      load.start(false);
+      return;
+    }
+    transition = transition.current();
+    transition.addLoad(load, true);
+    transition.enrollBelow(load.nodesBelow(), true);
+    // What follows it runs on its result, when it lands (Transition.reflow).
+    load.start(false);
   }
 
   /** Lane-only. isPending's readers re-render. */
@@ -1103,9 +1108,9 @@ public final class Tab {
     return (Boolean) connectedCell().read();
   }
 
-  private ValueCell connectedCell() {
+  private Node connectedCell() {
     if (connectedCell == null) {
-      connectedCell = new ValueCell(this, "tab:connected", connection != null);
+      connectedCell = new Node(this, "tab:connected", connection != null);
     }
     return connectedCell;
   }

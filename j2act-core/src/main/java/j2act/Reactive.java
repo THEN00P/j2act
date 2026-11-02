@@ -128,24 +128,38 @@ public final class Reactive {
     if (tab == null) {
       throw new IllegalStateException("async(...) needs a tab: call it from a memo, a handler or an action");
     }
-    return AsyncCell.submit(tab, observer instanceof AsyncCell ? (AsyncCell) observer : null, scope, work);
+    Node node = observer instanceof Node && ((Node) observer).isAsync() ? (Node) observer : null;
+    return Node.submit(tab, node, scope, Tracking.pass(), work);
   }
 
   /**
-   * Loads an async memo again, quietly: its old value stays and isPending does not turn true
-   * (ADR 0031). In an action's body it is part of the transaction: the action commits, with its
-   * optimistic writes going, once the new value arrived.
+   * Loads an async memo again, quietly: its old value stays, what follows it reloads with it and
+   * changes in the same update, and isPending does not turn true (ADR 0031). In an action's body it is
+   * part of the transaction: the action commits, with its optimistic writes going, once the new
+   * value arrived. The future finishes with what lands next, staged or not, so an action can wait for it.
    */
-  public static void refresh(Supplier<?> memo) {
-    AsyncCell async = asyncOf(memo, "refresh");
+  @SuppressWarnings("unchecked")
+  public static <T> CompletableFuture<T> refresh(Supplier<T> memo) {
+    Node node = asyncOf(memo, "refresh");
+    CompletableFuture<Object> landed = new CompletableFuture<>();
     Action.Call call = Action.Call.current();
-    if (call != null) {
-      call.refresh(async);
-    } else if (async.tab.lane.isCurrent()) {
-      async.refresh();
+    if (node.tab.lane.isCurrent() && call == null) {
+      node.addWaiter(landed);
+      node.tab.refresh(node);
+    } else if (call != null) {
+      call.refresh(node, landed);
     } else {
-      async.tab.post(async::refresh);
+      node.tab.post(() -> {
+        node.addWaiter(landed);
+        node.tab.refresh(node);
+      });
     }
+    return (CompletableFuture<T>) landed;
+  }
+
+  /** Tracked: the last load of this async memo failed; for showing it beside a withStaleOnError() value. */
+  public static boolean failed(Supplier<?> memo) {
+    return asyncOf(memo, "failed").readFailed();
   }
 
   /**
@@ -177,7 +191,7 @@ public final class Reactive {
    * action around this call ends, for a refresh that should show (ADR 0031).
    */
   public static void affects(Supplier<?> memo) {
-    AsyncCell async = asyncOf(memo, "affects");
+    Node async = asyncOf(memo, "affects");
     Action.Call call = Action.Call.current();
     if (async.tab.lane.isCurrent()) {
       async.affected = true;
@@ -194,12 +208,12 @@ public final class Reactive {
     }
   }
 
-  private static AsyncCell asyncOf(Supplier<?> value, String what) {
-    AsyncCell async = value instanceof Primitive ? Optimistic.asyncOf(((Primitive) value).requireCell()) : null;
-    if (async == null) {
+  private static Node asyncOf(Supplier<?> value, String what) {
+    Cell cell = value instanceof Primitive ? ((Primitive) value).requireCell() : null;
+    if (!(cell instanceof Node) || !((Node) cell).isAsync()) {
       throw new IllegalArgumentException(what + " takes an async memo or an optimistic value over a load");
     }
-    return async;
+    return (Node) cell;
   }
 
   /**
@@ -297,11 +311,11 @@ public final class Reactive {
 
   /** Reads ahead of a held write, for what must follow input at once, such as the text field being typed into. */
   public static <T> T latest(Supplier<T> read) {
-    boolean previous = Tracking.swapLatest(true);
+    Pass previous = Tracking.swapPass(Pass.LATEST);
     try {
       return read.get();
     } finally {
-      Tracking.swapLatest(previous);
+      Tracking.swapPass(previous);
     }
   }
 
@@ -311,11 +325,6 @@ public final class Reactive {
     if (tab != null && tab.lane.isCurrent()) {
       tab.applyWrites();
     }
-  }
-
-  /** Tracked: the last load of this async memo failed; for showing it beside a withStaleOnError() value. */
-  public static boolean failed(Supplier<?> memo) {
-    return asyncOf(memo, "failed").readFailed();
   }
 
   /** A boundary showing a fallback while what it wraps reads a value not loaded yet; see {@link Loading}. */

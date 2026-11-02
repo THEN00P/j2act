@@ -24,7 +24,7 @@ class StreamingTest {
     return LOADS.computeIfAbsent(key, k -> new CompletableFuture<>());
   }
 
-  static final class Sink implements ServeResult.ChunkSink {
+  static class Sink implements ServeResult.ChunkSink {
     final List<String> chunks = new CopyOnWriteArrayList<>();
     final AtomicInteger ends = new AtomicInteger();
 
@@ -181,6 +181,53 @@ class StreamingTest {
       result.streamTo(sink);
       load("missing").completeExceptionally(RouteException.notFound());
       Harness.eventually(() -> sink.all().contains("error boundary"), "the boundary shows it: " + sink.all());
+    }
+  }
+
+  static final class TwoParts extends LiveComponent {
+    static final java.util.concurrent.atomic.AtomicReference<String> RENDERED = new java.util.concurrent.atomic.AtomicReference<>();
+
+    @Override protected View setup() {
+      var first = createMemo(() -> load("first"));
+      var second = createMemo(() -> load("second"));
+      return () -> T.page("t", T.div(
+        Reactive.loading(() -> T.span("first:" + first.get())).withFallback(T.span("waiting")),
+        Reactive.loading(() -> {
+          String value = second.get();
+          RENDERED.set(value);
+          return T.span("second:" + value);
+        }).withFallback(T.span("waiting"))));
+    }
+  }
+
+  @Test
+  void aSlowClientDoesNotHoldUpTheTab() {
+    LOADS.clear();
+    TwoParts.RENDERED.set(null);
+    java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+    Sink slow = new Sink() {
+      @Override public void write(String chunk) {
+        if (chunk.contains("first:")) {
+          try {
+            release.await();
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        }
+        super.write(chunk);
+      }
+    };
+    try (Harness h = new Harness(TwoParts::new)) {
+      ServeResult result = h.engine.serve("/", Exchange.empty());
+      Thread request = new Thread(() -> result.streamTo(slow));
+      request.start();
+      load("first").complete("a");
+      Harness.eventually(() -> slow.chunks.size() >= 1, "the helper went out");
+      load("second").complete("b");
+      Harness.eventually(() -> "b".equals(TwoParts.RENDERED.get()), "the tab renders on while the client is stuck");
+      release.countDown();
+      Harness.eventually(() -> slow.ends.get() == 1, "and the response ends when it has caught up");
+      assertTrue(slow.all().contains("second:b"), slow.all());
     }
   }
 }

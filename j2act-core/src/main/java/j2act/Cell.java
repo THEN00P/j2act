@@ -26,8 +26,13 @@ abstract class Cell {
   /** Current value without tracking. */
   abstract Object peek();
 
-  /** What a run of a load reads and is validated against: a held write's value, if there is one. */
+  /** The newest value there is, for an update composing on it. */
   Object peekLatest() {
+    return peek();
+  }
+
+  /** What a run in this pass read of this cell, which its result is validated against. */
+  Object peekFor(Pass pass) {
     return peek();
   }
 
@@ -53,12 +58,6 @@ abstract class Cell {
     LoadRun run = Tracking.run();
     if (run != null && run.tab == tab) {
       run.record(this, seen);
-      return;
-    }
-    // A browser store's cell read from a tab's lane or query run: tracked there through a mirror (ADR 0030).
-    Tab reader = run != null ? run.tab : Tab.current();
-    if (tab.hubFor != null && reader != null && reader != tab) {
-      reader.mirror(this, seen).onRead(seen);
       return;
     }
     tab.warnForeignRead(address);

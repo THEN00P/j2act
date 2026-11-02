@@ -45,24 +45,26 @@ final class Tracking {
     return previous;
   }
 
-  /** Reads see held values: a load of a transition, or latest(...) (ADR 0031). */
-  private static final ThreadLocal<Boolean> LATEST = new ThreadLocal<>();
-  /** isPending(...) is probing what its expression reads (ADR 0031). */
-  private static final ThreadLocal<boolean[]> PROBE = new ThreadLocal<>();
+  /** What the running computation sees of a node's three places (ADR 0031). */
+  private static final ThreadLocal<Pass> PASS = new ThreadLocal<>();
 
-  static boolean latest() {
-    return LATEST.get() != null;
+  static Pass pass() {
+    return PASS.get();
   }
 
-  static boolean swapLatest(boolean next) {
-    boolean previous = LATEST.get() != null;
-    if (next) {
-      LATEST.set(Boolean.TRUE);
+  /** Installs a pass and returns the previous one, to restore in a finally. */
+  static Pass swapPass(Pass next) {
+    Pass previous = PASS.get();
+    if (next == null) {
+      PASS.remove();
     } else {
-      LATEST.remove();
+      PASS.set(next);
     }
     return previous;
   }
+
+  /** isPending(...) is probing what its expression reads (ADR 0031). */
+  private static final ThreadLocal<boolean[]> PROBE = new ThreadLocal<>();
 
   static boolean[] probe() {
     return PROBE.get();

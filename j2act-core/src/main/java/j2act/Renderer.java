@@ -107,7 +107,7 @@ final class Renderer {
         keepMounted(scope);
         scope.waitFor(e.cell);
         tab.showingError.add(scope);
-        AsyncCell failed = e.cell;
+        Node failed = e.cell;
         java.util.function.BiFunction<Throwable, Runnable, ? extends DomContent> fallback = ((Errored) boundary).fallback;
         if (fallback != null) {
           renderNode(scope, "/fallback", fallback.apply(e.getCause(), () -> tab.post(failed::retry)), false);

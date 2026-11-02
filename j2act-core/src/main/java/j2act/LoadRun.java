@@ -10,6 +10,8 @@ final class LoadRun {
   final long seq;
   final List<Cell> cells = new ArrayList<>();
   final List<Object> values = new ArrayList<>();
+  /** Memos it evaluated itself: followed like its reads, validated through what they read. */
+  final List<Cell> followed = new ArrayList<>();
 
   LoadRun(Tab tab, long seq) {
     this.tab = tab;
@@ -37,6 +39,11 @@ final class LoadRun {
     if (thread != null) {
       thread.interrupt();
     }
+  }
+
+  /** Called on the run's own thread only. */
+  void follow(Cell cell) {
+    followed.add(cell);
   }
 
   /** Called on the run's own thread only. */

@@ -26,6 +26,7 @@ final class PageStream {
   private boolean ended;
   private boolean finished;
   private boolean done;
+  private boolean draining;
 
   PageStream(Tab tab, String nonce, String tail) {
     this.tab = tab;
@@ -71,33 +72,73 @@ final class PageStream {
     }
   }
 
+  /** Writes on the executor, one drain at a time, so a slow client never holds up the tab's lane. */
   private void drain() {
-    if (sink == null) {
+    if (sink == null || draining || buffered.isEmpty() && !finished) {
       return;
     }
+    draining = true;
     try {
-      while (!buffered.isEmpty()) {
-        sink.write(buffered.poll());
+      tab.engine.executor.execute(this::drainNow);
+    } catch (java.util.concurrent.RejectedExecutionException e) {
+      draining = false;
+      fail();
+    }
+  }
+
+  private void drainNow() {
+    while (true) {
+      String chunk;
+      ServeResult.ChunkSink target;
+      boolean ending = false;
+      synchronized (this) {
+        target = sink;
+        chunk = buffered.poll();
+        if (target == null) {
+          draining = false;
+          return;
+        }
+        if (chunk == null) {
+          draining = false;
+          ending = finished;
+          if (!ending) {
+            return;
+          }
+          sink = null;
+          done = true;
+        }
       }
-      if (finished) {
-        ServeResult.ChunkSink last = sink;
-        sink = null;
-        done = true;
-        last.end();
+      try {
+        if (ending) {
+          target.end();
+          return;
+        }
+        target.write(chunk);
+      } catch (IOException | RuntimeException e) {
+        fail();
+        return;
       }
-    } catch (IOException | RuntimeException e) {
-      // The visitor left, or the response is gone: what is loading arrives over a socket, if one comes.
-      ServeResult.ChunkSink last = sink;
+    }
+  }
+
+  /** The visitor left, or the response is gone: what is loading arrives over a socket, if one comes. */
+  private void fail() {
+    ServeResult.ChunkSink last;
+    synchronized (this) {
+      last = sink;
       sink = null;
       ended = true;
       done = true;
+      draining = false;
       buffered.clear();
+    }
+    if (last != null) {
       try {
         last.end();
       } catch (RuntimeException ignored) {
         // Nothing more to do with this response.
       }
-      tab.post(tab::streamGone);
     }
+    tab.post(tab::streamGone);
   }
 }

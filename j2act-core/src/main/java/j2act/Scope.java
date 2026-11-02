@@ -310,10 +310,10 @@ final class Scope implements Observer {
     tab.cells.put(cell.address, cell);
     if (primitive instanceof RetainedSignal) {
       Signal<?> signal = (Signal<?>) primitive;
-      tab.snapshot.retain(this, primitive, signal.retainedName, signal.stackName, signal.initial(), (ValueCell) cell);
+      tab.snapshot.retain(this, primitive, signal.retainedName, signal.stackName, signal.initial(), (Node) cell);
     } else if (primitive instanceof RetainedValue) {
       RetainedValue<?> value = (RetainedValue<?>) primitive;
-      tab.snapshot.retain(this, primitive, value.name, value.stackName, cell.peek(), (ValueCell) cell);
+      tab.snapshot.retain(this, primitive, value.name, value.stackName, cell.peek(), (Node) cell);
     }
     primitive.attach(cell, true);
   }
@@ -333,7 +333,7 @@ final class Scope implements Observer {
   }
 
   /** The route cell pathParam()/queryParam() read here: a preloaded subtree's own, else the tab's. */
-  ValueCell routeCell() {
+  Node routeCell() {
     for (Scope s = this; s != null; s = s.parent) {
       if (s.routeOverride != null) {
         return s.routeOverride;
@@ -362,8 +362,7 @@ final class Scope implements Observer {
       return false;
     }
     for (Cell cell : cells) {
-      if (cell instanceof AsyncCell && ((AsyncCell) cell).loading()
-        || cell instanceof OptimisticCell && ((OptimisticCell) cell).loading()) {
+      if (cell instanceof Node && ((Node) cell).loading()) {
         return false;
       }
     }
@@ -380,7 +379,7 @@ final class Scope implements Observer {
     if (cell == null || cell.disposed) {
       return;
     }
-    Cell local = cell.tab == tab ? cell : tab.mirror(cell, cell.peek());
+    Cell local = cell.tab == tab ? cell : tab.mirror((Node) cell);
     local.observers.add(this);
     dependsOn(local);
   }

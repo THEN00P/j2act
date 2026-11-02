@@ -8,9 +8,9 @@ final class LoadFailed extends Error {
 
   private static final long serialVersionUID = 1L;
 
-  final transient AsyncCell cell;
+  final transient Node cell;
 
-  LoadFailed(AsyncCell cell, Throwable cause) {
+  LoadFailed(Node cell, Throwable cause) {
     super(cause == null ? "load failed" : cause.toString(), cause, false, false);
     this.cell = cell;
   }
