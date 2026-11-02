@@ -120,6 +120,7 @@ final class TabSnapshot {
         Tracking.swap(previous);
       }
     }
+    tab.applyWrites();
   }
 
   /** Lane-only. The retained values of mounted components, by key; null values are left out, as in .NET. */

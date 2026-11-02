@@ -37,7 +37,7 @@ public final class Prop<T> extends Primitive implements Supplier<T> {
 
   /** Lane-only. Takes the value of the same Prop on a newer description of this component. */
   void adopt(Prop<?> description) {
-    ((ValueCell) requireCell()).setOnLane(description.described());
+    ((ValueCell) requireCell()).writeNow(description.described());
   }
 
   private T described() {
@@ -55,7 +55,7 @@ public final class Prop<T> extends Primitive implements Supplier<T> {
   @Override void attach(Cell cell, boolean created) {
     this.cell = cell;
     if (!created) {
-      ((ValueCell) cell).setOnLane(described());
+      ((ValueCell) cell).writeNow(described());
     }
   }
 }

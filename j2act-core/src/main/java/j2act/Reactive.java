@@ -31,6 +31,14 @@ public final class Reactive {
     return own(new Signal<>(initial));
   }
 
+  /**
+   * A signal that follows its source and takes writes until the source changes again, for an
+   * editable copy that resets when what it copies changes (ADR 0031).
+   */
+  public static <T> Signal<T> createSignal(Supplier<T> source) {
+    return own(source == null ? new Signal<T>((T) null) : new Signal<T>(source, true));
+  }
+
   /** A pure derived value, recomputed when what it read changes; readers re-render only when it changes. */
   public static <T> Memo<T> createMemo(Supplier<T> body) {
     return own(new Memo<>(body));
@@ -101,6 +109,73 @@ public final class Reactive {
       async.refresh();
     } else {
       async.tab.post(async::refresh);
+    }
+  }
+
+  /**
+   * Tracked: a read inside fn depends on a change that has not committed yet, an input that
+   * changed and is reloading or an action's held writes (ADR 0031). A first load stops rendering
+   * at the nearest loading(...) like any read; once an error is shown this is false. An
+   * optimistic write alone does not make it true.
+   */
+  public static boolean isPending(Supplier<?> fn) {
+    Scope scope = Tracking.scope();
+    Tab tab = scope != null ? scope.tab : Tab.current();
+    if (tab != null) {
+      tab.pendingCell.read();
+    }
+    boolean[] found = new boolean[1];
+    boolean[] previous = Tracking.swapProbe(found);
+    try {
+      fn.get();
+    } catch (LoadFailed e) {
+      return false;
+    } finally {
+      Tracking.swapProbe(previous);
+    }
+    return found[0];
+  }
+
+  /**
+   * Marks a value as about to change, so isPending turns true for it until it next lands or the
+   * action around this call ends, for a refresh that should show (ADR 0031).
+   */
+  public static void affects(Supplier<?> memo) {
+    Cell cell = memo instanceof Primitive ? ((Primitive) memo).requireCell() : null;
+    if (!(cell instanceof AsyncCell)) {
+      throw new IllegalArgumentException("affects takes an async memo");
+    }
+    AsyncCell async = (AsyncCell) cell;
+    Action.Call call = Action.Call.current();
+    if (async.tab.lane.isCurrent()) {
+      async.affected = true;
+      async.tab.pendingChanged();
+    } else {
+      async.tab.post(() -> {
+        async.affected = true;
+        async.tab.pendingChanged();
+        if (call != null) {
+          call.releaseAffected(async);
+        }
+      });
+    }
+  }
+
+  /** Reads ahead of a held write, for what must follow input at once, such as the text field being typed into. */
+  public static <T> T latest(Supplier<T> read) {
+    boolean previous = Tracking.swapLatest(true);
+    try {
+      return read.get();
+    } finally {
+      Tracking.swapLatest(previous);
+    }
+  }
+
+  /** Applies the writes of this lane task now instead of at its end; mainly for tests. */
+  public static void flush() {
+    Tab tab = Tab.current();
+    if (tab != null && tab.lane.isCurrent()) {
+      tab.applyWrites();
     }
   }
 

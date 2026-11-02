@@ -23,11 +23,25 @@ abstract class Cell {
     this.address = address;
   }
 
-  /** Current value without tracking, used for commit validation. */
+  /** Current value without tracking. */
   abstract Object peek();
+
+  /** What a run of a load reads and is validated against: a held write's value, if there is one. */
+  Object peekLatest() {
+    return peek();
+  }
+
+  /** A change to this value has not committed yet, for isPending (ADR 0031). */
+  boolean pendingChange() {
+    return false;
+  }
 
   /** Records a read of {@code seen}: a graph edge on the lane, a read-set entry inside a query run. */
   final void onRead(Object seen) {
+    boolean[] probe = Tracking.probe();
+    if (probe != null && pendingChange()) {
+      probe[0] = true;
+    }
     if (tab.lane.isCurrent()) {
       Observer observer = Tracking.observer();
       if (observer != null && !disposed) {

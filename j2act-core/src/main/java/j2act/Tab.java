@@ -47,6 +47,12 @@ public final class Tab {
   final List<EffectCell> parkedEffects = new ArrayList<>();
   /** onSettled callbacks that have not fired yet (ADR 0031). */
   final List<LifecycleCell> pendingSettled = new ArrayList<>();
+  /** This lane task's writes, applied together at its end (ADR 0031). */
+  private final Map<ValueCell, Object> batch = new java.util.LinkedHashMap<>();
+  /** Writes held until the loads they started landed (ADR 0031). */
+  final List<Transition> transitions = new ArrayList<>();
+  /** isPending reads this, so its readers re-render when a transition starts or ends. */
+  final ValueCell pendingCell = new ValueCell(this, "tab:pending", 0L);
   /** The last render stopped outside any loading(...) on a value not loaded yet: the page waits for it (ADR 0031). */
   private boolean waitingOnRead;
   /** Effects wait for this tab's first socket, or a browser's first tab with one (ADR 0031). */
@@ -482,10 +488,14 @@ public final class Tab {
     Tab previous = MAKING_STORE.get();
     MAKING_STORE.set(this);
     Store previousStore = Store.swapConstructing(null);
+    Observer previousObserver = Tracking.swap(null);
     T instance;
     try {
       instance = create.get();
+      // What a container's @PostConstruct wrote is there before anyone reads the store.
+      applyWrites();
     } finally {
+      Tracking.swap(previousObserver);
       Store.swapConstructing(previousStore);
       if (previous == null) {
         MAKING_STORE.remove();
@@ -685,7 +695,13 @@ public final class Tab {
       ((Layout) frames.get(frames.size() - 1)).content = null;
     }
     guards = new ArrayList<>(match.guards);
-    routeCell.setOnLane(new RouteInfo(resolution.url, match.params));
+    RouteInfo nextRoute = new RouteInfo(resolution.url, match.params);
+    if (common == next.size() && common > 0) {
+      // The same page with new parameters: what it reloads holds the route, as any write (ADR 0031).
+      routeCell.writeNow(nextRoute);
+    } else {
+      routeCell.setOnLane(nextRoute);
+    }
     if (adopted != null) {
       adopt(adopted);
     }
@@ -758,7 +774,7 @@ public final class Tab {
 
   /** A query without data yet that the page is waiting on; withDefer() ones do not count. */
   private boolean awaitingData() {
-    if (waitingOnRead) {
+    if (waitingOnRead || !transitions.isEmpty()) {
       return true;
     }
     for (QueryCell query : inFlight) {
@@ -886,7 +902,9 @@ public final class Tab {
 
   /** Re-renders the topmost dirty scopes and sends one patch each. No-op until a socket is attached. */
   void flush() {
+    applyWrites();
     runEffects();
+    applyWrites();
     if (preload != null && preload.dirty) {
       renderPreload(preload);
     }
@@ -907,6 +925,104 @@ public final class Tab {
     renderDirty(true);
     clients.sendOutbox();
     fireSettled();
+  }
+
+  /** Lane-only. A write of this lane task, applied with the others at its end. */
+  void batch(ValueCell cell, Object next) {
+    batch.put(cell, next);
+  }
+
+  /** Lane-only. What an update starts from: this task's last write, else the newest value. */
+  Object batched(ValueCell cell) {
+    return batch.containsKey(cell) ? batch.get(cell) : cell.peekLatest();
+  }
+
+  /** Lane-only. Applies this task's writes: at once, or held if they reload something on screen. */
+  void applyWrites() {
+    if (batch.isEmpty()) {
+      return;
+    }
+    Map<ValueCell, Object> writes = new java.util.LinkedHashMap<>(batch);
+    batch.clear();
+    apply(writes, null);
+  }
+
+  /** Lane-only. One write outside a batch: a parent's render passing a Prop, or a route. */
+  void applyWrite(ValueCell cell, Object next) {
+    apply(java.util.Collections.singletonMap(cell, next), null);
+  }
+
+  /**
+   * Lane-only. Applies writes. Those that make an async value on screen reload are held in a
+   * transition until it landed, with everything sharing a load or a write entangled (ADR 0031).
+   */
+  void apply(Map<ValueCell, Object> writes, Transition into) {
+    Set<AsyncCell> reloads = new java.util.LinkedHashSet<>();
+    Set<Cell> seen = new HashSet<>();
+    for (ValueCell cell : writes.keySet()) {
+      collectReloads(cell, seen, reloads);
+    }
+    Transition target = into;
+    for (ValueCell cell : writes.keySet()) {
+      if (cell.transition != null) {
+        target = merged(target, cell.transition);
+      }
+    }
+    for (AsyncCell load : reloads) {
+      if (load.transition != null) {
+        target = merged(target, load.transition);
+      }
+    }
+    if (target == null && reloads.isEmpty()) {
+      writes.forEach(ValueCell::setOnLane);
+      return;
+    }
+    if (target == null) {
+      target = new Transition(this);
+      transitions.add(target);
+    }
+    Transition transition = target;
+    writes.forEach(transition::hold);
+    pendingChanged();
+    for (AsyncCell load : reloads) {
+      transition.load(load);
+    }
+    for (AsyncCell load : reloads) {
+      load.start();
+    }
+    transition.commitIfDone();
+  }
+
+  private static Transition merged(Transition into, Transition other) {
+    Transition current = other.current();
+    if (into == null) {
+      return current;
+    }
+    into.current().merge(current);
+    return into.current();
+  }
+
+  /** The async values on screen that follow this cell, through memos. */
+  private void collectReloads(Cell cell, Set<Cell> seen, Set<AsyncCell> reloads) {
+    if (!seen.add(cell)) {
+      return;
+    }
+    for (Observer observer : cell.observers) {
+      if (observer instanceof AsyncCell) {
+        if (((AsyncCell) observer).holdsWrites()) {
+          reloads.add((AsyncCell) observer);
+        }
+      } else if (observer instanceof MemoCell) {
+        collectReloads((MemoCell) observer, seen, reloads);
+      } else if (observer instanceof DerivedSignalCell) {
+        collectReloads((DerivedSignalCell) observer, seen, reloads);
+      }
+    }
+  }
+
+  /** Lane-only. isPending's readers re-render. */
+  void pendingChanged() {
+    pendingCell.setOnLane((Long) pendingCell.peek() + 1);
   }
 
   /** Lane-only. The update went out: onSettled callbacks whose subtree has finished loading run now. */

@@ -22,6 +22,10 @@ final class MemoCell extends Cell implements Observer {
   }
 
   Object read() {
+    if (Tracking.probe() != null || Tracking.latest() && tab.lane.isCurrent()) {
+      // isPending and a load of a transition see what is underneath, not the cached old value.
+      return body.get();
+    }
     if (!tab.lane.isCurrent()) {
       // A query loader reading a computed: evaluate directly so the underlying reads are recorded.
       if (Tracking.run() != null) {

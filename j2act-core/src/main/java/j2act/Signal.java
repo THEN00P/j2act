@@ -11,6 +11,8 @@ import java.util.function.UnaryOperator;
 public final class Signal<T> extends Primitive implements Supplier<T> {
 
   private final T initial;
+  /** For createSignal(fn): what it follows until a write, and again when that changes. */
+  private final Supplier<T> source;
   /** Retained State (ADR 0026): its value goes into the tab's snapshot. */
   final boolean retained;
   /** The explicit snapshot name, or null to use the field's name. */
@@ -20,8 +22,16 @@ public final class Signal<T> extends Primitive implements Supplier<T> {
     this(initial, false, null);
   }
 
+  Signal(Supplier<T> source, boolean derived) {
+    this.initial = null;
+    this.source = source;
+    this.retained = false;
+    this.retainedName = null;
+  }
+
   Signal(T initial, boolean retained, String retainedName) {
     this.initial = initial;
+    this.source = null;
     this.retained = retained;
     this.retainedName = retainedName;
   }
@@ -43,7 +53,7 @@ public final class Signal<T> extends Primitive implements Supplier<T> {
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    return new ValueCell(tab, address, initial);
+    return source != null ? new DerivedSignalCell(tab, address, source) : new ValueCell(tab, address, initial);
   }
 
   T initial() {

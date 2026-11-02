@@ -45,6 +45,39 @@ final class Tracking {
     return previous;
   }
 
+  /** Reads see held values: a load of a transition, or latest(...) (ADR 0031). */
+  private static final ThreadLocal<Boolean> LATEST = new ThreadLocal<>();
+  /** isPending(...) is probing what its expression reads (ADR 0031). */
+  private static final ThreadLocal<boolean[]> PROBE = new ThreadLocal<>();
+
+  static boolean latest() {
+    return LATEST.get() != null;
+  }
+
+  static boolean swapLatest(boolean next) {
+    boolean previous = LATEST.get() != null;
+    if (next) {
+      LATEST.set(Boolean.TRUE);
+    } else {
+      LATEST.remove();
+    }
+    return previous;
+  }
+
+  static boolean[] probe() {
+    return PROBE.get();
+  }
+
+  static boolean[] swapProbe(boolean[] next) {
+    boolean[] previous = PROBE.get();
+    if (next == null) {
+      PROBE.remove();
+    } else {
+      PROBE.set(next);
+    }
+    return previous;
+  }
+
   static QueryRun run() {
     return RUN.get();
   }

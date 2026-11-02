@@ -24,6 +24,13 @@ final class AsyncCell extends Cell implements Observer {
   private volatile Throwable error;
   private volatile boolean loading;
   private long seq;
+  /** Set while a write that reloads this value is held (ADR 0031): the result waits here for the commit. */
+  Transition transition;
+  private boolean isStaged;
+  private Object stagedValue;
+  private Throwable stagedError;
+  /** affects(x): a change to it is on its way, until the next landing or the action's end. */
+  boolean affected;
   private final Set<Cell> deps = new HashSet<>();
   /** The async(...) runs of the current body, whose reads are validated when it lands. */
   private List<QueryRun> runs = new ArrayList<>();
@@ -56,6 +63,40 @@ final class AsyncCell extends Cell implements Observer {
     return value;
   }
 
+  @Override boolean pendingChange() {
+    return transition != null || affected;
+  }
+
+  /** The value is on screen, so a write that reloads it holds the update instead of tearing it. */
+  boolean holdsWrites() {
+    return hasValue && error == null && !observers.isEmpty();
+  }
+
+  boolean staged() {
+    return isStaged;
+  }
+
+  /** Lane-only. The transition commits. */
+  void publishStaged() {
+    if (isStaged) {
+      isStaged = false;
+      if (stagedError == null) {
+        value = stagedValue;
+        hasValue = true;
+        error = null;
+      } else {
+        error = stagedError;
+      }
+      stagedValue = null;
+      stagedError = null;
+      loading = false;
+    }
+  }
+
+  void notifyPublished() {
+    notifyObservers();
+  }
+
   /** A load is running, or none has landed yet. */
   boolean loading() {
     return loading || !hasValue && error == null;
@@ -71,9 +112,11 @@ final class AsyncCell extends Cell implements Observer {
     unsubscribe();
     runs = new ArrayList<>();
     loading = true;
+    isStaged = false;
     CompletionStage<?> stage;
     Observer previous = Tracking.swap(this);
     Scope previousScope = Tracking.swapScope(owner);
+    boolean previousLatest = Tracking.swapLatest(true);
     try {
       stage = body.get();
     } catch (NotReady e) {
@@ -86,6 +129,7 @@ final class AsyncCell extends Cell implements Observer {
     } finally {
       Tracking.swap(previous);
       Tracking.swapScope(previousScope);
+      Tracking.swapLatest(previousLatest);
     }
     if (stage == null) {
       land(mine, null, new IllegalStateException("an async memo returned a null future at " + address));
@@ -103,7 +147,7 @@ final class AsyncCell extends Cell implements Observer {
     for (QueryRun run : runs) {
       for (int i = 0; i < run.cells.size(); i++) {
         Cell cell = run.cells.get(i);
-        if (cell.disposed || !Objects.equals(cell.peek(), run.values.get(i))) {
+        if (cell.disposed || !Objects.equals(cell.peekLatest(), run.values.get(i))) {
           tab.engine.stats.supersededRuns.incrementAndGet();
           start();
           return;
@@ -119,6 +163,22 @@ final class AsyncCell extends Cell implements Observer {
       // A value the run read is not loaded yet: this starts over when it lands.
       watch(((NotReady) cause).cell);
       return;
+    }
+    if (transition != null && !transition.over() && !(cause instanceof RouteException)) {
+      // Waits with the writes that started it; everything changes in one update (ADR 0031).
+      isStaged = true;
+      stagedValue = result;
+      stagedError = cause;
+      if (cause != null) {
+        tab.engine.log(System.Logger.Level.WARNING, "load failed at " + address, cause);
+      }
+      tab.engine.stats.committedRuns.incrementAndGet();
+      transition.current().commitIfDone();
+      return;
+    }
+    if (affected) {
+      affected = false;
+      tab.pendingChanged();
     }
     loading = false;
     if (cause == null) {
@@ -211,7 +271,9 @@ final class AsyncCell extends Cell implements Observer {
   }
 
   @Override public void invalidate() {
-    start();
+    if (transition == null) {
+      start();
+    }
   }
 
   @Override public void dependsOn(Cell cell) {
