@@ -12,6 +12,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 
@@ -118,29 +120,44 @@ class RetainedCheckpointTest {
   /** The first save is slow, so a later snapshot written in parallel would land first. */
   static final class SlowFirstSave extends CountingStorage {
     final java.util.concurrent.atomic.AtomicInteger started = new java.util.concurrent.atomic.AtomicInteger();
+    final CountDownLatch release = new CountDownLatch(1);
 
     @Override public void save(String id, String snapshot, Instant expiresAt) {
       if (started.getAndIncrement() == 0) {
-        sleep(300);
+        try {
+          assertTrue(release.await(Harness.TIMEOUT_MS, TimeUnit.MILLISECONDS), "the first save was released");
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          throw new AssertionError("interrupted waiting to save", e);
+        }
       }
       super.save(id, snapshot, expiresAt);
     }
   }
 
   @Test
-  void aTabsSavesLandInTheOrderTheirSnapshotsWereTaken() {
+  void aTabsSavesLandInTheOrderTheirSnapshotsWereTaken() throws Exception {
     SlowFirstSave storage = new SlowFirstSave();
     try (Harness h = harness(Form::new, storage, b -> b.withCheckpointInterval(Duration.ofMillis(100)))) {
       h.load();
       h.connect();
       type(h, "name", "first");
       Harness.eventually(() -> storage.started.get() == 1, "the slow checkpoint started");
+      Tab tab = h.engine.liveTab(h.token);
+      java.util.concurrent.CompletableFuture<Void> firstWrite = tab.call(() -> tab.snapshot.writes)
+        .get(Harness.TIMEOUT_MS, TimeUnit.MILLISECONDS);
       type(h, "name", "second");
       String token = h.token;
       h.engine.onClose(h.conn);
       Harness.eventually(() -> h.engine.tabCount() == 0, "the eviction");
-      sleep(500); // past the slow save
+      Harness.eventually(() -> tab.call(() -> tab.snapshot.writes != firstWrite).join(),
+        "a newer snapshot queued while the first save is blocked");
+      storage.release.countDown();
+      tab.ended.get(Harness.TIMEOUT_MS, TimeUnit.MILLISECONDS);
+      assertTrue(storage.saves.get() >= 2, "both the checkpoint and eviction reached storage");
       assertTrue(storage.inner.load(Retained.id(token)).get().contains("second"), "the newer snapshot landed last");
+    } finally {
+      storage.release.countDown();
     }
   }
 

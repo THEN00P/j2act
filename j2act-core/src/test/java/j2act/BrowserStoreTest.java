@@ -125,6 +125,8 @@ class BrowserStoreTest {
       int from = conn.size();
       engine.onMessage(conn, Json.object("type", "event", "id", ack, "handler", Harness.handlerOn(html, "change", id), "value", value));
       conn.await(from, m -> "ack".equals(m.get("type")) && ack.equals(m.get("id")));
+      // Browser store writes run on the hub's lane, after the event's ack on the tab's lane.
+      awaitPatch(from, id + "=" + value + ";");
     }
 
     void click(String label) {
@@ -471,9 +473,16 @@ class BrowserStoreTest {
       String cookie = cookieValue(guest.result.setCookies());
       guest.connect();
       guest.change("volume", "9");
+      Browser browser = h.engine.liveTab(guest.token).browser;
       guest.bye();
       String id = Retained.id("browser:" + cookie);
       Harness.eventually(() -> storage.inner.load(id).isPresent(), "the guest browser's snapshot");
+      // Storage can publish the snapshot before the retirement continuation removes the live hub.
+      Harness.eventually(() -> {
+        synchronized (browser) {
+          return browser.ended;
+        }
+      }, "the guest browser's retirement, so login binds the stored snapshot");
 
       new Page(h.engine, "/out", withCookieAs(cookie, "ada"));
       assertEquals("ada", Retained.decode(storage.inner.load(id).get()).principal, "the snapshot is ada's now");
