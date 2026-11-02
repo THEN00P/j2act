@@ -53,6 +53,8 @@ final class Scope {
   Scope fallbackScope;
   /** The fallback's HTML, by identity, to tell whether what a boundary shows is its fallback. */
   String fallbackHtml;
+  /** A reveal's owner, which its boundaries are created under. */
+  Owner revealOwner;
   /** A boundary's engine node, and what renders its content. */
   Node boundaryOutput;
   Node contentNode;
@@ -88,6 +90,11 @@ final class Scope {
   String shape;
 
   Scope(Tab tab, Scope parent, String address) {
+    this(tab, parent, address, null);
+  }
+
+  /** `above` is what a scope with no parent still belongs to: the boundary of its tab. */
+  Scope(Tab tab, Scope parent, String address, Owner above) {
     this.tab = tab;
     this.parent = parent;
     this.address = address;
@@ -95,7 +102,7 @@ final class Scope {
     this.codeEpoch = tab.engine.codeEpoch;
     // Nothing with no parent, such as a store, belongs to the view that happened to make it first.
     this.slot = parent != null ? tab.rt.createSlotOwner(parent.slot)
-      : tab.rt.runWithOwner(null, () -> tab.rt.createSlotOwner(null));
+      : tab.rt.runWithOwner(null, () -> tab.rt.createSlotOwner(above));
   }
 
   /**
@@ -536,7 +543,11 @@ final class Scope {
       tab.cells.remove(cell.address);
     }
     if (slot != null) {
-      slot.dispose();
+      try {
+        slot.dispose();
+      } catch (RuntimeException | Error e) {
+        tab.engine.log(System.Logger.Level.WARNING, "a cleanup failed at " + address, e);
+      }
     }
     tab.forgetScope(this);
     if (routeOverride != null) {

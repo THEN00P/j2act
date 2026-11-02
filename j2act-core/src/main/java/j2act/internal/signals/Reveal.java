@@ -1,4 +1,5 @@
 package j2act.internal.signals;
+// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import j2act.internal.signals.Boundaries.Boundary;
 import java.util.ArrayList;
@@ -195,6 +196,21 @@ final class Reveal {
 
   private static boolean truthy(Boolean b) {
     return b != null && b;
+  }
+
+  /** The owner of createRevealOrder, for a caller that renders under it again and again. */
+  Owner createRevealOwner(Supplier<String> order, Supplier<Boolean> collapsed) {
+    Owner owner = rt.owners.createOwner();
+    Controller parent = (Controller) owner.ctx.get(Boundaries.REVEAL);
+    Controller controller = new Controller(order != null ? order : SEQUENTIAL, collapsed != null ? collapsed : FALSE);
+    Map<Object, Object> context = new HashMap<>(owner.ctx);
+    context.put(Boundaries.REVEAL, controller);
+    owner.ctx = context;
+    if (parent != null) {
+      parent.register(controller);
+      rt.owners.cleanup(() -> parent.unregister(controller), owner);
+    }
+    return owner;
   }
 
   <T> T createRevealOrder(Function<Void, T> fn, Supplier<String> order, Supplier<Boolean> collapsed) {

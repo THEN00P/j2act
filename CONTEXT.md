@@ -13,7 +13,7 @@ The server side of one page load, reached with useTab(): created when the page's
 _Avoid_: Session, Circuit, Connection, Page load
 
 **Browser**:
-Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with useBrowser(). Its @BrowserScoped stores live on a hub with its own lane while any of its tabs lives, plus a grace window, and every tab that read a value re-renders when it changes, holding the change until that tab's own loads have landed. A logout or another user starts a new browser (ADR 0030).
+Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with useBrowser(). Its @BrowserScoped stores live on a hub while any of its tabs lives, plus a grace window. It has one lane and one reactive graph for all its tabs and stores (ADR 0033), so a change reaches every tab in one update, and tabs that can be seen hold together while it loads; a tab nobody can see holds nothing and catches up. A logout or another user starts a new browser (ADR 0030).
 _Avoid_: Session, Device, Visitor, User
 
 **Retained State**:
@@ -65,7 +65,7 @@ A memo whose body returns a future: createMemo(() -> { var key = id.get(); retur
 _Avoid_: Query, Deferred, Fetcher, Resource
 
 **Action**:
-A write, action(body): each run() is one transaction on the executor, returning a CompletableFuture. Optimistic writes show at once, plain signal writes land together at its end with what it refreshed; on failure the optimistic ones are undone and the rest dropped. Runs are concurrent (ADR 0031).
+A write, action(body): each run() is one transaction on the executor, returning a CompletableFuture. Optimistic writes show at once, plain signal writes land together at its end with what it refreshed; on failure the optimistic ones are undone and what it wrote stands, as in Solid, so a write that must not outlive a failure goes after the call that can fail. Its future finishes when the body ends; to wait for a refresh, join refresh(x)'s future in the body. Runs are concurrent (ADR 0031, 0033).
 _Avoid_: Mutation, Command
 
 **Optimistic value**:

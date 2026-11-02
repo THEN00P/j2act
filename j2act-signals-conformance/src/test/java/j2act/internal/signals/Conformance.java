@@ -94,11 +94,20 @@ public final class Conformance {
   }
 
   public List<Result> runFile(Path bundle) throws IOException {
+    return runFile(bundle, null);
+  }
+
+  /** `console` is where the file's console.log goes, if anywhere in particular. */
+  public List<Result> runFile(Path bundle, java.io.OutputStream console) throws IOException {
     String file = name(bundle);
     List<Result> out = new ArrayList<>();
-    Context context = Context.newBuilder("js").engine(engine).allowHostAccess(HostAccess.ALL)
+    Context.Builder builder = Context.newBuilder("js").engine(engine).allowHostAccess(HostAccess.ALL)
       .allowHostClassLookup(c -> false).allowExperimentalOptions(true)
-      .option("js.foreign-object-prototype", "true").build();
+      .option("js.foreign-object-prototype", "true");
+    if (console != null) {
+      builder.out(console);
+    }
+    Context context = builder.build();
     Thread watchdog = new Thread(() -> {
       try {
         Thread.sleep(TimeUnit.SECONDS.toMillis(FILE_BUDGET_SECONDS));

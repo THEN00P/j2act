@@ -489,9 +489,26 @@ public final class Runtime {
     scheduler.resetErrorHalt();
   }
 
+  public Owner createTabRoot() {
+    return boundaries.createTabRoot();
+  }
+
+  public void setTabHidden(Owner tabRoot, boolean hidden) {
+    boundaries.setDetached(tabRoot, hidden);
+  }
+
+  /** What createRevealOrder sets up: boundaries created under this owner show in this order. */
+  public Owner createRevealOwner(Supplier<String> order, Supplier<Boolean> collapsed) {
+    return reveal.createRevealOwner(order, collapsed);
+  }
+
+  public Object from(From.Subscribe<Object> subscribe) {
+    return from.from(subscribe);
+  }
+
   public Node boundaryNode(boolean loading, Node.Compute content, Supplier<Object> fallback,
-    java.util.function.BiFunction<Throwable, Runnable, Object> errorFallback) {
-    return loading ? boundaries.createLoadingBoundary(content, fallback, null)
+    java.util.function.BiFunction<Throwable, Runnable, Object> errorFallback, Supplier<?> on) {
+    return loading ? boundaries.createLoadingBoundary(content, fallback, on)
       : boundaries.createErrorBoundary(content, (error, reset) -> errorFallback.apply((Throwable) core.read(error), reset));
   }
 

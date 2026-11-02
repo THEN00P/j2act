@@ -4,6 +4,8 @@ ADR 0031 adopted Solid 2's API and semantics, and the first implementation wrote
 
 So j2act stops writing its own engine. It ports `@solidjs/signals` file by file, at commit `9449845` on `next` (`2.0.0-rc.20`), and builds on top of it.
 
+Status: done. The port lives in `j2act.internal.signals`, and j2act runs on it. "How it was checked" says what backs that.
+
 ## The line
 
 ```
@@ -72,7 +74,7 @@ This is Solid's documented form, where a read before the first `await` is tracke
 
 **Operations on a primitive** such as `refresh`, a boundary's reset, `failed` and `affects` run on the primitive's runtime, like any read. A tab reaches a browser store's nodes directly, so optimistic values in browser stores work, and a guess shows in every tab at once.
 
-**Effects** queue as in Solid and start at socket connect (ADR 0031): a runtime holds its effect queues until `goLive`.
+**Effects** are Solid's and start at socket connect (ADR 0031): an effect is not created until its tab has had a socket, or its preloaded subtree has been adopted. An effect acts when what its first half read changed, even if that half gives an equal value, as Solid's does.
 
 **Streaming** stays above the line: a boundary landing with no socket renders into the response.
 
@@ -80,22 +82,43 @@ This is Solid's documented form, where a read before the first `await` is tracke
 
 - `createStore`, projections, `createOptimisticStore`: they need JS proxies. `Store` stays.
 - `attribution*`, `dev`, `copies`, `identities`: developer tooling and JS packaging. Solid's invariant checks are ported as test-time assertions.
-- `map`, beyond its row ownership; `flatten`: JSX children. `seat.ts`: Solid's shadow rewrite of its read path, not what ships. When upstream switches to it, so does this.
+- `flatten`: JSX children; a boundary's content here is a string of HTML. `seat.ts`: Solid's shadow rewrite of its read path, not what ships. When upstream switches to it, so does this.
+- Hydration ids, snapshots and the `transparent` option, and `enableExternalSource`, which bridges to other reactive systems that Java does not have.
 
-These are on the backlog. `Reveal`, `Loading`'s `on`, `createDeferred` and `from` come with the port. `from` is for sources outside the JVM, such as Kafka or a device. This deletes `Node`, `Transition`, `OptimisticLane`, `Pass`, `Until`, `LoadRun` and `MirrorCell` as they stand.
+These are on the backlog. `Reveal`, `Loading`'s `on`, `createDeferred` and `from` came with the port as `reveal(...)`, `loading(...).on(...)`, `createDeferred(...)` and `createFrom(...)`. `from` is for sources outside the JVM, such as Kafka or a device. `mapArray` and `repeat` are ported and tested, and their row ownership is what kept components use; nothing public calls them yet. This deleted `Node`, `Transition`, `OptimisticLane`, `Pass`, `Until`, `LoadRun`, `MirrorCell`, `NotReady`, `LoadFailed` and `Observer`.
+
+## How it was checked
+
+Done means Solid's tests pass, every one that does not is listed with a reason, and the table below has no unexplained row. Hand-porting 100,000 lines of tests would have taken far too long and would have copied any misreading into the tests, so they run as they are. `j2act-signals-conformance` fetches Solid at the pinned commit, bundles its test files, and runs them in GraalJS with Solid's imports pointing at the Java classes. The module is not published.
+
+- **Solid's tests.** Of 4,578 in the files that run: 2,681 pass, 1,851 reach something left out on purpose, and 46 fail for a reason listed beside them in `known-failures.txt`. `docs/spikes/solid-port-tests.md` has the groups. A listed test that starts passing fails the build, so the list cannot go stale.
+- **Solid itself.** `js/fuzz.test.ts` builds random graphs and drives them with random writes, refreshes, actions and landings. The build runs it on Solid's own source in Node and on the port in GraalJS, and compares every frame of 400 seeds. 1,800 more seeds were compared by hand during the work. They all matched.
+- **j2act.** `ConsistencyTest`, the existing tests, and the browser checks on Spring and WildFly.
+
+That order of evidence also settled an argument with `ConsistencyTest`, which said some frames were inconsistent. They are, and Solid shows the same ones: with a guess out, a page can show `n4=g4` beside a value derived from the truth, and a first read during a hold gets a load's committed value (A10). So the test does not check those pages, and it says why. Whether the first of these is a bug in Solid is worth asking upstream.
 
 ## Phases
 
-Each passes before the next starts.
+All done, though not in this order: the skeleton came last, once the engine had its tests.
 
-1. **Base.** `graph`, `heap`, `owner`, `core`, `scheduler`, `effect`, with Solid's core tests on a same-thread test runtime, no `Tab`.
-2. **Skeleton.** One real page with slot-kept components on that engine, including a held frame.
+1. **Base.** `graph`, `heap`, `owner`, `core`, `scheduler`, `effect`.
+2. **Skeleton.** Slot-kept components on that engine, including a held frame.
 3. **Holds.** `async`, `from` and transactions, with the visibility oracle and its posture matrix.
 4. **Lanes.** `lanes`, `verdict`, `truth`, `action`, `refresh`, `until`, with the worked scenarios in `SCENARIOS.md` and the fuzz findings.
 5. **Boundaries.** `boundaries`, `reveal`, `deferred`.
-6. **Swap.** `Reactive` moves onto the engine and the old core goes. All existing tests, `ConsistencyTest` and the browser checks on Spring and WildFly pass.
+6. **Swap.** `Reactive` moved onto the engine and the old core went.
 
-Done means the ported tests pass, every test not ported is listed with a reason, and the table below has no unexplained row.
+## What the swap changed for app code
+
+- **Reads in a load go before `async(...)`.** The processor warns about one inside it, and about `pathParam()`, `queryParam()` and `auth()` there.
+- **A failed action's plain writes stand.** Only its guesses are undone. Before, they were dropped. A write that must not outlive a failure goes after the call that can fail.
+- **An action's future finishes when its body ends**, not when its writes show. To wait for a refresh, join `refresh(x)`'s future in the body, as a Solid action yields it. A refresh of something nothing reads holds nothing.
+- **A write to a derived signal stands until its source changes**, even to the same result: the body runs again and decides (Solid's R31).
+- **`equals` on a write.** Unchanged, but see the table.
+
+## How a view renders
+
+Every scope has a render effect. Its first half renders to a string, and a parent's first half runs each child's first half inside its own pass and puts the string in place, so a parent's patch carries its children. When the second half runs, the frame can show: the patch is queued, unless a parent's patch already carried it or the page already has that HTML, and children and handler ids the new frame stopped using go then, not earlier, so a click during a hold still lands. Patches go out at the end of the flush, or wait for a socket or a soft navigation's hold.
 
 ## Differences from Solid 2
 
@@ -108,6 +131,11 @@ Done means the ported tests pass, every test not ported is listed with a reason,
 | Action body | Generator; can escape the hold after `await` | A thread that stays in its transaction | Better |
 | Guess outside an action | Void | The engine voids it, and `Optimistic` refuses it with an error first | Better for finding the mistake |
 | Deep stores | `createStore` and friends | Not ported | Constraint: no proxies |
+| Equality | `===` | `Objects.equals`, so a value compares by content, 0.0 differs from -0.0 and NaN equals itself | Constraint: Java has no `===` that treats strings by value. A signal holding a large list compares it on each write |
+| An error nothing caught | Halts all reactivity for good | Logged, and what failed keeps what it shows, since one runtime serves all of a browser's tabs | Better for a server |
+| A future already done | A promise always lands a tick later | Read at once, as Solid reads a synchronous thenable | Constraint: it is what a done `CompletableFuture` is |
+| `withStaleOnError`, `failed(x)` | No such thing | Wrappers above the line | Addition |
+| Dev warnings | Many, through `DEV` and `OBSERVE` | The ones that throw are kept; the ones that warn are on the backlog with the diagnostics | Worse: closing it is the backlog's "Reactive diagnostics" |
 
 ## Not settled: state across browsers
 

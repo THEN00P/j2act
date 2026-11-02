@@ -904,6 +904,9 @@ public final class J2Act implements AutoCloseable {
       tab.post(() -> tab.clients.onResult(message));
     } else if ("clientError".equals(type)) {
       tab.post(() -> tab.clients.onError(message));
+    } else if ("visibility".equals(type)) {
+      boolean hidden = "true".equals(message.get("hidden"));
+      tab.post(() -> tab.setHidden(hidden));
     } else if ("liveGone".equals(type)) {
       tab.post(() -> tab.clients.onLiveGone(message.get("anchor")));
     } else if ("preload".equals(type)) {

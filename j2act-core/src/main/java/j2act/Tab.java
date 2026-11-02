@@ -1,5 +1,6 @@
 package j2act;
 
+import j2act.internal.signals.Owner;
 import j2act.internal.signals.Runtime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -49,6 +50,9 @@ public final class Tab {
   /** A notFound() or redirect() from inside a pass, where nothing may be written, for after the flush. */
   private RouteException deferredRoute;
   private int renderDepth;
+  /** The boundary above a page's root, for when nobody can see this tab. */
+  Owner rootOwner;
+  private boolean pageHidden;
   private long renderEpoch;
   /** onSettled callbacks that have not fired yet (ADR 0031). */
   final List<LifecycleCell> pendingSettled = new ArrayList<>();
@@ -671,7 +675,10 @@ public final class Tab {
       if (root != null) {
         root.dispose();
       }
-      root = new Scope(this, null, "frame:" + frameIds.get(0));
+      if (rootOwner == null) {
+        rootOwner = rt.createTabRoot();
+      }
+      root = new Scope(this, null, "frame:" + frameIds.get(0), rootOwner);
       root.bind(frames.get(0));
       markDirty(root);
       heldScope = root;
@@ -1060,6 +1067,18 @@ public final class Tab {
     clients.sendOutbox();
   }
 
+  /** A tab nobody can see holds nothing: its page is hidden, or its socket is gone (ADR 0033). */
+  void setHidden(boolean hidden) {
+    pageHidden = hidden;
+    applyVisibility();
+  }
+
+  private void applyVisibility() {
+    if (hubFor == null && rootOwner != null) {
+      rt.setTabHidden(rootOwner, pageHidden || (connection == null && shellSent));
+    }
+  }
+
   /** Whether effects may run: this tab has had a socket, or it is a browser's and one of its tabs has. */
   boolean live() {
     return live;
@@ -1067,6 +1086,10 @@ public final class Tab {
 
   /** Lane-only. Effects may run now; a browser's start with its first tab that has a socket. */
   void goLive() {
+    if (!lane.isCurrent()) {
+      post(this::goLive);
+      return;
+    }
     live = true;
     List<EffectCell> parked = new ArrayList<>(parkedEffects);
     parkedEffects.clear();
@@ -1234,6 +1257,8 @@ public final class Tab {
     connection = next;
     disconnectedAt = 0;
     lastActivity = engine.clock.millis();
+    pageHidden = false;
+    applyVisibility();
     // A socket takes over from a stream; with the script at the end of the page it comes after anyway.
     endStream();
     goLive();
@@ -1249,6 +1274,7 @@ public final class Tab {
     if (connection == closed) {
       connection = null;
       disconnectedAt = engine.clock.millis();
+      applyVisibility();
       if (connectedCell != null) {
         connectedCell.write(false);
       }

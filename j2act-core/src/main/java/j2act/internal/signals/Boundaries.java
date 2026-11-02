@@ -1,4 +1,5 @@
 package j2act.internal.signals;
+// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -42,6 +43,8 @@ final class Boundaries {
     Reveal.Controller reveal;
     boolean gated;
     boolean collapsed;
+    /** A tab's root while nobody can see it: it catches everything pending under it (ADR 0033). */
+    boolean detached;
     Node error;
     Function<Boundary, Object> show;
     Node fb;
@@ -75,7 +78,39 @@ final class Boundaries {
   }
 
   private boolean isCollecting(Boundary b) {
-    return b.type == STATUS_ERROR || !b.initialized || b.armed;
+    return b.type == STATUS_ERROR || !b.initialized || b.armed || b.detached;
+  }
+
+  /**
+   * Not in Solid, which has one screen (ADR 0033, F-3): a tab's root is a boundary that shows nothing and
+   * catches nothing while the tab can be seen. Once it cannot, what is pending under it holds nothing beyond it.
+   */
+  Owner createTabRoot() {
+    Owner owner = rt.core.runWithOwner(null, rt.owners::createOwner);
+    Boundary b = new Boundary();
+    b.type = STATUS_PENDING;
+    b.owner = owner;
+    b.initialized = true;
+    Map<Object, Object> context = new java.util.HashMap<>(owner.ctx);
+    context.put(BOUNDARY, b);
+    owner.ctx = context;
+    b.show = none -> null;
+    rt.core.runWithOwner(owner, () -> {
+      b.tree = rt.core.computed(prev -> null, null);
+      b.output = rt.core.computed(prev -> null, null);
+      return null;
+    });
+    return owner;
+  }
+
+  void setDetached(Owner tabRoot, boolean detached) {
+    Boundary b = boundaryOf(tabRoot);
+    b.detached = detached;
+    if (!detached) {
+      // Readers it caught answer for themselves when their loads land.
+      b.readers.clear();
+      collecting.remove(b);
+    }
   }
 
   private void record(Boundary b, Node node, Node source) {
@@ -536,6 +571,7 @@ final class Boundaries {
     return v;
   }
 
+  /** A boundary whose content is out of the way of its `on`, for a caller that has its own. */
   Node createLoadingBoundary(Node.Compute fn, Supplier<Object> fallback, Supplier<?> on) {
     return createBoundary(STATUS_PENDING, fn, b -> fallback.get(), on);
   }

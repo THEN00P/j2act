@@ -78,7 +78,7 @@ public final class Reactive {
   }
 
   /**
-   * Watches what track reads and acts with its value when it changes, starting once the tab's
+   * Watches what track reads and acts with its value when that changes, starting once the tab's
    * socket connects (ADR 0031). Only track is tracked. act returns its cleanup or null, which runs
    * before it acts again and on unmount.
    */
@@ -440,6 +440,35 @@ public final class Reactive {
     if (tab != null && tab.lane.isCurrent()) {
       tab.flush();
     }
+  }
+
+  /**
+   * A memo whose later loads do not hold anything (Solid's createDeferred, D-40): the first load is a load like
+   * any, and after that a change commits at once while this keeps its old value until its own load lands.
+   * isPending says so meanwhile. For a panel beside what changed, which should not make it wait.
+   */
+  public static <T> Memo<T> createDeferred(AsyncSupplier<T> body) {
+    return own(new Memo<>(body).deferred());
+  }
+
+  /**
+   * A value kept up to date by a source outside the JVM's reactive graph, such as a Kafka consumer or a device
+   * (Solid's from): subscribe gets what to call with each value, with a failure and at the end, and returns what
+   * stops it. Only the latest value between two reads counts.
+   */
+  public static <T> Memo<T> createFrom(From<T> source) {
+    return own(new Memo<T>(source));
+  }
+
+  /** What createFrom subscribes to. */
+  @FunctionalInterface
+  public interface From<T> {
+    Runnable subscribe(Consumer<T> next, Consumer<Throwable> error, Runnable complete);
+  }
+
+  /** Shows the loading(...) boundaries it wraps in order rather than as each is ready; see {@link Reveal}. */
+  public static Reveal reveal(DomContent... children) {
+    return new Reveal(children);
   }
 
   /** A boundary showing a fallback while what it wraps reads a value not loaded yet; see {@link Loading}. */

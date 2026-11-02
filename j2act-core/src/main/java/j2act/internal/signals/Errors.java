@@ -1,4 +1,5 @@
 package j2act.internal.signals;
+// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 /** Port of @solidjs/signals core/error.ts at 9449845. */
 public final class Errors {

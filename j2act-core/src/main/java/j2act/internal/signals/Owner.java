@@ -1,4 +1,5 @@
 package j2act.internal.signals;
+// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import java.util.ArrayList;
 import java.util.Collections;

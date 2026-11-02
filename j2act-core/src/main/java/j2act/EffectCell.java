@@ -49,7 +49,14 @@ final class EffectCell extends Cell {
         Scope previous = Tracking.swapScope(scope);
         Tab previousTab = Tab.swapCurrent(tab);
         try {
-          return apply.apply(value, previousValue);
+          Runnable cleanup = apply.apply(value, previousValue);
+          return cleanup == null ? null : () -> {
+            try {
+              cleanup.run();
+            } catch (RuntimeException | Error t) {
+              tab.engine.log(System.Logger.Level.WARNING, "effect cleanup failed at " + address, t);
+            }
+          };
         } catch (RuntimeException | Error t) {
           tab.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, t);
           return null;

@@ -103,6 +103,10 @@ final class ReactiveHost {
         } catch (RuntimeException | Error e) {
           engine.log(System.Logger.Level.WARNING, "a flush failed", e);
         }
+        if (rt.halted()) {
+          // Solid stops a page for good here. These tabs go on (ADR 0033): only what failed keeps what it shows.
+          rt.resetErrorHalt();
+        }
       } while (!microtasks.isEmpty() || anyDirty());
       for (Tab tab : tabs) {
         tab.afterFlush();

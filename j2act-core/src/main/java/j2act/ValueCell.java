@@ -31,12 +31,14 @@ class ValueCell extends Cell {
   volatile boolean restored;
   /** withStaleOnError: the last load failed, and the old value stayed. */
   private Node failedNode;
+  private final Reactive.From<Object> source;
   private final Scope creator = Tracking.scope();
 
   /** A plain value. */
   ValueCell(Tab tab, String address, Object initial, boolean ownedWrite) {
     super(tab, address);
     this.rt = tab.rt;
+    this.source = null;
     this.node = rt.signalNode(initial, ownedWrite);
   }
 
@@ -46,31 +48,40 @@ class ValueCell extends Cell {
 
   /** A derived value of the tab's own. */
   ValueCell(Tab tab, String address, Supplier<?> body) {
-    this(tab, address, body, null, false, false);
+    this(tab, address, body, null, Kind.MEMO, false, null);
   }
 
   private ValueCell(Tab tab, String address, Supplier<?> body, AsyncSupplier<?> asyncBody, boolean writable) {
-    this(tab, address, body, asyncBody, writable, false);
+    this(tab, address, body, asyncBody, writable ? Kind.DERIVED : Kind.MEMO, false, null);
   }
 
-  private ValueCell(Tab tab, String address, Supplier<?> body, AsyncSupplier<?> asyncBody, boolean writable,
-      boolean staleOnError) {
+  private ValueCell(Tab tab, String address, Supplier<?> body, AsyncSupplier<?> asyncBody, Kind kind,
+      boolean staleOnError, Reactive.From<Object> source) {
     super(tab, address);
     this.rt = tab.rt;
     this.body = body;
     this.asyncBody = asyncBody;
     this.staleOnError = staleOnError;
+    this.source = source;
     Node.Compute compute = this::compute;
-    this.node = writable ? rt.derivedNode(compute) : rt.memoNode(compute);
+    this.node = kind == Kind.DERIVED ? rt.derivedNode(compute) : kind == Kind.DEFERRED ? rt.deferredNode(compute) : rt.memoNode(compute);
   }
 
   static ValueCell memo(Tab tab, String address, Supplier<?> body) {
     return new ValueCell(tab, address, body, null, false);
   }
 
-  static ValueCell async(Tab tab, String address, AsyncSupplier<?> body, boolean staleOnError) {
-    return new ValueCell(tab, address, null, body, false, staleOnError);
+  static ValueCell async(Tab tab, String address, AsyncSupplier<?> body, boolean staleOnError, boolean deferred) {
+    return new ValueCell(tab, address, null, body, deferred ? Kind.DEFERRED : Kind.MEMO, staleOnError, null);
   }
+
+  /** createFrom: subscribes under this node, so a dispose stops it. */
+  @SuppressWarnings("unchecked")
+  static <T> ValueCell from(Tab tab, String address, Reactive.From<T> source) {
+    return new ValueCell(tab, address, null, null, Kind.MEMO, false, (Reactive.From<Object>) source);
+  }
+
+  private enum Kind { MEMO, DERIVED, DEFERRED }
 
   static ValueCell derived(Tab tab, String address, Supplier<?> source) {
     return new ValueCell(tab, address, source, null, true);
@@ -84,13 +95,20 @@ class ValueCell extends Cell {
   }
 
   final boolean isAsync() {
-    return asyncBody != null;
+    return asyncBody != null || source != null;
   }
 
   private Object compute(Object prev) throws Exception {
     Scope previous = Tracking.swapScope(creator);
     Tab previousTab = Tab.swapCurrent(tab);
     try {
+      if (source != null) {
+        // A value may arrive on any thread, and belongs on the lane.
+        return rt.from((next, error, complete) -> source.subscribe(
+          value -> tab.post(() -> next.accept(value)),
+          failure -> tab.post(() -> error.accept(failure)),
+          () -> tab.post(complete)));
+      }
       if (asyncBody == null) {
         Object value = body.get();
         if (retainedName != null && !java.util.Objects.equals(prev, value)) {
@@ -290,7 +308,7 @@ class ValueCell extends Cell {
   /** The node's engine state is gone with its owner; a value with none of its own goes with the runtime. */
   @Override void dispose() {
     super.dispose();
-    if (body != null || asyncBody != null) {
+    if (body != null || asyncBody != null || source != null) {
       node.dispose();
     }
   }

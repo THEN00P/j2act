@@ -28,7 +28,9 @@ final class Renderer {
   /** Renders a scope; a read that stops it unwinds up to a boundary, with what is mounted kept (ADR 0031). */
   void renderScope(Scope scope) {
     try {
-      if (scope.instance instanceof Boundary) {
+      if (scope.instance instanceof Reveal) {
+        renderReveal(scope);
+      } else if (scope.instance instanceof Boundary) {
         renderBoundary(scope);
       } else {
         renderComponent(scope);
@@ -70,9 +72,11 @@ final class Renderer {
     Boundary<?> boundary = (Boundary<?>) scope.instance;
     String shown;
     if (scope.boundaryOutput == null) {
+      java.util.function.Supplier<?> on = boundary instanceof Loading && ((Loading) boundary).on != null
+        ? () -> ((Loading) scope.instance).on.get() : null;
       scope.boundaryOutput = tab.rt.runWithOwner(scope.slot, () -> tab.rt.boundaryNode(boundary instanceof Loading,
         previous -> renderContent(scope), () -> renderLoadingFallback(scope),
-        (error, reset) -> renderErrorFallback(scope, error, reset)));
+        (error, reset) -> renderErrorFallback(scope, error, reset), on));
     } else if (scope.contentNode != null) {
       // A new description from the parent: what it wraps may be something else now.
       tab.rt.recomputeNow(scope.contentNode);
@@ -164,6 +168,40 @@ final class Renderer {
 
   private static Boundary<?> latest(Boundary<?> boundary) {
     return boundary instanceof Loading ? ((Loading) boundary).latest : ((Errored) boundary).latest;
+  }
+
+  /** Boundaries under a reveal show in its order, which the engine keeps under this scope's owner. */
+  private void renderReveal(Scope scope) {
+    if (scope.renderedEpoch == epoch) {
+      throw new IllegalStateException("one reveal was rendered twice in the same pass");
+    }
+    scope.renderedEpoch = epoch;
+    tab.clearDirty(scope);
+    Reveal reveal = (Reveal) scope.instance;
+    if (scope.revealOwner == null) {
+      scope.revealOwner = tab.rt.runWithOwner(scope.slot, () -> tab.rt.createRevealOwner(
+        () -> ((Reveal) scope.instance).order, () -> ((Reveal) scope.instance).collapsed));
+    }
+    tab.handlers.begin(scope);
+    scope.previousChildren = scope.children;
+    scope.children = new java.util.LinkedHashMap<>();
+    out.append("<div");
+    attribute("data-j2-scope", scope.anchor);
+    attribute("style", "display:contents");
+    out.append('>');
+    Scope previousScope = Tracking.swapScope(scope);
+    scope.rendering = true;
+    try {
+      tab.rt.runWithOwner(scope.revealOwner, () -> {
+        renderChildren(scope, "/0", reveal.latest.children(), false);
+        return null;
+      });
+    } finally {
+      scope.rendering = false;
+      Tracking.swapScope(previousScope);
+    }
+    out.append("</div>");
+    finish(scope);
   }
 
   private void renderComponent(Scope scope) {

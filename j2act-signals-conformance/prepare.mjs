@@ -2,10 +2,10 @@
 // Solid's source and vitest to the globals that js/solid-shim.js and js/vitest-shim.js define, so the tests
 // run against the Java engine.
 import { execSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const COMMIT = "944984541982df9a0133c042cbc886ad8aaedb7e";
 const here = dirname(fileURLToPath(import.meta.url));
@@ -69,4 +69,50 @@ for (const entry of entries) {
   }
 }
 writeFileSync(join(out, "bundle-failures.txt"), failed.join("\n"));
+
+// The fuzz, on Solid's own source: the log DifferentialTest compares the port's with.
+const fuzzSource = join(tests, "zz-j2act-fuzz.test.ts");
+copyFileSync(join(here, "js", "fuzz.test.ts"), fuzzSource);
+try {
+  await build({
+    entryPoints: [fuzzSource],
+    outfile: join(here, "target", "fuzz-real.mjs"),
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    target: "es2022",
+    logLevel: "silent",
+    define: { __DEV__: "true", __OBSERVE__: "true", __TEST__: "false" },
+    banner: { js: "globalThis.it = (name, fn) => { globalThis.__fuzz = fn; };" },
+    plugins: [{
+      name: "vitest",
+      setup(b) {
+        b.onResolve({ filter: /^vitest$/ }, () => ({ path: "vitest", namespace: "vitest" }));
+        b.onLoad({ filter: /.*/, namespace: "vitest" }, () => ({ contents: "export const it = globalThis.it;", loader: "js" }));
+      }
+    }]
+  });
+  await build({
+    entryPoints: [fuzzSource],
+    outfile: join(here, "target", "fuzz-port.js"),
+    bundle: true,
+    format: "iife",
+    target: "es2022",
+    platform: "neutral",
+    mainFields: ["module", "main"],
+    logLevel: "silent",
+    define: { __DEV__: "true", __OBSERVE__: "true", __TEST__: "true" },
+    plugins: [shims],
+    absWorkingDir: resolve(here)
+  });
+} finally {
+  rmSync(fuzzSource);
+}
+await import(pathToFileURL(join(here, "target", "fuzz-real.mjs")).href);
+const logged = [];
+const realLog = console.log;
+console.log = line => logged.push(line);
+await globalThis.__fuzz();
+console.log = realLog;
+writeFileSync(join(here, "target", "fuzz-expected.txt"), logged.join("\n") + "\n");
 console.log(`bundled ${entries.length - failed.length} of ${entries.length} Solid test files`);
