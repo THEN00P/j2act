@@ -32,6 +32,7 @@ final class Checks {
 
   private static final String TAG_HELPERS = "j2act.html.TagHelpers";
   private static final String COMPONENT = "j2act.ComponentTag";
+  private static final String REACTIVE = "j2act.Reactive";
   private static final String UNSAFE_HTML = "j2act.UnsafeHtml";
   private static final String ALLOW_UNSAFE = "j2act.AllowUnsafe";
   private static final String PRIMITIVE = "j2act.Primitive";
@@ -79,7 +80,11 @@ final class Checks {
         if (node != null) {
           if (kind == ElementKind.METHOD) {
             scope.methods.add(node);
+            if (scope.isType(type, COMPONENT)) {
+              componentMethod(member, node, scope);
+            }
           }
+          retainedOnOneLine(node, scope);
           scan(node, scope, typeAllowsUnsafe || allowsUnsafe(member));
         }
       }
@@ -94,9 +99,7 @@ final class Checks {
       if (!allowsUnsafe) {
         unsafeCall(node, scope);
       }
-      capturedLocals(node, scope);
       missingKeys(node, scope);
-      retainedInMethod(node, scope);
       retainedChangedInPlace(node, scope);
       transactionalSelfCall(node, scope);
     } else if (node.kind == Node.Kind.REF) {
@@ -175,42 +178,106 @@ final class Checks {
 
   // ---- captured locals in query loaders (ADR 0020)
 
-  private void capturedLocals(Node call, Scope scope) {
-    if (!call.name.equals("query") || call.args.size() != 1 || call.args.get(0).kind != Node.Kind.LAMBDA
-        || !ownsPrimitives(scope.candidates(call), scope)) {
-      return;
+  // ---- setup once (ADR 0031)
+
+  private void componentMethod(Element method, Node node, Scope scope) {
+    String name = method.getSimpleName().toString();
+    if (name.length() > 4 && name.startsWith("with") && Character.isUpperCase(name.charAt(4))) {
+      plainFieldInSetter(method, node, scope);
+    } else if (name.equals("setup")) {
+      readOnceInSetup(node, scope);
+      catchAllInView(method, node, scope);
     }
-    Node loader = call.args.get(0);
-    List<Node> key = new ArrayList<>();
-    for (Node link = call; link.parent != null && link.parent.kind == Node.Kind.CALL && link.parent.receiver == link;
-         link = link.parent) {
-      if (link.parent.name.equals("withKey")) {
-        key.addAll(link.parent.args);
+    boundaryArguments(node, scope);
+  }
+
+  /** A description is dropped after its Props are taken, so a plain field written by with* is lost. */
+  private void plainFieldInSetter(Element method, Node node, Scope scope) {
+    for (Node assign : descendants(node, Node.Kind.ASSIGN)) {
+      Node target = assign.children.isEmpty() ? null : assign.children.get(0);
+      String field = null;
+      if (target != null && target.kind == Node.Kind.IDENT && local(target, target.name) == null) {
+        field = target.name;
+      } else if (target != null && target.kind == Node.Kind.SELECT && target.receiver != null
+          && target.receiver.is(Node.Kind.IDENT, "this")) {
+        field = target.name;
       }
-    }
-    Set<String> reported = new HashSet<>();
-    for (Node ident : descendants(loader, Node.Kind.IDENT)) {
-      Node local = local(ident, ident.name);
-      if (local != null && !isWithin(local, loader) && !scope.isReactive(local) && !mentions(key, ident.name)
-          && reported.add(ident.name)) {
-        report(ident, scope, "query loader captures local " + ident.name + ", so it keeps the first value; "
-          + "read it inside the loader or add it to withKey(...) (ADR 0020)");
+      if (field != null) {
+        source.report(Diagnostic.Kind.ERROR, "j2act: " + method.getSimpleName() + " writes plain field " + field
+          + ", which is lost: a parent's render only hands over Props, so make it a Prop (ADR 0031)", method);
+        return;
       }
     }
   }
 
-  private static boolean mentions(List<Node> key, String name) {
-    for (Node part : key) {
-      if (part.is(Node.Kind.IDENT, name)) {
-        return true;
+  /** A read directly in setup, outside any lambda, happens once and never updates. */
+  private void readOnceInSetup(Node node, Scope scope) {
+    for (Node child : node.children) {
+      if (child.kind == Node.Kind.LAMBDA || child.kind == Node.Kind.CLASS) {
+        continue;
       }
-      for (Node ident : descendants(part, Node.Kind.IDENT)) {
-        if (ident.name.equals(name)) {
-          return true;
+      if (isPrimitiveRead(child, scope)) {
+        report(child, scope, child.receiver.name + " is read once during setup and never updates; read it inside a "
+          + "lambda, or say it is meant with untrack(...) (ADR 0031)");
+      }
+      readOnceInSetup(child, scope);
+    }
+  }
+
+  private boolean isPrimitiveRead(Node node, Scope scope) {
+    return node.is(Node.Kind.CALL, "get") && node.args.isEmpty() && node.receiver != null
+      && node.receiver.kind == Node.Kind.IDENT && scope.isType(scope.typeOf(node.receiver), PRIMITIVE);
+  }
+
+  /** Reading a value not loaded yet throws an Error that stops rendering, which these would catch. */
+  private void catchAllInView(Element method, Node node, Scope scope) {
+    for (Node lambda : descendants(node, Node.Kind.LAMBDA)) {
+      for (Node variable : descendants(lambda, Node.Kind.VAR)) {
+        if (variable.body == null && ("Throwable".equals(variable.type) || "Error".equals(variable.type)
+            || "java.lang.Throwable".equals(variable.type) || "java.lang.Error".equals(variable.type))) {
+          source.report(Diagnostic.Kind.WARNING, "j2act: catch (" + variable.type + " " + variable.name
+            + ") in a view also catches what stops rendering at loading(...); catch Exception (ADR 0031)", method);
+          return;
         }
       }
     }
-    return false;
+  }
+
+  /** Java evaluates arguments before the call, so a read here happens before the boundary exists. */
+  private void boundaryArguments(Node node, Scope scope) {
+    for (Node call : descendants(node, Node.Kind.CALL)) {
+      if ((call.name.equals("loading") || call.name.equals("errored")) && scope.isOwnedBy(scope.candidates(call), REACTIVE)) {
+        for (Node argument : call.args) {
+          if (argument.kind != Node.Kind.LAMBDA) {
+            directRead(argument, call, scope);
+          }
+        }
+      }
+    }
+  }
+
+  private void directRead(Node at, Node boundary, Scope scope) {
+    if (at.kind == Node.Kind.LAMBDA || at.kind == Node.Kind.CLASS) {
+      return;
+    }
+    if (isPrimitiveRead(at, scope)) {
+      report(at, scope, at.receiver.name + " is read before " + boundary.name + "(...) exists, since Java evaluates "
+        + "arguments first; pass a lambda: " + boundary.name + "(() -> ...) (ADR 0031)");
+    }
+    for (Node child : at.children) {
+      directRead(child, boundary, scope);
+    }
+  }
+
+  /** The name table identifies a call by its line, so two on one line have no name to go by. */
+  private void retainedOnOneLine(Node node, Scope scope) {
+    Set<Integer> lines = new HashSet<>();
+    for (Node call : descendants(node, Node.Kind.CALL)) {
+      if (isRetainedState(call, scope) && !lines.add(source.line(call, scope.type))) {
+        report(call, scope, "two createRetained calls on one line have no variable name to tell them apart; "
+          + "put them on lines of their own (ADR 0031)");
+      }
+    }
   }
 
   // ---- components repeated without keys (ADR 0019)
@@ -454,15 +521,10 @@ final class Checks {
     "j2act.ComponentTag", "j2act.UploadRef", "j2act.Exchange");
 
   private boolean isRetainedState(Node node, Scope scope) {
-    return node.kind == Node.Kind.CALL && node.name.equals("retainedState") && ownsPrimitives(scope.candidates(node), scope);
+    return node.kind == Node.Kind.CALL && node.name.equals("createRetained") && scope.isOwnedBy(scope.candidates(node), REACTIVE);
   }
 
-  /** Declared by ComponentTag or Store, the two owners of primitives (ADR 0019, 0030). */
-  private static boolean ownsPrimitives(List<ExecutableElement> methods, Scope scope) {
-    return scope.isOwnedBy(methods, COMPONENT) || scope.isOwnedBy(methods, STORE);
-  }
-
-  /** A field initializer that is, or chains from, retainedState(...). */
+  /** A field initializer that is, or chains from, createRetained(...). */
   private boolean callsRetainedState(Node member, Scope scope) {
     for (Node node : member.children) {
       for (Node link = node; link != null && link.kind == Node.Kind.CALL; link = link.receiver) {
@@ -474,7 +536,7 @@ final class Checks {
     return false;
   }
 
-  /** Owner.name, a field of a store initialized with retainedState(...) (ADR 0030). */
+  /** Owner.name, a field of a store initialized with createRetained(...) (ADR 0030). */
   private boolean isRetainedStoreField(TypeElement owner, String name) {
     for (Element member : owner.getEnclosedElements()) {
       if (member.getKind() == ElementKind.FIELD && member.getSimpleName().contentEquals(name)) {
@@ -485,20 +547,13 @@ final class Checks {
     return false;
   }
 
-  /** In a method, the runtime cannot see a field name, so the value is keyed by creation order. */
-  private void retainedInMethod(Node call, Scope scope) {
-    if (!isRetainedState(call, scope)) {
-      return;
+  private boolean isRetainedChain(Node value, Scope scope) {
+    for (Node link = value; link != null && link.kind == Node.Kind.CALL; link = link.receiver) {
+      if (isRetainedState(link, scope)) {
+        return true;
+      }
     }
-    Node member = call.parent;
-    while (member != null && member.kind != Node.Kind.MEMBER && member.kind != Node.Kind.LAMBDA
-        && member.kind != Node.Kind.CLASS) {
-      member = member.parent;
-    }
-    if (member != null && member.kind == Node.Kind.MEMBER && member.parent == null && scope.methods.contains(member)) {
-      report(call, scope, "retainedState in a method is keyed by creation order, so a state added above it "
-        + "takes its value after a deploy; declare it as a field (ADR 0026)");
-    }
+    return false;
   }
 
   /** name.get().add(...) or name.get().setX(...) on a retained field or store: no set(), so no save. */
@@ -514,7 +569,15 @@ final class Checks {
     }
     Node field = get.receiver;
     String name;
-    if (field.kind == Node.Kind.IDENT && local(field, field.name) == null) {
+    Node local = field.kind == Node.Kind.IDENT ? local(field, field.name) : null;
+    if (local != null) {
+      if (local.body != null && isRetainedChain(local.body, scope)) {
+        report(call, scope, "retained " + field.name + " is changed in place by " + call.name + "(), which is not saved; "
+          + "set a new value with " + field.name + ".set(...) (ADR 0026)");
+      }
+      return;
+    }
+    if (field.kind == Node.Kind.IDENT) {
       name = field.name;
     } else if (field.kind == Node.Kind.SELECT && field.receiver != null && field.receiver.is(Node.Kind.IDENT, "this")) {
       name = field.name;

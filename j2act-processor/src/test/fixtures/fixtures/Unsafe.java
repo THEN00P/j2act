@@ -1,7 +1,9 @@
 package fixtures;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
+import j2act.View;
 import j2act.AllowUnsafe;
 import j2act.ComponentTag;
 import j2act.Tag;
@@ -12,8 +14,8 @@ public class Unsafe extends ComponentTag {
 
   private final String markdown = "<b>hi</b>";
 
-  @Override protected Tag<?> render() {
-    return div(
+  @Override protected View setup() {
+    return () -> div(
       unsafeHtml(markdown), // expect: unsafeHtml() renders raw HTML
       TagHelpers.unsafeHtml(markdown), // expect: unsafeHtml() renders raw HTML
       new UnsafeHtml(markdown), // expect: new UnsafeHtml() renders raw HTML
@@ -27,7 +29,7 @@ public class Unsafe extends ComponentTag {
       a("home").withHref("/home"),
       a("home").withHref(markdown + "javascript:"),
       trusted(),
-      new Trusted().render()
+      new Trusted()
     );
   }
 
@@ -38,23 +40,24 @@ public class Unsafe extends ComponentTag {
 
   @AllowUnsafe("fixed markup")
   static final class Trusted extends ComponentTag {
-    @Override protected Tag<?> render() {
-      return a("run").withHref("javascript:void(0)");
-    }
+
+  @Override protected View setup() {
+    return () -> a("run").withHref("javascript:void(0)");
+  }
   }
 
   static final class Nested extends ComponentTag {
     private final Runnable later = () -> unsafeHtml("<i>"); // expect: unsafeHtml() renders raw HTML
 
-    @Override protected Tag<?> render() {
-      return div(
+  @Override protected View setup() {
+    return () -> div(
         new Object() {
           UnsafeHtml inAnonymousClass() {
             return unsafeHtml("<u>"); // expect: unsafeHtml() renders raw HTML
           }
         }.inAnonymousClass()
       );
-    }
+  }
   }
 
   /** A method of the user's own named unsafeHtml is not the framework's. */

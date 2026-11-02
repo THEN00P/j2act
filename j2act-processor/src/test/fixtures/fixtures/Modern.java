@@ -1,10 +1,11 @@
 package fixtures;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.DomContent;
-import j2act.Query;
 import j2act.Tag;
 
 /** Java 17 syntax around the checks: records, patterns, switch expressions, text blocks. */
@@ -20,12 +21,13 @@ public class Modern extends ComponentTag {
 
   private final Object shape = new Link("a", "/a");
 
-  @Override protected Tag<?> render() {
-    String mode = "text";
-    Query<String> q = query(() -> switch (mode) { // expect: captures local mode
+  @Override protected View setup() {
+    var mode = "text";
+    var q = createMemo(() -> async(() -> switch (mode) {
       case "html" -> "h";
       default -> "t";
-    });
+    }));
+    return () -> {
     DomContent body = shape instanceof Link link
       ? link.render()
       : switch (mode) {
@@ -33,5 +35,6 @@ public class Modern extends ComponentTag {
         default -> text(q.get());
       };
     return div(body);
+    };
   }
 }

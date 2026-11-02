@@ -1,8 +1,10 @@
 package layout;
 
+import static j2act.Reactive.*;
 import static j2act.router.Routes.*;
 import static j2act.html.TagCreator.*;
 
+import j2act.View;
 import j2act.LiveComponent;
 import j2act.router.Routes.Router;
 import j2act.Tag;
@@ -11,9 +13,10 @@ import j2act.Tag;
 public class Layouts {
 
   static final class NotALayout extends LiveComponent {
-    @Override public Tag<?> render() {
-      return div();
-    }
+
+  @Override protected View setup() {
+    return () -> div();
+  }
   }
 
   static final Router ROUTES = routes(

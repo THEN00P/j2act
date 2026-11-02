@@ -386,6 +386,16 @@ final class EcjSource implements Source {
         node.add(convert(get(ast, "right")));
         return node;
       }
+      case "Assignment": {
+        if (!ast.getClass().getSimpleName().equals("Assignment")) {
+          // += and x++ inherit from Assignment; javac has them apart, and no check reads them.
+          return generic(ast);
+        }
+        Node node = positioned(Node.Kind.ASSIGN, ast);
+        node.add(convert(get(ast, "lhs")));
+        node.add(convert(get(ast, "expression")));
+        return node;
+      }
       case "ReturnStatement": {
         Node node = positioned(Node.Kind.RETURN, ast);
         node.body = node.add(convert(get(ast, "expression")));
@@ -487,6 +497,7 @@ final class EcjSource implements Source {
           case "NullLiteral":
           case "BinaryExpression":
           case "ReturnStatement":
+          case "Assignment":
           case "TypeDeclaration":
           case "ReferenceExpression":
           case "AbstractMethodDeclaration":

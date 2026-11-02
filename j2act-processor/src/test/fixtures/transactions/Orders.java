@@ -1,12 +1,14 @@
 package transactions;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 
+import j2act.View;
 import j2act.ComponentTag;
-import j2act.Mutation;
+import j2act.Action;
 import j2act.Signal;
 import j2act.Store;
 import j2act.Tag;
@@ -17,10 +19,10 @@ public class Orders {
   @TabScoped
   public static class Cart extends Store {
     @Inject Cart self;
-    final Signal<Integer> count = state(0);
-    final Mutation<String, String> viaLambda = mutation((String item) -> save(item)); // expect: save() is transactional
-    final Mutation<String, String> viaReference = mutation(this::save); // expect: save() is transactional
-    final Mutation<String, String> viaSelf = mutation((String item) -> self.save(item));
+    final Signal<Integer> count = createSignal(0);
+    final Action<String, String> viaLambda = action((String item) -> save(item)); // expect: save() is transactional
+    final Action<String, String> viaReference = action(this::save); // expect: save() is transactional
+    final Action<String, String> viaSelf = action((String item) -> self.save(item));
 
     @Transactional
     public String save(String item) {
@@ -146,7 +148,7 @@ public class Orders {
       drop(null); // expect: drop() is transactional
     }
 
-    final Mutation<String, String> viaReference = mutation((String note) -> {
+    final Action<String, String> viaReference = action((String note) -> {
       java.util.function.Consumer<String> later = this::keep;
       later.accept(note);
       return note;
@@ -172,7 +174,7 @@ public class Orders {
       return super.save(item); // expect: save() is transactional
     }
 
-    final Mutation<String, String> viaSuperReference = mutation(super::save); // expect: save() is transactional
+    final Action<String, String> viaSuperReference = action(super::save); // expect: save() is transactional
   }
 
   /** A component is never proxied, so its own transactional methods never start one either. */
@@ -181,9 +183,11 @@ public class Orders {
     void pay() {
     }
 
-    @Override protected Tag<?> render() {
+  @Override protected View setup() {
+    return () -> {
       return button("pay").onClick(e -> pay()); // expect: pay() is transactional
-    }
+    };
+  }
   }
 
   /** Not a store or a component: the container's own rules apply, so nothing is reported. */

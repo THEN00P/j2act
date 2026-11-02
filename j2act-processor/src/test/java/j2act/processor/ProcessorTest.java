@@ -124,7 +124,7 @@ class ProcessorTest {
         .filter(d -> d.contains(" ERROR "))
         .collect(Collectors.toList());
       assertFalse(errors.isEmpty(), compiler.getClass().getSimpleName() + " accepted it");
-      assertTrue(errors.get(0).startsWith("Layouts.java:20:"), errors.toString());
+      assertTrue(errors.get(0).startsWith("Layouts.java:23:"), errors.toString());
     }
   }
 
