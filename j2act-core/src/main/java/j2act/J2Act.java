@@ -216,6 +216,12 @@ public final class J2Act implements AutoCloseable {
     String bound;
     if (browser != null) {
       synchronized (browser) {
+        if (browser.ended) {
+          // It retired since the lookup, with its snapshot saved, and its hub is gone: whoever logged
+          // in has to go on that snapshot, or it stays anonymous for another account to restore.
+          browsers.remove(cookie, browser);
+          return cookieBelongsElsewhere(tab, () -> principal);
+        }
         bound = browser.principal;
         if (bound == null && principal != null) {
           recordPrincipal(browser, principal);
@@ -537,7 +543,7 @@ public final class J2Act implements AutoCloseable {
 
   private final ConcurrentHashMap<String, Tab> tabs = new ConcurrentHashMap<>();
   /** Browsers with a live tab on this node, by cookie (ADR 0030). */
-  private final ConcurrentHashMap<String, Browser> browsers = new ConcurrentHashMap<>();
+  final ConcurrentHashMap<String, Browser> browsers = new ConcurrentHashMap<>();
   /** One-time tokens a page trades for its browser cookie, with their Set-Cookie value and expiry. */
   private final ConcurrentHashMap<String, Map.Entry<String, Long>> browserCookieOffers = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Connection, Tab> byConnection = new ConcurrentHashMap<>();

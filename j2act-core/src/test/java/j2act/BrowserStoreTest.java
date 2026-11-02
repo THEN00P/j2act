@@ -472,6 +472,34 @@ class BrowserStoreTest {
     }
   }
 
+  /**
+   * A login that found the browser just before its retirement removed it. The hub is gone, so writing
+   * the user on the browser would leave the snapshot anonymous, for another account to restore.
+   */
+  @Test
+  void aLoginRacingARetirementStillBindsTheSnapshot() {
+    RetainedStateTest.CountingStorage storage = new RetainedStateTest.CountingStorage();
+    try (Harness h = twoPages(b -> b.withRetainedStateStorage(storage))) {
+      Page guest = new Page(h.engine, "/", Exchange.empty());
+      String cookie = cookieValue(guest.result.setCookies());
+      guest.connect();
+      guest.change("volume", "9");
+      Browser browser = h.engine.liveTab(guest.token).browser;
+      guest.bye();
+      Harness.eventually(() -> {
+        synchronized (browser) {
+          return browser.ended;
+        }
+      }, "the guest browser's retirement");
+      // What the login's lookup sees if it ran just before the removal.
+      h.engine.browsers.put(cookie, browser);
+
+      new Page(h.engine, "/out", withCookieAs(cookie, "ada"));
+      String id = Retained.id("browser:" + cookie);
+      assertEquals("ada", Retained.decode(storage.inner.load(id).get()).principal, "the snapshot is ada's now");
+    }
+  }
+
   static final class OnceBrowser extends LiveComponent {
     private final State<Boolean> used = state(false);
 
