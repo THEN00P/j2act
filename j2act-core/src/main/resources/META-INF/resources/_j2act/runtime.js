@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-88e8c439d9d22cbefdf478728cec4f6f84bb73ee2b8ba89239a814b3906d054b */
+* sources: sha256-a6121fa083e8951e618da7598d7e826a6a66d525d37b3bc6edad12af6a23581d */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -74,7 +74,9 @@
 					type: "liveGone",
 					anchor
 				});
+				return true;
 			}
+			return false;
 		}
 		/** A call from Java, sent after the patch: queued until its client has mounted. */
 		function call(m) {
@@ -90,10 +92,28 @@
 			if (!c || !c.ready) throw c && c.failure ? c.failure.error : named("InvalidStateError", "the client has not mounted yet");
 			return invoke(c, name, revive(JSON.stringify(args)));
 		}
+		/** Results the server has not acknowledged: a socket can die with one on its way (ADR 0032). */
+		const unseenResults = /* @__PURE__ */ new Map();
+		function sendResult(id, result) {
+			unseenResults.set(id, result);
+			send(result);
+		}
+		/** The server has this result. */
+		function resultSeen(id) {
+			unseenResults.delete(id);
+		}
+		/** The socket is back: what the old one may have lost goes again, and the server ignores what it settled. */
+		function resendResults() {
+			unseenResults.forEach((result) => send(result));
+		}
+		/** A new server-side tab: it never made those calls. */
+		function forgetResults() {
+			unseenResults.clear();
+		}
 		/** Answers a call from Java, an action's or a window() call's. */
 		function reply(id, ok, value) {
 			if (ok) try {
-				send({
+				sendResult(id, {
 					type: "callResult",
 					id,
 					ok: true,
@@ -104,7 +124,7 @@
 				value = e;
 			}
 			console.warn("j2act: client action failed", value);
-			send({
+			sendResult(id, {
 				type: "callResult",
 				id,
 				ok: false,
@@ -322,6 +342,9 @@
 			call,
 			callNow,
 			reply,
+			resultSeen,
+			resendResults,
+			forgetResults,
 			sync,
 			reimport
 		};
@@ -335,7 +358,7 @@
 	* The page's socket (ADR 0010): says hello with the tab id and token, queues messages until
 	* the server answers ready, and reconnects with backoff unless the page is leaving or paused.
 	*/
-	function createConnection(url, tab, token, onMessage, reconnects) {
+	function createConnection(url, tab, token, onMessage, reconnects, seen) {
 		let ready = false;
 		let ws = null;
 		let queue = [];
@@ -347,7 +370,8 @@
 				socket.send(JSON.stringify({
 					type: "hello",
 					tab,
-					token
+					token,
+					seen: seen()
 				}));
 			};
 			socket.onmessage = (e) => {
@@ -2174,7 +2198,7 @@
 		let remounting = false;
 		const here = () => location.pathname + location.search;
 		const previous = takePrevious(here(), meta(document, "j2-token"), navigationType());
-		const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath, sid, meta(document, "j2-token"), onMessage, () => !leaving && !remounting && retained.phase !== "paused");
+		const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath, sid, meta(document, "j2-token"), onMessage, () => !leaving && !remounting && retained.phase !== "paused", () => applied);
 		const send = (message) => connection.send(message);
 		document.addEventListener("visibilitychange", () => {
 			if (connection.ready) send({
@@ -2202,6 +2226,8 @@
 		const handlers = {
 			ready: () => {
 				connection.opened();
+				clients.resendResults();
+				acknowledgeSoon();
 				retained.connected();
 				if (document.hidden) send({
 					type: "visibility",
@@ -2209,7 +2235,7 @@
 				});
 			},
 			patch: (m) => {
-				if (!morpher.patch(m.anchor, m.html, m.root === true)) clients.anchorGone(m.anchor);
+				if (!morpher.patch(m.anchor, m.html, m.root === true) && !clients.anchorGone(m.anchor)) send({ type: "resync" });
 				clients.scan();
 			},
 			head: (m) => morpher.head(m.html),
@@ -2230,6 +2256,7 @@
 			},
 			clientCall: (m) => clients.call(m),
 			ack: (m) => pending.ack(m.id),
+			callSeen: (m) => clients.resultSeen(m.id),
 			expired: () => {
 				if (retained.expired()) remount();
 			},
@@ -2239,8 +2266,36 @@
 			modules: (m) => clients.reimport(m.modules),
 			browserCookie: (m) => claimBrowserCookie(m.url)
 		};
+		/** The highest message number applied, which a resend starts after (ADR 0032). */
+		let applied = 0;
+		let acknowledging = false;
+		/** Acknowledgements are batched: one covers everything up to its number. */
+		function acknowledgeSoon() {
+			if (!acknowledging) {
+				acknowledging = true;
+				setTimeout(() => {
+					acknowledging = false;
+					connection.sendIfReady({
+						type: "seen",
+						n: applied
+					});
+				}, 100);
+			}
+		}
 		function onMessage(m) {
-			handlers[m.type]?.(m);
+			const n = m.n;
+			if (n !== void 0) {
+				if (n <= applied) return;
+				if (n > applied + 1) send({ type: "resync" });
+			}
+			try {
+				handlers[m.type]?.(m);
+			} finally {
+				if (n !== void 0) {
+					applied = n;
+					acknowledgeSoon();
+				}
+			}
 		}
 		/** Starts over on a new server-side tab; restoring names a closed page's token instead of this one's (ADR 0030). */
 		function remount(restoring) {
@@ -2260,6 +2315,8 @@
 				document.documentElement.setAttribute("data-j2-scope", doc.documentElement.getAttribute("data-j2-scope"));
 				document.title = doc.title;
 				pending.clear();
+				applied = 0;
+				clients.forgetResults();
 				morpher.body(doc.body);
 				clients.scan();
 				remounting = false;

@@ -45,6 +45,7 @@ export type ServerMessage =
   | { type: "windowCall"; id: string; call: string }
   | ClientCall
   | { type: "ack"; id: string; ok: boolean }
+  | { type: "callSeen"; id: string }
   | { type: "expired"; saved?: boolean }
   | { type: "paused"; saved?: boolean }
   | { type: "pauseRefused" }
@@ -73,7 +74,10 @@ export interface EventFields {
 export type FileFields = Pick<EventFields, "fileId" | "fileName" | "fileSize" | "fileType">;
 
 export type ClientMessage =
-  | { type: "hello"; tab: string | null; token: string | null }
+  /** seen: the highest message number this page applied (ADR 0032). */
+  | { type: "hello"; tab: string | null; token: string | null; seen: number }
+  | { type: "seen"; n: number }
+  | { type: "resync" }
   | ({ type: "event"; id: string; handler: string; value: string } & EventFields)
   /** args is a JSON array. */
   | ({ type: "callback"; handler: string; args: string } & FileFields)

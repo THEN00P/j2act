@@ -36,7 +36,7 @@ function start(): void {
 
   const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath,
     sid, meta(document, "j2-token"), onMessage,
-    () => !leaving && !remounting && retained.phase !== "paused");
+    () => !leaving && !remounting && retained.phase !== "paused", () => applied);
   const send = (message: ClientMessage) => connection.send(message);
   document.addEventListener("visibilitychange", () => {
     if (connection.ready) {
@@ -60,14 +60,17 @@ function start(): void {
   const handlers: Handlers = {
     ready: () => {
       connection.opened();
+      clients.resendResults();
+      acknowledgeSoon();
       retained.connected();
       if (document.hidden) {
         send({ type: "visibility", hidden: true });
       }
     },
     patch: (m) => {
-      if (!morpher.patch(m.anchor, m.html, m.root === true)) {
-        clients.anchorGone(m.anchor);
+      if (!morpher.patch(m.anchor, m.html, m.root === true) && !clients.anchorGone(m.anchor)) {
+        // Its place is not on the page, so the page has drifted from the server (ADR 0032).
+        send({ type: "resync" });
       }
       clients.scan();
     },
@@ -90,6 +93,7 @@ function start(): void {
     },
     clientCall: (m) => clients.call(m),
     ack: (m) => pending.ack(m.id),
+    callSeen: (m) => clients.resultSeen(m.id),
     expired: () => {
       if (retained.expired()) {
         remount();
@@ -103,8 +107,39 @@ function start(): void {
     browserCookie: (m) => claimBrowserCookie(m.url)
   };
 
-  function onMessage(m: ServerMessage): void {
-    (handlers[m.type] as ((m: ServerMessage) => void) | undefined)?.(m);
+  /** The highest message number applied, which a resend starts after (ADR 0032). */
+  let applied = 0;
+  let acknowledging = false;
+
+  /** Acknowledgements are batched: one covers everything up to its number. */
+  function acknowledgeSoon(): void {
+    if (!acknowledging) {
+      acknowledging = true;
+      setTimeout(() => {
+        acknowledging = false;
+        connection.sendIfReady({ type: "seen", n: applied });
+      }, 100);
+    }
+  }
+
+  function onMessage(m: ServerMessage & { n?: number }): void {
+    const n = m.n;
+    if (n !== undefined) {
+      if (n <= applied) {
+        return; // a resend of what an acknowledgement lost on its way did not cover
+      }
+      if (n > applied + 1) {
+        send({ type: "resync" }); // a gap nothing can fill: the whole page, morphed in
+      }
+    }
+    try {
+      (handlers[m.type] as ((m: ServerMessage) => void) | undefined)?.(m);
+    } finally {
+      if (n !== undefined) {
+        applied = n;
+        acknowledgeSoon();
+      }
+    }
   }
 
   // ---- tab lifetime (ADR 0010)
@@ -129,6 +164,8 @@ function start(): void {
         document.documentElement.setAttribute("data-j2-scope", doc.documentElement.getAttribute("data-j2-scope")!);
         document.title = doc.title;
         pending.clear();
+        applied = 0;
+        clients.forgetResults();
         morpher.body(doc.body);
         clients.scan();
         remounting = false;

@@ -26,6 +26,10 @@ If the client finds a gap it cannot fill, such as a number missing in the middle
 
 Apart from call results (above), events the client sends into a socket that has died are lost, as today; the runtime only queues what it sends while it knows the socket is down. The user sees the missed click and repeats it. Numbering that direction with the same scheme is possible later and needs no protocol change beyond an ack from the server. Uploads keep their own resumable chunks (ADR 0006).
 
+## In the code
+
+`Unacknowledged` holds the numbered messages, and `Tab.send` is the one way in. `n` goes first in each message on the wire; `ready` says a socket is up, so it belongs to no sequence, and the `expired` and rate-limit answers written straight to a connection stay outside it too. The client acknowledges with `{type: "seen", n}` at most every 100 ms and sends `seen` in its `hello`. A patch whose anchor is not on the page and is not live content asks for `{type: "resync"}`, as does a gap in the numbers. Before a tab's first hello nothing is buffered, since the page response and its stream carry that. A hello without `seen` has nothing owed to it.
+
 ## Before code
 
 A test in Harness that drops the socket after a patch is written but before it is read, then reconnects, and checks that the page matches the server: first failing on today's code, then passing. The same for a client action, for a client action whose result is lost on the way back, for a navigate() while disconnected, and for several URL updates around a client call while disconnected, which must replay with no gap. The browser check gains a reconnect step that kills the socket at the network layer.

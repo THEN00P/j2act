@@ -43,6 +43,8 @@ final class Harness implements AutoCloseable {
     J2Act.Builder builder = J2Act
       .builder(resolver)
       .withExecutor(pool)
+      // Nothing here acknowledges unless a test says so, and it should not run out for that.
+      .withMaxUnacknowledged(Long.MAX_VALUE)
       .withSweepInterval(Duration.ofMillis(50));
     config.accept(builder);
     engine = builder.build();
@@ -169,7 +171,13 @@ final class Harness implements AutoCloseable {
     private final List<Map<String, String>> messages = new ArrayList<>();
     volatile boolean closed;
 
+    /** The socket looks alive and delivers nothing, as one does before the server notices it died. */
+    volatile boolean deaf;
+
     @Override public synchronized void send(String message) {
+      if (deaf) {
+        return;
+      }
       messages.add(Json.parseFlat(message));
       notifyAll();
     }

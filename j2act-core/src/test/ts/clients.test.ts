@@ -16,6 +16,26 @@ describe("Clients", () => {
     document.body.innerHTML = "";
   });
 
+  describe("results (ADR 0032)", () => {
+    it("sends a result again after a reconnect until the server has it", () => {
+      clients.reply("7", true, "value");
+      expect(sent).toHaveLength(1);
+      clients.resendResults();
+      expect(sent).toHaveLength(2);
+      expect(sent[1]).toEqual(sent[0]);
+      clients.resultSeen("7");
+      clients.resendResults();
+      expect(sent).toHaveLength(2);
+    });
+
+    it("forgets results a new server-side tab never asked for", () => {
+      clients.reply("7", true, "value");
+      clients.forgetResults();
+      clients.resendResults();
+      expect(sent).toHaveLength(1);
+    });
+  });
+
   describe("revive", () => {
     it("turns callbacks into functions that call Java", () => {
       const props = clients.revive('{"onPick":{"$fn":"h9"}}') as { onPick: (...args: unknown[]) => void };

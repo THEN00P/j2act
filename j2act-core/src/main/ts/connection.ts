@@ -8,7 +8,8 @@ export type Connection = ReturnType<typeof createConnection>;
  * the server answers ready, and reconnects with backoff unless the page is leaving or paused.
  */
 export function createConnection(url: string, tab: string | null, token: string | null,
-                                 onMessage: (m: ServerMessage) => void, reconnects: () => boolean) {
+                                 onMessage: (m: ServerMessage) => void, reconnects: () => boolean,
+                                 seen: () => number) {
   let ready = false;
   let ws: WebSocket | null = null;
   let queue: string[] = [];
@@ -18,7 +19,7 @@ export function createConnection(url: string, tab: string | null, token: string 
     const socket = new WebSocket(url);
     ws = socket;
     socket.onopen = () => {
-      socket.send(JSON.stringify({ type: "hello", tab: tab, token: token } satisfies ClientMessage));
+      socket.send(JSON.stringify({ type: "hello", tab: tab, token: token, seen: seen() } satisfies ClientMessage));
     };
     socket.onmessage = (e) => {
       onMessage(JSON.parse(e.data));

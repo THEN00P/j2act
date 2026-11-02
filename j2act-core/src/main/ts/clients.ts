@@ -1,3 +1,4 @@
+import type { ClientMessage } from "./protocol.ts";
 import type { ClientCall, Send } from "./protocol.ts";
 import type { Uploads } from "./uploads.ts";
 import { errorText, named } from "./util.ts";
@@ -92,11 +93,13 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
    * A patch found no element for its anchor. If it was live content given to an action, the
    * client dropped it, and the server stops patching it.
    */
-  function anchorGone(anchor: string): void {
+  function anchorGone(anchor: string): boolean {
     if (liveAnchors.delete(anchor)) {
       console.warn("j2act: live content " + anchor + " passed to a client action left the document (ADR 0022)");
       send({ type: "liveGone", anchor: anchor });
+      return true;
     }
+    return false;
   }
 
   /** A call from Java, sent after the patch: queued until its client has mounted. */
@@ -122,18 +125,41 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
     return invoke(c, name, revive(JSON.stringify(args)) as unknown[]);
   }
 
+  /** Results the server has not acknowledged: a socket can die with one on its way (ADR 0032). */
+  const unseenResults = new Map<string, ClientMessage>();
+
+  function sendResult(id: string, result: ClientMessage): void {
+    unseenResults.set(id, result);
+    send(result);
+  }
+
+  /** The server has this result. */
+  function resultSeen(id: string): void {
+    unseenResults.delete(id);
+  }
+
+  /** The socket is back: what the old one may have lost goes again, and the server ignores what it settled. */
+  function resendResults(): void {
+    unseenResults.forEach((result) => send(result));
+  }
+
+  /** A new server-side tab: it never made those calls. */
+  function forgetResults(): void {
+    unseenResults.clear();
+  }
+
   /** Answers a call from Java, an action's or a window() call's. */
   function reply(id: string, ok: boolean, value: unknown): void {
     if (ok) {
       try {
-        send({ type: "callResult", id: id, ok: true, value: JSON.stringify(value === undefined ? null : value) });
+        sendResult(id, { type: "callResult", id: id, ok: true, value: JSON.stringify(value === undefined ? null : value) });
         return;
       } catch (e) {
         value = e;
       }
     }
     console.warn("j2act: client action failed", value);
-    send({ type: "callResult", id: id, ok: false, error: errorText(value) });
+    sendResult(id, { type: "callResult", id: id, ok: false, error: errorText(value) });
   }
 
   /** Server attributes follow the render; attributes the client added stay; slots morph where they live. */
@@ -358,7 +384,7 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
     send({ type: "clientError", client: c.id, error: what + ": " + errorText(e) });
   }
 
-  return { scan, revive, anchorGone, call, callNow, reply, sync, reimport };
+  return { scan, revive, anchorGone, call, callNow, reply, resultSeen, resendResults, forgetResults, sync, reimport };
 }
 
 function attributeNames(el: Element): string[] {

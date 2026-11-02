@@ -176,14 +176,21 @@ final class Clients {
         handler -> tab.handlers.registerAction(cell.owner, key, handler),
         component -> live(cell, key, component), name));
     }
+    if (calls.size() >= tab.engine.maxPendingClientCalls) {
+      ClientException refused = new ClientException("QuotaExceededError", name
+        + " has too many calls waiting; withMaxPendingClientCalls allows " + tab.engine.maxPendingClientCalls);
+      if (method.getReturnType() == void.class) {
+        throw refused;
+      }
+      return CompletableFuture.failedFuture(refused);
+    }
     outbox.add(Json.object("type", "clientCall", "id", id, "client", cell.id, "action", method.getName(),
       "args", json.append(']').toString()));
     CompletableFuture<Object> future = new CompletableFuture<>();
     Function<String, Object> decode = method.getReturnType() == void.class ? result -> null
       : result -> tab.engine.json.read(result, ClientCall.valueType(method));
     calls.put(id, new PendingCall(cell, cell.owner, "client action " + name, decode, false, future));
-    tab.engine.later(tab, TIMEOUT_MILLIS, () -> settle(id, null,
-      new ClientException("TimeoutError", name + " did not settle within 30 seconds")));
+    timeOut(id, TIMEOUT_MILLIS, () -> new ClientException("TimeoutError", name + " did not settle within 30 seconds"));
     return method.getReturnType() == void.class ? null : future;
   }
 
@@ -216,13 +223,16 @@ final class Clients {
   }
 
   private CompletableFuture<Object> window(Scope scope, String name, String json, WebPath.Decoder<Object> decoder) {
+    if (calls.size() >= tab.engine.maxPendingClientCalls) {
+      return CompletableFuture.failedFuture(new BrowserException("QuotaExceededError", name
+        + " has too many calls waiting; withMaxPendingClientCalls allows " + tab.engine.maxPendingClientCalls));
+    }
     String id = String.valueOf(++callSeq);
     outbox.add(Json.object("type", "windowCall", "id", id, "call", json));
     CompletableFuture<Object> future = new CompletableFuture<>();
     calls.put(id, new PendingCall(null, scope, "window call " + name, text -> decoder.decode(Json.parse(text)), true,
       future));
-    tab.engine.later(tab, TIMEOUT_MILLIS, () -> settle(id, null,
-      new BrowserException("TimeoutError", name + " did not settle within 30 seconds")));
+    timeOut(id, TIMEOUT_MILLIS, () -> new BrowserException("TimeoutError", name + " did not settle within 30 seconds"));
     return future;
   }
 
@@ -268,11 +278,46 @@ final class Clients {
       tab.send(message);
     }
     outbox.clear();
+    redelivered();
+  }
+
+  /** Lane-only. A call's time counts from when it was delivered, not from behind a dead socket (ADR 0032). */
+  void redelivered() {
+    long now = System.currentTimeMillis();
+    for (PendingCall call : calls.values()) {
+      call.deliveredAt = now;
+    }
+  }
+
+  /** Lane-only. The socket went: what was sent may not have arrived, and comes again with the next one. */
+  void undelivered() {
+    for (PendingCall call : calls.values()) {
+      call.deliveredAt = 0;
+    }
+  }
+
+  private void timeOut(String id, long after, java.util.function.Supplier<? extends ClientException> failure) {
+    tab.engine.later(tab, after, () -> {
+      PendingCall call = calls.get(id);
+      if (call == null) {
+        return;
+      }
+      long used = call.deliveredAt == 0 ? 0 : System.currentTimeMillis() - call.deliveredAt;
+      if (call.deliveredAt != 0 && used >= TIMEOUT_MILLIS) {
+        settle(id, null, failure.get());
+      } else {
+        timeOut(id, TIMEOUT_MILLIS - used, failure);
+      }
+    });
   }
 
   /** The browser's reply to a call: {type: "callResult", id, ok, value or error}. */
   void onResult(Map<String, String> message) {
     String id = message.get("id");
+    if (id != null) {
+      // Either way it has this one: the browser keeps a result until it hears so (ADR 0032).
+      tab.send(Json.object("type", "callSeen", "id", id));
+    }
     PendingCall call = id == null ? null : calls.get(id);
     if (call == null) {
       return;
@@ -334,8 +379,9 @@ final class Clients {
   }
 
   void dispose() {
-    for (String id : new ArrayList<>(calls.keySet())) {
-      settle(id, null, new ClientException("AbortError", "the tab ended"));
+    for (Map.Entry<String, PendingCall> entry : new ArrayList<>(calls.entrySet())) {
+      settle(entry.getKey(), null, new ClientException("AbortError", entry.getValue().deliveredAt == 0
+        ? "the tab ended with its socket gone, before this call could reach the browser" : "the tab ended"));
     }
     outbox.clear();
     byId.clear();
@@ -446,6 +492,8 @@ final class Clients {
     final Function<String, Object> decode;
     final boolean browser;
     final CompletableFuture<Object> future;
+    /** When it last went to a socket; 0 while it is waiting for one. */
+    long deliveredAt;
 
     PendingCall(ClientCell cell, Scope owner, String name, Function<String, Object> decode, boolean browser,
                 CompletableFuture<Object> future) {
