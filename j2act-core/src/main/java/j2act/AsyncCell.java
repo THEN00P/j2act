@@ -33,7 +33,7 @@ final class AsyncCell extends Cell implements Observer {
   boolean affected;
   private final Set<Cell> deps = new HashSet<>();
   /** The async(...) runs of the current body, whose reads are validated when it lands. */
-  private List<QueryRun> runs = new ArrayList<>();
+  private List<LoadRun> runs = new ArrayList<>();
 
   AsyncCell(Tab tab, String address, AsyncSupplier<?> body) {
     super(tab, address);
@@ -144,7 +144,7 @@ final class AsyncCell extends Cell implements Observer {
       return;
     }
     Throwable cause = unwrap(failure);
-    for (QueryRun run : runs) {
+    for (LoadRun run : runs) {
       for (int i = 0; i < run.cells.size(); i++) {
         Cell cell = run.cells.get(i);
         if (cell.disposed || !Objects.equals(cell.peekLatest(), run.values.get(i))) {
@@ -154,7 +154,7 @@ final class AsyncCell extends Cell implements Observer {
         }
       }
     }
-    for (QueryRun run : runs) {
+    for (LoadRun run : runs) {
       for (Cell cell : run.cells) {
         watch(cell);
       }
@@ -227,7 +227,7 @@ final class AsyncCell extends Cell implements Observer {
   }
 
   /** The body called async(...): runs work on the executor, tracked and validated with this cell. */
-  void adopt(QueryRun run) {
+  void adopt(LoadRun run) {
     runs.add(run);
   }
 
@@ -246,7 +246,7 @@ final class AsyncCell extends Cell implements Observer {
   /** Runs work for async(...), off the lane; its reads are recorded in its run. */
   static <R> CompletableFuture<R> submit(Tab tab, AsyncCell cell, Scope scope, Loader<R> work) {
     CompletableFuture<R> result = new CompletableFuture<>();
-    QueryRun run = new QueryRun(tab, 0);
+    LoadRun run = new LoadRun(tab, 0);
     if (cell != null) {
       cell.adopt(run);
     }
@@ -275,7 +275,7 @@ final class AsyncCell extends Cell implements Observer {
   }
 
   private void interruptRuns() {
-    for (QueryRun run : runs) {
+    for (LoadRun run : runs) {
       run.interrupt();
     }
   }

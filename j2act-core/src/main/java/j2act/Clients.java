@@ -199,7 +199,7 @@ final class Clients {
     }
     if (scope != null && scope.rendering) {
       throw new IllegalStateException(name + " runs in the browser; call it from a handler or effect, or bind it"
-        + " with onClick, not in render() (ADR 0022)");
+        + " with onClick, not in a view (ADR 0022)");
     }
     if (tab.lane.isCurrent()) {
       return tab.clients.window(scope, name, json, decoder);

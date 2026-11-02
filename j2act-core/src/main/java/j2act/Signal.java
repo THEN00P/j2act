@@ -5,7 +5,7 @@ import java.util.function.UnaryOperator;
 
 /**
  * Server-side reactive value owned by a component or a store (ADR 0030). get() inside
- * render() subscribes the component; set() from any thread is queued onto the tab's lane
+ * a view subscribes the component; set() from any thread is queued onto the tab's lane
  * (ADR 0014).
  */
 public class Signal<T> extends Primitive implements Supplier<T> {

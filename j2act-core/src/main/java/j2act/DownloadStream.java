@@ -7,18 +7,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * A claimed download, for the adapter to serve: set the headers, then writeTo() the
- * response stream. The outcome is committed to the Mutation on the tab's lane.
+ * response stream. The outcome is committed to the Download on the tab's lane.
  */
 public final class DownloadStream {
 
   final Tab tab;
-  private final MutationCell cell;
+  private final TransferCell cell;
   private final Download<?> run;
   private final Object variables;
   private final long seq;
   private final AtomicBoolean finished = new AtomicBoolean();
 
-  DownloadStream(Tab tab, MutationCell cell, Download<?> run, Object variables, long seq) {
+  DownloadStream(Tab tab, TransferCell cell, Download<?> run, Object variables, long seq) {
     this.tab = tab;
     this.cell = cell;
     this.run = run;
@@ -54,7 +54,7 @@ public final class DownloadStream {
     return "attachment; filename=\"" + ascii + "\"; filename*=UTF-8''" + encoded;
   }
 
-  /** Runs the writer on the calling thread. The Mutation succeeds after the last byte, or fails with the writer. */
+  /** Runs the writer on the calling thread. The Download succeeds after the last byte, or fails with the writer. */
   @SuppressWarnings({"unchecked", "rawtypes"})
   public void writeTo(OutputStream out) throws IOException {
     try {

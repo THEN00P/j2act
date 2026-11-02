@@ -1074,7 +1074,7 @@ public final class J2Act implements AutoCloseable {
 
   /**
    * Saves the snapshot of every tab with a changed retained value, without discarding it
-   * (ADR 0026), so a crash loses at most one interval. onPersisting runs first in each.
+   * (ADR 0026), so a crash loses at most one interval.
    */
   private void checkpoint() {
     for (Browser browser : browsers.values()) {

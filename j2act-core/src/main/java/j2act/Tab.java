@@ -210,7 +210,7 @@ public final class Tab {
     if (tab != null) {
       return tab;
     }
-    QueryRun run = Tracking.run();
+    LoadRun run = Tracking.run();
     return run == null ? null : run.tab;
   }
 
@@ -263,7 +263,7 @@ public final class Tab {
     lane.runInline(() -> {
       Tab previous = CURRENT.get();
       Observer observer = Tracking.swap(null);
-      QueryRun run = Tracking.run();
+      LoadRun run = Tracking.run();
       Tracking.clearRun();
       CURRENT.set(this);
       try {
@@ -302,7 +302,7 @@ public final class Tab {
 
   /**
    * Queues body on the lane with this tab bound, as post() does, but without the flush after it:
-   * for its last tasks, the goodbye and retirement, whose onPersisting callbacks and effect cleanups
+   * for its last tasks, the goodbye and retirement, whose effect cleanups
    * may still call injected scoped stores (ADR 0030).
    */
   void postBound(Runnable body) {
@@ -728,7 +728,7 @@ public final class Tab {
     }
   }
 
-  /** A query without data yet that the page is waiting on; withDefer() ones do not count. */
+  /** A read outside any loading(...) the page waits for, or a transition it would tear. */
   private boolean awaitingData() {
     stoppedRenders.removeIf(scope -> scope.disposed);
     return !stoppedRenders.isEmpty() || !transitions.isEmpty();

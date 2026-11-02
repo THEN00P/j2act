@@ -77,7 +77,7 @@ public final class Action<V, R> {
     transition.openAction();
     tab.transitions.add(transition);
     Call call = new Call(tab, transition);
-    QueryRun run = new QueryRun(tab, 0);
+    LoadRun run = new LoadRun(tab, 0);
     try {
       tab.engine.executor.execute(() -> {
         R value = null;

@@ -10,7 +10,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 
 /**
- * The file flavor of Mutation (ADR 0006). mutate(file) with the UploadFile from a file
+ * A Transfer that receives a file (ADR 0006). mutate(file) with the UploadFile from a file
  * input's change event: the browser sends the bytes in resumable chunks, restrictions are
  * enforced on the server, and the file lands under withTarget with withNaming's name.
  * Pending until stored; progress() tracks the bytes received.
@@ -76,7 +76,7 @@ public final class Upload extends Transfer<UploadFile, UploadRef> {
 
   /** Percent of the file's bytes the server has, 0 to 100. */
   public int progress() {
-    return cell == null ? 0 : ((MutationCell) cell).read().progress;
+    return cell == null ? 0 : ((TransferCell) cell).read().progress;
   }
 
   /** Not supported: the browser resumes failed chunks itself, so a retry is another mutate(). */

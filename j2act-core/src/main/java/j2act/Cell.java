@@ -50,7 +50,7 @@ abstract class Cell {
       }
       return;
     }
-    QueryRun run = Tracking.run();
+    LoadRun run = Tracking.run();
     if (run != null && run.tab == tab) {
       run.record(this, seen);
       return;

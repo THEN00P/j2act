@@ -4,8 +4,8 @@ import java.util.function.Supplier;
 
 /**
  * Tracked component input (ADR 0020). A with* builder calls set(); reads are tracked
- * like State. On a fresh component object the prop starts from its default unless
- * the builder set it, so c() is a fresh description (ADR 0019).
+ * like a signal. On a description the prop starts from its default unless the builder set it,
+ * and the slot's kept instance takes its value (ADR 0031).
  */
 public final class Prop<T> extends Primitive implements Supplier<T> {
 

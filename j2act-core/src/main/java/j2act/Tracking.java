@@ -8,7 +8,7 @@ package j2act;
 final class Tracking {
 
   private static final ThreadLocal<Observer> OBSERVER = new ThreadLocal<>();
-  private static final ThreadLocal<QueryRun> RUN = new ThreadLocal<>();
+  private static final ThreadLocal<LoadRun> RUN = new ThreadLocal<>();
   /** The component or store scope whose code is running, for what is read around it (ADR 0031). */
   private static final ThreadLocal<Scope> SCOPE = new ThreadLocal<>();
 
@@ -78,11 +78,11 @@ final class Tracking {
     return previous;
   }
 
-  static QueryRun run() {
+  static LoadRun run() {
     return RUN.get();
   }
 
-  static void setRun(QueryRun run) {
+  static void setRun(LoadRun run) {
     RUN.set(run);
   }
 

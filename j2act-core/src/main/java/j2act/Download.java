@@ -5,7 +5,7 @@ import java.time.Duration;
 import java.util.function.Consumer;
 
 /**
- * The file flavor of Mutation (ADR 0012). mutate(v) hands the browser a single-use URL;
+ * A Transfer that streams a file to the browser (ADR 0012). mutate(v) hands the browser a single-use URL;
  * the writer runs when the browser fetches it, on the request thread, streaming into
  * the response. The run is pending until the last byte is written.
  *
