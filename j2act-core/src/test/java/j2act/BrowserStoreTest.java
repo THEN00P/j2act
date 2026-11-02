@@ -25,9 +25,9 @@ class BrowserStoreTest {
 
   @BrowserScoped
   public static class Player extends Store {
-    final State<String> track = state("none");
-    final State<Integer> volume = retainedState(5);
-    final Computed<String> label = computed(() -> {
+    final Signal<String> track = state("none");
+    final Signal<Integer> volume = retainedState(5);
+    final Memo<String> label = computed(() -> {
       computations.incrementAndGet();
       return track.get().toUpperCase();
     });
@@ -42,12 +42,12 @@ class BrowserStoreTest {
 
   @TabScoped
   public static class Sidebar extends Store {
-    final State<Boolean> open = state(false);
+    final Signal<Boolean> open = state(false);
   }
 
   @BrowserScoped
   public static class Reaching extends Store {
-    final State<String> seen = state("-");
+    final Signal<String> seen = state("-");
 
     public Reaching() {
       effect(() -> {
@@ -76,7 +76,7 @@ class BrowserStoreTest {
 
   /** Never reads the player while rendering; a click is its first use. */
   static final class LazyPage extends LiveComponent {
-    private final State<String> shown = state("-");
+    private final Signal<String> shown = state("-");
 
     @Override public Tag<?> render() {
       return T.page("l", T.div(
@@ -464,7 +464,7 @@ class BrowserStoreTest {
   }
 
   static final class OnceBrowser extends LiveComponent {
-    private final State<Boolean> used = state(false);
+    private final Signal<Boolean> used = state(false);
 
     @Override public Tag<?> render() {
       return T.page("o", T.div(

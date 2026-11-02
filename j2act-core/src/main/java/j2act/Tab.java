@@ -1120,7 +1120,7 @@ public final class Tab {
     if (!foreignReadWarned) {
       foreignReadWarned = true;
       engine.log(System.Logger.Level.WARNING, "State at " + address + " read from a foreign thread outside a"
-        + " query loader; use State.update() for read-modify-write (ADR 0014)", null);
+        + " query loader; use Signal.update() for read-modify-write (ADR 0014)", null);
     }
   }
 

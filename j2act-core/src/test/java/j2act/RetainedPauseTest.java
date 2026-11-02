@@ -139,7 +139,7 @@ class RetainedPauseTest {
   }
 
   static final class Exporting extends LiveComponent {
-    private final State<String> note = retainedState("");
+    private final Signal<String> note = retainedState("");
     private final Download<String> csv = download((String like, OutputStream out) -> out.write(1));
 
     @Override public Tag<?> render() {
@@ -198,8 +198,8 @@ class RetainedPauseTest {
     static final AtomicInteger restoredRuns = new AtomicInteger();
     static volatile String restoredValue;
 
-    private final State<String> typed = state("");
-    private final State<String> saved = retainedState("");
+    private final Signal<String> typed = state("");
+    private final Signal<String> saved = retainedState("");
 
     {
       onPersisting(() -> saved.set(typed.get()));
@@ -253,7 +253,7 @@ class RetainedPauseTest {
   }
 
   static final class Failing extends LiveComponent {
-    private final State<String> name = retainedState("");
+    private final Signal<String> name = retainedState("");
 
     {
       onPersisting(() -> {
@@ -270,7 +270,7 @@ class RetainedPauseTest {
 
   static final class Asking extends LiveComponent {
     static volatile Integer asked;
-    private final State<String> name = retainedState("");
+    private final Signal<String> name = retainedState("");
 
     @Override public Tag<?> render() {
       return T.page("asking", T.div(
@@ -300,7 +300,7 @@ class RetainedPauseTest {
   static final class TabPausing extends LiveComponent {
     static volatile Boolean asked;
     static volatile TabPausing mounted;
-    private final State<String> name = retainedState("");
+    private final Signal<String> name = retainedState("");
 
     @Override public Tag<?> render() {
       mounted = this;

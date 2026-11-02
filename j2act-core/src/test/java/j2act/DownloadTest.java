@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
 class DownloadTest {
 
   static final class Export extends LiveComponent {
-    private final State<String> filter = state("ad");
+    private final Signal<String> filter = state("ad");
     private final Download<String> csv = download((String like, OutputStream out) -> {
       if ("boom".equals(like)) {
         throw new IllegalStateException("export broke");

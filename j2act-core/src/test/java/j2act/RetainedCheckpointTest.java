@@ -93,7 +93,7 @@ class RetainedCheckpointTest {
   }
 
   static final class Clearable extends LiveComponent {
-    private final State<String> note = retainedState("");
+    private final Signal<String> note = retainedState("");
 
     @Override public Tag<?> render() {
       return T.page("c", T.div(T.span("note=" + note.get() + ";"),

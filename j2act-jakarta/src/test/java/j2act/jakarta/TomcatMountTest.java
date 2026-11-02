@@ -40,7 +40,7 @@ import j2act.ComponentTag;
 import j2act.J2Act;
 import j2act.LiveComponent;
 import j2act.PageResolver;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.ButtonTag;
 import j2act.html.tags.HtmlTag;
 
@@ -49,7 +49,7 @@ class TomcatMountTest {
 
   public static final class Counter extends ComponentTag {
     @Override protected ButtonTag render() {
-      State<Integer> count = state(0);
+      Signal<Integer> count = state(0);
       return button("Count " + count.get()).onClick(e -> count.set(count.get() + 1));
     }
   }

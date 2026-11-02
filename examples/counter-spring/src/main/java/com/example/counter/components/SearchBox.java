@@ -11,7 +11,7 @@ import com.example.counter.services.Directory;
 import j2act.ComponentTag;
 import j2act.html.tags.DivTag;
 import j2act.Query;
-import j2act.State;
+import j2act.Signal;
 
 /**
  * Keyless query (ADR 0020): filter is read inside the loader, so it is the dependency.
@@ -21,7 +21,7 @@ public final class SearchBox extends ComponentTag {
 
   @Inject private Directory directory;
 
-  private final State<String> filter = state("");
+  private final Signal<String> filter = state("");
   private final Query<List<String>> people = query(() -> directory.search(filter.get()));
 
   public static SearchBox searchBox() {

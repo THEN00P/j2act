@@ -39,7 +39,7 @@ class ConcurrencyTest {
 
   static final class Feed extends LiveComponent {
     private final Bus bus;
-    private final State<List<String>> entries = state(Collections.emptyList());
+    private final Signal<List<String>> entries = state(Collections.emptyList());
 
     Feed(Bus bus) {
       this.bus = bus;
@@ -99,8 +99,8 @@ class ConcurrencyTest {
   }
 
   static final class Holder extends LiveComponent {
-    static final AtomicReference<State<Integer>> handle = new AtomicReference<>();
-    private final State<Integer> n = state(0);
+    static final AtomicReference<Signal<Integer>> handle = new AtomicReference<>();
+    private final Signal<Integer> n = state(0);
 
     @Override public Tag<?> render() {
       handle.set(n);

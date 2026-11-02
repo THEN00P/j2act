@@ -4,7 +4,7 @@ import static j2act.html.TagCreator.*;
 
 import j2act.BrowserException;
 import j2act.ComponentTag;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.DivTag;
 
 /**
@@ -14,11 +14,11 @@ import j2act.html.tags.DivTag;
  */
 public final class BrowserApis extends ComponentTag {
 
-  private final State<String> stored = state("nothing");
-  private final State<String> title = state("unknown");
-  private final State<String> place = state("unknown");
-  private final State<String> copied = state("not yet");
-  private final State<String> failure = state("none");
+  private final Signal<String> stored = state("nothing");
+  private final Signal<String> title = state("unknown");
+  private final Signal<String> place = state("unknown");
+  private final Signal<String> copied = state("not yet");
+  private final Signal<String> failure = state("none");
 
   public static BrowserApis browserApis() {
     return new BrowserApis();

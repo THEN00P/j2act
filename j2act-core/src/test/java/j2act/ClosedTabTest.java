@@ -119,7 +119,7 @@ class ClosedTabTest {
   void aTabWithoutRetainedValuesSavesNothingOnBye() {
     CountingStorage storage = new CountingStorage();
     try (Harness h = harness(() -> new LiveComponent() {
-      private final State<String> plain = state("");
+      private final Signal<String> plain = state("");
 
       @Override public Tag<?> render() {
         return T.page("p", T.div(T.input().withId("plain").onChange(e -> plain.set(e.value()))));

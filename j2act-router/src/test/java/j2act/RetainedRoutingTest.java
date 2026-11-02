@@ -32,7 +32,7 @@ class RetainedRoutingTest {
   }
 
   public static final class FormPage extends LiveComponent {
-    private final State<String> name = retainedState("");
+    private final Signal<String> name = retainedState("");
 
     @Override public HtmlTag render() {
       return html(head(title("Form")), body(

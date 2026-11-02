@@ -5,7 +5,7 @@ import static j2act.html.TagCreator.*;
 
 import j2act.LiveComponent;
 import j2act.Query;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.HtmlTag;
 
 /**
@@ -15,7 +15,7 @@ import j2act.html.tags.HtmlTag;
  */
 public class ItemPage extends LiveComponent {
 
-  private final State<Integer> likes = state(0);
+  private final Signal<Integer> likes = state(0);
   private final Query<String> item = query(() -> {
     String id = pathParam("id");
     if ("404".equals(id)) {

@@ -15,7 +15,7 @@ import j2act.web.ShareData;
 class WindowTest {
 
   static final class Page extends LiveComponent {
-    private final State<String> out = state("none");
+    private final Signal<String> out = state("none");
 
     @Override public Tag<?> render() {
       return T.page("t",

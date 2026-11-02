@@ -29,7 +29,7 @@ final class Retained {
       List<Field> fields = new ArrayList<>();
       for (Class<?> c = type; c != null && c != ComponentTag.class && c != Store.class && c != Object.class; c = c.getSuperclass()) {
         for (Field field : c.getDeclaredFields()) {
-          if (!Modifier.isStatic(field.getModifiers()) && field.getType() == State.class) {
+          if (!Modifier.isStatic(field.getModifiers()) && field.getType() == Signal.class) {
             try {
               field.setAccessible(true);
               fields.add(field);
@@ -47,7 +47,7 @@ final class Retained {
   }
 
   /** The instance field holding this State, or null when it is a local or not reachable. */
-  static Field fieldOf(Object instance, State<?> state) {
+  static Field fieldOf(Object instance, Signal<?> state) {
     for (Field field : STATE_FIELDS.get(instance.getClass())) {
       try {
         if (field.get(instance) == state) {

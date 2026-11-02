@@ -9,7 +9,7 @@ import j2act.Client;
 import j2act.ComponentTag;
 import j2act.DomContent;
 import j2act.Mount;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.DivTag;
 
 /**
@@ -26,7 +26,7 @@ public final class SalesChart extends ComponentTag {
   private static final List<String> MONTHS = List.of("Jan", "Feb", "Mar", "Apr", "May", "Jun");
 
   private final Bars bars = client(Bars.class);
-  private final State<List<Integer>> sales = state(List.of(10, 20, 30));
+  private final Signal<List<Integer>> sales = state(List.of(10, 20, 30));
 
   public static SalesChart salesChart() {
     return new SalesChart();

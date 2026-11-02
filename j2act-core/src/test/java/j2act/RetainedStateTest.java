@@ -23,9 +23,9 @@ import org.junit.jupiter.api.Test;
 class RetainedStateTest {
 
   static final class Form extends LiveComponent {
-    private final State<String> name = retainedState("");
-    private final State<Integer> age = retainedState(0);
-    private final State<String> scratch = state("");
+    private final Signal<String> name = retainedState("");
+    private final Signal<Integer> age = retainedState(0);
+    private final Signal<String> scratch = state("");
 
     @Override public Tag<?> render() {
       return T.page("form", T.div(
@@ -221,7 +221,7 @@ class RetainedStateTest {
   }
 
   static final class Plain extends LiveComponent {
-    private final State<String> text = state("");
+    private final Signal<String> text = state("");
 
     @Override public Tag<?> render() {
       return T.page("plain", T.input().withId("text").onChange(e -> text.set(e.value())));
@@ -257,7 +257,7 @@ class RetainedStateTest {
   }
 
   static final class NullableForm extends LiveComponent {
-    private final State<String> note = retainedState(null);
+    private final Signal<String> note = retainedState(null);
 
     @Override public Tag<?> render() {
       return T.page("n", T.span("note=" + note.get()));
@@ -267,7 +267,7 @@ class RetainedStateTest {
   static List<String> rowIds = Arrays.asList("a", "b", "c");
 
   static final class Row extends ComponentTag {
-    private final State<String> draft = retainedState("");
+    private final Signal<String> draft = retainedState("");
     private String id;
 
     Row withId(String id) {
@@ -313,7 +313,7 @@ class RetainedStateTest {
   }
 
   static final class Price extends LiveComponent {
-    private final State<Money> price = retainedState(new Money(0));
+    private final Signal<Money> price = retainedState(new Money(0));
 
     @Override public Tag<?> render() {
       return T.page("p", T.div(
@@ -345,7 +345,7 @@ class RetainedStateTest {
 
   static final class LocalRetained extends LiveComponent {
     @Override public Tag<?> render() {
-      State<String> text = retainedState("");
+      Signal<String> text = retainedState("");
       return T.page("l", T.div(T.span("text=" + text.get() + ";"), T.input().withId("text").onChange(e -> text.set(e.value()))));
     }
   }

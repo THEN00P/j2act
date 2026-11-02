@@ -24,7 +24,7 @@ class IdentityTest {
     }
 
     @Override protected Tag<?> render() {
-      State<Integer> count = state(0);
+      Signal<Integer> count = state(0);
       return T.button(label.get() + ":" + count.get())
         .onClick(e -> count.set(count.get() + 1));
     }
@@ -61,7 +61,7 @@ class IdentityTest {
   }
 
   static final class Toggle extends LiveComponent {
-    private final State<Boolean> show = state(false);
+    private final Signal<Boolean> show = state(false);
 
     @Override public Tag<?> render() {
       return T.page("t", T.div(
@@ -91,7 +91,7 @@ class IdentityTest {
 
   static final class Row extends ComponentTag {
     private final Prop<String> name = prop();
-    private final State<Boolean> open = state(false);
+    private final Signal<Boolean> open = state(false);
 
     Row withName(String n) {
       name.set(n);
@@ -106,7 +106,7 @@ class IdentityTest {
 
   static final class Rows extends LiveComponent {
     private final boolean keyed;
-    private final State<List<String>> names = state(Arrays.asList("ann", "bob", "cid"));
+    private final Signal<List<String>> names = state(Arrays.asList("ann", "bob", "cid"));
 
     Rows(boolean keyed) {
       this.keyed = keyed;
@@ -150,7 +150,7 @@ class IdentityTest {
 
   static final class Held extends LiveComponent {
     private final Counter kept = counter().withLabel("H");
-    private final State<Integer> bump = state(0);
+    private final Signal<Integer> bump = state(0);
 
     @Override public Tag<?> render() {
       return T.page("t", T.div(
@@ -188,7 +188,7 @@ class IdentityTest {
   }
 
   static final class Conditional extends LiveComponent {
-    private final State<Boolean> extra = state(false);
+    private final Signal<Boolean> extra = state(false);
 
     @Override public Tag<?> render() {
       if (extra.get()) {

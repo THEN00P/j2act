@@ -4,18 +4,18 @@ import static j2act.html.TagCreator.*;
 
 import j2act.ComponentTag;
 import j2act.Query;
-import j2act.State;
+import j2act.Signal;
 import j2act.Tag;
 
 public class Captures extends ComponentTag {
 
-  private final State<Long> selected = state(1L);
+  private final Signal<Long> selected = state(1L);
   private final Directory directory = new Directory();
 
   @Override protected Tag<?> render() {
     long id = selected.get();
     String kind = "admin";
-    State<String> filter = state("");
+    Signal<String> filter = state("");
     var sort = state("name");
     Query<String> stale = query(() -> directory.find(id)); // expect: query loader captures local id
     Query<String> keyed = query(() -> directory.find(id)).withKey("user", id);

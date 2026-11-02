@@ -13,7 +13,7 @@ import java.util.function.Supplier;
  * <pre>{@code
  * @TabScoped
  * public class EditorContext extends Store {
- *   private final State<String> selected = state(null);
+ *   private final Signal<String> selected = state(null);
  *
  *   public String selected() { return selected.get(); }
  *   public void select(String id) { selected.set(id); }
@@ -45,8 +45,8 @@ public abstract class Store {
     }
   }
 
-  protected <T> State<T> state(T initial) {
-    return register(new State<>(initial));
+  protected <T> Signal<T> state(T initial) {
+    return register(new Signal<>(initial));
   }
 
   /**
@@ -55,21 +55,21 @@ public abstract class Store {
    * by this store's class and the field holding it. Replace values through set(), since
    * changing a retained list in place does not count as a change.
    */
-  protected <T> State<T> retainedState(T initial) {
-    return register(new State<>(initial, true, null));
+  protected <T> Signal<T> retainedState(T initial) {
+    return register(new Signal<>(initial, true, null));
   }
 
   /** A Retained State with an explicit name instead of its field's name; never required. */
-  protected <T> State<T> retainedState(String name, T initial) {
+  protected <T> Signal<T> retainedState(String name, T initial) {
     if (name == null || name.isEmpty()) {
       throw new IllegalArgumentException("a retained state name must not be empty");
     }
-    return register(new State<>(initial, true, name));
+    return register(new Signal<>(initial, true, name));
   }
 
   /** A pure derived value, recomputed when what it read changes (CONTEXT: Computed). */
-  protected <T> Computed<T> computed(Supplier<T> body) {
-    return register(new Computed<>(body));
+  protected <T> Memo<T> computed(Supplier<T> body) {
+    return register(new Memo<>(body));
   }
 
   /** A cached async loader; State it reads is its dependency (ADR 0020). */

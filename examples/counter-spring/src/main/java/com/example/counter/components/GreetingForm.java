@@ -5,7 +5,7 @@ import static j2act.html.TagCreator.*;
 import java.util.Locale;
 
 import j2act.ComponentTag;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.DivTag;
 
 /**
@@ -14,9 +14,9 @@ import j2act.html.tags.DivTag;
  */
 public final class GreetingForm extends ComponentTag {
 
-  private final State<String> greeting = state("nobody greeted yet");
-  private final State<String> focus = state("idle");
-  private final State<String> lastKey = state("none");
+  private final Signal<String> greeting = state("nobody greeted yet");
+  private final Signal<String> focus = state("idle");
+  private final Signal<String> lastKey = state("none");
 
   public static GreetingForm greetingForm() {
     return new GreetingForm();

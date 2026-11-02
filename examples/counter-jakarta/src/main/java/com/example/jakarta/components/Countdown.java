@@ -9,7 +9,7 @@ import j2act.Client;
 import j2act.ComponentTag;
 import j2act.DomContent;
 import j2act.Mount;
-import j2act.State;
+import j2act.Signal;
 import j2act.Upload;
 import j2act.html.tags.ButtonTag;
 import j2act.html.tags.DivTag;
@@ -45,15 +45,15 @@ public final class Countdown extends ComponentTag {
   }
 
   private final Timer timer = client(Timer.class);
-  private final State<Integer> ticks = state(5);
-  private final State<String> status = state("running");
+  private final Signal<Integer> ticks = state(5);
+  private final Signal<String> status = state("running");
   private final Upload log = upload()
     .withAccept(".txt")
     .withMaxFileSize("1KB");
 
   /** Handed to note(): it keeps re-rendering on its own State inside the client's DOM. */
   static final class NoteBadge extends ComponentTag {
-    private final State<Integer> clicks = state(0);
+    private final Signal<Integer> clicks = state(0);
 
     @Override protected ButtonTag render() {
       return button("notes " + clicks.get())

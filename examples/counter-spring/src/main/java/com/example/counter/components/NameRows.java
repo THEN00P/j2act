@@ -11,12 +11,12 @@ import j2act.ComponentTag;
 import j2act.html.tags.DivTag;
 import j2act.html.tags.LiTag;
 import j2act.Prop;
-import j2act.State;
+import j2act.Signal;
 
 /** Stateful rows keyed on the row itself (ADR 0019): the open row stays open through a reorder. */
 public final class NameRows extends ComponentTag {
 
-  private final State<List<String>> names = state(Arrays.asList("Ada", "Grace", "Barbara", "Ken"));
+  private final Signal<List<String>> names = state(Arrays.asList("Ada", "Grace", "Barbara", "Ken"));
 
   public static NameRows nameRows() {
     return new NameRows();
@@ -41,7 +41,7 @@ public final class NameRows extends ComponentTag {
   public static final class Row extends ComponentTag {
 
     private final Prop<String> name = prop();
-    private final State<Boolean> open = state(false);
+    private final Signal<Boolean> open = state(false);
 
     public static Row row() {
       return new Row();

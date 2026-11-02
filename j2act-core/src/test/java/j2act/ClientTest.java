@@ -30,7 +30,7 @@ class ClientTest {
 
   /** Live content for annotate(): re-renders on its own State. */
   static final class Badge extends ComponentTag {
-    private final State<Integer> clicks = state(0);
+    private final Signal<Integer> clicks = state(0);
 
     @Override protected Tag<?> render() {
       return T.button("badge " + clicks.get()).onClick(e -> clicks.set(clicks.get() + 1));
@@ -40,10 +40,10 @@ class ClientTest {
   static final class Gauge extends LiveComponent {
     private final Meter meter = client(Meter.class);
     private final Upload export = upload().withMaxFileSize(100);
-    private final State<String> reading = state("none");
-    private final State<Integer> value = state(0);
-    private final State<String> label = state("volts");
-    private final State<Integer> resets = state(0);
+    private final Signal<String> reading = state("none");
+    private final Signal<Integer> value = state(0);
+    private final Signal<String> label = state("volts");
+    private final Signal<Integer> resets = state(0);
 
     @Override public Tag<?> render() {
       return T.page("t",

@@ -26,7 +26,7 @@ class RoutingTest {
   static final AtomicInteger userLoads = new AtomicInteger();
 
   public static final class AdminLayout extends Layout {
-    private final State<Integer> clicks = state(0);
+    private final Signal<Integer> clicks = state(0);
 
     @Override public HtmlTag render(DomContent content) {
       return html(
@@ -66,7 +66,7 @@ class RoutingTest {
   }
 
   public static final class UserPage extends LiveComponent {
-    private final State<Integer> visits = state(0);
+    private final Signal<Integer> visits = state(0);
     private final Query<String> user = query(() -> {
       userLoads.incrementAndGet();
       String id = pathParam("id");

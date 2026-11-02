@@ -10,7 +10,7 @@ import jakarta.inject.Inject;
 import com.example.jakarta.model.People;
 import j2act.ComponentTag;
 import j2act.Query;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.DivTag;
 
 /**
@@ -21,7 +21,7 @@ public final class SearchBox extends ComponentTag {
 
   @Inject private People people;
 
-  private final State<String> filter = state("");
+  private final Signal<String> filter = state("");
   private final Query<List<String>> found = query(() -> people.search(filter.get()));
 
   public static SearchBox searchBox() {

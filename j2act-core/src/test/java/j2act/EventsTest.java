@@ -16,7 +16,7 @@ class EventsTest {
   static final List<String> log = new CopyOnWriteArrayList<>();
 
   static final class Form extends LiveComponent {
-    private final State<String> lastKey = state("none");
+    private final Signal<String> lastKey = state("none");
 
     @Override public Tag<?> render() {
       return T.page("t",

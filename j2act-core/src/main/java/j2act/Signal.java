@@ -8,7 +8,7 @@ import java.util.function.UnaryOperator;
  * render() subscribes the component; set() from any thread is queued onto the tab's lane
  * (ADR 0014).
  */
-public final class State<T> extends Primitive implements Supplier<T> {
+public final class Signal<T> extends Primitive implements Supplier<T> {
 
   private final T initial;
   /** Retained State (ADR 0026): its value goes into the tab's snapshot. */
@@ -16,11 +16,11 @@ public final class State<T> extends Primitive implements Supplier<T> {
   /** The explicit snapshot name, or null to use the field's name. */
   final String retainedName;
 
-  State(T initial) {
+  Signal(T initial) {
     this(initial, false, null);
   }
 
-  State(T initial, boolean retained, String retainedName) {
+  Signal(T initial, boolean retained, String retainedName) {
     this.initial = initial;
     this.retained = retained;
     this.retainedName = retainedName;

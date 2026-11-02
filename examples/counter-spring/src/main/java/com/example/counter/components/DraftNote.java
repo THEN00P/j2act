@@ -7,7 +7,7 @@ import jakarta.inject.Inject;
 import j2act.Client;
 import j2act.ComponentTag;
 import j2act.Mount;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.DivTag;
 
 /**
@@ -24,7 +24,7 @@ public final class DraftNote extends ComponentTag {
 
   @Inject private Signature signature;
 
-  private final State<String> draft = retainedState("");
+  private final Signal<String> draft = retainedState("");
   private final PauseControls pauseControls = client(PauseControls.class);
 
   public static DraftNote draftNote() {

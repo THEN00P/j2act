@@ -18,7 +18,7 @@ class TrackingTest {
 
   static final class Child extends ComponentTag {
     private final Prop<String> label = prop("");
-    private final State<Integer> clicks = state(0);
+    private final Signal<Integer> clicks = state(0);
 
     Child withLabel(String l) {
       label.set(l);
@@ -32,7 +32,7 @@ class TrackingTest {
   }
 
   static final class Parent extends LiveComponent {
-    private final State<String> name = state("first");
+    private final Signal<String> name = state("first");
 
     @Override public Tag<?> render() {
       parentRenders.incrementAndGet();

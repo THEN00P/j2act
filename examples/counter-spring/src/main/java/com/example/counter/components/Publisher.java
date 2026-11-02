@@ -6,10 +6,10 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
 import j2act.ComponentTag;
-import j2act.Computed;
+import j2act.Memo;
 import j2act.Download;
 import j2act.Mutation;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.DivTag;
 
 /**
@@ -19,9 +19,9 @@ import j2act.html.tags.DivTag;
  */
 public final class Publisher extends ComponentTag {
 
-  private final State<Integer> paragraphs = state(0);
-  private final State<String> published = state("nothing yet");
-  private final Computed<String> length = computed(() -> paragraphs.get() >= 3 ? "long" : "short");
+  private final Signal<Integer> paragraphs = state(0);
+  private final Signal<String> published = state("nothing yet");
+  private final Memo<String> length = computed(() -> paragraphs.get() >= 3 ? "long" : "short");
   private final Mutation<Integer, String> publish = mutation((Integer count) -> {
     Thread.sleep(600);
     return count + " paragraphs";

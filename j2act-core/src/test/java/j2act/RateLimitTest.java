@@ -18,7 +18,7 @@ import j2act.internal.json.Json;
 class RateLimitTest {
 
   static final class Clicks extends LiveComponent {
-    private final State<Integer> n = state(0);
+    private final Signal<Integer> n = state(0);
 
     @Override public Tag<?> render() {
       return T.page("t", T.div(

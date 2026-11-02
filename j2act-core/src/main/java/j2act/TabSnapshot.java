@@ -55,7 +55,7 @@ final class TabSnapshot {
   }
 
   /** Lane-only. Names a new retained cell after its field, and fills it from the snapshot being restored. */
-  void retain(Scope scope, State<?> state, ValueCell cell, int index) {
+  void retain(Scope scope, Signal<?> state, ValueCell cell, int index) {
     Object instance = scope.owner();
     String component = scope.ownerClass().getName();
     java.lang.reflect.Field field = Retained.fieldOf(instance, state);

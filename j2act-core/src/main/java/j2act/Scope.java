@@ -224,8 +224,8 @@ final class Scope implements Observer {
     cell.owner = this;
     cells.add(cell);
     tab.cells.put(cell.address, cell);
-    if (primitive instanceof State && ((State<?>) primitive).retained) {
-      tab.snapshot.retain(this, (State<?>) primitive, (ValueCell) cell, index);
+    if (primitive instanceof Signal && ((Signal<?>) primitive).retained) {
+      tab.snapshot.retain(this, (Signal<?>) primitive, (ValueCell) cell, index);
     }
     primitive.attach(cell, true);
   }

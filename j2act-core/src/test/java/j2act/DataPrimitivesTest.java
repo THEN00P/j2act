@@ -19,8 +19,8 @@ class DataPrimitivesTest {
   // ---- computed
 
   static final class Threshold extends LiveComponent {
-    private final State<Integer> n = state(0);
-    private final Computed<Boolean> big = computed(() -> n.get() >= 3);
+    private final Signal<Integer> n = state(0);
+    private final Memo<Boolean> big = computed(() -> n.get() >= 3);
 
     @Override public Tag<?> render() {
       return T.page("t", T.div(
@@ -52,7 +52,7 @@ class DataPrimitivesTest {
   static volatile CountDownLatch release = new CountDownLatch(0);
 
   static final class Editor extends LiveComponent {
-    private final State<String> saved = state("none");
+    private final Signal<String> saved = state("none");
     private final Mutation<String, String> save = mutation((String text) -> {
       int now = running.incrementAndGet();
       maxRunning.accumulateAndGet(now, Math::max);
@@ -140,7 +140,7 @@ class DataPrimitivesTest {
   // ---- keyed queries
 
   static final AtomicInteger listLoads = new AtomicInteger();
-  static final State<String>[] FILTER = new State[1];
+  static final Signal<String>[] FILTER = new Signal[1];
 
   static final class ListView extends ComponentTag {
     private final Prop<String> label = prop("");
@@ -167,8 +167,8 @@ class DataPrimitivesTest {
   }
 
   static final class SharedPage extends LiveComponent {
-    private final State<String> filter = state("a");
-    private final State<Boolean> showFirst = state(true);
+    private final Signal<String> filter = state("a");
+    private final Signal<Boolean> showFirst = state(true);
 
     @Override public Tag<?> render() {
       return T.page("t", T.div(

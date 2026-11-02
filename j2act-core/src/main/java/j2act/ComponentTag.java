@@ -39,8 +39,8 @@ public abstract class ComponentTag implements DomContent {
     return this;
   }
 
-  protected final <T> State<T> state(T initial) {
-    return register(new State<>(initial));
+  protected final <T> Signal<T> state(T initial) {
+    return register(new Signal<>(initial));
   }
 
   /**
@@ -50,16 +50,16 @@ public abstract class ComponentTag implements DomContent {
    * it as a field; give a repeated component a withKey. Replace values through set(), since
    * changing a retained list in place does not count as a change.
    */
-  protected final <T> State<T> retainedState(T initial) {
-    return register(new State<>(initial, true, null));
+  protected final <T> Signal<T> retainedState(T initial) {
+    return register(new Signal<>(initial, true, null));
   }
 
   /** A Retained State with an explicit name instead of its field's name; never required. */
-  protected final <T> State<T> retainedState(String name, T initial) {
+  protected final <T> Signal<T> retainedState(String name, T initial) {
     if (name == null || name.isEmpty()) {
       throw new IllegalArgumentException("a retained state name must not be empty");
     }
-    return register(new State<>(initial, true, name));
+    return register(new Signal<>(initial, true, name));
   }
 
   /**
@@ -121,8 +121,8 @@ public abstract class ComponentTag implements DomContent {
   }
 
   /** A pure derived value, recomputed when what it read changes (CONTEXT: Computed). */
-  protected final <T> Computed<T> computed(java.util.function.Supplier<T> body) {
-    return register(new Computed<>(body));
+  protected final <T> Memo<T> computed(java.util.function.Supplier<T> body) {
+    return register(new Memo<>(body));
   }
 
   /** An async write: status, data, error and variables are tracked (ADR 0006). */

@@ -6,7 +6,7 @@ import jakarta.inject.Inject;
 
 import com.example.jakarta.model.TickBus;
 import j2act.ComponentTag;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.PTag;
 
 /** Pushes from a managed scheduler thread; update() runs on the tab's lane (ADR 0014). */
@@ -14,8 +14,8 @@ public final class ClockFeed extends ComponentTag {
 
   @Inject private TickBus bus;
 
-  private final State<String> last = state("waiting for the first tick");
-  private final State<Integer> ticks = state(0);
+  private final Signal<String> last = state("waiting for the first tick");
+  private final Signal<Integer> ticks = state(0);
 
   public static ClockFeed clockFeed() {
     return new ClockFeed();

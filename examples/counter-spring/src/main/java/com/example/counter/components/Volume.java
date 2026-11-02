@@ -5,7 +5,7 @@ import static j2act.html.TagCreator.*;
 import java.time.Duration;
 
 import j2act.ComponentTag;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.DivTag;
 
 /**
@@ -14,8 +14,8 @@ import j2act.html.tags.DivTag;
  */
 public final class Volume extends ComponentTag {
 
-  private final State<String> level = state("50");
-  private final State<Integer> received = state(0);
+  private final Signal<String> level = state("50");
+  private final Signal<Integer> received = state(0);
 
   public static Volume volume() {
     return new Volume();

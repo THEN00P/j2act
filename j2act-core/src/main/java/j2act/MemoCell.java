@@ -9,14 +9,14 @@ import java.util.function.Supplier;
  * Backs computed(): a derived value recomputed lazily, on the lane, when a cell it read
  * changed. It notifies its own readers only if the new value differs.
  */
-final class ComputedCell extends Cell implements Observer {
+final class MemoCell extends Cell implements Observer {
 
   Supplier<?> body;
   private volatile Object value;
   private boolean stale = true;
   private final Set<Cell> deps = new HashSet<>();
 
-  ComputedCell(Tab tab, String address, Supplier<?> body) {
+  MemoCell(Tab tab, String address, Supplier<?> body) {
     super(tab, address);
     this.body = body;
   }

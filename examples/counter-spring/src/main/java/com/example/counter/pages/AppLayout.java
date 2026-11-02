@@ -5,7 +5,7 @@ import static j2act.html.TagCreator.*;
 import j2act.DomContent;
 import j2act.Layout;
 import j2act.Preload;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.HtmlTag;
 
 /**
@@ -22,7 +22,7 @@ public class AppLayout extends Layout {
     + "button[data-pending]{opacity:.6;cursor:progress}.muted{color:#888}"
     + ".card{background:#f6f6f6;padding:.5rem .75rem;border-radius:6px}ul{padding-left:1.25rem}";
 
-  private final State<Integer> clicks = state(0);
+  private final Signal<Integer> clicks = state(0);
 
   @Override public HtmlTag render(DomContent content) {
     return html(

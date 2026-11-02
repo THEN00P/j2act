@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 class BrowserAssetsTest {
 
   static final class Page extends LiveComponent {
-    private final State<Integer> clicks = state(0);
+    private final Signal<Integer> clicks = state(0);
 
     @Override public Tag<?> render() {
       return T.tag("html",

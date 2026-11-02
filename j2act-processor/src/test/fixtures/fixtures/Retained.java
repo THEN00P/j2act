@@ -9,27 +9,27 @@ import java.util.Map;
 import java.util.function.Supplier;
 
 import j2act.ComponentTag;
-import j2act.State;
+import j2act.Signal;
 import j2act.Tag;
 
 public class Retained extends ComponentTag {
 
-  private final State<String> name = retainedState("");
-  private final State<List<String>> tags = retainedState(new ArrayList<>());
-  private final State<Draft> draft = retainedState(new Draft());
-  private final State<Map<String, Integer>> counts = retainedState("counts", Map.of());
-  private final State<Supplier<String>> later = retainedState(() -> ""); // expect: retained later holds a function
-  private final State<InputStream> upload = retainedState(InputStream.nullInputStream()); // expect: retained upload holds a InputStream
-  private final State<List<String>> plain = state(new ArrayList<>());
-  private final State<String> assigned;
+  private final Signal<String> name = retainedState("");
+  private final Signal<List<String>> tags = retainedState(new ArrayList<>());
+  private final Signal<Draft> draft = retainedState(new Draft());
+  private final Signal<Map<String, Integer>> counts = retainedState("counts", Map.of());
+  private final Signal<Supplier<String>> later = retainedState(() -> ""); // expect: retained later holds a function
+  private final Signal<InputStream> upload = retainedState(InputStream.nullInputStream()); // expect: retained upload holds a InputStream
+  private final Signal<List<String>> plain = state(new ArrayList<>());
+  private final Signal<String> assigned;
 
   public Retained() {
     assigned = retainedState("");
   }
 
   @Override protected Tag<?> render() {
-    State<String> local = retainedState(""); // expect: retainedState in a method is keyed by creation order
-    State<String> ordinary = state("");
+    Signal<String> local = retainedState(""); // expect: retainedState in a method is keyed by creation order
+    Signal<String> ordinary = state("");
     return div(
       button("tag").onClick(e -> tags.get().add("x")), // expect: retained tags is changed in place by add()
       button("rename").onClick(e -> draft.get().setTitle("x")), // expect: retained draft is changed in place by setTitle()

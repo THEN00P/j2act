@@ -23,8 +23,8 @@ class StoreTest {
   @TabScoped
   public static class Prefs extends Store {
     static final AtomicInteger made = new AtomicInteger();
-    final State<String> theme = state("light");
-    final State<Integer> size = state(12);
+    final Signal<String> theme = state("light");
+    final Signal<Integer> size = state(12);
 
     public Prefs() {
       made.incrementAndGet();
@@ -91,9 +91,9 @@ class StoreTest {
 
   @TabScoped
   public static class Filters extends Store {
-    final State<String> branch = retainedState("all");
-    final State<List<String>> tags = retainedState(Collections.emptyList());
-    final State<String> plain = state("none");
+    final Signal<String> branch = retainedState("all");
+    final Signal<List<String>> tags = retainedState(Collections.emptyList());
+    final Signal<String> plain = state("none");
   }
 
   static final class Branch extends LiveComponent {
@@ -174,7 +174,7 @@ class StoreTest {
   @TabScoped
   public static class Feed extends Store {
     final String source;
-    final State<String> latest = state("-");
+    final Signal<String> latest = state("-");
 
     Feed(String source) {
       this.source = source;
@@ -246,7 +246,7 @@ class StoreTest {
     scopeActiveWhilePersisting = null;
     CountingStorage storage = new CountingStorage();
     try (Harness h = new Harness(() -> new LiveComponent() {
-      private final State<String> note = retainedState("kept");
+      private final Signal<String> note = retainedState("kept");
 
       {
         onPersisting(() -> scopeActiveWhilePersisting = StoreScope.isActive(TabScoped.class));
@@ -298,7 +298,7 @@ class StoreTest {
 
   @TabScoped
   public static class Draft extends Store {
-    final State<String> text = retainedState("");
+    final Signal<String> text = retainedState("");
   }
 
   public static class LetterDraft extends Draft {

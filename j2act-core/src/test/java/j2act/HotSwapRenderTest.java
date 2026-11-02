@@ -31,14 +31,14 @@ class HotSwapRenderTest {
 
   static final class Child extends ComponentTag {
     @Override protected Tag<?> render() {
-      State<Integer> count = state(0);
+      Signal<Integer> count = state(0);
       String extra = extraPrimitive ? " " + state("fresh").get() : "";
       return T.button("child:" + count.get() + extra).onClick(e -> count.set(count.get() + 1));
     }
   }
 
   static final class Page extends LiveComponent {
-    private final State<Integer> count = state(0);
+    private final Signal<Integer> count = state(0);
 
     @Override public Tag<?> render() {
       return T.page("t", T.div(

@@ -7,7 +7,7 @@ import java.time.temporal.ChronoUnit;
 
 import j2act.LiveComponent;
 import j2act.Query;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.HtmlTag;
 
 /**
@@ -17,7 +17,7 @@ import j2act.html.tags.HtmlTag;
  */
 public class ReportPage extends LiveComponent {
 
-  private final State<String> openedAt = state("not yet");
+  private final Signal<String> openedAt = state("not yet");
   private final Query<String> report = query(() -> {
     Thread.sleep(800);
     return "Report ready";

@@ -23,7 +23,7 @@ class QueryTest {
 
   static final class Search extends LiveComponent {
     private Fetch fetch;
-    private final State<String> filter = state("a");
+    private final Signal<String> filter = state("a");
     private final Query<String> result = query(() -> fetch.apply(filter.get()));
 
     Search(Fetch fetch) {
@@ -127,8 +127,8 @@ class QueryTest {
   }
 
   static final class Host extends LiveComponent {
-    private final State<Boolean> show = state(true);
-    private final State<String> which = state("7");
+    private final Signal<Boolean> show = state(true);
+    private final Signal<String> which = state("7");
 
     @Override public Tag<?> render() {
       return T.page("t", T.div(
