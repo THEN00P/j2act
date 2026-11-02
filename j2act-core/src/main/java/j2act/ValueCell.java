@@ -24,7 +24,8 @@ class ValueCell extends Cell {
   }
 
   Object read() {
-    Object v = latestRead() ? peekLatest() : value;
+    Action.Call call = Action.Call.current();
+    Object v = call != null && call.wrote(this) ? call.seen(this) : latestRead() ? peekLatest() : value;
     onRead(v);
     if (held && Tracking.latest() && tab.lane.isCurrent()) {
       latestReader();

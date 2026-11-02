@@ -345,7 +345,8 @@ final class Scope implements Observer {
     }
     for (Cell cell : cells) {
       if (cell instanceof QueryCell && ((QueryCell) cell).loading()
-        || cell instanceof AsyncCell && ((AsyncCell) cell).loading()) {
+        || cell instanceof AsyncCell && ((AsyncCell) cell).loading()
+        || cell instanceof OptimisticCell && ((OptimisticCell) cell).loading()) {
         return false;
       }
     }

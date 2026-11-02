@@ -98,14 +98,17 @@ public final class Reactive {
     return AsyncCell.submit(tab, observer instanceof AsyncCell ? (AsyncCell) observer : null, scope, work);
   }
 
-  /** Loads an async memo again, quietly: its old value stays and isPending does not turn true (ADR 0031). */
+  /**
+   * Loads an async memo again, quietly: its old value stays and isPending does not turn true
+   * (ADR 0031). In an action's body it is part of the transaction: the action commits, with its
+   * optimistic writes going, once the new value arrived.
+   */
   public static void refresh(Supplier<?> memo) {
-    Cell cell = memo instanceof Primitive ? ((Primitive) memo).requireCell() : null;
-    if (!(cell instanceof AsyncCell)) {
-      throw new IllegalArgumentException("refresh takes an async memo");
-    }
-    AsyncCell async = (AsyncCell) cell;
-    if (async.tab.lane.isCurrent()) {
+    AsyncCell async = asyncOf(memo, "refresh");
+    Action.Call call = Action.Call.current();
+    if (call != null) {
+      call.refresh(async);
+    } else if (async.tab.lane.isCurrent()) {
       async.refresh();
     } else {
       async.tab.post(async::refresh);
@@ -141,11 +144,7 @@ public final class Reactive {
    * action around this call ends, for a refresh that should show (ADR 0031).
    */
   public static void affects(Supplier<?> memo) {
-    Cell cell = memo instanceof Primitive ? ((Primitive) memo).requireCell() : null;
-    if (!(cell instanceof AsyncCell)) {
-      throw new IllegalArgumentException("affects takes an async memo");
-    }
-    AsyncCell async = (AsyncCell) cell;
+    AsyncCell async = asyncOf(memo, "affects");
     Action.Call call = Action.Call.current();
     if (async.tab.lane.isCurrent()) {
       async.affected = true;
@@ -159,6 +158,107 @@ public final class Reactive {
         }
       });
     }
+  }
+
+  private static AsyncCell asyncOf(Supplier<?> value, String what) {
+    AsyncCell async = value instanceof Primitive ? Optimistic.asyncOf(((Primitive) value).requireCell()) : null;
+    if (async == null) {
+      throw new IllegalArgumentException(what + " takes an async memo or an optimistic value over a load");
+    }
+    return async;
+  }
+
+  /**
+   * A write whose body runs on j2act's executor, as one transaction per run; see {@link Action}.
+   * It creates nothing reactive, so it takes no create prefix and needs no owner.
+   */
+  public static <V, R> Action<V, R> action(Action.Body<V, R> body) {
+    return new Action<>(body);
+  }
+
+  /** An action with no result. */
+  public static <V> Action<V, Void> action(Action.VoidBody<V> body) {
+    return new Action<>(variables -> {
+      body.run(variables);
+      return null;
+    });
+  }
+
+  /** An action with no variables; run it with run(). */
+  public static <R> Action<Void, R> action(Action.NoArgBody<R> body) {
+    return new Action<>(variables -> body.run());
+  }
+
+  /** A value that takes optimistic writes from actions, undone when they end; see {@link Optimistic}. */
+  public static <T> Optimistic<T> createOptimistic(T initial) {
+    return own(new Optimistic<>(new Signal<>(initial)));
+  }
+
+  /** An optimistic value over a derived value. */
+  public static <T> Optimistic<T> createOptimistic(Supplier<T> body) {
+    return own(new Optimistic<>(new Memo<>(body)));
+  }
+
+  /** An optimistic value over a load, the usual shape: createOptimistic(() -> async(() -> service.list())). */
+  public static <T> Optimistic<T> createOptimistic(AsyncSupplier<T> body) {
+    return own(new Optimistic<>(new Memo<>(body)));
+  }
+
+  /**
+   * Runs one call, trying it again up to retries times with a doubling wait from backoff, for the
+   * call inside an action that may fail and is safe to repeat (ADR 0031). Whether it is safe is
+   * the app's to know: a call that succeeded but lost its reply runs twice.
+   */
+  public static <R> R retry(Loader<R> call, int retries, java.time.Duration backoff) throws Exception {
+    long wait = backoff.toMillis();
+    for (int attempt = 0;; attempt++) {
+      try {
+        return call.load();
+      } catch (InterruptedException e) {
+        throw e;
+      } catch (Exception e) {
+        if (attempt >= retries) {
+          throw e;
+        }
+        Thread.sleep(wait);
+        wait *= 2;
+      }
+    }
+  }
+
+  /** A timer started by schedule(...). */
+  @FunctionalInterface
+  public interface Timer {
+    void cancel();
+  }
+
+  /** Runs body on this tab's lane after a delay, function first and timing last as the JDK's schedule has it. */
+  public static Timer schedule(Runnable body, java.time.Duration delay) {
+    return schedule(body, delay, false);
+  }
+
+  /** Runs body on this tab's lane after a delay, again and again if repeating, until the timer is cancelled. */
+  public static Timer schedule(Runnable body, java.time.Duration delay, boolean repeating) {
+    Tab tab = ambientTab("schedule(...)");
+    Scope scope = Tracking.scope();
+    java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+    Runnable[] tick = new Runnable[1];
+    tick[0] = () -> {
+      if (cancelled.get()) {
+        return;
+      }
+      Scope previous = Tracking.swapScope(scope);
+      try {
+        body.run();
+      } finally {
+        Tracking.swapScope(previous);
+      }
+      if (repeating) {
+        tab.engine.later(tab, delay.toMillis(), tick[0]);
+      }
+    };
+    tab.engine.later(tab, delay.toMillis(), tick[0]);
+    return () -> cancelled.set(true);
   }
 
   /** Reads ahead of a held write, for what must follow input at once, such as the text field being typed into. */
@@ -181,11 +281,7 @@ public final class Reactive {
 
   /** Tracked: the last load of this async memo failed; for showing it beside a withStaleOnError() value. */
   public static boolean failed(Supplier<?> memo) {
-    Cell cell = memo instanceof Primitive ? ((Primitive) memo).requireCell() : null;
-    if (!(cell instanceof AsyncCell)) {
-      throw new IllegalArgumentException("failed takes an async memo");
-    }
-    return ((AsyncCell) cell).readFailed();
+    return asyncOf(memo, "failed").readFailed();
   }
 
   /** A boundary showing a fallback while what it wraps reads a value not loaded yet; see {@link Loading}. */
