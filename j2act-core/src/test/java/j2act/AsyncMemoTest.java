@@ -185,6 +185,50 @@ class AsyncMemoTest {
     }
   }
 
+  static final class CopiesALoad extends ComponentTag {
+    @Override protected View setup() {
+      var value = createMemo(() -> future("copied"));
+      var copy = createSignal(() -> value.get());
+      return () -> T.button("copy:" + copy.get()).onClick(e -> copy.set("edited"));
+    }
+  }
+
+  static final class CopyInABoundary extends LiveComponent {
+    @Override protected View setup() {
+      return () -> T.page("t", T.div(Reactive.loading(new CopiesALoad()).withFallback(T.span("waiting"))));
+    }
+  }
+
+  @Test
+  void aSetupThatReadsAValueNotLoadedResumesInItsBoundary() {
+    FUTURES.clear();
+    try (Harness h = new Harness(CopyInABoundary::new)) {
+      assertTrue(h.load().contains("waiting"), h.html);
+      h.connect();
+      int from = h.conn.size();
+      future("copied").complete("ready");
+      String patch = h.awaitPatch(from, p -> p.contains("copy:ready")).get("html");
+      from = h.conn.size();
+      h.click(Harness.clickOn(patch, "copy:ready"));
+      h.awaitPatch(from, p -> p.contains("copy:edited"));
+    }
+  }
+
+  static final class CopyAtTheRoot extends LiveComponent {
+    @Override protected View setup() {
+      var value = createMemo(() -> async(() -> "ready"));
+      var copy = createSignal(() -> value.get());
+      return () -> T.page("t", T.span("copy:" + copy.get()));
+    }
+  }
+
+  @Test
+  void aSetupThatReadsAValueNotLoadedOutsideEveryBoundaryIsWaitedFor() {
+    try (Harness h = new Harness(CopyAtTheRoot::new)) {
+      assertTrue(h.load().contains("copy:ready"), h.html);
+    }
+  }
+
   static final List<String> SEEN = new java.util.concurrent.CopyOnWriteArrayList<>();
 
   static final class EffectWaits extends LiveComponent {

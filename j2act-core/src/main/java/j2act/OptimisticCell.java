@@ -58,6 +58,15 @@ final class OptimisticCell extends Cell implements Observer {
     return base.peek();
   }
 
+  /** What a load that read this is validated against: what it read, with the overlays. */
+  @Override Object peekLatest() {
+    Object value = base.peekLatest();
+    for (Overlay overlay : overlays) {
+      value = overlay.change.apply(value);
+    }
+    return value;
+  }
+
   boolean loading() {
     return base instanceof AsyncCell && ((AsyncCell) base).loading();
   }

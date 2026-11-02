@@ -251,6 +251,43 @@ class ActionTest {
     }
   }
 
+  static final class LoadReadsOptimistic extends LiveComponent {
+    static final AtomicInteger LOADS = new AtomicInteger();
+    static volatile java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(0);
+
+    @Override protected View setup() {
+      var draft = createOptimistic("base");
+      var shown = createMemo(() -> async(() -> {
+        LOADS.incrementAndGet();
+        return "seen " + draft.get();
+      }));
+      var save = action((String v) -> {
+        draft.set(v);
+        release.await();
+        refresh(shown);
+        return v;
+      });
+      return () -> T.page("t", T.div(
+        T.span("shown:" + shown.get() + ";"),
+        T.button("save").onClick(e -> save.run("edit").thenRun(() -> LOADS.addAndGet(1000)))));
+    }
+  }
+
+  @Test
+  void aLoadReadingAnOptimisticValueLands() {
+    LoadReadsOptimistic.LOADS.set(0);
+    LoadReadsOptimistic.release = new java.util.concurrent.CountDownLatch(1);
+    try (Harness h = new Harness(LoadReadsOptimistic::new)) {
+      String html = h.load();
+      h.connect();
+      assertTrue(html.contains("shown:seen base;"), html);
+      h.click(Harness.clickOn(html, "save"));
+      LoadReadsOptimistic.release.countDown();
+      Harness.eventually(() -> LoadReadsOptimistic.LOADS.get() >= 1000, "the action finishes, with its load landed");
+      assertTrue(LoadReadsOptimistic.LOADS.get() < 1010, "and no load kept restarting: " + LoadReadsOptimistic.LOADS.get());
+    }
+  }
+
   static final class WritesOutsideAnAction extends LiveComponent {
     static volatile Throwable thrown;
 

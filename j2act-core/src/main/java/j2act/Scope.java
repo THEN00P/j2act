@@ -229,7 +229,9 @@ final class Scope implements Observer {
 
   /** Before a render: after a class swap the view must be the new code's. */
   void refreshView() {
-    if (view != null && swapped()) {
+    if (view == null) {
+      runSetup();
+    } else if (swapped()) {
       try {
         runSetup();
       } catch (ShapeChanged e) {
@@ -281,7 +283,12 @@ final class Scope implements Observer {
       bindPrimitive(primitives.get(i), i);
     }
     if (view == null && settledCount < 0) {
-      runSetup();
+      try {
+        runSetup();
+      } catch (NotReady | LoadFailed e) {
+        // It read a value not loaded yet. The render that follows runs setup again, where a
+        // boundary can catch this; what it created so far is found again by creation order.
+      }
     }
   }
 
