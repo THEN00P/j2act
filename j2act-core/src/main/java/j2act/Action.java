@@ -195,6 +195,13 @@ public final class Action<V, R> {
           held.merge(cell.transition.current());
         }
         held.load(cell);
+        // What follows it changes too: those run again on its result, and the run waits for them.
+        for (AsyncCell below : tab.loadsBelow(cell)) {
+          if (below.transition != null && below.transition.current() != held) {
+            held.merge(below.transition.current());
+          }
+          held.load(below);
+        }
         cell.start();
       }
       held.closeAction();

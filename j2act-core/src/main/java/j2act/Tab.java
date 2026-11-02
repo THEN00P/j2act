@@ -49,6 +49,8 @@ public final class Tab {
   final List<LifecycleCell> pendingSettled = new ArrayList<>();
   /** The loading(...) boundaries showing their fallback: what a served page's stream waits for (ADR 0031). */
   final Set<Scope> showingFallback = new HashSet<>();
+  /** The errored(...) boundaries showing their fallback, which hide what they wrap like a loading(...) does. */
+  final Set<Scope> showingError = new HashSet<>();
   /** The rest of the served page, while it streams. */
   private PageStream stream;
   /** The shell went out, so a load's notFound() can no longer change the response (ADR 0031). */
@@ -993,6 +995,14 @@ public final class Tab {
     transition.current().commitIfDone();
   }
 
+  /** Lane-only. The async values on screen that follow this load. */
+  Set<AsyncCell> loadsBelow(AsyncCell load) {
+    Set<AsyncCell> below = new java.util.LinkedHashSet<>();
+    Set<Cell> seen = new HashSet<>();
+    collectReloads(load, seen, below);
+    return below;
+  }
+
   /** Lane-only. A load of a transition landed: the loads that follow it run again on its new result. */
   void restartBelow(AsyncCell landed, Transition transition) {
     Set<AsyncCell> below = new java.util.LinkedHashSet<>();
@@ -1056,7 +1066,7 @@ public final class Tab {
     for (LifecycleCell hook : new ArrayList<>(pendingSettled)) {
       if (hook.disposed) {
         pendingSettled.remove(hook);
-      } else if (hook.owner == null || !hook.owner.preloading() && hook.owner.settledBelow()) {
+      } else if (hook.owner == null || !hook.owner.preloading() && hook.owner.settledBelow() && !hook.owner.hidden()) {
         pendingSettled.remove(hook);
         hook.fire();
       }

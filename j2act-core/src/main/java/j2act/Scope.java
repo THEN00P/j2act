@@ -339,6 +339,16 @@ final class Scope implements Observer {
     deps.add(cell);
   }
 
+  /** A boundary at or above this scope shows its fallback, so this scope's output is not on screen. */
+  boolean hidden() {
+    for (Scope s = this; s != null; s = s.parent) {
+      if (tab.showingFallback.contains(s) || tab.showingError.contains(s)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Everything loading in this component and below finished, and it was rendered. */
   boolean settledBelow() {
     if (dirty || disposed) {
@@ -392,6 +402,7 @@ final class Scope implements Observer {
     tab.handlers.remove(this);
     tab.heads.forget(this);
     tab.showingFallback.remove(this);
+    tab.showingError.remove(this);
     // Children first, above; then this owner's, last created first, as Solid runs its cleanups.
     for (int i = cells.size() - 1; i >= 0; i--) {
       Cell cell = cells.get(i);

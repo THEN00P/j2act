@@ -203,6 +203,54 @@ class ActionTest {
     }
   }
 
+  static final class RefreshChain extends LiveComponent {
+    static final Map<String, CompletableFuture<String>> LOADS = new ConcurrentHashMap<>();
+    static final AtomicInteger RUN = new AtomicInteger();
+
+    static CompletableFuture<String> load(String key) {
+      return LOADS.computeIfAbsent(key, k -> new CompletableFuture<>());
+    }
+
+    @Override protected View setup() {
+      var first = createMemo(() -> load("first" + RUN.incrementAndGet()));
+      var second = createMemo(() -> load("then " + first.get()));
+      var again = action((String v) -> {
+        refresh(first);
+        return v;
+      });
+      return () -> T.page("t", T.div(
+        T.span("first:" + first.get() + ";"),
+        T.span("second:" + second.get() + ";"),
+        T.button("again").onClick(e -> again.run("x"))));
+    }
+  }
+
+  @Test
+  void aRefreshWaitsForTheLoadsThatFollowIt() {
+    RefreshChain.LOADS.clear();
+    RefreshChain.RUN.set(0);
+    RefreshChain.load("first1").complete("a");
+    RefreshChain.load("then a").complete("b");
+    try (Harness h = new Harness(RefreshChain::new)) {
+      String html = h.load();
+      h.connect();
+      assertTrue(html.contains("second:b;"), html);
+      h.click(Harness.clickOn(html, "again"));
+      Harness.eventually(() -> RefreshChain.LOADS.containsKey("first2"), "the refresh");
+
+      int from = h.conn.size();
+      RefreshChain.load("first2").complete("c");
+      Harness.eventually(() -> RefreshChain.LOADS.containsKey("then c"), "the follower runs on the new result");
+      assertTrue(h.conn.since(from, m -> "patch".equals(m.get("type")) && m.get("html").contains("first:c;")).isEmpty(),
+        "nothing changes until the follower landed");
+
+      from = h.conn.size();
+      RefreshChain.load("then c").complete("d");
+      String landed = h.awaitPatch(from, p -> p.contains("second:d;")).get("html");
+      assertTrue(landed.contains("first:c;"), "one update: " + landed);
+    }
+  }
+
   static final class WritesOutsideAnAction extends LiveComponent {
     static volatile Throwable thrown;
 

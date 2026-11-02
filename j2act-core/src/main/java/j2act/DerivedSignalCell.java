@@ -59,7 +59,12 @@ final class DerivedSignalCell extends ValueCell implements Observer {
 
   @Override public void invalidate() {
     if (!disposed) {
-      setOnLane(compute());
+      // A write stands until what it copies really changes.
+      Object before = sourced;
+      Object next = compute();
+      if (!java.util.Objects.equals(before, next)) {
+        setOnLane(next);
+      }
     }
   }
 

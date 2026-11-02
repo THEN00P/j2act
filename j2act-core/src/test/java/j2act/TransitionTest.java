@@ -199,6 +199,29 @@ class TransitionTest {
     }
   }
 
+  static final class DerivedKeepsEdit extends LiveComponent {
+    @Override protected View setup() {
+      var source = createSignal(0);
+      var parity = createSignal(() -> source.get() % 2);
+      return () -> T.page("t", T.div(
+        T.span("parity:" + parity.get() + ";"),
+        T.button("edit").onClick(e -> parity.set(10)),
+        T.button("even").onClick(e -> source.set(2)),
+        T.button("odd").onClick(e -> source.set(3))));
+    }
+  }
+
+  @Test
+  void anEditOfADerivedSignalStandsUntilItsSourceResultChanges() {
+    try (Harness h = new Harness(DerivedKeepsEdit::new)) {
+      String html = h.load();
+      h.connect();
+      assertTrue(h.click(Harness.clickOn(html, "edit")).get(0).get("html").contains("parity:10;"));
+      assertTrue(h.click(Harness.clickOn(html, "even")).isEmpty(), "0 % 2 and 2 % 2 are the same result");
+      assertTrue(h.click(Harness.clickOn(html, "odd")).get(0).get("html").contains("parity:1;"));
+    }
+  }
+
   static final class Batches extends LiveComponent {
     static volatile int seenAfterSet;
 

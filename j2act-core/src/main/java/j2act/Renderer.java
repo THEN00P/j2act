@@ -86,6 +86,7 @@ final class Renderer {
       try {
         renderChildren(scope, "/0", latest(boundary).children(), false);
         tab.showingFallback.remove(scope);
+        tab.showingError.remove(scope);
       } catch (NotReady e) {
         if (!(boundary instanceof Loading)) {
           throw e;
@@ -105,6 +106,7 @@ final class Renderer {
         out.setLength(inner);
         keepMounted(scope);
         scope.waitFor(e.cell);
+        tab.showingError.add(scope);
         AsyncCell failed = e.cell;
         java.util.function.BiFunction<Throwable, Runnable, ? extends DomContent> fallback = ((Errored) boundary).fallback;
         if (fallback != null) {

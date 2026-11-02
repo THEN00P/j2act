@@ -134,6 +134,50 @@ class HooksTest {
     }
   }
 
+  static volatile java.util.concurrent.CompletableFuture<String> late;
+
+  static final class ReadyChild extends ComponentTag {
+    @Override protected View setup() {
+      onSettled(() -> {
+        LOG.add("ready child settled");
+        return null;
+      });
+      return () -> T.span("ready");
+    }
+  }
+
+  static final class PendingChild extends ComponentTag {
+    @Override protected View setup() {
+      var value = Reactive.createMemo(() -> late);
+      return () -> T.span("late:" + value.get());
+    }
+  }
+
+  static final class HiddenBySibling extends LiveComponent {
+    @Override protected View setup() {
+      return () -> T.page("t", T.div(
+        Reactive.loading(new ReadyChild(), new PendingChild()).withFallback(T.span("waiting")),
+        T.button("flush").onClick(e -> { })));
+    }
+  }
+
+  @Test
+  void onSettledWaitsWhileABoundaryAboveHidesItsComponent() {
+    LOG.clear();
+    late = new java.util.concurrent.CompletableFuture<>();
+    try (Harness h = new Harness(HiddenBySibling::new)) {
+      String html = h.load();
+      assertTrue(html.contains("waiting"), html);
+      h.connect();
+      h.click(Harness.clickOn(html, "flush"));
+      assertTrue(LOG.isEmpty(), "its output was dropped for the fallback: " + LOG);
+      int from = h.conn.size();
+      late.complete("here");
+      h.awaitPatch(from, p -> p.contains("late:here"));
+      Harness.eventually(() -> LOG.contains("ready child settled"), "once it is really on screen");
+    }
+  }
+
   static final class WatchesSocket extends LiveComponent {
     @Override protected View setup() {
       createEffect(() -> useTab().connected(), live -> {
