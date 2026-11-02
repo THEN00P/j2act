@@ -30,9 +30,10 @@ public final class ProfileCard extends ComponentTag {
   @Override protected View setup() {
     var profile = createMemo(() -> async(() -> directory.profile(name.get())));
     return () -> div(
-      loading(() -> p(profile.get()))
-        .withFallback(p("Loading profile…")),
-      small("directory calls so far: " + directory.calls())
+      loading(() -> div(
+        p(profile.get()),
+        small("directory calls so far: " + directory.calls())
+      )).withFallback(p("Loading profile…"))
     ).withClass("card");
   }
 }

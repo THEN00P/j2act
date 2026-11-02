@@ -15,7 +15,8 @@ final class PageStream {
   /** Swaps a template in for the element with its anchor. Defined once, right after the shell. */
   private static final String HELPER = "function j2s(a){var t=document.getElementById(\"j2t-\"+a),"
     + "e=document.querySelector('[data-j2-scope=\"'+a+'\"]');if(t){if(e&&t.content.firstElementChild)"
-    + "e.replaceWith(t.content.firstElementChild);t.remove()}document.currentScript.remove()}";
+    + "e.replaceWith(t.content.firstElementChild);t.remove()}document.currentScript.remove()}"
+    + "document.currentScript.remove()";
 
   private final Tab tab;
   private final String scriptTag;

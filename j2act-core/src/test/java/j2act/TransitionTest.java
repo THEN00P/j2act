@@ -89,6 +89,48 @@ class TransitionTest {
     }
   }
 
+  static final class Shows extends ComponentTag {
+    private final Prop<Signal<String>> selected = prop();
+
+    Shows withSelected(Signal<String> s) {
+      selected.set(s);
+      return this;
+    }
+
+    @Override protected View setup() {
+      var profile = createMemo(() -> profile(selected.get().get()));
+      return () -> T.span("shown:" + profile.get() + ";");
+    }
+  }
+
+  static final class Unmounts extends LiveComponent {
+    @Override protected View setup() {
+      var selected = createSignal("A");
+      var shown = createSignal(true);
+      var other = createSignal("x");
+      return () -> T.page("t", T.div(
+        T.span("selected:" + selected.get() + ";other:" + other.get() + ";pending:" + isPending(selected) + ";"),
+        shown.get() ? new Shows().withSelected(selected) : null,
+        T.button("pick").onClick(e -> selected.set("never")),
+        T.button("hide").onClick(e -> shown.set(false))));
+    }
+  }
+
+  @Test
+  void aLoadUnmountedWhileItHeldAWriteLetsItGo() {
+    PROFILES.clear();
+    profile("A").complete("a!");
+    try (Harness h = new Harness(Unmounts::new)) {
+      String html = h.load();
+      h.connect();
+      h.click(Harness.clickOn(html, "pick"));
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "hide"));
+      String page = h.awaitPatch(from, p -> p.contains("selected:never;")).get("html");
+      assertTrue(page.contains("pending:false;"), "nothing is left holding it: " + page);
+    }
+  }
+
   static final class Batches extends LiveComponent {
     static volatile int seenAfterSet;
 

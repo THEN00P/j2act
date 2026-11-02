@@ -302,5 +302,11 @@ final class AsyncCell extends Cell implements Observer {
     interruptRuns();
     unsubscribe();
     super.dispose();
+    Transition holding = transition;
+    if (holding != null) {
+      // Unmounted while a held write waited for it: what else it held need not wait any more.
+      transition = null;
+      holding.current().commitIfDone();
+    }
   }
 }
