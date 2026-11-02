@@ -84,6 +84,25 @@ class ProcessorTest {
     }
   }
 
+  /**
+   * ADR 0031's name table, under both compilers: a key is the chain of variable names from setup()
+   * down, so a helper used twice gets two keys, and a call the table cannot name gets none.
+   */
+  @Test void retainedKeysComeFromVariableNames() throws Exception {
+    for (JavaCompiler compiler : Arrays.asList(ToolProvider.getSystemJavaCompiler(), new EclipseCompiler())) {
+      Path classes = Files.createTempDirectory("j2act-names");
+      Result result = compile(compiler, sources("names"), classes);
+      assertEquals(Collections.emptyList(), result.diagnostics, compiler.toString());
+      try (java.net.URLClassLoader loader = new java.net.URLClassLoader(new java.net.URL[] {classes.toUri().toURL()},
+        ProcessorTest.class.getClassLoader())) {
+        Class<?> notes = loader.loadClass("names.Notes");
+        notes.getMethod("setup").invoke(notes.getConstructor().newInstance());
+        assertEquals(Arrays.asList("notes/draft", "summary/draft", "direct", null, null, null),
+          notes.getField("KEYS").get(null), compiler.toString());
+      }
+    }
+  }
+
   @Test void clientTypesMatchTheCheckedInExample() throws IOException {
     Result javac = compile(ToolProvider.getSystemJavaCompiler(), sources("clients"));
     String expected = new String(Files.readAllBytes(FIXTURES.resolve("clients/Webcam.types.d.ts")), StandardCharsets.UTF_8);

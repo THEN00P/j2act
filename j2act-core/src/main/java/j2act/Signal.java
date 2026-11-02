@@ -8,7 +8,7 @@ import java.util.function.UnaryOperator;
  * render() subscribes the component; set() from any thread is queued onto the tab's lane
  * (ADR 0014).
  */
-public final class Signal<T> extends Primitive implements Supplier<T> {
+public class Signal<T> extends Primitive implements Supplier<T> {
 
   private final T initial;
   /** For createSignal(fn): what it follows until a write, and again when that changes. */
@@ -17,6 +17,8 @@ public final class Signal<T> extends Primitive implements Supplier<T> {
   final boolean retained;
   /** The explicit snapshot name, or null to use the field's name. */
   final String retainedName;
+  /** The variable names the processor recorded for this call, or null without them (ADR 0031). */
+  String stackName;
 
   Signal(T initial) {
     this(initial, false, null);

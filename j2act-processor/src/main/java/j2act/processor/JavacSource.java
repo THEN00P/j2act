@@ -129,6 +129,12 @@ final class JavacSource implements Source {
     messager.printMessage(kind, message, at);
   }
 
+  @Override public int line(Node call, TypeElement type) {
+    CompilationUnitTree unit = unit(type);
+    long end = trees.getSourcePositions().getEndPosition(unit, (Tree) call.origin);
+    return (int) unit.getLineMap().getLineNumber(end);
+  }
+
   @Override public java.nio.file.Path sourceFile(TypeElement type) {
     java.net.URI uri = unit(type).getSourceFile().toUri();
     return "file".equals(uri.getScheme()) ? java.nio.file.Paths.get(uri) : null;

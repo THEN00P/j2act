@@ -34,6 +34,7 @@ import javax.tools.Diagnostic;
 public final class J2ActProcessor extends AbstractProcessor {
 
   private Checks checks;
+  private NameTable names;
   private ClientTypes clientTypes;
   private Source source;
   private boolean tokenWritten;
@@ -62,6 +63,7 @@ public final class J2ActProcessor extends AbstractProcessor {
         "j2act: build-time checks skipped, " + env.getClass().getName() + " is neither javac nor ECJ");
     } else {
       checks = new Checks(env, source);
+      names = new NameTable(env.getFiler(), env.getElementUtils(), source);
     }
     clientTypes = new ClientTypes(env, source);
     this.source = source;
@@ -81,6 +83,7 @@ public final class J2ActProcessor extends AbstractProcessor {
         try {
           if (checks != null) {
             checks.check((TypeElement) root);
+            names.write((TypeElement) root);
           }
           clientTypes.generate((TypeElement) root);
         } catch (RuntimeException e) {

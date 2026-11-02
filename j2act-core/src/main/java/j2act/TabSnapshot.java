@@ -2,7 +2,9 @@ package j2act;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -52,6 +54,125 @@ final class TabSnapshot {
       }
     }
     restoring = entries;
+  }
+
+  /** Retained values with no name yet, until their owner's setup ends and all of them are known. */
+  private final Map<Scope, List<Unnamed>> unnamed = new java.util.IdentityHashMap<>();
+
+  private static final class Unnamed {
+    final ValueCell cell;
+    final Object initial;
+
+    Unnamed(ValueCell cell, Object initial) {
+      this.cell = cell;
+      this.initial = initial;
+    }
+
+    String type() {
+      return initial == null ? "Object" : initial.getClass().getName();
+    }
+  }
+
+  /**
+   * Lane-only. Names a new retained value (ADR 0031): explicitly, by the field holding it, or by
+   * the variables the processor recorded. With none of those it waits for the end of setup.
+   */
+  void retain(Scope scope, String explicit, String stackName, Object initial, ValueCell cell) {
+    String name = explicit != null ? explicit : fieldName(scope, cell);
+    if (name == null) {
+      name = stackName;
+    }
+    if (name == null) {
+      unnamed.computeIfAbsent(scope, s -> new ArrayList<>()).add(new Unnamed(cell, initial));
+      return;
+    }
+    String component = scope.ownerClass().getName();
+    for (Cell other : scope.cells) {
+      if (other != cell && other instanceof ValueCell && name.equals(((ValueCell) other).retainedName)) {
+        tab.engine.warnOnce("name " + component + "#" + name, component + " has two retained values named \""
+          + name + "\", such as a call in a loop; the second one is not retained, so give each its own name (ADR 0031)");
+        return;
+      }
+    }
+    warnIfKeyless(scope, component);
+    fill(scope, cell, name, initial == null ? Object.class : initial.getClass());
+  }
+
+  /** The field of a store or a component holding this cell's primitive, or null for a local. */
+  private String fieldName(Scope scope, ValueCell cell) {
+    return Retained.fieldHolding(scope.owner(), cell);
+  }
+
+  /**
+   * Lane-only. Setup ended. Creation order plus type only names what it cannot get wrong: unnamed
+   * values of different types. Two of one type could swap undetected, so neither is retained; and
+   * when the snapshot's types differ from the new code's, none of them is restored (ADR 0031).
+   */
+  void settleUnnamed(Scope scope) {
+    List<Unnamed> values = unnamed.remove(scope);
+    if (values == null) {
+      return;
+    }
+    String component = scope.ownerClass().getName();
+    Set<String> types = new java.util.TreeSet<>();
+    for (Unnamed value : values) {
+      if (!types.add(value.type())) {
+        tab.engine.log(System.Logger.Level.ERROR, component + " has two retained values of type " + value.type()
+          + " with no name to tell them apart, so neither is retained: pass createRetained(\"name\", initial), or"
+          + " build with the j2act processor (ADR 0031)", null);
+        return;
+      }
+    }
+    Map<String, String> entries = scope.store != null ? restoringStores : restoring;
+    String prefix = scope.slotPath() + "#@";
+    if (entries != null) {
+      Set<String> stored = new java.util.TreeSet<>();
+      for (String key : entries.keySet()) {
+        if (key.startsWith(prefix)) {
+          stored.add(key.substring(prefix.length()));
+        }
+      }
+      if (!stored.isEmpty() && !stored.equals(types)) {
+        tab.engine.log(System.Logger.Level.WARNING, component + "'s unnamed retained values changed since its"
+          + " snapshot, so none of them is restored (ADR 0031)", null);
+        for (String type : stored) {
+          entries.remove(prefix + type);
+        }
+      }
+    }
+    for (Unnamed value : values) {
+      fill(scope, value.cell, "@" + value.type(), value.initial == null ? Object.class : value.initial.getClass());
+    }
+  }
+
+  private void fill(Scope scope, ValueCell cell, String name, java.lang.reflect.Type type) {
+    cell.retainedName = name;
+    cell.retainedType = type;
+    Map<String, String> entries = scope.store != null ? restoringStores : restoring;
+    String json = entries == null ? null : entries.remove(scope.slotPath() + "#" + name);
+    if (json != null) {
+      try {
+        cell.restoreValue(tab.engine.snapshots.readValue(json, type));
+        scope.restored = true;
+      } catch (RuntimeException e) {
+        tab.engine.log(System.Logger.Level.WARNING, "retained " + scope.ownerClass().getName() + "#" + name
+          + " no longer reads as " + type.getTypeName() + "; it starts from its initial value (ADR 0026)", e);
+      }
+    }
+  }
+
+  private void warnIfKeyless(Scope scope, String component) {
+    if (scope.instance != null && scope.instance.key == null && scope.parent != null) {
+      for (Scope sibling : scope.parent.children.values()) {
+        if (sibling != scope && sibling.instance != null && sibling.instance.getClass() == scope.instance.getClass()
+          && sibling.instance.key == null) {
+          tab.engine.warnOnce("keyless " + scope.parent.address + "@" + component, component
+            + " has retained state and repeats without withKey under " + scope.parent.instance.getClass().getName()
+            + ", so a restore puts values back by position; give each row a stable withKey (ADR 0026)");
+          break;
+        }
+      }
+    }
   }
 
   /** Lane-only. Names a new retained cell after its field, and fills it from the snapshot being restored. */

@@ -79,6 +79,17 @@ final class EcjSource implements Source {
     return member instanceof ExecutableElement ? method(declaration) : field(declaration);
   }
 
+  @Override public int line(Node call, TypeElement type) {
+    begin(unit(type));
+    int line = 1;
+    for (int i = 0; i < call.end && i < source.length; i++) {
+      if (source[i] == '\n') {
+        line++;
+      }
+    }
+    return line;
+  }
+
   @Override public List<Node> initializers(TypeElement type) {
     Object unit = unit(type);
     List<Node> out = new ArrayList<>();

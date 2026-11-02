@@ -117,6 +117,7 @@ final class Scope implements Observer {
       bindPrimitive(primitives.get(i), i);
     }
     settledCount = cells.size();
+    tab.snapshot.settleUnnamed(this);
     activatePending();
   }
 
@@ -213,6 +214,7 @@ final class Scope implements Observer {
       }
       settledCount = cells.size();
       settled();
+      tab.snapshot.settleUnnamed(this);
     }
   }
 
@@ -304,7 +306,13 @@ final class Scope implements Observer {
     cell.owner = this;
     cells.add(cell);
     tab.cells.put(cell.address, cell);
-    if (primitive instanceof Signal && ((Signal<?>) primitive).retained) {
+    if (primitive instanceof RetainedSignal) {
+      Signal<?> signal = (Signal<?>) primitive;
+      tab.snapshot.retain(this, signal.retainedName, signal.stackName, signal.initial(), (ValueCell) cell);
+    } else if (primitive instanceof RetainedValue) {
+      RetainedValue<?> value = (RetainedValue<?>) primitive;
+      tab.snapshot.retain(this, value.name, value.stackName, cell.peek(), (ValueCell) cell);
+    } else if (primitive instanceof Signal && ((Signal<?>) primitive).retained) {
       tab.snapshot.retain(this, (Signal<?>) primitive, (ValueCell) cell, index);
     }
     primitive.attach(cell, true);

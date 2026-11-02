@@ -16,6 +16,8 @@ class ValueCell extends Cell {
   Transition transition;
   /** For Retained State: its name within its scope's slot and the type its JSON reads as (ADR 0026). */
   String retainedName;
+  /** This value came back from a snapshot. */
+  volatile boolean restored;
   java.lang.reflect.Type retainedType;
 
   ValueCell(Tab tab, String address, Object initial) {
@@ -96,6 +98,12 @@ class ValueCell extends Cell {
       throw new IllegalStateException("a signal is written while something reactive runs: derive with createMemo,"
         + " and write in handlers or an effect's second half (ADR 0031)");
     }
+  }
+
+  /** A snapshot's value, before anyone read this cell. */
+  void restoreValue(Object value) {
+    initialize(value);
+    restored = true;
   }
 
   /** Sets the first value without notifying anyone; for lazily resolved cells such as identity. */

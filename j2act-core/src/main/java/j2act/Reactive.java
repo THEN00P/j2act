@@ -1,7 +1,10 @@
 package j2act;
 
 import java.util.concurrent.CompletableFuture;
+
+import j2act.internal.names.RetainedNames;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -37,6 +40,36 @@ public final class Reactive {
    */
   public static <T> Signal<T> createSignal(Supplier<T> source) {
     return own(source == null ? new Signal<T>((T) null) : new Signal<T>(source, true));
+  }
+
+  /**
+   * A signal whose value goes into its owner's Snapshot, so it outlives the in-memory tab (ADR
+   * 0026, 0031). Keyed by the variable it is assigned to, through the processor.
+   */
+  public static <T> RetainedSignal<T> createRetained(T initial) {
+    return own(new RetainedSignal<>(initial, null, RetainedNames.chain(Reactive.class)));
+  }
+
+  /** A retained signal with an explicit name instead of its variable's; never required. */
+  public static <T> RetainedSignal<T> createRetained(String name, T initial) {
+    if (name == null || name.isEmpty()) {
+      throw new IllegalArgumentException("a retained name must not be empty");
+    }
+    return own(new RetainedSignal<>(initial, name, null));
+  }
+
+  /**
+   * Live data that needs converting, or several signals saved as one (ADR 0031). save is tracked,
+   * so a checkpoint writes only when its value changed. restore runs during setup, before the
+   * first render, when a snapshot had a value.
+   */
+  public static <T> RetainedValue<T> createRetained(Supplier<T> save, Consumer<T> restore) {
+    return own(new RetainedValue<>(save, restore, null, RetainedNames.chain(Reactive.class)));
+  }
+
+  /** A retained value with an explicit name instead of its variable's; never required. */
+  public static <T> RetainedValue<T> createRetained(String name, Supplier<T> save, Consumer<T> restore) {
+    return own(new RetainedValue<>(save, restore, name, null));
   }
 
   /** A pure derived value, recomputed when what it read changes; readers re-render only when it changes. */

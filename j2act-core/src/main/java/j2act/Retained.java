@@ -46,6 +46,27 @@ final class Retained {
   private Retained() {
   }
 
+  /** The instance field holding the primitive bound to this cell, or null: a local, a local of a helper, not reachable. */
+  static String fieldHolding(Object instance, Cell cell) {
+    for (Class<?> c = instance.getClass(); c != null && c != ComponentTag.class && c != Store.class && c != Object.class;
+        c = c.getSuperclass()) {
+      for (Field field : c.getDeclaredFields()) {
+        if (!Modifier.isStatic(field.getModifiers()) && Primitive.class.isAssignableFrom(field.getType())) {
+          try {
+            field.setAccessible(true);
+            Object held = field.get(instance);
+            if (held != null && ((Primitive) held).cell == cell) {
+              return field.getName();
+            }
+          } catch (IllegalAccessException | RuntimeException e) {
+            // A class in a named module that does not open its package: no field names from it.
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   /** The instance field holding this State, or null when it is a local or not reachable. */
   static Field fieldOf(Object instance, Signal<?> state) {
     for (Field field : STATE_FIELDS.get(instance.getClass())) {
