@@ -21,6 +21,10 @@ Deferred until core is solid (avoid rewrite hell). Signals plus button callbacks
 - **Typed value enums on generated tags**: `withType(InputType.EMAIL)` next to the String overloads, generated from the value sets already in the vendored HTML data (ADR 0021).
 
 - **In-page overlay devtools (not a browser extension)**: react-scan-style perf overlay (which scopes re-ran, patch sizes), slow-event log, component-tree inspector for our scope tree.
+- **Reactive diagnostics and attribution**: Solid 2's coded runtime diagnostics (`UNTRACKED_READ_AFTER_AWAIT` and friends, `packages/signals/src/core/dev.ts`) and its attribution engine, which answers why something re-ran and what a hold is waiting on (`core/attribution.ts`, `documentation/solid-2.0/08-dev-diagnostics.md`). The overlay above is the natural place to show them.
+
+- **Deep stores**: Solid 2's nested reactivity (`createStore`, `createProjection`, `reconcile`, `createOptimisticStore`, `packages/signals/src/store`): changing `user.address.city` re-renders only what read that path, and a setter edits a draft (`setStore(s => { s.list.push(x); })`). JS builds this on proxies, which Java has only for interfaces, so it needs its own design: generated accessors, bytecode, or a lens API over records. Until then a signal holds a whole value.
+
 - **Optimistic onMutate helpers**: snapshot/rollback conventions on Mutation, TanStack-style.
 - **S3-direct upload SPI**: StorageBackend behind the locked granular upload() shape (presigned chunks, no server bytes). Shape already covers it.
 - **View transitions**: lands with the component library, deferred together.
