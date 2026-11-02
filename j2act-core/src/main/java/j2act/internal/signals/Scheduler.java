@@ -82,6 +82,7 @@ final class Scheduler {
   Predicate<Node> laneAdoptHook;
   java.util.function.BiConsumer<Node, Node> laneServedHook;
   boolean guessing;
+  boolean inTrackedQueueCallback;
   Caught catchHook;
   Fresh freshHook;
   Predicate<Node> hiddenHook;
@@ -111,6 +112,7 @@ final class Scheduler {
   long clock;
   private boolean scheduled;
   private boolean halted;
+  private boolean haltNotified;
   private int syncDepth;
   int actionDepth;
   int question;
@@ -327,6 +329,7 @@ final class Scheduler {
 
   void schedule() {
     if (halted) {
+      notifyHalted();
       return;
     }
     if (scheduled) {
@@ -344,8 +347,18 @@ final class Scheduler {
     }
     halted = true;
     rt.owners.rethrowCleanupError(true);
-    System.getLogger("j2act").log(System.Logger.Level.ERROR,
-      "[REACTIVITY_HALTED] An uncaught error halted the reactive system. No further updates will be processed.", cause);
+    rt.errorLog.accept(
+      "[REACTIVITY_HALTED] An uncaught error halted the reactive system. No further updates will be processed."
+        + " Handle errors with <Errored> or treat this as a crash.", cause);
+  }
+
+  /** Logs on the first write after a halt, so a frozen interaction is traceable. */
+  private void notifyHalted() {
+    if (haltNotified) {
+      return;
+    }
+    haltNotified = true;
+    rt.errorLog.accept("[REACTIVITY_HALTED] Update ignored: the reactive system was halted by an earlier uncaught error.", null);
   }
 
   boolean halted() {
@@ -354,6 +367,7 @@ final class Scheduler {
 
   void resetErrorHalt() {
     halted = false;
+    haltNotified = false;
   }
 
   // ---- GlobalQueue
@@ -714,15 +728,32 @@ final class Scheduler {
     pendingNodes.clear();
   }
 
+  private static final String FLUSH_IN_ACTION = "[FLUSH_IN_ACTION] flush() inside an action body is not allowed. An action's writes"
+    + " are held in its transaction and commit when the action settles: flush() cannot reveal them, and draining here would"
+    + " detach the writes that follow from the transaction. Remove the flush(); to observe the result, read after the action"
+    + " resolves.";
+
   void flush() {
     if (actionDepth > 0) {
-      throw new IllegalStateException("[FLUSH_IN_ACTION] flush() inside an action body is not allowed: an action's writes are"
-        + " held in its transaction and commit when the action settles.");
+      throw new IllegalStateException(FLUSH_IN_ACTION);
     }
-    if (running || halted) {
+    if (running) {
+      if (inTrackedQueueCallback) {
+        throw new IllegalStateException("Cannot call flush() from inside onSettled or createTrackedEffect. flush() is not"
+          + " reentrant there. Writes made here are processed in the same flush's continuation; to force a drain afterwards,"
+          + " defer it: queueMicrotask(() -> flush()).");
+      }
       return;
     }
+    if (halted) {
+      return;
+    }
+    int count = 0;
     while (scheduled) {
+      if (++count == 100000) {
+        rt.owners.rethrowCleanupError(true);
+        throw new IllegalStateException("Potential Infinite Loop Detected. Kept alive by scheduled work");
+      }
       flushQueue();
     }
     rt.owners.rethrowCleanupError(false);
@@ -730,7 +761,7 @@ final class Scheduler {
 
   <T> T flush(Supplier<T> fn) {
     if (actionDepth > 0) {
-      return fn.get();
+      throw new IllegalStateException(FLUSH_IN_ACTION);
     }
     syncDepth++;
     try {

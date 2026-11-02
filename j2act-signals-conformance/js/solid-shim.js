@@ -3,6 +3,7 @@
 (function () {
   const b = globalThis.__bridge;
   const $REFRESH = Symbol("refresh");
+  const ROOT_ERROR_HOOK = Symbol("root error hook");
 
   class NotReadyError extends Error {
     constructor(source) {
@@ -46,6 +47,7 @@
       e = new NoOwnerError();
     } else if (kind === "contextNotFound") {
       e = new ContextNotFoundError();
+      e.message = message;
     } else {
       e = new Error(message);
       if (cause !== undefined) e.cause = cause;
@@ -62,45 +64,53 @@
       }
     };
 
-  const owners = new Map();
-  const wrapOwner = java => {
-    if (java === null || java === undefined) return null;
-    const key = b.identity(java);
-    let w = owners.get(key);
-    if (w === undefined) {
-      w = {
-        __owner: java,
-        get _parent() {
-          return wrapOwner(b.ownerParent(java));
-        },
-        get _firstChild() {
-          return wrapOwner(b.ownerFirstChild(java));
-        },
-        get _nextSibling() {
-          return wrapOwner(b.ownerNextSibling(java));
-        },
-        get id() {
-          return undefined;
-        },
-        get _context() {
-          return w.__context;
-        },
-        set _context(v) {
-          w.__context = v;
-        },
-        dispose(self) {
-          return guard(() => b.disposeOwner(java, self !== false))();
-        }
-      };
-      owners.set(key, w);
+  // What a test sees of an engine object it looks inside: `_subs` is the Java field `subs`.
+  const mirrors = new Map();
+  const NOT_PENDING = b.constantOf("NOT_PENDING");
+  const mirror = java => {
+    if (java === null || java === undefined || !Java.isJavaObject(java)) return java;
+    if (b.isCollection(java) || b.isMap(java)) {
+      const entries = b.entriesOf(java);
+      return b.isMap(java) ? new Map(entries.map(([k, v]) => [mirror(k), mirror(v)])) : new Set(entries.map(mirror));
     }
-    return w;
+    if (!b.isEngineObject(java)) return java;
+    const key = b.identity(java);
+    let m = mirrors.get(key);
+    if (m === undefined) {
+      const extras = {};
+      const isThrowable = false;
+      m = new Proxy(extras, {
+        get(t, prop) {
+          if (prop === "__node") return java;
+          if (typeof prop !== "string" || prop === "then") return undefined;
+          if (prop in t) return t[prop];
+          if (prop === "id") return undefined;
+          if (prop === "dispose") return guard(self => b.disposeOwner(java, self !== false));
+          if (prop === "_context") {
+            const out = {};
+            for (const [k, v] of b.entriesOf(b.fieldOf(java, "ctx"))) out[Symbol("context")] = mirror(v);
+            return out;
+          }
+          return mirror(b.fieldOf(java, prop));
+        },
+        set(t, prop, value) {
+          if (prop === ROOT_ERROR_HOOK) b.setRootErrorHook(java, value);
+          if (prop === "_name" && typeof value === "string") b.setName(java, value);
+          t[prop] = value;
+          return true;
+        }
+      });
+      mirrors.set(key, m);
+    }
+    return m;
   };
-  const unwrapOwner = o => (o === null || o === undefined ? null : o.__owner !== undefined ? o.__owner : o);
+  const unmirror = o => (o !== null && o !== undefined && o.__node !== undefined ? o.__node : o);
+  const wrapOwner = java => (java === undefined ? null : mirror(java));
+  const unwrapOwner = o => (o === null || o === undefined ? null : unmirror(o));
 
   const accessor = node => {
     const fn = guard(() => b.read(node));
-    fn[$REFRESH] = node;
+    Object.defineProperty(fn, $REFRESH, { get: () => mirror(node) });
     fn.__node = node;
     return fn;
   };
@@ -156,6 +166,7 @@
   const onCleanup = guard(fn => b.onCleanup(fn));
   const flush = guard(fn => (fn === undefined ? b.flush() : b.flushWith(fn)));
   const resetErrorHalt = guard(() => b.resetErrorHalt());
+  b.setConsole((...args) => console.error(...args));
   b.setTimers((f, ms) => setTimeout(f, ms), id => clearTimeout(id));
 
   const isPending = guard(fn => b.isPending(fn));
@@ -169,7 +180,7 @@
           "Pass the original source target, not a wrapper function or derived property read."
       );
     }
-    const promise = b.refresh(node);
+    const promise = b.refresh(unmirror(node));
     promise.catch(() => {});
     return promise;
   });
@@ -185,13 +196,15 @@
       return b.action(() => genFn(...args));
     });
 
-  const createContext = (defaultValue, description) => ({ id: b.newContextId(), defaultValue });
-  const getContext = guard((context, owner = getOwner()) =>
-    b.getContext(context.id, context.defaultValue, unwrapOwner(owner))
-  );
-  const setContext = guard((context, value, owner = getOwner()) =>
-    b.setContext(context.id, value, context.defaultValue, unwrapOwner(owner))
-  );
+  const createContext = function (defaultValue, description) {
+    return {
+      id: Symbol(description),
+      java: b.newContext(defaultValue, description, arguments.length > 0 && defaultValue === undefined),
+      defaultValue
+    };
+  };
+  const getContext = guard((context, owner = getOwner()) => b.getContext(context.java, unwrapOwner(owner)));
+  const setContext = guard((context, value, owner = getOwner()) => b.setContext(context.java, value, unwrapOwner(owner)));
 
   function flattenArray(children, results = [], options) {
     let notReady = null;
@@ -274,7 +287,7 @@
           "alone, or target the store record that owns the property."
       );
     }
-    b.affects(node);
+    b.affects(unmirror(node));
   });
 
   const iterableOf = java => ({
@@ -312,6 +325,22 @@
     if (source && typeof source[Symbol.asyncIterator] === "function") return iterableOf(b.wrapIterable(source));
     throw new TypeError("from(): expected a subscribe function, an Observable or an AsyncIterable");
   });
+  const mapArray = guard((list, map, options) => {
+    const keyed = options && options.keyed;
+    const keyFn = typeof keyed === "function" ? keyed : undefined;
+    const byIndex = keyed === false;
+    const indexes = map.length > 1;
+    const rowsMode = keyFn !== undefined || byIndex;
+    const wrapped = (item, index) => {
+      if (byIndex) return map(accessor(item), index);
+      if (rowsMode) return map(accessor(item), indexes ? accessor(index) : undefined);
+      return indexes ? map(item, accessor(index)) : map(item);
+    };
+    return accessor(b.mapArray(list, wrapped, indexes, keyFn, byIndex, options && options.fallback));
+  });
+  const repeat = guard((count, map, options) =>
+    accessor(b.repeat(count, map, options && options.from, options && options.fallback))
+  );
   const configureClientErrors = config => {
     if (config && config.onError !== undefined && typeof config.onError !== "function") {
       throw new TypeError(`Invalid onError: expected a function, received ${typeof config.onError}.`);
@@ -362,10 +391,52 @@
     affects,
     from,
     configureClientErrors,
+    ROOT_ERROR_HOOK,
+    mapArray,
+    repeat,
+    __smallMoveHits: () => b.smallMoveHits(),
+    ...Object.fromEntries(
+      [
+        "NOT_PENDING", "REACTIVE_NONE", "REACTIVE_CHECK", "REACTIVE_DIRTY", "REACTIVE_RECOMPUTING_DEPS", "REACTIVE_IN_HEAP",
+        "REACTIVE_IN_HEAP_HEIGHT", "REACTIVE_ZOMBIE", "REACTIVE_DISPOSED", "REACTIVE_JOINED", "REACTIVE_LAZY",
+        "REACTIVE_FRAME_READ", "REACTIVE_REASK", "REACTIVE_STAGED_READ", "REACTIVE_PROBED", "REACTIVE_LANE_DIRTY",
+        "REACTIVE_LANE_READ", "REACTIVE_SCREEN_READ", "REACTIVE_PROBE_UNANSWERED", "REACTIVE_WINDOW", "CONFIG_OWNED_WRITE",
+        "CONFIG_CHILDREN_FORBIDDEN", "CONFIG_AUTO_DISPOSE", "CONFIG_SYNC", "CONFIG_STAGED", "CONFIG_HELD", "CONFIG_HELD_FRAME",
+        "CONFIG_INPUTS_PUBLISHED", "CONFIG_OVERRIDE", "CONFIG_STAGED_ERROR", "CONFIG_GUESS", "CONFIG_VERDICT", "CONFIG_REDERIVE",
+        "CONFIG_LAGS", "CONFIG_AUTHORITATIVE", "CONFIG_FRESH_READ", "CONFIG_PROMOTED", "CONFIG_FRAME", "CONFIG_ASYNC",
+        "STATUS_NONE", "STATUS_PENDING", "STATUS_ERROR", "STATUS_UNINITIALIZED", "EFFECT_RENDER", "EFFECT_USER", "EFFECT_TRACKED"
+      ].map(n => [n, b.constantOf(n)])
+    ),
     SUPPORTS_PROXY: true,
     __guard: guard,
     __wrapOwner: wrapOwner,
     __unwrapOwner: unwrapOwner
   };
+  // Something the port leaves out names itself when a test reaches it, so a test that needs it is told
+  // apart from one that fails for a real reason.
+  const leftOut = name =>
+    new Proxy(function () {}, {
+      apply() {
+        throw new Error(`[left out] ${name}`);
+      },
+      construct() {
+        throw new Error(`[left out] ${name}`);
+      },
+      get(t, prop) {
+        if (typeof prop === "symbol" || prop === "then" || prop === "__esModule") return undefined;
+        return leftOut(`${name}.${prop}`);
+      }
+    });
+  // esbuild copies a module's own names into an object with the module's prototype, so a missing name
+  // reaches this prototype.
+  Object.setPrototypeOf(
+    solid,
+    new Proxy(Object.create(null), {
+      get(t, prop) {
+        if (typeof prop === "symbol" || prop === "then" || prop === "__esModule" || prop === "default") return undefined;
+        return leftOut(prop);
+      }
+    })
+  );
   globalThis.__solid = solid;
 })();

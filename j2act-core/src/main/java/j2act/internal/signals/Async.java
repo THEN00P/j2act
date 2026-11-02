@@ -66,10 +66,18 @@ final class Async {
     return value instanceof CompletionStage;
   }
 
-  /** What `parked.then()` gives: a new stage settling with the one it is given. */
+  /** What `parked.then()` gives: a new stage settling with the one it is given, never before the next tick. */
   @SuppressWarnings("unchecked")
-  static Object continuation(Object parked) {
-    return ((CompletionStage<Object>) parked).thenApply(v -> v);
+  Object continuation(Object parked) {
+    java.util.concurrent.CompletableFuture<Object> next = new java.util.concurrent.CompletableFuture<>();
+    ((CompletionStage<Object>) parked).whenComplete((v, e) -> rt.microtasks.execute(() -> {
+      if (e != null) {
+        next.completeExceptionally(e);
+      } else {
+        next.complete(v);
+      }
+    }));
+    return next;
   }
 
   /** Solid's `.then(fn, fn)`: at once when it is already settled here, otherwise on the lane. */

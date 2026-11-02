@@ -31,13 +31,17 @@ public final class Runtime {
   final From from;
   final Action action;
   final Signals signals;
+  final MapArray mapArray;
   final Executor microtasks;
   final Executor lane;
   /** What a boundary does with its content's value, Solid's `flatten`. Java's content has nothing to flatten. */
   UnaryOperator<Object> flatten = UnaryOperator.identity();
   Signals.Timer timer = Runtime::defaultTimer;
+  /** Solid's console.error. */
+  java.util.function.BiConsumer<String, Throwable> errorLog = (message, cause) ->
+    System.getLogger("j2act").log(System.Logger.Level.ERROR, message, cause);
   /** Solid's ambient hook of configureClientErrors. */
-  java.util.function.BiConsumer<Throwable, Owner> clientErrorHook;
+  ClientErrorHook clientErrorHook;
   private final java.util.Set<Throwable> reportedErrors =
     java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
@@ -59,6 +63,7 @@ public final class Runtime {
     this.from = new From(this);
     this.action = new Action(this);
     this.signals = new Signals(this);
+    this.mapArray = new MapArray(this);
   }
 
   private static final java.util.concurrent.ScheduledExecutorService TIMERS =
@@ -73,12 +78,28 @@ public final class Runtime {
     return () -> f.cancel(false);
   }
 
+  /** Solid's ClientErrorHook: the paths are of owners with a name, outermost first, or null when none has one. */
+  @FunctionalInterface
+  public interface ClientErrorHook {
+    void report(Throwable error, java.util.List<String> ownerPath, java.util.List<String> boundaryPath);
+  }
+
+  private static java.util.List<String> labels(Owner owner) {
+    java.util.ArrayList<String> path = new java.util.ArrayList<>();
+    for (Owner o = owner; o != null; o = o.parent) {
+      if (o.name != null && !o.name.isEmpty()) {
+        path.add(0, o.name);
+      }
+    }
+    return path.isEmpty() ? null : path;
+  }
+
   /** Port of reportClientError in core/error-hooks.ts: each error once, to the root's hook or the ambient one. */
   void reportClientError(Throwable error, Owner owner, Owner thrower) {
     if (error == null || !reportedErrors.add(error)) {
       return;
     }
-    java.util.function.BiConsumer<Throwable, Owner> hook = clientErrorHook;
+    ClientErrorHook hook = clientErrorHook;
     for (Owner o = owner; o != null; o = o.parent) {
       if (o.errorHook != null) {
         hook = o.errorHook;
@@ -88,10 +109,12 @@ public final class Runtime {
     if (hook == null) {
       return;
     }
+    java.util.List<String> boundary = labels(owner);
+    java.util.List<String> path = labels(thrower);
     try {
-      hook.accept(error, thrower != null ? thrower : owner);
+      hook.report(error, path != null ? path : boundary, boundary);
     } catch (RuntimeException | Error hookError) {
-      System.getLogger("j2act").log(System.Logger.Level.ERROR, "a client error hook failed", hookError);
+      errorLog.accept(null, hookError);
     }
   }
 
@@ -249,7 +272,7 @@ public final class Runtime {
   }
 
   public Runnable onCleanup(Runnable fn) {
-    return owners.cleanup(fn, core.context);
+    return signals.onCleanup(fn);
   }
 
   public Owner getOwner() {

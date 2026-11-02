@@ -1,0 +1,48 @@
+# Solid tests that fail here for a stated reason, by file and test name. A test that passes is taken off.
+
+async-chain-supersession :: a second write while an async chain is in flight > A33 / #3375 a Loading boundary reset keeps the hold while a reader outside the boundary observes the flight	tooling: the assertion is on the dev warning LOADING_ON_OUTSIDE_HOLD; the frames match
+attribution-current-origin :: currentOrigin > is undefined with no engine installed, and outside any frame with one	tooling: attribution, left out
+attribution-engine-cost :: <file>	tooling: attribution, left out
+attribution-navigation :: withOrigin — navigation provenance > is a plain call when no engine is installed	tooling: attribution, left out
+boundary-not-born-held-3540 :: Loading `on` beside a keyed Show around the boundary (#3540) > on over committed: mid-flight holds	tooling: the assertion is on the dev warning LOADING_ON_OUTSIDE_HOLD; the frames match
+createLoadingBoundary :: createLoadingBoundary > throws dev error when pending async value is read outside tracking scope with strictRead	tooling: strictRead dev error, left out
+createRoot :: should reset child ids when computations rerun	hydration ids, left out
+createRoot :: transparent owners > should delegate child IDs through transparent computed	hydration ids, left out
+createRoot :: transparent owners > should delegate child IDs to the nearest non-transparent ancestor	hydration ids, left out
+createRoot :: transparent owners > should handle nested transparent owners delegating to non-transparent ancestor	hydration ids, left out
+createRoot :: transparent owners > should inherit parent id on the transparent owner itself	hydration ids, left out
+createRoot :: transparent owners > should not consume _childCount with transparent computed	hydration ids, left out
+createRoot :: transparent owners > should not consume a _childCount slot from parent	hydration ids, left out
+dev :: Phase 1b: Notification hooks > onGraph > fires for unowned signals with owner=null	tooling: dev diagnostics and warnings, left out
+dev :: Phase 1b: Notification hooks > onGraph > fires when a signal is created with an owner	tooling: dev diagnostics and warnings, left out
+dev :: Phase 1b: Notification hooks > onOwner > fires for transparent owners	tooling: dev diagnostics and warnings, left out
+dev :: Phase 1b: Notification hooks > onOwner > fires when createMemo creates a computed owner	tooling: dev diagnostics and warnings, left out
+dev :: Phase 1b: Notification hooks > onOwner > fires when createRoot creates an owner	tooling: dev diagnostics and warnings, left out
+dev :: Phase 1b: Notification hooks > onUpdate > fires once even with multiple signal writes	tooling: dev diagnostics and warnings, left out
+dev :: Phase 1b: Notification hooks > onUpdate > fires once per flush	tooling: dev diagnostics and warnings, left out
+diagnostics :: <file>	tooling: dev diagnostics and warnings, left out
+effect-phase-writes :: warns in dev when flush() is called from a createEffect callback	tooling: dev diagnostics and warnings, left out
+equals-comparator-errors :: equals comparator errors (#2837, A3: comparator throws are compute-phase errors) > a setter's comparator throw is the signal's error: the boundary contains it	JS: asserts V8's wording of a TypeError; GraalJS words it differently
+equals-comparator-errors :: equals comparator errors (#2837, A3: comparator throws are compute-phase errors) > async resolution: comparator throw routes to the boundary, not an unhandled rejection	JS: asserts V8's wording of a TypeError; GraalJS words it differently
+equals-comparator-errors :: equals comparator errors (#2837, A3: comparator throws are compute-phase errors) > no boundary: halts loudly through REACTIVITY_HALTED, later writes report ignored	JS: asserts V8's wording of a TypeError; GraalJS words it differently
+equals-comparator-errors :: equals comparator errors (#2837, A3: comparator throws are compute-phase errors) > sync recompute: boundary contains the comparator throw; scheduler stays alive	JS: asserts V8's wording of a TypeError; GraalJS words it differently
+errorHalt :: REACTIVITY_HALTED names where it happened (#4178) > locates a computed's throw at the computed, not the effect reading it	tooling: owner paths in the halt message, and the browser reportError
+errorHalt :: REACTIVITY_HALTED names where it happened (#4178) > locates an effect-callback throw at the effect's owner path	tooling: owner paths in the halt message, and the browser reportError
+errorHalt :: REACTIVITY_HALTED names where it happened (#4178) > names an unlabelled effect by its default name	tooling: owner paths in the halt message, and the browser reportError
+errorHalt :: uncaught effect errors halt the reactive system (A5) > hands the cause to reportError where the platform provides one	tooling: owner paths in the halt message, and the browser reportError
+gc :: <file>	JS: needs node:inspector and a JS garbage collector
+lane-contract :: lane hardening — errors, disposal, nesting, growth > a long-lived lane does not grow its bookkeeping with every pass	tooling: finds its node through DEV.hooks.onOwner
+observe-idle-cost :: <file>	tooling: dev diagnostics and warnings, left out
+observe-records :: OBSERVE.records > is one object per process, registered on globalThis under its name	tooling: dev diagnostics and warnings, left out
+rules-index :: <file>	tooling: dev diagnostics and warnings, left out
+snapshot-derived-store-rows :: <file>	hydration snapshots and stores, left out
+staged-signed-zero :: keeps an accepted NaN rewrite as a proposal	difference: equality is Objects.equals, which tells 0.0 from -0.0 and NaN equals itself; JS === does the opposite
+staged-signed-zero :: keeps the default comparator's signed-zero equality	difference: equality is Objects.equals, which tells 0.0 from -0.0 and NaN equals itself; JS === does the opposite
+strict-read-pending-store :: uninitialized derived stores never leak the seed (#2897) > memo control: uninitialized async memo read in a component body throws the dev error	tooling: dev diagnostics and warnings, left out
+strictRead :: strictRead > effect callback (back half) > warns on isPending read in effect callback	tooling: dev diagnostics and warnings, left out
+strictRead :: strictRead > effect callback (back half) > warns on signal read in effect callback	tooling: dev diagnostics and warnings, left out
+strictRead :: strictRead > restores strictRead correctly through nested untrack calls	tooling: dev diagnostics and warnings, left out
+strictRead :: strictRead > warns on memo read under strict + untracked	tooling: dev diagnostics and warnings, left out
+strictRead :: strictRead > warns on signal read under strict + untracked	tooling: dev diagnostics and warnings, left out
+untracked-async-read :: untracked async read after await (#2987) > memo form errors identically	difference: the Java message says the read came off the lane, not after an await
+untracked-async-read :: untracked async read after await (#2987) > post-await first-read of an unready source errors instead of wedging	difference: the Java message says the read came off the lane, not after an await

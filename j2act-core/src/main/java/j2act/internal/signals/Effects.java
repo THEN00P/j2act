@@ -88,7 +88,7 @@ final class Effects {
             }
           });
         } else {
-          System.getLogger("j2act").log(System.Logger.Level.ERROR, "an effect failed", err);
+          rt.errorLog.accept(null, err);
         }
       } catch (Exception | Error error) {
         escalate(node, error);
@@ -161,8 +161,13 @@ final class Effects {
       }
       long epoch = q.notifyEpoch;
       owed = false;
-      node.modified = false;
-      rt.core.recompute(node, false);
+      q.inTrackedQueueCallback = true;
+      try {
+        node.modified = false;
+        rt.core.recompute(node, false);
+      } finally {
+        q.inTrackedQueueCallback = false;
+      }
       for (Link d = node.deps; d != null; d = d.nextDep) {
         Node dep = d.dep;
         if (dep.pendingValue != NOT_PENDING && (dep.config & CONFIG_OVERRIDE) == 0

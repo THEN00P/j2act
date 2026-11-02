@@ -35,6 +35,15 @@ final class Signals {
     this.rt = rt;
   }
 
+  Runnable onCleanup(Runnable fn) {
+    Owner owner = rt.core.context;
+    if (owner != null && (owner.config & CONFIG_CHILDREN_FORBIDDEN) != 0) {
+      throw new IllegalStateException("[CLEANUP_IN_FORBIDDEN_SCOPE] Cannot use onCleanup inside createTrackedEffect or"
+        + " onSettled; return a cleanup function instead");
+    }
+    return rt.owners.cleanup(fn, owner);
+  }
+
   private void microtask(Runnable task) {
     rt.microtasks.execute(task);
   }

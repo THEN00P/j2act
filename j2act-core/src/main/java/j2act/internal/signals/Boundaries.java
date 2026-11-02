@@ -410,18 +410,24 @@ final class Boundaries {
     context.put(REVEAL, null);
     owner.ctx = context;
     Node tree = rt.core.runWithOwner(owner, () -> {
-      Node c = rt.core.computed(fn, null);
-      return rt.core.computed(prev -> rt.flatten.apply(rt.core.read(c)), null);
+      Node c = rt.core.computed(fn, named("children"));
+      return rt.core.computed(prev -> rt.flatten.apply(rt.core.read(c)), named("boundary"));
     });
     b.tree = tree;
     if (controller != null) {
       controller.register(b);
     }
-    Node output = rt.core.computed(prev -> outputPass(b, tree, type), null);
+    Node output = rt.core.computed(prev -> outputPass(b, tree, type), named("value"));
     output.config |= CONFIG_REDERIVE;
     tree.config |= CONFIG_FRAME;
     b.output = output;
     return output;
+  }
+
+  private static Core.NodeOptions named(String name) {
+    Core.NodeOptions o = new Core.NodeOptions();
+    o.name = name;
+    return o;
   }
 
   private Object outputPass(Boundary b, Node tree, int type) throws Exception {

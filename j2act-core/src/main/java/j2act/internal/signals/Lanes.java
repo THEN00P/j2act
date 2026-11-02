@@ -891,7 +891,7 @@ final class Lanes {
     r.x.parked = null;
     rt.async.releaseFlightTeardown(r);
     try {
-      rt.async.handleAsync(r, Async.continuation(parked), null, null);
+      rt.async.handleAsync(r, rt.async.continuation(parked), null, null);
     } catch (RuntimeException | Error e) {
       // the flight's own failure reaches the node through handleAsync
     }

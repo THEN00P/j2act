@@ -107,9 +107,19 @@ final class Deferred {
         Object r = fn.apply(prev);
         if (open && r != null) {
           if (r instanceof CompletionStage) {
-            ask(r);
-            rt.async.whenSettled((CompletionStage<Object>) r, () -> land(r, true));
-            return serve(r);
+            // A CompletableFuture runs its dependents last registered first, and land has to come before the
+            // landing as Solid's first `.then` does, so the landing waits on this one.
+            java.util.concurrent.CompletableFuture<Object> next = new java.util.concurrent.CompletableFuture<>();
+            ask(next);
+            rt.async.whenResult((CompletionStage<Object>) r, (v, e) -> {
+              land(next, true);
+              if (e != null) {
+                next.completeExceptionally(e);
+              } else {
+                next.complete(v);
+              }
+            });
+            return serve(next);
           }
           if (r instanceof Async.AsyncIterable) {
             Async.AsyncIterator<Object> it = ((Async.AsyncIterable<Object>) r).iterator();

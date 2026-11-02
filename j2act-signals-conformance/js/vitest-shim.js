@@ -42,6 +42,7 @@
     it.only = (name, fn) => addTest(name, fn, { only: true });
     it.todo = name => addTest(name, null, { skip: true });
     it.fails = (name, fn) => addTest(name, fn, { fails: true });
+    it.fails.each = each((n, f) => it.fails(n, f));
     it.skipIf = c => (c ? it.skip : it);
     it.runIf = c => (c ? it : it.skip);
     it.concurrent = it;
@@ -100,7 +101,7 @@
   globalThis.clearInterval = clear;
   globalThis.clearImmediate = clear;
   const macrotask = () => new Promise(r => realSetTimeout(r, 0));
-  globalThis.performance ??= { now: () => clock };
+  globalThis.performance = { now: () => (globalThis.__bridge ? globalThis.__bridge.nanos() / 1e6 : clock) };
   function advanceSync(ms) {
     const end = fakeNow + ms;
     for (;;) {
@@ -486,6 +487,15 @@
         stuckReject = null;
       }
     }
+    // A test that failed and left the engine halted would fail every test after it.
+    if (error && globalThis.__solid) {
+      try {
+        globalThis.__solid.resetErrorHalt();
+        globalThis.__solid.flush();
+      } catch (e) {
+        // what the failed test left behind
+      }
+    }
     if (t.fails) error = error ? null : new Error("expected to fail");
     results.push({
       name,
@@ -556,7 +566,7 @@
   globalThis.afterAll = afterAll;
   globalThis.__vitest = { it, test, describe, expect, vi, beforeEach, afterEach, beforeAll, afterAll };
   globalThis.queueMicrotask ??= f => void Promise.resolve().then(f);
-  globalThis.process ??= { env: {}, on() {}, off() {} };
+  globalThis.process ??= { env: {}, on() {}, off() {}, removeListener() {}, emit() {} };
   globalThis.AbortController ??= class {
     constructor() {
       const listeners = [];

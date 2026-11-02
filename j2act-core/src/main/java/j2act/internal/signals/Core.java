@@ -39,6 +39,7 @@ final class Core {
     boolean hasLoadingValue;
     Object loadingValue;
     int extraConfig;
+    String name;
   }
 
   private final Runtime rt;
@@ -201,27 +202,19 @@ final class Core {
       stale = true;
     }
     try {
-      if ((el.config & CONFIG_SYNC) != 0) {
-        value = el.fn.apply(value);
+      Object prevInFlight = el.x != null ? el.x.inFlight : null;
+      Object fnResult = el.fn.apply(value);
+      boolean isAsyncResult = Async.isAsync(fnResult);
+      boolean selfRegistered = (el.x != null ? el.x.inFlight : null) != prevInFlight;
+      value = selfRegistered || !isAsyncResult ? fnResult : rt.async.handleAsync(el, fnResult, null, null);
+      if (!selfRegistered && !isAsyncResult) {
         if (el.x != null) {
           el.x.inFlight = null;
+          if (q.holdWorkHook != null) {
+            el.config &= ~CONFIG_ASYNC;
+          }
         }
         el.loading = false;
-      } else {
-        Object prevInFlight = el.x != null ? el.x.inFlight : null;
-        Object fnResult = el.fn.apply(value);
-        boolean isAsyncResult = Async.isAsync(fnResult);
-        boolean selfRegistered = (el.x != null ? el.x.inFlight : null) != prevInFlight;
-        value = selfRegistered || !isAsyncResult ? fnResult : rt.async.handleAsync(el, fnResult, null, null);
-        if (!selfRegistered && !isAsyncResult) {
-          if (el.x != null) {
-            el.x.inFlight = null;
-            if (q.holdWorkHook != null) {
-              el.config &= ~CONFIG_ASYNC;
-            }
-          }
-          el.loading = false;
-        }
       }
       if (el.statusFlags != 0 || el.x != null) {
         rt.async.clearStatus(el, create);
@@ -446,6 +439,7 @@ final class Core {
       | (options != null && options.sync ? CONFIG_SYNC : 0)
       | (options != null ? options.extraConfig : 0);
     self.equals = options != null ? options.equals : Node.IS_EQUAL;
+    self.name = options != null ? options.name : null;
     self.fn = fn;
     self.value = loading ? options.loadingValue : null;
     self.parent = context;
@@ -536,6 +530,7 @@ final class Core {
     self.config = (type << 23) | (options != null && options.ownedWrite ? CONFIG_OWNED_WRITE : 0)
       | (options != null && options.sync ? CONFIG_SYNC : 0) | (options != null ? options.extraConfig : 0);
     self.equals = null;
+    self.name = options != null ? options.name : null;
     self.fn = fn;
     self.parent = context;
     self.flags = REACTIVE_LAZY;
@@ -572,6 +567,7 @@ final class Core {
   Node signal(Object v, NodeOptions options) {
     Node n = new Node(rt);
     n.equals = options != null ? options.equals : Node.IS_EQUAL;
+    n.name = options != null ? options.name : null;
     n.config = options != null && options.ownedWrite ? CONFIG_OWNED_WRITE : 0;
     n.value = v;
     n.time = s().clock;

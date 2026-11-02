@@ -27,8 +27,11 @@ public final class Bridge {
   private final Value undefined;
   private final Value queueMicrotask;
   private Value errorFactory;
+  private boolean landingFromJs;
   private final Map<Throwable, Value> jsErrors = new IdentityHashMap<>();
   private final Map<Object, Integer> identities = new IdentityHashMap<>();
+  private final Map<Object, Value> jsLists = new IdentityHashMap<>();
+  private final Map<Value, JsThrown> thrownObjects = new java.util.HashMap<>();
   final Runtime rt;
 
   /** A value a JS `throw` left, kept as it was thrown: anything can be thrown in JS. */
@@ -44,11 +47,15 @@ public final class Bridge {
     }
 
     private static String messageOf(Value thrown) {
-      if (thrown != null && thrown.hasMember("message")) {
-        Value m = thrown.getMember("message");
-        return m == null || m.isNull() ? null : m.toString();
+      try {
+        if (thrown != null && thrown.hasMember("message")) {
+          Value m = thrown.getMember("message");
+          return m == null || m.isNull() ? null : m.toString();
+        }
+        return thrown == null ? null : thrown.toString();
+      } catch (RuntimeException e) {
+        return null;
       }
-      return thrown == null ? null : thrown.toString();
     }
   }
 
@@ -57,10 +64,19 @@ public final class Bridge {
     this.undefined = context.eval("js", "undefined");
     this.queueMicrotask = context.eval("js", "(f) => queueMicrotask(f)");
     Runnable[] box = new Runnable[1];
-    this.rt = new Runtime(task -> task.run(), task -> queueMicrotask.execute((ProxyExecutable) args -> {
+    java.util.concurrent.Executor microtask = task -> queueMicrotask.execute((ProxyExecutable) args -> {
       task.run();
       return undefined;
-    }));
+    });
+    // A landing from a JS promise is already its own tick. A future Java completed, as from() does, lands a
+    // tick later, as a JS promise's `.then` does.
+    this.rt = new Runtime(task -> {
+      if (landingFromJs) {
+        task.run();
+      } else {
+        microtask.execute(task);
+      }
+    }, microtask);
   }
 
   public void setErrorFactory(Value factory) {
@@ -71,8 +87,38 @@ public final class Bridge {
     return identities.computeIfAbsent(o, k -> identities.size() + 1);
   }
 
-  public Object newContextId() {
-    return new Object();
+  public Object newContext(Value defaultValue, Value description, boolean undefinedDefault) {
+    return new Owners.Context(toJava(defaultValue),
+      description != null && description.isString() ? description.asString() : null, undefinedDefault);
+  }
+
+  public long nanos() {
+    return System.nanoTime();
+  }
+
+  public Value entriesOf(Object collection) {
+    Value array = context.eval("js", "[]");
+    if (collection instanceof Map) {
+      for (Map.Entry<?, ?> e : ((Map<?, ?>) collection).entrySet()) {
+        Value pair = context.eval("js", "[]");
+        pair.invokeMember("push", js(e.getKey()));
+        pair.invokeMember("push", js(e.getValue()));
+        array.invokeMember("push", pair);
+      }
+    } else {
+      for (Object o : (java.util.Collection<?>) collection) {
+        array.invokeMember("push", js(o));
+      }
+    }
+    return array;
+  }
+
+  public boolean isMap(Object o) {
+    return o instanceof Map;
+  }
+
+  public boolean isCollection(Object o) {
+    return o instanceof java.util.Collection;
   }
 
   public Object newNotReady(Object source) {
@@ -141,11 +187,23 @@ public final class Bridge {
   CompletableFuture<Object> futureOf(Value thenable) {
     CompletableFuture<Object> future = new CompletableFuture<>();
     ProxyExecutable resolve = args -> {
-      future.complete(args.length == 0 ? null : toJavaResultNested(args[0]));
+      boolean prev = landingFromJs;
+      landingFromJs = true;
+      try {
+        future.complete(args.length == 0 ? null : toJavaResultNested(args[0]));
+      } finally {
+        landingFromJs = prev;
+      }
       return undefined;
     };
     ProxyExecutable reject = args -> {
-      future.completeExceptionally(args.length == 0 ? new JsThrown(null, undefined) : thrown(args[0]));
+      boolean prev = landingFromJs;
+      landingFromJs = true;
+      try {
+        future.completeExceptionally(args.length == 0 ? new JsThrown(null, undefined) : thrown(args[0]));
+      } finally {
+        landingFromJs = prev;
+      }
       return undefined;
     };
     try {
@@ -167,6 +225,15 @@ public final class Bridge {
       if (java != null && java.isHostObject() && java.asHostObject() instanceof Throwable) {
         return java.asHostObject();
       }
+    }
+    // The same JS error thrown twice is one error, as it is to `===`.
+    if (v != null && v.hasMembers()) {
+      JsThrown known = thrownObjects.get(v);
+      if (known == null) {
+        known = new JsThrown(null, v);
+        thrownObjects.put(v, known);
+      }
+      return known;
     }
     return new JsThrown(null, v);
   }
@@ -256,23 +323,23 @@ public final class Bridge {
         n.equals = null;
       }
     }
-    n.ownedWrite = isTrue(member(o, "ownedWrite"));
-    n.lazy = isTrue(member(o, "lazy"));
-    n.sync = isTrue(member(o, "sync"));
+    n.ownedWrite = truthy(member(o, "ownedWrite"));
+    n.lazy = truthy(member(o, "lazy"));
+    n.sync = truthy(member(o, "sync"));
+    Value name = member(o, "name");
+    if (name != null && name.isString()) {
+      n.name = name.asString();
+    }
     Value unobserved = member(o, "unobserved");
     if (unobserved != null && unobserved.canExecute()) {
       n.unobserved = () -> call(unobserved);
     }
     if (o.hasMember("loadingValue")) {
       Value loading = member(o, "loadingValue");
-      n.hasLoadingValue = loading != null || isOwn(o, "loadingValue");
+      n.hasLoadingValue = true;
       n.loadingValue = toJava(loading);
     }
     return n;
-  }
-
-  private boolean isOwn(Value o, String key) {
-    return context.eval("js", "(o, k) => k in o && o[k] !== undefined").execute(o, key).asBoolean();
   }
 
   private static boolean isTrue(Value v) {
@@ -320,7 +387,8 @@ public final class Bridge {
   }
 
   public Object read(Object node) {
-    return js(rt.core.read((Node) node));
+    Object v = rt.core.read((Node) node);
+    return v instanceof List ? listToJs(v) : js(v);
   }
 
   public Object setSignal(Object node, Value value, Value fn) {
@@ -343,13 +411,13 @@ public final class Bridge {
   public void effect(Value compute, Value effectFn, Value errorFn, boolean user, Value options) {
     Effects.EffectOptions o = new Effects.EffectOptions();
     o.user = user;
-    o.defer = isTrue(member(options, "defer"));
-    o.schedule = isTrue(member(options, "schedule"));
+    o.defer = truthy(member(options, "defer"));
+    o.schedule = truthy(member(options, "schedule"));
     o.node = nodeOptions(options);
     Node.EffectFn fn = (value, prev) -> {
       Value r = call(effectFn, value, prev);
       if (r != null && !r.isNull() && !r.canExecute()) {
-        throw new IllegalStateException("[INVALID_EFFECT_CLEANUP] effect callback returned an invalid cleanup value."
+        throw new IllegalStateException("effect callback returned an invalid cleanup value."
           + " Return a cleanup function or undefined.");
       }
       return cleanupOf(r);
@@ -363,10 +431,12 @@ public final class Bridge {
   }
 
   public void trackedEffect(Value compute, Value options) {
+    Value name = member(options, "name");
     rt.effects.trackedEffect(() -> {
       Value r = call(compute);
       if (r != null && !r.isNull() && !r.canExecute()) {
-        throw new IllegalStateException("Tracked effect returned an invalid cleanup value.");
+        throw new IllegalStateException("trackedEffect callback returned an invalid cleanup value."
+          + " Return a cleanup function or undefined.");
       }
       return cleanupOf(r);
     });
@@ -374,13 +444,19 @@ public final class Bridge {
 
   public Object onCleanup(Value fn) {
     if (fn != null && fn.canExecute()) {
-      rt.owners.cleanup(() -> call(fn), rt.core.context);
+      rt.signals.onCleanup(() -> call(fn));
     }
     return fn;
   }
 
   public Object createRoot(Value fn, Value options) {
-    Function<Owner, Object> init = owner -> js(call(fn, owner));
+    Value name = member(options, "name");
+    Function<Owner, Object> init = owner -> {
+      if (name != null && name.isString()) {
+        owner.name = name.asString();
+      }
+      return js(call(fn, owner));
+    };
     return rt.owners.createRoot(init);
   }
 
@@ -528,7 +604,8 @@ public final class Bridge {
     rt.signals.onSettled(() -> {
       Value r = call(fn);
       if (r != null && !r.isNull() && !r.canExecute()) {
-        throw new IllegalStateException("onSettled returned an invalid cleanup value.");
+        throw new IllegalStateException("onSettled callback returned an invalid cleanup value."
+          + " Return a cleanup function or undefined.");
       }
       return cleanupOf(r);
     });
@@ -559,12 +636,12 @@ public final class Bridge {
     };
   }
 
-  public Object getContext(Object id, Value defaultValue, Object owner) {
-    return js(rt.owners.getContext(id, toJava(defaultValue), (Owner) owner));
+  public Object getContext(Object context, Object owner) {
+    return js(rt.owners.getContext((Owners.Context) context, (Owner) owner));
   }
 
-  public void setContext(Object id, Value value, Value defaultValue, Object owner) {
-    rt.owners.setContext(id, toJava(value), toJava(defaultValue), (Owner) owner);
+  public void setContext(Object context, Value value, Object owner) {
+    rt.owners.setContext((Owners.Context) context, toJava(value), (Owner) owner);
   }
 
   public Object createLoadingBoundary(Value fn, Value fallback, Value on) {
@@ -597,16 +674,135 @@ public final class Bridge {
     rt.marks.affects((Node) node);
   }
 
+  public void setConsole(Value error) {
+    rt.errorLog = (message, cause) -> {
+      if (message != null && cause != null) {
+        error.execute(message, jsError(cause));
+      } else if (message != null) {
+        error.execute(message);
+      } else {
+        error.execute(js(cause));
+      }
+    };
+  }
+
+  public Object constantOf(String name) {
+    try {
+      java.lang.reflect.Field f = Constants.class.getDeclaredField(name);
+      f.setAccessible(true);
+      return f.get(null);
+    } catch (ReflectiveOperationException e) {
+      return undefined;
+    }
+  }
+
+  /** A field of an engine object, for the few tests that look inside: `_subs` is the field `subs`. */
+  public Object fieldOf(Object target, String name) {
+    Class<?> c = target.getClass();
+    String field = name.startsWith("_") ? name.substring(1) : name;
+    if (field.equals("context")) {
+      field = "ctx";
+    }
+    while (c != null) {
+      try {
+        java.lang.reflect.Field f = c.getDeclaredField(field);
+        f.setAccessible(true);
+        Object v = f.get(target);
+        boolean holdsValue = field.equals("value") || field.equals("prevValue") || field.equals("cleanup")
+          || field.equals("pendingSources");
+        return v == null ? (holdsValue ? undefined : context.eval("js", "null")) : v;
+      } catch (NoSuchFieldException e) {
+        c = c.getSuperclass();
+      } catch (IllegalAccessException e) {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
+
+  public void setName(Object owner, String name) {
+    ((Owner) owner).name = name;
+  }
+
+  public boolean isEngineObject(Object o) {
+    return o instanceof Owner || o instanceof Node.Link || o instanceof NodeExtension || o instanceof Scheduler.Transaction
+      || o instanceof Boundaries.Boundary;
+  }
+
+  public Object listToJs(Object list) {
+    @SuppressWarnings("unchecked")
+    List<Object> l = (List<Object>) list;
+    Value cached = jsLists.get(l);
+    if (cached != null) {
+      return cached;
+    }
+    Value array = context.eval("js", "[]");
+    for (Object o : l) {
+      array.invokeMember("push", js(o));
+    }
+    jsLists.put(l, array);
+    return array;
+  }
+
+  public Object mapArray(Value list, Value map, boolean indexes, Value keyFn, boolean byIndex, Value fallback) {
+    return rt.mapArray.mapArray(() -> {
+      Value v = call(list);
+      if (v == null || v.isNull() || !v.hasArrayElements()) {
+        return null;
+      }
+      List<Object> items = new ArrayList<>((int) v.getArraySize());
+      for (long i = 0; i < v.getArraySize(); i++) {
+        items.add(toJava(v.getArrayElement(i)));
+      }
+      return items;
+    }, (item, index) -> toJava(call(map, item, index)), indexes,
+      keyFn == null || !keyFn.canExecute() ? null : item -> toJava(call(keyFn, item)), byIndex,
+      fallback == null || !fallback.canExecute() ? null : () -> toJava(call(fallback)));
+  }
+
+  public Object repeat(Value count, Value map, Value from, Value fallback) {
+    return rt.mapArray.repeat(() -> call(count).asInt(), i -> toJava(call(map, i)),
+      from == null || !from.canExecute() ? null : () -> {
+        Value v = call(from);
+        return v == null || v.isNull() || !v.isNumber() ? null : Integer.valueOf(v.asInt());
+      }, fallback == null || !fallback.canExecute() ? null : () -> toJava(call(fallback)));
+  }
+
+  public int smallMoveHits() {
+    return rt.mapArray.smallMoveHits;
+  }
+
   public void setFlatten(Value fn) {
     rt.flatten = v -> toJavaResult(call(fn, v));
   }
 
   public void configureClientErrors(Value fn) {
-    rt.clientErrorHook = fn == null || !fn.canExecute() ? null : (e, o) -> call(fn, userError(e), o);
+    rt.clientErrorHook = clientHook(fn);
   }
 
   public void setRootErrorHook(Object owner, Value fn) {
-    ((Owner) owner).errorHook = fn == null || !fn.canExecute() ? null : (e, o) -> call(fn, userError(e), o);
+    ((Owner) owner).errorHook = clientHook(fn);
+  }
+
+  private Runtime.ClientErrorHook clientHook(Value fn) {
+    return fn == null || !fn.canExecute() ? null : (e, ownerPath, boundaryPath) -> {
+      Value context = this.context.eval("js", "({})");
+      if (ownerPath != null) {
+        context.putMember("ownerPath", jsArray(ownerPath));
+      }
+      if (boundaryPath != null) {
+        context.putMember("boundaryPath", jsArray(boundaryPath));
+      }
+      call(fn, userError(e), context);
+    };
+  }
+
+  private Value jsArray(List<String> list) {
+    Value array = context.eval("js", "[]");
+    for (String s : list) {
+      array.invokeMember("push", s);
+    }
+    return array;
   }
 
   public Object fromSubscribe(Value subscribe) {
@@ -695,10 +891,15 @@ public final class Bridge {
     }
 
     @Override public Async.AsyncIterator<Object> iterator() {
-      Value it = context.eval("js", "(o, f) => f.call(o)").execute(source, iteratorFn);
+      Value it = call(context.eval("js", "(o, f) => f.call(o)"), source, iteratorFn);
       return new Async.AsyncIterator<>() {
         @Override public CompletionStage<Async.Step<Object>> next() {
-          Value step = it.invokeMember("next");
+          Value step;
+          try {
+            step = it.invokeMember("next");
+          } catch (PolyglotException e) {
+            throw Errors.<RuntimeException>sneak(unwrap(e));
+          }
           if (step.hasMember("then") && step.getMember("then").canExecute()) {
             return futureOf(step).thenApply(v -> stepOf(v));
           }
@@ -714,12 +915,16 @@ public final class Bridge {
         }
 
         @Override public void close() {
-          if (it.hasMember("return") && it.getMember("return").canExecute()) {
-            Value returned = it.invokeMember("return");
-            if (returned != null && returned.hasMember("then") && returned.getMember("then").canExecute()) {
-              ProxyExecutable ignore = args -> undefined;
-              returned.invokeMember("then", undefined, ignore);
+          try {
+            if (it.hasMember("return") && it.getMember("return").canExecute()) {
+              Value returned = it.invokeMember("return");
+              if (returned != null && returned.hasMember("then") && returned.getMember("then").canExecute()) {
+                ProxyExecutable ignore = args -> undefined;
+                returned.invokeMember("then", undefined, ignore);
+              }
             }
+          } catch (PolyglotException e) {
+            throw Errors.<RuntimeException>sneak(unwrap(e));
           }
         }
       };

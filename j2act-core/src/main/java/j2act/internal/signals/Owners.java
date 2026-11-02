@@ -110,7 +110,9 @@ final class Owners {
     if (self && node.cleanup != null) {
       Runnable effectCleanup = node.cleanup;
       node.cleanup = null;
+      rt.core.disposalDepth++;
       runCleanup(effectCleanup);
+      rt.core.disposalDepth--;
     }
   }
 
@@ -134,36 +136,50 @@ final class Owners {
     } else {
       node.disposal = null;
     }
+    rt.core.disposalDepth++;
     for (int i = disposal.size() - 1; i >= 0; i--) {
       runCleanup(disposal.get(i));
     }
+    rt.core.disposalDepth--;
   }
 
   // ---- Port of core/context.ts
 
-  /** A context is its key: `id` is the object createContext made, with the default kept beside it by the caller. */
-  Object getContext(Object id, Object defaultValue, Owner owner) {
+  /** Solid's Context; `undefinedDefault` is createContext(undefined), which is not a default. */
+  static final class Context {
+    final Object defaultValue;
+    final String description;
+    final boolean undefinedDefault;
+
+    Context(Object defaultValue, String description, boolean undefinedDefault) {
+      this.defaultValue = defaultValue;
+      this.description = description;
+      this.undefinedDefault = undefinedDefault;
+    }
+  }
+
+  Object getContext(Context context, Owner owner) {
     Object value = null;
     if (owner != null) {
-      value = owner.ctx.get(id);
+      value = owner.ctx.get(context);
     } else {
       throw new Errors.NoOwnerError();
     }
     if (value == null) {
-      value = defaultValue;
+      value = context.defaultValue;
     }
     if (value == null) {
-      throw new Errors.ContextNotFoundError();
+      throw new Errors.ContextNotFoundError(context.description, context.undefinedDefault, owner.ctx.containsKey(context));
     }
     return value;
   }
 
-  void setContext(Object id, Object value, Object defaultValue, Owner owner) {
+  void setContext(Context context, Object value, Owner owner) {
     if (owner == null) {
       throw new Errors.NoOwnerError();
     }
     java.util.Map<Object, Object> next = new java.util.HashMap<>(owner.ctx);
-    next.put(id, value == null ? defaultValue : value);
+    next.put(context, value == null ? context.defaultValue : value);
     owner.ctx = next;
   }
 

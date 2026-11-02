@@ -28,8 +28,10 @@ public class Owner {
   Node parentComputed;
   /** Solid's `_context`: copied on write, and inherited from the owner this was created under. */
   Map<Object, Object> ctx;
+  /** Solid's `_name`: what diagnostics call this. */
+  String name;
   /** Solid's ROOT_ERROR_HOOK on a root. */
-  java.util.function.BiConsumer<Throwable, Owner> errorHook;
+  Runtime.ClientErrorHook errorHook;
 
   Owner(Runtime rt) {
     this.rt = rt;

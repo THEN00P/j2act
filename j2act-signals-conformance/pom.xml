@@ -81,6 +81,8 @@
             <solid.file>${solid.file}</solid.file>
           </systemPropertyVariables>
           <trimStackTrace>true</trimStackTrace>
+          <!-- Truffle asserts interop invariants a JS Proxy breaks; the tests assert for themselves. -->
+          <enableAssertions>false</enableAssertions>
         </configuration>
       </plugin>
     </plugins>
