@@ -334,7 +334,7 @@ return () -> div(
 isPending(() -> users.get().size() + posts.get().size())
 ```
 
-`refresh(x)` replaces refetch() and is quiet: it does not make isPending true, so a background refresh does not flicker. `affects(x)` before it makes it visible, as in Solid 2. Quiet is not torn: what follows x reloads with it and everything changes in one update. It returns a CompletableFuture that finishes with what lands next, so an action can wait for it: `refresh(x).get()`. Solid's returns a promise of the next quiescent state for the same reason.
+`refresh(x)` replaces refetch() and is quiet: it does not make isPending true, so a background refresh does not flicker. `affects(x)` before it makes it visible, as in Solid 2. Quiet is not torn: what follows x reloads with it and everything changes in one update. It returns a CompletableFuture for the next quiescent state, as Solid's promise does: everything that followed x has landed too, in the update that shows it. Inside an action it finishes with what lands, since the commit waits for the action: `refresh(x).get()`. Every refresh in one lane task is one load. `until(fn)` finishes when fn first gives a value that is not null or false, seeing the truth and never a guess, for a write confirmed by a socket or another tab; `resolve(fn)` takes the first value there is.
 
 A failed load goes where a pending one does: reading it stops rendering up to the nearest errored(...), whose fallback gets the error and a reset that runs the failed loads again and renders the contents once more:
 
@@ -433,7 +433,7 @@ var add = action((String title) -> {
 
 - A lane is a new base: it sees the screen plus its guesses, and breaks out of its transition's hold, so a guess shows while the writes around it wait.
 - If what derives from a guess hits a load, the lane holds itself until that landed, so a guess never shows beside an old derived value. A guess already shown stays while a newer one of the same lane waits. A blocked lane holds its transition too.
-- Two runs guessing one value, or something reading the guesses of both, link their lanes: they reveal as one, and land together.
+- Reading a guess is what puts a computation in its lane, including a first read while the guess is out. A memo reading the guesses of two lanes links them: they reveal as one, and each lands with its own action. Two runs guessing one value land together, since their results touch the same value. So do lanes linked through a load (see the table below).
 - A lane ends when its transition lands, in the same update, so a guess becomes the truth without a flicker. A failed action takes only its own guesses; lanes linked to it derive again without them, and its guess goes when that shows.
 - A guess does not make isPending true.
 - A write reaching something a lane derives joins that lane's transition if it reloads something on screen, so a lane's derived value never changes under it. A write that reloads nothing goes through at once, and what the lane derives from it recomputes.
@@ -495,6 +495,25 @@ Because the page's script waits for the end of the response, one load that hangs
 - The view re-runs as a whole instead of per expression, until compile-time regions.
 - Retained signals, stores as container beans and the processor's name table have no Solid counterpart.
 - Signal is one object with get() and set(), not a getter and setter pair.
-- Linked lanes land together. In Solid each keeps its own lifetime and only reveals with the others; a value derived from two guesses, one of them now the truth, would need a load re-run under it here, where a load is a server call and not a cheap recomputation. A failure still takes only its own guesses.
-- `refresh(x)` finishes when x lands, not at the next quiescent state of everything, and there is no `until(fn)` yet: an action body is a thread and can wait on what it needs.
-- A memo first read while a lane is showing computes from the truth, since it was not below the guess when the guess was made. It joins the next guess.
+
+## Compared with Solid 2's source
+
+Solid 2 has had far longer in the oven, so its behavior is the default answer. Checked against `@solidjs/signals` 2.0.0-rc.20. Each difference is a runtime constraint, somewhere ours is worse, or somewhere ours is better. "Worse" means worse: a known gap to close, not a design choice.
+
+| Where | Solid 2 | Here | Verdict |
+|---|---|---|---|
+| Reads | One thread, so a read happens in the pass that runs it | Loads read on executor threads, so a run records its reads and validates them when it lands | Constraint |
+| View | Updates per expression | The view re-runs and the page is morphed | Constraint, until compile-time regions |
+| Tabs | One graph per page | A browser store's value is copied per tab, each holding on its own; an optimistic value in a browser store is refused | Constraint |
+| Action body | Generator; code after a bare `await` runs outside the transaction until the next `yield`, and its docs warn about it | A thread that stays in its transaction throughout | Better, thanks to threads |
+| Guess outside an action | Void: reverts at once | Refused with an error | Better for finding the mistake; revisit if a legitimate use appears |
+| Reverting one action's guess | Single lane slot per node, with bookkeeping to restore what another action guessed (#4336) | Each run's guesses fold in order, so a run removes only its own | Simpler, but far less tested |
+| Lanes linked through a load | Land separately | Land together, so a fast action can wait on a slow one | **Worse.** Landing separately needs the load re-run under the remaining guess while the display holds. Lanes linked through plain memos already land separately |
+| Entering a lane | Only by reading a guess, and a pass that no longer reaches it leaves (#3698) | Also walks what is below when the guess is made, so a branch that stopped reading it still loads in the lane | **Worse:** an extra server call and a needless block |
+| Recompute order | Height-ordered heap, each computation runs once | Pull with out-of-date marks: never mixed inputs, but a body in a diamond can run twice | **Worse**, in cost only |
+| `until` | A flip inside an action's transaction reveals with it; sees a lane's value once a guess is confirmed (#3943) | Neither yet | **Worse** |
+| `isPending` and `latest` | Verdict lanes: their readers break out of the hold; `isPending` inside `latest` asks about the proposal | Views always re-render, so the common case matches; the nested case is not modeled | **Worse**, narrow |
+| Diagnostics | Coded diagnostics across the runtime | A few messages and the processor's checks | **Worse** |
+| Not built | `Reveal`, `createStore`, `createProjection`, `createOptimisticStore` | Stream order is whatever lands first; values are whole | Missing |
+
+The largest thing not yet taken from Solid is its test suite, whose scenarios encode years of edge cases. Porting its lane and transition scenarios to Harness tests would find what `ConsistencyTest`'s random graphs do not.

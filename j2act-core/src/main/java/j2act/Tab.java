@@ -59,6 +59,12 @@ public final class Tab {
   private final Map<Node, Object> batch = new java.util.LinkedHashMap<>();
   /** Writes held until the loads they started landed (ADR 0031). */
   final List<Transition> transitions = new ArrayList<>();
+  /** until(...) and resolve(...) still waiting, which end with the tab. */
+  final java.util.Set<Until<?>> untils = new java.util.HashSet<>();
+  /** What this lane task already refreshed. */
+  private final java.util.Set<Node> refreshing = new java.util.HashSet<>();
+  /** Counts changes reaching the graph, so a mark from an earlier one is not mistaken for this one's. */
+  long changeEpoch;
   /** isPending reads this, so its readers re-render when a transition starts or ends. */
   final Node pendingCell = new Node(this, "tab:pending", 0L);
   /** The served page's render stopped outside any loading(...) on a value not loaded yet: it waits for it (ADR 0031). */
@@ -1037,6 +1043,12 @@ public final class Tab {
    * everything changes in one update. Nothing on screen has nothing to hold.
    */
   void refresh(Node load) {
+    if (!refreshing.add(load)) {
+      return; // Every refresh in one lane task is one load, as in Solid.
+    }
+    if (refreshing.size() == 1) {
+      post(refreshing::clear);
+    }
     if (load.transition != null) {
       load.start(false);
       return;
@@ -1048,6 +1060,22 @@ public final class Tab {
     Transition transition = new Transition(this);
     transitions.add(transition);
     refreshInto(load, transition);
+  }
+
+  /** Lane-only. A refresh outside an action: its future finishes when all that followed it has landed too. */
+  void refresh(Node load, java.util.concurrent.CompletableFuture<Object> landed) {
+    refresh(load);
+    if (load.transition == null) {
+      load.addWaiter(landed);
+      return;
+    }
+    load.transition.current().onCommit(() -> {
+      if (load.lastError() != null) {
+        landed.completeExceptionally(load.lastError());
+      } else {
+        landed.complete(load.peek());
+      }
+    });
   }
 
   /** Lane-only. A load joins a transition, with everything that follows it. */
@@ -1401,6 +1429,10 @@ public final class Tab {
       return;
     }
     endStream();
+    for (Until<?> until : new ArrayList<>(untils)) {
+      until.cancel();
+    }
+    untils.clear();
     if (root != null) {
       root.dispose();
     }

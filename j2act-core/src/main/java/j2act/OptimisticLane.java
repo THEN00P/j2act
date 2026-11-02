@@ -58,12 +58,11 @@ final class OptimisticLane {
     nodes.add(node);
   }
 
-  /** Two runs guessed one value, or something reads both guesses: they reveal and land together. */
+  /** Something reads both guesses: they reveal together. Who else they land with is the caller's to say. */
   void link(OptimisticLane other) {
     if (other.group == group || over || other.over) {
       return;
     }
-    join(other.transition());
     Group absorbed = other.group;
     group.flights += absorbed.flights;
     for (OptimisticLane lane : absorbed.lanes) {
@@ -135,7 +134,10 @@ final class OptimisticLane {
   private void unblockedIfNoneLeft() {
     if (!blocked()) {
       reveal();
-      transition().commitIfDone();
+      // Linked lanes can be in different transitions, and all of them waited for this.
+      for (OptimisticLane lane : new ArrayList<>(group.lanes)) {
+        lane.transition().commitIfDone();
+      }
     }
   }
 

@@ -67,6 +67,10 @@ class Node extends Cell implements Observer {
   private boolean stale;
   /** What body last gave, which a write to a writable node covers. */
   private Object sourced;
+  /** Marked out of date by a change on its way here, and what it was then. */
+  private long markEpoch;
+  private Object valueWhenMarked;
+  private boolean hadValueWhenMarked;
 
   // ---- a transition's future
 
@@ -101,6 +105,8 @@ class Node extends Cell implements Observer {
   private Throwable displayError;
   private boolean hasDisplay;
   private boolean displayStale;
+  /** A load that joined a lane already showing, whose first value has to come from the lane. */
+  private boolean lateLoad;
 
   // ---- computing
 
@@ -213,7 +219,7 @@ class Node extends Cell implements Observer {
         if (observer != null && tab.lane.isCurrent()) {
           latestReaders.add(observer);
         }
-        return screen();
+        return pass == Pass.AUTHORITATIVE ? committed() : screen();
       }
     }
     return pass != null ? committed() : screen();
@@ -248,8 +254,15 @@ class Node extends Cell implements Observer {
         }
         return displayValue;
       }
+      if (lateLoad) {
+        // Mounted under a guess that shows: what it loaded from the truth would tear beside it.
+        onRead(value);
+        throw new NotReady(this);
+      }
     }
-    return committed();
+    Object truth = committed();
+    // Computing it just now may have found it reads a guess that shows.
+    return revealed && displayStale && tab.lane.isCurrent() ? screen() : truth;
   }
 
   private boolean anyShown() {
@@ -386,6 +399,10 @@ class Node extends Cell implements Observer {
 
   /** What a run read of this, in its pass, which its result is validated against. */
   @Override Object peekFor(Pass pass) {
+    if (stale && tab.lane.isCurrent()) {
+      // Nobody read it yet, so its value is not what the run computed. A failure is the run's to see.
+      recomputeQuietly();
+    }
     if (pass != null && pass.lane != null) {
       if (!overlays.isEmpty()) {
         Object folded = value;
@@ -411,12 +428,14 @@ class Node extends Cell implements Observer {
 
   /** Whether an optimistic write counts: it does not, Solid keeps optimism and pending apart. */
   @Override boolean pendingChange() {
-    return transition != null && !quiet || affected || affectingRuns > 0;
+    boolean changes = transition != null && !quiet
+      && !(isStaged && stagedError == null && hasValue && error == null && Objects.equals(value, stagedValue));
+    return changes || affected || affectingRuns > 0;
   }
 
   /** The value is on screen, so a write that reloads it holds the update instead of tearing it. */
   final boolean holdsWrites() {
-    return isAsync() && hasValue && error == null && !observers.isEmpty();
+    return isAsync() && (hasValue || hasDisplay) && error == null && !observers.isEmpty();
   }
 
   /** Tracked: the last load failed. */
@@ -499,7 +518,37 @@ class Node extends Cell implements Observer {
     error = null;
     stale = false;
     markRetainedDirty();
+    markBelowOutOfDate();
     notifyObservers();
+  }
+
+  /**
+   * Lane-only. Before anyone hears of a change: what derives from it is out of date, so a body reading
+   * two of them pulls both fresh and never runs on inputs that never coexisted, as Solid's height
+   * order ensures. Each still tells its own readers when its turn comes, compared with what it was here.
+   */
+  final void markBelowOutOfDate() {
+    markBelowOutOfDate(++tab.changeEpoch);
+  }
+
+  /** Stops at a load: what is below one has not changed until that lands. */
+  final void markBelowOutOfDate(long epoch) {
+    for (Observer observer : observers) {
+      if (observer instanceof Node && ((Node) observer).markOutOfDate(epoch)) {
+        ((Node) observer).markBelowOutOfDate(epoch);
+      }
+    }
+  }
+
+  private boolean markOutOfDate(long epoch) {
+    if (isAsync() || body == null || transition != null || markEpoch == epoch) {
+      return false;
+    }
+    markEpoch = epoch;
+    valueWhenMarked = value;
+    hadValueWhenMarked = hasValue;
+    stale = true;
+    return true;
   }
 
   /** Lane-only. A parent's render passing a Prop, or a route: at once, unless it reloads something on screen. */
@@ -596,16 +645,31 @@ class Node extends Cell implements Observer {
       return;
     }
     if (isAsync()) {
+      if (observers.isEmpty()) {
+        // Nobody holds on to it, so the write went through and this value is out of date:
+        // a first read waits for the new one rather than showing it beside what it came from.
+        hasValue = false;
+        if (revealed) {
+          hasDisplay = false;
+          lateLoad = true;
+        }
+      }
       start(false);
       return;
     }
     if (body == null) {
       return;
     }
-    Object before = value;
-    boolean had = hasValue;
+    // If this change marked it, a reader may have pulled it fresh already, and it still has to tell its own.
+    boolean marked = markEpoch == tab.changeEpoch;
+    Object before = marked ? valueWhenMarked : value;
+    boolean had = marked ? hadValueWhenMarked : hasValue;
+    boolean fresh = marked && !stale;
+    valueWhenMarked = null;
     try {
-      recompute();
+      if (!fresh) {
+        recompute();
+      }
     } catch (NotReady | LoadFailed e) {
       stale = true;
       notifyObservers();
@@ -631,6 +695,54 @@ class Node extends Cell implements Observer {
 
   @Override public void dependsOn(Cell cell) {
     deps.add(cell);
+    if (cell instanceof Node) {
+      // As in Solid, reading a guess is what puts a computation in its lane.
+      Node read = (Node) cell;
+      OptimisticLane found = read.activeLane();
+      if (found != null) {
+        enterLane(found, read.showsLane());
+      }
+    }
+  }
+
+  /** The lane this reads guesses of, if any. */
+  private OptimisticLane activeLane() {
+    for (Overlay overlay : overlays) {
+      if (!overlay.retired) {
+        return overlay.lane;
+      }
+    }
+    return lane;
+  }
+
+  private boolean showsLane() {
+    return revealed || anyShown();
+  }
+
+  /** A read of a guess this was not below when it was made, such as a first read while it is out. */
+  private void enterLane(OptimisticLane by, boolean shows) {
+    boolean entered = lane == null;
+    if (entered) {
+      lane = by;
+      joinIfHeld(by);
+      markLaneStale();
+    } else if (lane != by) {
+      lane.link(by);
+    }
+    by.add(this);
+    if (shows && !revealed) {
+      revealed = true;
+      displayStale = !isAsync();
+      hasDisplay = false;
+      lateLoad = isAsync();
+    }
+    if (entered && isAsync()) {
+      tab.post(() -> {
+        if (!disposed && lane == by) {
+          startFlight();
+        }
+      });
+    }
   }
 
   private void watch(Cell cell) {
@@ -639,7 +751,7 @@ class Node extends Cell implements Observer {
     }
     Cell local = tab.local(cell);
     local.observers.add(this);
-    deps.add(local);
+    dependsOn(local);
   }
 
   private void unsubscribeDeps() {
@@ -1014,6 +1126,7 @@ class Node extends Cell implements Observer {
     for (Overlay other : overlays) {
       if (other.lane != by && !other.retired) {
         by.link(other.lane);
+        by.join(other.lane.transitionNow());
         break;
       }
     }
@@ -1025,8 +1138,12 @@ class Node extends Cell implements Observer {
   /** Lane-only. This node derives from a lane's guesses. */
   final void deriveIn(OptimisticLane by) {
     if (lane != null && lane != by) {
-      // It reads both guesses, and cannot show one without the other (Solid's linked lanes).
+      // It reads both guesses, and cannot show one without the other (Solid's linked lanes). They
+      // still land on their own, unless what they share is a load: see ADR 0031.
       lane.link(by);
+      if (isAsync()) {
+        by.join(lane.transitionNow());
+      }
     }
     lane = by;
     by.add(this);
@@ -1036,7 +1153,8 @@ class Node extends Cell implements Observer {
 
   /** Lane-only. What it loaded in the lane no longer holds, once all of the lane is marked. */
   final void startFlightOnChange() {
-    if (lane != null && isAsync() && hasValue) {
+    if (lane != null && isAsync()) {
+      // Even with no value yet: once it has one, it has to be the guess's, not the truth's.
       startFlight();
     }
   }
@@ -1126,6 +1244,9 @@ class Node extends Cell implements Observer {
       if (remaining != null) {
         lane = remaining;
         remaining.add(this);
+        markLaneStale();
+        displayStale = revealed && !isAsync();
+        hasDisplay = isAsync() && hasDisplay;
       } else {
         if (laneSeq > 0) {
           by.flightGone();
@@ -1141,6 +1262,7 @@ class Node extends Cell implements Observer {
         displayError = null;
         hasDisplay = false;
         displayStale = false;
+        lateLoad = false;
       }
     }
     return had;
@@ -1244,6 +1366,10 @@ class Node extends Cell implements Observer {
   }
 
   /** The last load failed, whether or not the value stays through it. */
+  final Throwable lastError() {
+    return error;
+  }
+
   final boolean snapshotFailed() {
     return error != null;
   }

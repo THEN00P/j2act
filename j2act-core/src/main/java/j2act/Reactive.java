@@ -136,7 +136,8 @@ public final class Reactive {
    * Loads an async memo again, quietly: its old value stays, what follows it reloads with it and
    * changes in the same update, and isPending does not turn true (ADR 0031). In an action's body it is
    * part of the transaction: the action commits, with its optimistic writes going, once the new
-   * value arrived. The future finishes with what lands next, staged or not, so an action can wait for it.
+   * value arrived, so its future finishes with what lands next, which the body can wait for. Elsewhere
+   * the future finishes once everything that followed it has landed too, in the update that shows it.
    */
   @SuppressWarnings("unchecked")
   public static <T> CompletableFuture<T> refresh(Supplier<T> memo) {
@@ -144,17 +145,46 @@ public final class Reactive {
     CompletableFuture<Object> landed = new CompletableFuture<>();
     Action.Call call = Action.Call.current();
     if (node.tab.lane.isCurrent() && call == null) {
-      node.addWaiter(landed);
-      node.tab.refresh(node);
+      node.tab.refresh(node, landed);
     } else if (call != null) {
       call.refresh(node, landed);
     } else {
-      node.tab.post(() -> {
-        node.addWaiter(landed);
-        node.tab.refresh(node);
-      });
+      node.tab.post(() -> node.tab.refresh(node, landed));
     }
     return (CompletableFuture<T>) landed;
+  }
+
+  /**
+   * Finishes the first time fn gives a value that is not null or false, for a write confirmed by
+   * something other than its own reply, such as a socket or another tab: correlate by an id in fn.
+   * It sees the truth and never an action's own guess, and a read not loaded yet means not yet. A
+   * failed read fails it. Called from a handler or an action, not from something reactive (ADR 0031).
+   */
+  public static <T> CompletableFuture<T> until(Supplier<T> fn) {
+    return until(fn, null);
+  }
+
+  /** {@link #until(Supplier)}, failing with a TimeoutException if nothing confirms it in time. */
+  public static <T> CompletableFuture<T> until(Supplier<T> fn, java.time.Duration timeout) {
+    return new Until<>(imperativeTab("until"), fn, true, timeout).result;
+  }
+
+  /** Finishes with the first value fn settles on, whatever it is, once what it reads has loaded (ADR 0031). */
+  public static <T> CompletableFuture<T> resolve(Supplier<T> fn) {
+    return new Until<>(imperativeTab("resolve"), fn, false, null).result;
+  }
+
+  private static Tab imperativeTab(String what) {
+    if (Tracking.observer() != null) {
+      throw new IllegalStateException(what + "(...) waits, so it cannot run inside something reactive:"
+        + " call it from a handler or an action (ADR 0031)");
+    }
+    Action.Call call = Action.Call.current();
+    Tab tab = call != null ? call.tab : Tab.current();
+    if (tab == null) {
+      throw new IllegalStateException(what + "(...) needs a tab: call it from a handler or an action");
+    }
+    return tab;
   }
 
   /** Tracked: the last load of this async memo failed; for showing it beside a withStaleOnError() value. */
@@ -321,6 +351,9 @@ public final class Reactive {
 
   /** Applies the writes of this lane task now instead of at its end; mainly for tests. */
   public static void flush() {
+    if (Action.Call.current() != null) {
+      throw new IllegalStateException("flush() cannot reveal an action's held writes, so its body may not call it (ADR 0031)");
+    }
     Tab tab = Tab.current();
     if (tab != null && tab.lane.isCurrent()) {
       tab.applyWrites();

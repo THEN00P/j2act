@@ -7,6 +7,8 @@ import static j2act.Reactive.createSignal;
 import static j2act.Reactive.errored;
 import static j2act.Reactive.isPending;
 import static j2act.Reactive.refresh;
+import static j2act.Reactive.resolve;
+import static j2act.Reactive.until;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -365,6 +367,274 @@ class LaneTest {
       Harness.eventually(() -> Awaits.result != null && Awaits.result.isDone(), "the action finishes");
       assertEquals("new", Awaits.result.get());
       h.awaitPatch(from, p -> p.contains("loaded:new;"));
+    }
+  }
+
+  /** Solid: lanes reveal as one where something reads both guesses, and each keeps its own lifetime. */
+  @Test
+  void aGuessSharedThroughAMemoStillLandsWithItsOwnAction() {
+    Linked.failing = new CompletableFuture<>();
+    Linked.passing = new CompletableFuture<>();
+    try (Harness h = new Harness(Linked::new)) {
+      String html = h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "fail"));
+      h.click(Harness.clickOn(html, "pass"));
+      h.awaitPatch(from, p -> p.contains("left:L;right:R;both:L+R;"));
+
+      // One action ends while the other still runs: its guess goes, and the other's stays.
+      from = h.conn.size();
+      Linked.passing.complete(null);
+      h.awaitPatch(from, p -> p.contains("left:L;right:r;both:L+r;"));
+      Linked.failing.complete(null);
+    }
+  }
+
+  static final class LateMemo extends LiveComponent {
+    static volatile CompletableFuture<Void> gate;
+
+    @Override protected View setup() {
+      var draft = createOptimistic("base");
+      var shown = createSignal(false);
+      var late = createMemo(() -> "late of " + draft.get());
+      var save = action((String v) -> {
+        draft.set(v);
+        gate.get();
+        return v;
+      });
+      return () -> T.page("t", T.div(
+        T.span("draft:" + draft.get() + ";" + (shown.get() ? late.get() + ";" : "")),
+        T.button("save").onClick(e -> save.run("next")),
+        T.button("show").onClick(e -> shown.set(true))));
+    }
+  }
+
+  @Test
+  void aMemoFirstReadWhileAGuessShowsFollowsTheGuess() {
+    LateMemo.gate = new CompletableFuture<>();
+    try (Harness h = new Harness(LateMemo::new)) {
+      String html = h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "save"));
+      h.awaitPatch(from, p -> p.contains("draft:next;"));
+      from = h.conn.size();
+      h.click(Harness.clickOn(html, "show"));
+      h.awaitPatch(from, p -> p.contains("draft:next;late of next;"));
+      neverShown(h, from, "late of base");
+
+      from = h.conn.size();
+      LateMemo.gate.complete(null);
+      h.awaitPatch(from, p -> p.contains("draft:base;late of base;"));
+    }
+  }
+
+  static final class RefreshOutside extends LiveComponent {
+    static final Map<String, CompletableFuture<String>> LOADS = new ConcurrentHashMap<>();
+    static volatile String next;
+    static volatile CompletableFuture<String> refreshed;
+
+    @Override protected View setup() {
+      AsyncSupplier<String> first = () -> LOADS.computeIfAbsent("first:" + next, k -> new CompletableFuture<>());
+      var head = createMemo(first);
+      AsyncSupplier<String> second = () -> LOADS.computeIfAbsent("second:" + head.get(), k -> new CompletableFuture<>());
+      var tail = createMemo(second);
+      return () -> T.page("t", T.div(
+        T.span("head:" + head.get() + ";tail:" + tail.get() + ";"),
+        T.button("refresh").onClick(e -> refreshed = refresh(head))));
+    }
+  }
+
+  @Test
+  void aRefreshOutsideAnActionFinishesOnceWhatFollowsItHasLanded() throws Exception {
+    RefreshOutside.LOADS.clear();
+    RefreshOutside.next = "1";
+    RefreshOutside.LOADS.put("first:1", CompletableFuture.completedFuture("one"));
+    RefreshOutside.LOADS.put("second:one", CompletableFuture.completedFuture("x"));
+    try (Harness h = new Harness(RefreshOutside::new)) {
+      String html = h.load();
+      h.connect();
+      RefreshOutside.next = "2";
+      h.click(Harness.clickOn(html, "refresh"));
+      RefreshOutside.LOADS.get("first:2").complete("two");
+      Harness.eventually(() -> RefreshOutside.LOADS.containsKey("second:two"), "what follows it runs");
+      assertFalse(RefreshOutside.refreshed.isDone(), "its own load landed, but the update has not gone out");
+      RefreshOutside.LOADS.get("second:two").complete("y");
+      Harness.eventually(() -> RefreshOutside.refreshed.isDone(), "it finishes with the update");
+      assertEquals("two", RefreshOutside.refreshed.get());
+    }
+  }
+
+  static final class Confirms extends LiveComponent {
+    static volatile CompletableFuture<String> confirmed;
+    static volatile CompletableFuture<String> resolved;
+    static final CompletableFuture<String> LOAD = new CompletableFuture<>();
+
+    @Override protected View setup() {
+      var echoed = createOptimistic("none");
+      var truth = createSignal("none");
+      AsyncSupplier<String> body = () -> LOAD;
+      var loading = createMemo(body);
+      var send = action((String id) -> {
+        echoed.set(id);
+        return id;
+      });
+      return () -> T.page("t", T.div(
+        T.span("truth:" + truth.get() + ";"),
+        T.button("wait").onClick(e -> {
+          confirmed = until(() -> "m1".equals(truth.get()) ? truth.get() : null);
+          resolved = resolve(() -> loading.get());
+        }),
+        T.button("guess").onClick(e -> send.run("m1")),
+        T.button("echo").onClick(e -> truth.set("m1"))));
+    }
+  }
+
+  @Test
+  void untilWaitsForTheTruthAndResolveForAValue() throws Exception {
+    try (Harness h = new Harness(Confirms::new)) {
+      String html = h.load();
+      h.connect();
+      h.click(Harness.clickOn(html, "wait"));
+      h.click(Harness.clickOn(html, "guess"));
+      Thread.sleep(50);
+      assertFalse(Confirms.confirmed.isDone());
+      assertFalse(Confirms.resolved.isDone(), "what it reads has not loaded");
+      h.click(Harness.clickOn(html, "echo"));
+      Harness.eventually(() -> Confirms.confirmed.isDone(), "the echo confirms it");
+      assertEquals("m1", Confirms.confirmed.get());
+      Confirms.LOAD.complete("value");
+      Harness.eventually(() -> Confirms.resolved.isDone(), "the load lands");
+      assertEquals("value", Confirms.resolved.get());
+    }
+  }
+
+  static final class GuessIsNotTruth extends LiveComponent {
+    static volatile CompletableFuture<String> confirmed;
+    static final CompletableFuture<Void> GATE = new CompletableFuture<>();
+
+    @Override protected View setup() {
+      var value = createOptimistic("none");
+      var send = action((String id) -> {
+        value.set(id);
+        GATE.get();
+        return id;
+      });
+      return () -> T.page("t", T.div(
+        T.span("value:" + value.get() + ";"),
+        T.button("send").onClick(e -> {
+          send.run("m1");
+          confirmed = until(() -> "m1".equals(value.get()) ? "yes" : null);
+        })));
+    }
+  }
+
+  @Test
+  void aGuessCannotConfirmItself() throws Exception {
+    try (Harness h = new Harness(GuessIsNotTruth::new)) {
+      String html = h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "send"));
+      h.awaitPatch(from, p -> p.contains("value:m1;"));
+      Thread.sleep(50);
+      assertFalse(GuessIsNotTruth.confirmed.isDone(), "the guess shows, and does not count");
+      GuessIsNotTruth.GATE.complete(null);
+    }
+  }
+
+  static final class Diamond extends LiveComponent {
+    static final java.util.List<String> SEEN = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    @Override protected View setup() {
+      var source = createSignal(1);
+      var left = createMemo(() -> source.get() * 10);
+      var right = createMemo(() -> source.get() * 100);
+      var both = createMemo(() -> {
+        SEEN.add(left.get() + "/" + right.get());
+        return left.get() + right.get();
+      });
+      return () -> T.page("t", T.div(
+        T.span("both:" + both.get() + ";"),
+        T.button("set").onClick(e -> source.set(2))));
+    }
+  }
+
+  /** As Solid's height order gives: a body never runs on inputs that never coexisted. */
+  @Test
+  void aMemoNeverComputesFromMixedInputs() {
+    Diamond.SEEN.clear();
+    try (Harness h = new Harness(Diamond::new)) {
+      String html = h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "set"));
+      h.awaitPatch(from, p -> p.contains("both:220;"));
+      assertFalse(Diamond.SEEN.contains("20/100"), "mixed inputs: " + Diamond.SEEN);
+      assertFalse(Diamond.SEEN.contains("10/200"), "mixed inputs: " + Diamond.SEEN);
+    }
+  }
+
+  static final class Coalesces extends LiveComponent {
+    static final java.util.concurrent.atomic.AtomicInteger LOADS = new java.util.concurrent.atomic.AtomicInteger();
+
+    @Override protected View setup() {
+      AsyncSupplier<Integer> body = () -> CompletableFuture.completedFuture(LOADS.incrementAndGet());
+      var loaded = createMemo(body);
+      return () -> T.page("t", T.div(
+        T.span("loaded;" + (loaded.get() > 0)),
+        T.button("again").onClick(e -> {
+          refresh(loaded);
+          refresh(loaded);
+          refresh(loaded);
+        })));
+    }
+  }
+
+  /** As in Solid: every refresh in one go is one call to the server. */
+  @Test
+  void refreshesInOneGoAreOneLoad() {
+    Coalesces.LOADS.set(0);
+    try (Harness h = new Harness(Coalesces::new)) {
+      String html = h.load();
+      h.connect();
+      assertEquals(1, Coalesces.LOADS.get());
+      h.click(Harness.clickOn(html, "again"));
+      Harness.eventually(() -> Coalesces.LOADS.get() >= 2, "it loads again");
+      assertEquals(2, Coalesces.LOADS.get());
+    }
+  }
+
+  static final class SameValue extends LiveComponent {
+    static final CompletableFuture<String> LANDING = new CompletableFuture<>();
+    static final java.util.concurrent.atomic.AtomicBoolean FIRST = new java.util.concurrent.atomic.AtomicBoolean(true);
+
+    @Override protected View setup() {
+      var id = createSignal("a");
+      AsyncSupplier<String> body = () -> {
+        id.get();
+        return FIRST.getAndSet(false) ? CompletableFuture.completedFuture("same") : LANDING;
+      };
+      var loaded = createMemo(body);
+      return () -> T.page("t", T.div(
+        T.span("loaded:" + loaded.get() + ";pending:" + isPending(loaded) + ";"),
+        T.button("change").onClick(e -> id.set("b"))));
+    }
+  }
+
+  /** Solid's A24: pending means a value change is on its way, and a landing that changes nothing is not one. */
+  @Test
+  void aLandingThatChangesNothingIsNotPending() throws Exception {
+    try (Harness h = new Harness(SameValue::new)) {
+      String html = h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "change"));
+      h.awaitPatch(from, p -> p.contains("pending:true;"));
+      from = h.conn.size();
+      SameValue.LANDING.complete("same");
+      h.awaitPatch(from, p -> p.contains("loaded:same;pending:false;"));
     }
   }
 }

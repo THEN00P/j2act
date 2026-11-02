@@ -101,6 +101,7 @@ final class Transition {
     if (from == this) {
       return;
     }
+    Set<Node> mine = new LinkedHashSet<>(nodes);
     nodes.addAll(from.nodes);
     for (Node node : from.nodes) {
       node.transition = this;
@@ -112,6 +113,30 @@ final class Transition {
     from.over = true;
     from.redirect = this;
     tab.transitions.remove(from);
+    // Each side computed without the other's future. What reads across has to see it now.
+    reflowAcross(mine, from.nodes);
+    reflowAcross(from.nodes, mine);
+  }
+
+  private void reflowAcross(Set<Node> sources, Set<Node> readers) {
+    Set<Node> reached = new LinkedHashSet<>();
+    for (Node source : sources) {
+      for (Node below : source.nodesBelow()) {
+        if (readers.contains(below)) {
+          reached.add(below);
+        }
+      }
+    }
+    for (Node node : reached) {
+      if (!node.isAsync()) {
+        reflowOne(node);
+      }
+    }
+    for (Node node : reached) {
+      if (node.isAsync()) {
+        reflowOne(node);
+      }
+    }
   }
 
   /** Lane-only. A load landed: what follows it computes again from its result, and loads run on it. */
@@ -167,7 +192,48 @@ final class Transition {
         return;
       }
     }
+    if (loadsThatCameOnScreen()) {
+      return;
+    }
     commit();
+  }
+
+  /**
+   * What is below this now can differ from when the hold began, since a first read makes new edges. A
+   * load that came on screen would show its old value beside the new ones, so it joins and this waits
+   * for it. A node another transition holds would change apart from what it reads, so they land together.
+   */
+  private boolean loadsThatCameOnScreen() {
+    Set<Node> late = new LinkedHashSet<>();
+    Set<Transition> others = new LinkedHashSet<>();
+    for (Node node : nodes) {
+      for (Node below : node.nodesBelow()) {
+        Transition lane = below.isAsync() ? below.laneTransition() : null;
+        if (lane != null && lane != this) {
+          // A lane's load read the truth this is about to change, and shows what it derived from it.
+          others.add(lane);
+        }
+        if (below.transition == null) {
+          if (below.holdsWrites()) {
+            late.add(below);
+          }
+        } else if (below.transition.current() != this) {
+          others.add(below.transition.current());
+        }
+      }
+    }
+    if (late.isEmpty() && others.isEmpty()) {
+      return false;
+    }
+    for (Transition other : others) {
+      merge(other);
+    }
+    enrollBelow(late, false);
+    for (Node load : late) {
+      load.start(false);
+    }
+    commitIfDone();
+    return true;
   }
 
   /** What this still waits for, for a test that found it stuck. */
@@ -204,11 +270,15 @@ final class Transition {
       lane.dissolve();
     }
     // Everything in here is already its new self, so only what is outside hears about it.
-    for (Node node : changed) {
-      node.notifyExcept(nodes);
-    }
     for (Node node : nodes) {
       node.leaveTransition();
+    }
+    long epoch = ++tab.changeEpoch;
+    for (Node node : changed) {
+      node.markBelowOutOfDate(epoch);
+    }
+    for (Node node : changed) {
+      node.notifyExcept(nodes);
     }
     for (Runnable callback : atCommit) {
       callback.run();

@@ -52,6 +52,11 @@ public final class Action<V, R> {
 
   /** Runs this action from a handler, an effect, a load or another action; concurrent with other runs. */
   public CompletableFuture<R> run(V variables) {
+    if (Tracking.observer() != null) {
+      // Tracking what it writes would run it again for every write, for good.
+      throw new IllegalStateException("an action is a write, so it cannot run inside something reactive:"
+        + " call it from a handler or an effect's second half (ADR 0031)");
+    }
     Scope scope = Tracking.scope();
     Tab tab = scope != null ? scope.tab : Tab.ambient();
     if (tab == null) {

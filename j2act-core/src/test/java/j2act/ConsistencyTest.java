@@ -68,6 +68,7 @@ class ConsistencyTest {
     volatile String written;
     volatile int writeTo;
     volatile int refreshing;
+    volatile int revealing;
     volatile int openTransitions;
     volatile String waiting;
 
@@ -135,11 +136,14 @@ class ConsistencyTest {
         return run.guess;
       });
       Tab tab = Tab.current();
+      // Some start unread, and a memo's first read can come while a guess is out.
+      List<Signal<Boolean>> visible = new ArrayList<>();
+      for (int i = 0; i < nodes.size(); i++) {
+        visible.add(createSignal(i % 2 == 0));
+      }
       return () -> {
         List<DomContent> shown = new ArrayList<>();
-        for (int i = 0; i < nodes.size(); i++) {
-          shown.add(T.span("[n" + i + "=" + nodes.get(i).get() + "]"));
-        }
+        shown.add(T.button("reveal").onClick(e -> visible.get(graph.revealing).set(true)));
         shown.add(T.button("write").onClick(e -> signals.get(graph.writeTo).set(graph.written)));
         shown.add(T.button("act").onClick(e -> {
           Run run = graph.next;
@@ -150,6 +154,12 @@ class ConsistencyTest {
           graph.openTransitions = tab.transitions.size();
           graph.waiting = tab.transitions.stream().map(Transition::waitingFor).collect(java.util.stream.Collectors.joining(" / "));
         }));
+        // After the buttons, so what appears here leaves their handler ids alone.
+        for (int i = 0; i < nodes.size(); i++) {
+          if (visible.get(i).get()) {
+            shown.add(T.span("[n" + i + "=" + nodes.get(i).get() + "]"));
+          }
+        }
         return T.page("t", T.div(shown.toArray(new DomContent[0])));
       };
     }
@@ -217,10 +227,12 @@ class ConsistencyTest {
       }
       int[] from = graph.parents.get(i);
       String[] inputs = new String[from.length];
+      boolean allThere = true;
       for (int j = 0; j < from.length; j++) {
         inputs[j] = values.get("n" + from[j]);
+        allThere &= inputs[j] != null;
       }
-      if (!f(id, inputs).equals(shown)) {
+      if (allThere && !f(id, inputs).equals(shown)) {
         fail("n" + id + "=" + shown + " does not follow from n" + java.util.Arrays.toString(from)
           + " on the same page\n" + values + "\n" + context);
       }
@@ -253,12 +265,17 @@ class ConsistencyTest {
       String act = Harness.clickOn(html, "act");
       String refresh = Harness.clickOn(html, "refresh");
       String sync = Harness.clickOn(html, "sync");
+      String reveal = Harness.clickOn(html, "reveal");
       int checked = h.conn.size();
       int unique = 0;
       List<Run> open = new ArrayList<>();
       for (int step = 0; step < steps; step++) {
-        int op = random.nextInt(10);
-        if (op < 3) {
+        int op = random.nextInt(11);
+        if (op == 10) {
+          graph.revealing = random.nextInt(SIGNALS + OPTIMISTIC + derived);
+          log.append("first read of n").append(graph.revealing).append('\n');
+          h.click(reveal);
+        } else if (op < 3) {
           graph.writeTo = random.nextInt(SIGNALS);
           graph.written = "w" + unique++;
           log.append("write s").append(graph.writeTo).append(" = ").append(graph.written).append('\n');
@@ -324,7 +341,9 @@ class ConsistencyTest {
       if (!messages.isEmpty()) {
         Map<String, String> last = shownOn(messages.get(messages.size() - 1).get("html"));
         for (int i = 0; i < OPTIMISTIC; i++) {
-          assertEquals(last.get("n" + i), last.get("n" + (SIGNALS + i)), "guess " + i + " has gone\n" + last + "\n" + log);
+          if (last.containsKey("n" + i) && last.containsKey("n" + (SIGNALS + i))) {
+            assertEquals(last.get("n" + i), last.get("n" + (SIGNALS + i)), "guess " + i + " has gone\n" + last + "\n" + log);
+          }
         }
       }
     }

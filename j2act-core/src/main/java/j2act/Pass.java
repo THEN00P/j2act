@@ -15,6 +15,8 @@ final class Pass {
 
   static final Pass LATEST = new Pass(null, null, true);
   static final Pass TRUTH = new Pass(null, null, false);
+  /** until(fn): the newest truth, staged or committed, and never a guess. */
+  static final Pass AUTHORITATIVE = new Pass(null, null, true);
 
   Pass(Transition tx, OptimisticLane lane, boolean latest) {
     this.tx = tx;
