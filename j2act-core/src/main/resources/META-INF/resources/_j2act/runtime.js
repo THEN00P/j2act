@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-298cf23e370869b89040cbccdfc8788b4786976ee34698400a0c7b8b259e89e5 */
+* sources: sha256-365977adb35b84073b8bd938576dc1ca38a763cb38a6720e569345d6d22dbfe7 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -98,6 +98,8 @@
 		}
 		/** Results the server has not acknowledged: a socket can die with one on its way (ADR 0032). */
 		const unseenResults = /* @__PURE__ */ new Map();
+		/** Which server-side tab this is, of those the page has had: call ids start over with each. */
+		let tabGeneration = 0;
 		let maxFrame = Number.POSITIVE_INFINITY;
 		let resultAllowance = RESULTS_PER_SECOND;
 		let resultTimer = null;
@@ -148,6 +150,14 @@
 		/** A new server-side tab: it never made those calls. */
 		function forgetResults() {
 			unseenResults.clear();
+			tabGeneration++;
+		}
+		/** What a call running now answers with, later: if a new tab has come by then, its answer means nothing. */
+		function replier(id) {
+			const generation = tabGeneration;
+			return (ok, value) => {
+				if (generation === tabGeneration) reply(id, ok, value);
+			};
 		}
 		/** Answers a call from Java, an action's or a window() call's. */
 		function reply(id, ok, value) {
@@ -354,7 +364,8 @@
 				reply(m.id, false, e);
 				return;
 			}
-			Promise.resolve(result).then((v) => reply(m.id, true, v), (e) => reply(m.id, false, e));
+			const answer = replier(m.id);
+			Promise.resolve(result).then((v) => answer(true, v), (e) => answer(false, e));
 		}
 		function callback(id) {
 			return (...args) => {
@@ -381,6 +392,7 @@
 			call,
 			callNow,
 			reply,
+			replier,
 			resultSeen,
 			resendResults,
 			forgetResults,
@@ -2292,7 +2304,8 @@
 					clients.reply(m.id, false, e);
 					return;
 				}
-				result.then((v) => clients.reply(m.id, true, v), (e) => clients.reply(m.id, false, e));
+				const answer = clients.replier(m.id);
+				result.then((v) => answer(true, v), (e) => answer(false, e));
 			},
 			clientCall: (m) => clients.call(m),
 			ack: (m) => pending.ack(m.id),

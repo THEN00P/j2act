@@ -134,6 +134,8 @@ export function createClients({ send, connected, uploads, morphSlot }: ClientsOp
 
   /** Results the server has not acknowledged: a socket can die with one on its way (ADR 0032). */
   const unseenResults = new Map<string, { message: ClientMessage; sentAt: number }>();
+  /** Which server-side tab this is, of those the page has had: call ids start over with each. */
+  let tabGeneration = 0;
   let maxFrame = Number.POSITIVE_INFINITY;
   let resultAllowance = RESULTS_PER_SECOND;
   let resultTimer: ReturnType<typeof setTimeout> | null = null;
@@ -191,6 +193,17 @@ export function createClients({ send, connected, uploads, morphSlot }: ClientsOp
   /** A new server-side tab: it never made those calls. */
   function forgetResults(): void {
     unseenResults.clear();
+    tabGeneration++;
+  }
+
+  /** What a call running now answers with, later: if a new tab has come by then, its answer means nothing. */
+  function replier(id: string): (ok: boolean, value: unknown) => void {
+    const generation = tabGeneration;
+    return (ok, value) => {
+      if (generation === tabGeneration) {
+        reply(id, ok, value);
+      }
+    };
   }
 
   /** Answers a call from Java, an action's or a window() call's. */
@@ -414,7 +427,8 @@ export function createClients({ send, connected, uploads, morphSlot }: ClientsOp
       reply(m.id, false, e);
       return;
     }
-    Promise.resolve(result).then((v) => reply(m.id, true, v), (e) => reply(m.id, false, e));
+    const answer = replier(m.id);
+    Promise.resolve(result).then((v) => answer(true, v), (e) => answer(false, e));
   }
 
   function callback(id: string): (...args: unknown[]) => void {
@@ -429,7 +443,7 @@ export function createClients({ send, connected, uploads, morphSlot }: ClientsOp
     send({ type: "clientError", client: c.id, error: what + ": " + errorText(e) });
   }
 
-  return { scan, revive, anchorGone, call, callNow, reply, resultSeen, resendResults, forgetResults, sync, reimport };
+  return { scan, revive, anchorGone, call, callNow, reply, replier, resultSeen, resendResults, forgetResults, sync, reimport };
 }
 
 function attributeNames(el: Element): string[] {

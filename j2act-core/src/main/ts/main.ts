@@ -89,7 +89,8 @@ function start(): void {
         clients.reply(m.id, false, e);
         return;
       }
-      result.then((v) => clients.reply(m.id, true, v), (e) => clients.reply(m.id, false, e));
+      const answer = clients.replier(m.id);
+      result.then((v) => answer(true, v), (e) => answer(false, e));
     },
     clientCall: (m) => clients.call(m),
     ack: (m) => pending.ack(m.id),

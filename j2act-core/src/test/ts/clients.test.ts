@@ -84,6 +84,14 @@ describe("Clients", () => {
       expect(JSON.stringify(sent[0]).length).toBeLessThan(200);
     });
 
+    it("drops the answer of a call from before a new server-side tab, whose ids start over", () => {
+      const answer = clients.replier("7");
+      clients.forgetResults();
+      answer(true, "from the old tab");
+      clients.resendResults();
+      expect(sent).toHaveLength(0);
+    });
+
     it("forgets results a new server-side tab never asked for", () => {
       clients.reply("7", true, "value");
       clients.forgetResults();
