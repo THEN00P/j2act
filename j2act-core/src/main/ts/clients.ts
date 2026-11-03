@@ -194,6 +194,10 @@ export function createClients({ send, connected, uploads, morphSlot }: ClientsOp
   function forgetResults(): void {
     unseenResults.clear();
     tabGeneration++;
+    // Calls still waiting for their module belong to the old tab too: unmounting would answer them.
+    clients.forEach((c) => {
+      c.waiting = [];
+    });
   }
 
   /** What a call running now answers with, later: if a new tab has come by then, its answer means nothing. */

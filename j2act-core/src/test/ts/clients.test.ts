@@ -92,6 +92,17 @@ describe("Clients", () => {
       expect(sent).toHaveLength(0);
     });
 
+    it("does not answer a call still waiting for its module once a new server-side tab has come", () => {
+      document.body.innerHTML = '<div data-j2-client="c1" data-j2-module="data:text/javascript,await new Promise(() => {})" data-j2-export="x"></div>';
+      clients.scan();
+      clients.call({ type: "clientCall", id: "7", client: "c1", action: "read", args: "[]" });
+      clients.forgetResults();
+      document.body.innerHTML = "";
+      clients.scan();
+      clients.resendResults();
+      expect(sent).toHaveLength(0);
+    });
+
     it("forgets results a new server-side tab never asked for", () => {
       clients.reply("7", true, "value");
       clients.forgetResults();

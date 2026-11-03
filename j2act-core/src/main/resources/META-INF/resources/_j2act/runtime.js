@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-365977adb35b84073b8bd938576dc1ca38a763cb38a6720e569345d6d22dbfe7 */
+* sources: sha256-d82187fafec843b1db148613e96cb966a31b40a53072f9c67f782e39a272d9e4 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -151,6 +151,9 @@
 		function forgetResults() {
 			unseenResults.clear();
 			tabGeneration++;
+			clients.forEach((c) => {
+				c.waiting = [];
+			});
 		}
 		/** What a call running now answers with, later: if a new tab has come by then, its answer means nothing. */
 		function replier(id) {
