@@ -68,7 +68,12 @@ for (const entry of entries) {
     failed.push(`${entry}: ${e.message.split("\n")[1] ?? e.message}`);
   }
 }
-writeFileSync(join(out, "bundle-failures.txt"), failed.join("\n"));
+// These two test Solid's build output, which is not here. Any other file that stops bundling would quietly stop running.
+const expectedFailures = new Set(["dist-artifacts.test.ts", "treeshake.test.ts"]);
+const unexpected = failed.filter(failure => ![...expectedFailures].some(name => failure.includes(name + ":")));
+if (unexpected.length !== 0 || failed.length !== expectedFailures.size) {
+  throw new Error(`Solid test files did not bundle as expected (${failed.length} failed, ${expectedFailures.size} expected):\n${failed.join("\n")}`);
+}
 
 // The fuzz, on Solid's own source: the log DifferentialTest compares the port's with.
 const fuzzSource = join(tests, "zz-j2act-fuzz.test.ts");

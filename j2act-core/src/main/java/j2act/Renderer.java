@@ -72,17 +72,19 @@ final class Renderer {
     Boundary<?> boundary = (Boundary<?>) scope.instance;
     String shown;
     if (scope.boundaryOutput == null) {
+      // Each of these runs again on its own, in whatever job its flush falls in.
       java.util.function.Supplier<?> on = boundary instanceof Loading && ((Loading) boundary).on != null
-        ? () -> ((Loading) scope.instance).on.get() : null;
+        ? () -> Tracking.in(tab, scope, ((Loading) scope.instance).on) : null;
       scope.boundaryOutput = tab.rt.runWithOwner(scope.slot, () -> tab.rt.boundaryNode(boundary instanceof Loading,
-        previous -> renderContent(scope), () -> renderLoadingFallback(scope),
-        (error, reset) -> renderErrorFallback(scope, error, reset), on));
+        previous -> Tracking.in(tab, scope, () -> renderContent(scope)),
+        () -> Tracking.in(tab, scope, () -> renderLoadingFallback(scope)),
+        (error, reset) -> Tracking.in(tab, scope, () -> renderErrorFallback(scope, error, reset)), on));
     } else if (scope.contentNode != null) {
       // A new description from the parent: what it wraps may be something else now.
       tab.rt.recomputeNow(scope.contentNode);
     }
     shown = (String) tab.rt.read(scope.boundaryOutput);
-    boolean showingFallback = shown == scope.fallbackHtml;
+    boolean showingFallback = tab.rt.showsFallback(scope.boundaryOutput);
     (boundary instanceof Loading ? tab.showingFallback : tab.showingError).remove(scope);
     if (showingFallback) {
       (boundary instanceof Loading ? tab.showingFallback : tab.showingError).add(scope);
@@ -160,10 +162,7 @@ final class Renderer {
     } finally {
       Tracking.swapScope(previousScope);
     }
-    // A new string each time: what the boundary shows is this one by identity.
-    String html = new String(inner.out.toString());
-    scope.fallbackHtml = html;
-    return html;
+    return inner.out.toString();
   }
 
   private static Boundary<?> latest(Boundary<?> boundary) {
@@ -447,6 +446,8 @@ final class Renderer {
         // An adopted preloaded page (ADR 0011): its slot is where it renders now.
         child.localPath = local;
       }
+      // Placed again before the pass that dropped it showed.
+      parent.removing.remove(child);
     } else {
       String address = parent.address + local;
       if (parent.children.containsKey(address)) {

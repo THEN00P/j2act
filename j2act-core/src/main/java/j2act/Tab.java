@@ -733,7 +733,10 @@ public final class Tab {
     }
   }
 
-  /** A read outside any loading(...) the page waits for, or a change it would tear. */
+  /**
+   * A read outside any loading(...) the page waits for, or a change it would tear. Asked of the whole browser's
+   * runtime, so another tab's load can keep a navigation back too, for no longer than pendingMs.
+   */
   private boolean awaitingData() {
     return rt.holding();
   }
@@ -1013,6 +1016,7 @@ public final class Tab {
   PageStream openStream(String html) {
     shellSent = true;
     if (showingFallback.isEmpty() || !html.endsWith("</body></html>")) {
+      applyVisibility();
       return null;
     }
     stream = new PageStream(this, nonce, "</body></html>");
@@ -1038,6 +1042,7 @@ public final class Tab {
     if (ending != null) {
       ending.end();
     }
+    applyVisibility();
   }
 
   /** Lane-only. The response is gone, so nothing streams any more. */
@@ -1075,7 +1080,8 @@ public final class Tab {
 
   private void applyVisibility() {
     if (hubFor == null && rootOwner != null) {
-      rt.setTabHidden(rootOwner, pageHidden || (connection == null && shellSent));
+      // With no socket, and no response still streaming, nobody is looking at what this tab shows.
+      rt.setTabHidden(rootOwner, pageHidden || (connection == null && stream == null && shellSent));
     }
   }
 
@@ -1317,6 +1323,9 @@ public final class Tab {
     waiters.clear();
     if (root != null) {
       root.dispose();
+    }
+    if (rootOwner != null) {
+      rootOwner.dispose();
     }
     disposeStores();
     disposed = true;

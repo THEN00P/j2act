@@ -76,12 +76,14 @@ public final class Memo<T> extends Primitive implements Supplier<T> {
     return cell instanceof ValueCell && ((ValueCell) cell).isAsync() == (asyncBody != null || source != null);
   }
 
+  @SuppressWarnings("unchecked")
   @Override void attach(Cell cell, boolean created) {
     this.cell = cell;
     ValueCell node = (ValueCell) cell;
     // A class swap's setup() brings the new code's lambda.
     node.body = body;
     node.asyncBody = asyncBody;
+    node.source = (Reactive.From<Object>) (Reactive.From<?>) source;
     node.staleOnError = staleOnError;
   }
 }

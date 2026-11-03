@@ -22,6 +22,8 @@ final class ReactiveHost {
   /** Every tab on this lane, hub included. */
   final Set<Tab> tabs = ConcurrentHashMap.newKeySet();
   private boolean flushing;
+  private final java.util.Queue<Runnable> foreignWrites = new java.util.concurrent.ConcurrentLinkedQueue<>();
+  private final java.util.concurrent.atomic.AtomicBoolean foreignWriteQueued = new java.util.concurrent.atomic.AtomicBoolean();
 
   ReactiveHost(J2Act engine) {
     this.engine = engine;
@@ -92,7 +94,7 @@ final class ReactiveHost {
     try {
       do {
         for (Tab tab : tabs) {
-          tab.applyDirty();
+          forTab(tab, tab::applyDirty);
         }
         Runnable task;
         while ((task = microtasks.poll()) != null) {
@@ -109,7 +111,7 @@ final class ReactiveHost {
         }
       } while (!microtasks.isEmpty() || anyDirty());
       for (Tab tab : tabs) {
-        tab.afterFlush();
+        forTab(tab, tab::afterFlush);
       }
       // What afterFlush ran, such as onSettled callbacks, may have written.
       if (!microtasks.isEmpty() || anyDirty()) {
@@ -118,6 +120,35 @@ final class ReactiveHost {
       }
     } finally {
       flushing = false;
+    }
+  }
+
+  /** Runs a step for one tab as that tab's: if it fails, the other tabs of this browser still get theirs. */
+  private void forTab(Tab tab, Runnable step) {
+    try {
+      Tracking.in(tab, null, () -> {
+        step.run();
+        return null;
+      });
+    } catch (RuntimeException | Error e) {
+      engine.log(System.Logger.Level.ERROR, "tab task failed", e);
+    }
+  }
+
+  /**
+   * A write from another thread (ADR 0014). Those that arrive before the lane gets to them are one job, so a burst is
+   * one flush and one patch, which is what keeps a chatty producer from rendering once per value.
+   */
+  void writeFromOutside(Runnable write) {
+    foreignWrites.add(write);
+    if (foreignWriteQueued.compareAndSet(false, true)) {
+      job(() -> {
+        foreignWriteQueued.set(false);
+        Runnable next;
+        while ((next = foreignWrites.poll()) != null) {
+          runQuietly(next);
+        }
+      });
     }
   }
 

@@ -36,23 +36,15 @@ final class EffectCell extends Cell {
     started = true;
     Scope scope = owner;
     tab.rt.runWithOwner(scope != null ? scope.slot : null, () -> {
-      tab.rt.effectNode(prev -> {
-        Scope previous = Tracking.swapScope(scope);
-        Tab previousTab = Tab.swapCurrent(tab);
+      tab.rt.effectNode(prev -> Tracking.in(tab, scope, track), (value, previousValue) -> {
         try {
-          return track.get();
-        } finally {
-          Tracking.swapScope(previous);
-          Tab.swapCurrent(previousTab);
-        }
-      }, (value, previousValue) -> {
-        Scope previous = Tracking.swapScope(scope);
-        Tab previousTab = Tab.swapCurrent(tab);
-        try {
-          Runnable cleanup = apply.apply(value, previousValue);
+          Runnable cleanup = Tracking.in(tab, scope, () -> apply.apply(value, previousValue));
           return cleanup == null ? null : () -> {
             try {
-              cleanup.run();
+              Tracking.in(tab, scope, () -> {
+                cleanup.run();
+                return null;
+              });
             } catch (RuntimeException | Error t) {
               tab.engine.log(System.Logger.Level.WARNING, "effect cleanup failed at " + address, t);
             }
@@ -60,9 +52,6 @@ final class EffectCell extends Cell {
         } catch (RuntimeException | Error t) {
           tab.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, t);
           return null;
-        } finally {
-          Tracking.swapScope(previous);
-          Tab.swapCurrent(previousTab);
         }
       }, (error, cleanup) -> tab.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, error), true,
         created -> node = created);
@@ -72,7 +61,7 @@ final class EffectCell extends Cell {
 
   @Override void dispose() {
     if (node != null) {
-      node.dispose();
+      tab.rt.disposeNode(node);
     }
     super.dispose();
   }

@@ -206,7 +206,7 @@ public final class Reactive {
     } else if (cell.tab.lane.isCurrent()) {
       start.run();
     } else {
-      cell.tab.post(start);
+      cell.tab.host.job(start);
     }
     return (CompletableFuture<T>) landed;
   }
@@ -224,23 +224,19 @@ public final class Reactive {
   /** {@link #until(Supplier)}, failing with a TimeoutException if nothing confirms it in time. */
   public static <T> CompletableFuture<T> until(Supplier<T> fn, java.time.Duration timeout) {
     Long millis = timeout == null ? null : Long.valueOf(timeout.toMillis());
-    return waiting("until", rt -> rt.until(supplier(fn), millis), timeout);
+    return waiting("until", fn, (rt, around) -> rt.until(around, millis), timeout);
   }
 
   /** Finishes with the first value fn settles on, whatever it is, once what it reads has loaded (ADR 0031). */
   public static <T> CompletableFuture<T> resolve(Supplier<T> fn) {
-    return waiting("resolve", rt -> rt.resolve(supplier(fn)), null);
+    return waiting("resolve", fn, (rt, around) -> rt.resolve(around), null);
   }
 
   @SuppressWarnings("unchecked")
-  private static Supplier<Object> supplier(Supplier<?> fn) {
-    return (Supplier<Object>) fn;
-  }
-
-  @SuppressWarnings("unchecked")
-  private static <T> CompletableFuture<T> waiting(String what,
-      java.util.function.Function<j2act.internal.signals.Runtime, java.util.concurrent.CompletionStage<Object>> start,
+  private static <T> CompletableFuture<T> waiting(String what, Supplier<T> fn,
+      BiFunction<j2act.internal.signals.Runtime, Supplier<Object>, java.util.concurrent.CompletionStage<Object>> starting,
       java.time.Duration timeout) {
+    Scope scope = Tracking.scope();
     Action.Call call = Action.Call.current();
     Tab tab = call != null ? call.tab : Tab.current();
     if (tab == null) {
@@ -250,19 +246,47 @@ public final class Reactive {
       throw new IllegalStateException(what + "(...) waits, so it cannot run inside something reactive:"
         + " call it from a handler or an action (ADR 0031)");
     }
+    // It runs again whenever what it read changes, in whatever job that falls in.
+    Function<j2act.internal.signals.Runtime, java.util.concurrent.CompletionStage<Object>> start =
+      rt -> starting.apply(rt, () -> Tracking.in(tab, scope, fn));
     CompletableFuture<Object> result = new CompletableFuture<>();
     tab.waiters.add(result);
-    result.whenComplete((value, failure) -> tab.waiters.remove(result));
-    Runnable begin = () -> start.apply(tab.rt).whenComplete((value, failure) -> {
-      if (failure instanceof j2act.internal.signals.Errors.TimeoutError) {
-        result.completeExceptionally(new java.util.concurrent.TimeoutException(
-          what + "(...) was not satisfied within " + timeout));
-      } else if (failure != null) {
-        result.completeExceptionally(failure);
+    if (tab.disposed) {
+      // Too late for the tab's ending to cancel it.
+      result.cancel(false);
+      return (CompletableFuture<T>) result;
+    }
+    // What it runs lives under an owner of its own, so a future cancelled, or a tab ended, stops it.
+    j2act.internal.signals.Owner[] watcher = new j2act.internal.signals.Owner[1];
+    result.whenComplete((value, failure) -> {
+      tab.waiters.remove(result);
+      Runnable stop = () -> {
+        if (watcher[0] != null) {
+          watcher[0].dispose();
+        }
+      };
+      if (tab.lane.isCurrent()) {
+        stop.run();
       } else {
-        result.complete(value);
+        tab.host.job(stop);
       }
     });
+    Runnable begin = () -> {
+      if (result.isDone()) {
+        return;
+      }
+      watcher[0] = tab.rt.runWithOwner(null, () -> tab.rt.createSlotOwner(null));
+      tab.rt.runWithOwner(watcher[0], () -> start.apply(tab.rt)).whenComplete((value, failure) -> {
+        if (failure instanceof j2act.internal.signals.Errors.TimeoutError) {
+          result.completeExceptionally(new java.util.concurrent.TimeoutException(
+            what + "(...) was not satisfied within " + timeout));
+        } else if (failure != null) {
+          result.completeExceptionally(failure);
+        } else {
+          result.complete(value);
+        }
+      });
+    };
     if (call != null) {
       call.enter(tab, () -> {
         begin.run();
@@ -271,7 +295,7 @@ public final class Reactive {
     } else if (tab.lane.isCurrent()) {
       begin.run();
     } else {
-      tab.post(begin);
+      tab.host.job(begin);
     }
     return (CompletableFuture<T>) result;
   }

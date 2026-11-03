@@ -51,8 +51,6 @@ final class Scope {
   String placedInside;
   /** What a loading(...) or errored(...) shows, rendered as a scope of its own. */
   Scope fallbackScope;
-  /** The fallback's HTML, by identity, to tell whether what a boundary shows is its fallback. */
-  String fallbackHtml;
   /** A reveal's owner, which its boundaries are created under. */
   Owner revealOwner;
   /** A boundary's engine node, and what renders its content. */

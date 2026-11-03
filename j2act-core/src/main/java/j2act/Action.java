@@ -64,7 +64,13 @@ public final class Action<V, R> {
     if (tab.lane.isCurrent()) {
       start(tab, scope, variables, result);
     } else {
-      tab.post(() -> start(tab, scope, variables, result));
+      tab.host.job(() -> {
+        if (tab.disposed) {
+          result.completeExceptionally(new IllegalStateException("tab " + tab.id + " has ended"));
+        } else {
+          start(tab, scope, variables, result);
+        }
+      });
     }
     return result;
   }
@@ -99,7 +105,7 @@ public final class Action<V, R> {
         }
         R ended = value;
         Throwable failed = failure;
-        tab.post(() -> run.end(ended, failed));
+        tab.host.job(() -> run.end(ended, failed));
       });
     } catch (RejectedExecutionException e) {
       run.end(null, e);

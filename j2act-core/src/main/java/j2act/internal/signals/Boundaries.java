@@ -52,6 +52,7 @@ final class Boundaries {
 
   private final Runtime rt;
   private final Set<Boundary> collecting = new LinkedHashSet<>();
+  private final Map<Node, Boundary> byOutput = new java.util.IdentityHashMap<>();
 
   Boundaries(Runtime rt) {
     this.rt = rt;
@@ -60,7 +61,7 @@ final class Boundaries {
     q.freshHook = (node, held) -> !truthy(held)
       ? ((node.statusFlags & STATUS_UNINITIALIZED) != 0 ? catchStatus(node, STATUS_PENDING, null) : armedOver(node))
       : Boolean.FALSE;
-    q.hiddenHook = r -> hiddenBy(r) != null;
+    q.hiddenHook = r -> hiddenBy(r) != null || detachedOver(r);
     q.boundarySeamHook = this::boundarySeam;
     q.heldRunHook = this::heldRun;
   }
@@ -111,6 +112,8 @@ final class Boundaries {
       b.readers.clear();
       collecting.remove(b);
     }
+    // A hold that started while this tab could be seen may have only this tab to wait for now.
+    s().schedule();
   }
 
   private void record(Boundary b, Node node, Node source) {
@@ -220,6 +223,15 @@ final class Boundaries {
       }
     }
     return null;
+  }
+
+  private boolean detachedOver(Node r) {
+    for (Boundary b = boundaryOf(r); b != null; b = b.parent) {
+      if (b.detached) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private boolean heldRun(Node node) {
@@ -456,6 +468,8 @@ final class Boundaries {
     output.config |= CONFIG_REDERIVE;
     tree.config |= CONFIG_FRAME;
     b.output = output;
+    byOutput.put(output, b);
+    rt.owners.cleanup(() -> byOutput.remove(output), owner);
     return output;
   }
 
@@ -569,6 +583,11 @@ final class Boundaries {
     q.passLane = p;
     out.flags ^= (out.flags ^ f) & (REACTIVE_PROBED | REACTIVE_LANE_READ);
     return v;
+  }
+
+  boolean showsFallback(Node output) {
+    Boundary b = byOutput.get(output);
+    return b != null && b.fallback;
   }
 
   /** A boundary whose content is out of the way of its `on`, for a caller that has its own. */

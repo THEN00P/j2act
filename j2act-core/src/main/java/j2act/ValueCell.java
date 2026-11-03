@@ -31,7 +31,9 @@ class ValueCell extends Cell {
   volatile boolean restored;
   /** withStaleOnError: the last load failed, and the old value stayed. */
   private Node failedNode;
-  private final Reactive.From<Object> source;
+  private volatile long loadRun;
+  /** A class swap's setup() brings the new code's lambda here too. */
+  Reactive.From<Object> source;
   private final Scope creator = Tracking.scope();
 
   /** A plain value. */
@@ -104,10 +106,16 @@ class ValueCell extends Cell {
     try {
       if (source != null) {
         // A value may arrive on any thread, and belongs on the lane.
-        return rt.from((next, error, complete) -> source.subscribe(
-          value -> tab.post(() -> next.accept(value)),
-          failure -> tab.post(() -> error.accept(failure)),
-          () -> tab.post(complete)));
+        return rt.from((next, error, complete) -> {
+          Runnable stop = source.subscribe(
+            value -> tab.post(() -> next.accept(value)),
+            failure -> tab.post(() -> error.accept(failure)),
+            () -> tab.post(complete));
+          return stop == null ? null : () -> Tracking.in(tab, creator, () -> {
+            stop.run();
+            return null;
+          });
+        });
       }
       if (asyncBody == null) {
         Object value = body.get();
@@ -116,8 +124,9 @@ class ValueCell extends Cell {
         }
         return value;
       }
-      CompletionStage<?> flight = watchingRoute(asyncBody.get());
-      return staleOnError ? keepingOldValue(flight) : flight;
+      long run = ++loadRun;
+      CompletionStage<?> flight = watchingRoute(asyncBody.get(), run);
+      return staleOnError ? keepingOldValue(flight, run) : flight;
     } finally {
       Tracking.swapScope(previous);
       Tab.swapCurrent(previousTab);
@@ -128,17 +137,26 @@ class ValueCell extends Cell {
    * notFound() or redirect() from a load ends the route, not the memo (ADR 0015): nothing lands, and what it
    * held goes with the page. With the shell already sent it is an error at the nearest errored(...) (ADR 0031).
    */
-  private CompletionStage<Object> watchingRoute(CompletionStage<?> flight) {
+  private CompletionStage<Object> watchingRoute(CompletionStage<?> flight, long run) {
     CompletableFuture<Object> answer = new CompletableFuture<>();
     flight.whenComplete((value, failure) -> {
       Throwable cause = failure instanceof java.util.concurrent.CompletionException && failure.getCause() != null
         ? failure.getCause() : failure;
+      if (replaced(run)) {
+        // The engine ignores what it answers; what it would do to the page or the log must not happen either.
+        answer.complete(value);
+        return;
+      }
       if (cause instanceof RouteException) {
         if (tab.streamingShell()) {
           tab.engine.warnOnce("streamed route " + address, "notFound() or redirect() from a load read inside loading(...),"
             + " after the response started: read it outside loading(...) for a real 404 or redirect (ADR 0031)");
         } else {
-          tab.post(() -> tab.onRouteException((RouteException) cause));
+          tab.post(() -> {
+            if (!replaced(run)) {
+              tab.onRouteException((RouteException) cause);
+            }
+          });
           return;
         }
       }
@@ -156,16 +174,17 @@ class ValueCell extends Cell {
    * withStaleOnError, which Solid has no such thing as, so it stands above the engine (ADR 0033): a load
    * that fails answers with what is there and says so through failed(x). A first load has nothing to keep.
    */
-  private CompletionStage<Object> keepingOldValue(CompletionStage<?> flight) {
-    boolean hasValue = !rt.uninitialized(node);
-    Object old = rt.committed(node);
+  private CompletionStage<Object> keepingOldValue(CompletionStage<?> flight, long run) {
+    // The first run happens while this cell is being made, with no node yet and nothing to keep.
+    boolean hasValue = node != null && !rt.uninitialized(node);
+    Object old = hasValue ? rt.committed(node) : null;
     CompletableFuture<Object> answer = new CompletableFuture<>();
     flight.whenComplete((value, failure) -> {
       if (failure == null) {
-        setFailed(false);
+        setFailed(false, run);
         answer.complete(value);
       } else if (hasValue) {
-        setFailed(true);
+        setFailed(true, run);
         answer.complete(old);
       } else {
         answer.completeExceptionally(failure);
@@ -174,8 +193,17 @@ class ValueCell extends Cell {
     return answer;
   }
 
-  private void setFailed(boolean failed) {
-    tab.post(() -> rt.write(failedNode(), failed));
+  private void setFailed(boolean failed, long run) {
+    tab.post(() -> {
+      if (!replaced(run)) {
+        rt.write(failedNode(), failed);
+      }
+    });
+  }
+
+  /** A newer run of this load started, or nobody is left to tell. */
+  private boolean replaced(long run) {
+    return run != loadRun || disposed;
   }
 
   private Node failedNode() {
@@ -239,7 +267,11 @@ class ValueCell extends Cell {
       call.enter(tab, () -> rt.write(node, next));
       return;
     }
-    tab.post(() -> rt.write(node, next));
+    tab.host.writeFromOutside(() -> {
+      if (!tab.disposed) {
+        rt.write(node, next);
+      }
+    });
   }
 
   @SuppressWarnings("unchecked")
@@ -254,7 +286,11 @@ class ValueCell extends Cell {
       call.enter(tab, () -> rt.update(node, fn));
       return;
     }
-    tab.post(() -> rt.update(node, fn));
+    tab.host.writeFromOutside(() -> {
+      if (!tab.disposed) {
+        rt.update(node, fn);
+      }
+    });
   }
 
   /** On a lane, from a guess inside an action. */
@@ -309,7 +345,7 @@ class ValueCell extends Cell {
   @Override void dispose() {
     super.dispose();
     if (body != null || asyncBody != null || source != null) {
-      node.dispose();
+      rt.disposeNode(node);
     }
   }
 }

@@ -394,6 +394,14 @@ public final class Runtime {
     }, effect, error, options);
   }
 
+  /** Solid's dispose(node): it stops for good, and lets go of what it read and what it owns. */
+  public void disposeNode(Node node) {
+    owners.dispose(node);
+    if (owners.hasCleanupError() && !scheduler.running) {
+      owners.rethrowCleanupError(false);
+    }
+  }
+
   /** Runs an effect or memo again in the next flush, as if something it read changed. */
   public void rerun(Node node) {
     if ((node.flags & Constants.REACTIVE_DISPOSED) == 0) {
@@ -487,6 +495,11 @@ public final class Runtime {
 
   public void resetErrorHalt() {
     scheduler.resetErrorHalt();
+  }
+
+  /** Whether what this boundary's node gives now is its fallback. */
+  public boolean showsFallback(Node output) {
+    return boundaries.showsFallback(output);
   }
 
   public Owner createTabRoot() {
