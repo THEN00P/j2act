@@ -23,6 +23,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -146,6 +147,76 @@ class SharedRuntimeTest {
       int next = h.conn.size();
       HasAFallback.shown.set(1);
       h.awaitPatch(next, p -> p.contains("waiting:1;"));
+    }
+  }
+
+  // ---- a store's memo that reads a field declared after it
+
+  @TabScoped
+  public static class ReadsAhead extends Store {
+    final Memo<String> upper = createMemo(() -> this.name.get().toUpperCase());
+    final Signal<String> name = createSignal("one");
+  }
+
+  static final class ReadsAheadPage extends LiveComponent {
+    @Override protected View setup() {
+      var store = useTabStore(ReadsAhead.class);
+      return () -> T.page("t", T.span("upper:" + store.upper.get() + ";"),
+        T.button("two").onClick(e -> store.name.set("two")));
+    }
+  }
+
+  @Test
+  void aMemoFollowsAFieldDeclaredAfterIt() {
+    try (Harness h = new Harness(ReadsAheadPage::new)) {
+      assertTrue(h.load().contains("upper:ONE;"), h.html);
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(h.html, "two"));
+      h.awaitPatch(from, p -> p.contains("upper:TWO;"));
+    }
+  }
+
+  // ---- a boundary's on follows its description
+
+  static final class SwitchesOn extends LiveComponent {
+    static final Map<Integer, CompletableFuture<String>> LOADS = new java.util.concurrent.ConcurrentHashMap<>();
+    static volatile Signal<Integer> which;
+    static volatile Signal<Integer> subject;
+
+    @Override protected View setup() {
+      var first = createSignal(0);
+      var second = createSignal(0);
+      which = first;
+      subject = second;
+      var other = createSignal(0);
+      var value = createMemo((AsyncSupplier<String>) () -> {
+        int n = second.get();
+        return n == 0 ? CompletableFuture.completedFuture("zero") : LOADS.computeIfAbsent(n, k -> new CompletableFuture<>());
+      });
+      return () -> {
+        Supplier<?> on = first.get() == 0 ? other : second;
+        return T.page("t", loading(() -> T.span("value:" + value.get() + ";")).on(on).withFallback(T.span("waiting;")));
+      };
+    }
+  }
+
+  @Test
+  void aBoundaryFollowsANewOn() {
+    SwitchesOn.LOADS.clear();
+    try (Harness h = new Harness(SwitchesOn::new)) {
+      assertTrue(h.load().contains("value:zero;"), h.html);
+      h.connect();
+      int from = h.conn.size();
+      SwitchesOn.which.set(1);
+      Harness.eventually(() -> {
+        CompletableFuture<Void> lane = new CompletableFuture<>();
+        h.engine.liveTab(h.token).post(() -> lane.complete(null));
+        lane.join();
+        return true;
+      }, "the description is adopted");
+      SwitchesOn.subject.set(1);
+      h.awaitPatch(from, p -> p.contains("waiting;"));
     }
   }
 
