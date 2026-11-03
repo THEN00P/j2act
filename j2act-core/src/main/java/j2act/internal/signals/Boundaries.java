@@ -590,6 +590,21 @@ final class Boundaries {
     return v;
   }
 
+  /** A fallback on screen renders again; one that is not is made anew if it is ever needed. */
+  void redescribed(Node output) {
+    Boundary b = byOutput.get(output);
+    if (b == null || b.fb == null) {
+      return;
+    }
+    if (b.fallback) {
+      s().dirtyQueue.enqueueSub(b.fb);
+      s().schedule();
+    } else {
+      rt.owners.dispose(b.fb);
+      b.fb = null;
+    }
+  }
+
   boolean showsFallback(Node output) {
     Boundary b = byOutput.get(output);
     return b != null && b.fallback;

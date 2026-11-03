@@ -66,7 +66,7 @@ public final class QueryState<T> extends Primitive implements Supplier<T> {
     if (cell == null) {
       return initial;
     }
-    return valueIn((RouteInfo) cell.owner.routeCell().read());
+    return parsed(cell.owner.routeCell().routePart("query:" + name, route -> route.queryParams.get(name)));
   }
 
   /** Replaces the parameter after the current event; the initial value or null removes it. */
@@ -84,7 +84,10 @@ public final class QueryState<T> extends Primitive implements Supplier<T> {
   }
 
   private T valueIn(RouteInfo route) {
-    String raw = route.queryParams.get(name);
+    return parsed(route.queryParams.get(name));
+  }
+
+  private T parsed(String raw) {
     if (raw == null) {
       return initial;
     }

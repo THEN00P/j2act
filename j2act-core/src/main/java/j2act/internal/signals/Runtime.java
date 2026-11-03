@@ -507,6 +507,11 @@ public final class Runtime {
     scheduler.resetErrorHalt();
   }
 
+  /** Its parent gave this boundary a new description, which its fallback has to follow. */
+  public void boundaryRedescribed(Node output) {
+    boundaries.redescribed(output);
+  }
+
   /** Whether what this boundary's node gives now is its fallback. */
   public boolean showsFallback(Node output) {
     return boundaries.showsFallback(output);

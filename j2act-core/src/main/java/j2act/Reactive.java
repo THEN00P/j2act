@@ -649,12 +649,12 @@ public final class Reactive {
 
   /** Path parameter of the current route, e.g. "id" for /users/{id}. Tracked. */
   public static String pathParam(String name) {
-    return route().params.get(name);
+    return routeCell().routePart("path:" + name, route -> route.params.get(name));
   }
 
   /** Query parameter of the current URL, or null. Tracked. */
   public static String queryParam(String name) {
-    return route().queryParams.get(name);
+    return routeCell().routePart("query:" + name, route -> route.queryParams.get(name));
   }
 
   /** The tab's identity (ADR 0004). Tracked: a view branching on it re-runs when it changes. */
@@ -668,9 +668,9 @@ public final class Reactive {
     tab.post(() -> tab.navigate(path, "push"));
   }
 
-  private static RouteInfo route() {
+  private static ValueCell routeCell() {
     Scope scope = Tracking.scope();
-    return (RouteInfo) (scope != null ? scope.routeCell() : ambientTab("pathParam()").routeCell).read();
+    return scope != null ? scope.routeCell() : ambientTab("pathParam()").routeCell;
   }
 
   private static Tab ambientTab(String what) {

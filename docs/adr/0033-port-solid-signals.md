@@ -110,6 +110,7 @@ All done, though not in this order: the skeleton came last, once the engine had 
 
 ## What the swap changed for app code
 
+- **Each route parameter is its own memo**, as Solid Router's `createMemoObject` gives them. A load reading `pathParam("id")` runs again when `id` changes, not when the query or another parameter does.
 - **Reads in a load go before `async(...)`.** The processor warns about one inside it, and about `pathParam()`, `queryParam()` and `auth()` there.
 - **A failed action's plain writes stand.** Only its guesses are undone. Before, they were dropped. A write that must not outlive a failure goes after the call that can fail.
 - **An action's future finishes when its body ends**, not when its writes show. To wait for a refresh, join `refresh(x)`'s future in the body, as a Solid action yields it. A refresh of something nothing reads holds nothing.

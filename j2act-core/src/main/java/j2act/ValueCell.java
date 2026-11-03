@@ -3,9 +3,12 @@ package j2act;
 import j2act.internal.signals.Errors.NotReadyError;
 import j2act.internal.signals.Node;
 import j2act.internal.signals.Runtime;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
@@ -32,6 +35,8 @@ class ValueCell extends Cell {
   /** withStaleOnError: the last load failed, and the old value stayed. */
   private Node failedNode;
   private volatile long loadRun;
+  /** On a route cell: a memo per parameter read so far. Lane-only. */
+  private Map<String, ValueCell> routeParts;
   /** A class swap's setup() brings the new code's lambda here too. */
   Reactive.From<Object> source;
   private final Scope creator = Tracking.scope();
@@ -364,8 +369,32 @@ class ValueCell extends Cell {
     restored = true;
   }
 
+  /**
+   * One parameter of this route, as Solid Router's createMemoObject gives them: a memo per key, so what reads one runs
+   * again only when that one changes, not on every navigation. Off the lane nothing tracks, so the route will do.
+   */
+  final String routePart(String key, Function<RouteInfo, String> part) {
+    if (!tab.lane.isCurrent()) {
+      return part.apply((RouteInfo) read());
+    }
+    if (routeParts == null) {
+      routeParts = new HashMap<>();
+    }
+    ValueCell memo = routeParts.get(key);
+    if (memo == null) {
+      memo = rt.runWithOwner(tab.rootOwner, () -> Tracking.in(tab, null,
+        () -> ValueCell.derived(tab, address + ":" + key, () -> part.apply((RouteInfo) read()))));
+      routeParts.put(key, memo);
+    }
+    return (String) memo.read();
+  }
+
   /** The node's engine state is gone with its owner; a value with none of its own goes with the runtime. */
   @Override void dispose() {
+    if (routeParts != null) {
+      routeParts.values().forEach(ValueCell::dispose);
+      routeParts = null;
+    }
     // What is saved still has this value, which a crash would bring back.
     markRetainedDirty();
     super.dispose();

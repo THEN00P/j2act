@@ -82,6 +82,7 @@ final class Renderer {
     } else if (scope.contentNode != null) {
       // A new description from the parent: what it wraps may be something else now.
       tab.rt.recomputeNow(scope.contentNode);
+      tab.rt.boundaryRedescribed(scope.boundaryOutput);
     }
     shown = (String) tab.rt.read(scope.boundaryOutput);
     boolean showingFallback = tab.rt.showsFallback(scope.boundaryOutput);
@@ -105,7 +106,9 @@ final class Renderer {
     if (scope.contentNode == null && tab.rt.getOwner() instanceof Node) {
       scope.contentNode = (Node) tab.rt.getOwner();
     }
-    Renderer inner = new Renderer(tab, epoch);
+    // It runs again on its own, so this can be a pass of its own, not the one that made it.
+    tab.enterRender();
+    Renderer inner = new Renderer(tab, tab.renderEpoch());
     inner.enclosing = enclosing;
     tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
@@ -121,17 +124,18 @@ final class Renderer {
     } finally {
       scope.rendering = false;
       Tracking.swapScope(previousScope);
+      tab.exitRender();
     }
     return inner.out.toString();
   }
 
   private String renderLoadingFallback(Scope scope) {
-    DomContent fallback = ((Loading) scope.instance).fallback;
+    DomContent fallback = ((Loading) latest((Boundary<?>) scope.instance)).fallback;
     return renderFallback(scope, fallback);
   }
 
   private String renderErrorFallback(Scope scope, Throwable error, Runnable reset) {
-    java.util.function.BiFunction<Throwable, Runnable, ? extends DomContent> fallback = ((Errored) scope.instance).fallback;
+    java.util.function.BiFunction<Throwable, Runnable, ? extends DomContent> fallback = ((Errored) latest((Boundary<?>) scope.instance)).fallback;
     Runnable retry = () -> tab.post(reset);
     return renderFallback(scope, fallback == null ? null : fallback.apply(error, retry));
   }
@@ -150,7 +154,8 @@ final class Renderer {
       }
       own.dispose();
     });
-    Renderer inner = new Renderer(tab, epoch);
+    tab.enterRender();
+    Renderer inner = new Renderer(tab, tab.renderEpoch());
     inner.enclosing = enclosing;
     tab.handlers.begin(own);
     Scope previousScope = Tracking.swapScope(own);
@@ -161,8 +166,11 @@ final class Renderer {
       inner.finish(own);
     } finally {
       Tracking.swapScope(previousScope);
+      tab.exitRender();
     }
-    return inner.out.toString();
+    // What is in the fallback patches itself, so it needs to find itself in what is around it.
+    own.html = inner.out.toString();
+    return own.html;
   }
 
   private static Boundary<?> latest(Boundary<?> boundary) {

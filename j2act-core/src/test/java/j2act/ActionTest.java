@@ -296,6 +296,7 @@ class ActionTest {
   static final class TwoAffect extends LiveComponent {
     static final CompletableFuture<Void> FIRST = new CompletableFuture<>();
     static final CompletableFuture<Void> SECOND = new CompletableFuture<>();
+    static final java.util.concurrent.CountDownLatch SECOND_AFFECTS = new java.util.concurrent.CountDownLatch(1);
     static final CompletableFuture<Void> FIRST_ENDED = new CompletableFuture<>();
 
     @Override protected View setup() {
@@ -306,6 +307,7 @@ class ActionTest {
       });
       var second = action((String v) -> {
         affects(value);
+        SECOND_AFFECTS.countDown();
         SECOND.get();
       });
       return () -> T.page("t", T.div(
@@ -324,6 +326,7 @@ class ActionTest {
       int from = h.conn.size();
       h.click(Harness.clickOn(html, "first"));
       h.click(Harness.clickOn(html, "second"));
+      assertTrue(TwoAffect.SECOND_AFFECTS.await(5, java.util.concurrent.TimeUnit.SECONDS));
       h.awaitPatch(from, p -> p.contains("pending=true;"));
 
       int mid = h.conn.size();
