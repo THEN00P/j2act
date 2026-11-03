@@ -3,6 +3,7 @@ package j2act;
 import static j2act.Reactive.action;
 import static j2act.Reactive.async;
 import static j2act.Reactive.createEffect;
+import static j2act.Reactive.createClient;
 import static j2act.Reactive.createMemo;
 import static j2act.Reactive.createRetained;
 import static j2act.Reactive.createSignal;
@@ -11,6 +12,7 @@ import static j2act.Reactive.failed;
 import static j2act.Reactive.loading;
 import static j2act.Reactive.onCleanup;
 import static j2act.Reactive.pathParam;
+import static j2act.Reactive.queryParam;
 import static j2act.Reactive.refresh;
 import static j2act.Reactive.until;
 import static j2act.Reactive.useBrowserStore;
@@ -358,6 +360,7 @@ class RandomAppTest {
       var local = createSignal(0);
       var child = createSignal(false);
       var draft = createRetained("draft", 0);
+      var meter = createClient(ClientTest.Meter.class);
       String expected = idIn(url);
 
       var guard = createMemo((AsyncSupplier<String>) () -> {
@@ -382,11 +385,11 @@ class RandomAppTest {
           if (!java.util.Objects.equals(id, expected)) {
             world.violation(me + ": its first load read id " + id);
           }
-        } else if ((id + "." + n).equals(me.lastInputs) && me.refreshes == me.lastRefreshes && !plainFails(id)) {
+        } else if ((id + "." + n + "." + queryParam("q")).equals(me.lastInputs) && me.refreshes == me.lastRefreshes && !plainFails(id)) {
           // In Solid a later read runs a memo that failed again, so only one that worked counts.
           world.violation(me + ": a load ran again for the same " + id + "." + n);
         }
-        me.lastInputs = id + "." + n;
+        me.lastInputs = id + "." + n + "." + queryParam("q");
         me.lastRefreshes = me.refreshes;
         return load(me, "a load", plainValue(id, n), plainFails(id) ? planned("load") : null, n);
       });
@@ -416,6 +419,11 @@ class RandomAppTest {
           T.span("[page" + me.id + "=" + kind + " guard=" + guard.get() + " id=" + id + " n=" + shared.n.get()
             + " doubled=" + shared.doubled.get() + " local=" + local.get() + "]"),
           T.span("[draft" + me.id + "=" + draft.get() + "]"),
+          T.span("[q=" + queryParam("q") + "]"),
+          T.span("[kept=" + shared.kept.get() + "]"),
+          T.div().withId("meter" + me.id).withClient(meter),
+          T.button("read" + me.id).onClick(e -> world.results.add(meter.read().toCompletableFuture())),
+          T.button("reset" + me.id).onClick(e -> meter.reset(() -> me.running("a client's callback"))),
           T.button("draft" + me.id).onClick(e -> {
             me.drafted = world.drafts.incrementAndGet();
             draft.set(me.drafted);
@@ -513,7 +521,13 @@ class RandomAppTest {
     }
   };
 
-  private static final String[] URLS = {"/a/1", "/a/2", "/a/3", "/b/1", "/b/2", "/d/1", "/d/2", "/c", "/a/nf", "/a/rd", "/d/nf"};
+  private static final String[] URLS = {"/a/1", "/a/2", "/a/3", "/b/1", "/b/2", "/d/1", "/d/2", "/c", "/a/nf", "/a/rd", "/d/nf",
+    "/a/1?q=2", "/a/1?q=3", "/b/1?q=2"};
+
+  private static String queryIn(String url) {
+    int at = url.indexOf("?q=");
+    return at < 0 ? "null" : url.substring(at + 3);
+  }
 
   /** One tab as a browser has it: its document, built from what the server sent. */
   static final class BrowserTab {
@@ -527,6 +541,8 @@ class RandomAppTest {
     int acks;
     final Map<String, String> ackResults = new HashMap<>();
     final List<String> calls = new ArrayList<>();
+    /** The callback a client action was given, by call. */
+    final Map<String, String> callbacks = new HashMap<>();
     final List<String> problems = new ArrayList<>();
     final List<String> recent = new ArrayList<>();
 
@@ -563,16 +579,20 @@ class RandomAppTest {
             doc = m.get("html");
           } else {
             String next = replaceScope(doc, m.get("anchor"), m.get("html"));
-            if (next == null) {
-              problems.add("a patch for " + m.get("anchor") + ", which is not on the page");
-            } else {
+            // During a hold a child's patch can get ahead of its parent's, whose own patch brings it along. The
+            // runtime ignores it, and what the page ends up showing is checked at rest.
+            if (next != null) {
               doc = next;
             }
           }
         } else if ("ack".equals(type)) {
           ackResults.put(m.get("id"), m.get("ok"));
-        } else if ("windowCall".equals(type)) {
+        } else if ("windowCall".equals(type) || "clientCall".equals(type)) {
           calls.add(m.get("id"));
+          Matcher callback = m.get("args") == null ? null : Pattern.compile("\\$fn\":\"([^\"]+)\"").matcher(m.get("args"));
+          if (callback != null && callback.find()) {
+            callbacks.put(m.get("id"), callback.group(1));
+          }
         } else if ("url".equals(type)) {
           wanted = m.get("url");
         }
@@ -754,6 +774,12 @@ class RandomAppTest {
       int op = random.nextInt(100);
       if (op < 18) {
         String url = URLS[random.nextInt(URLS.length)];
+        if (random.nextInt(3) == 0) {
+          // A hover: it may be where the page goes next, or not.
+          String hover = random.nextBoolean() ? url : URLS[random.nextInt(8)];
+          log.append("tab").append(tabs.indexOf(tab)).append(" preloads ").append(hover).append('\n');
+          h.engine.onMessage(tab.conn, Json.object("type", "preload", "url", hover));
+        }
         log.append("tab").append(tabs.indexOf(tab)).append(" navigates to ").append(url).append('\n');
         tab.wanted = url;
         h.engine.onMessage(tab.conn, Json.object("type", "navigate", "url", url, "mode", "push"));
@@ -788,7 +814,8 @@ class RandomAppTest {
         log.append("an action goes on\n");
         gates.remove(random.nextInt(gates.size())).open.complete(null);
       } else if (op < 81 && page != null) {
-        click(tab, "call" + page);
+        int which = random.nextInt(3);
+        click(tab, (which == 0 ? "call" : which == 1 ? "read" : "reset") + page);
       } else if (op < 85 && !tab.calls.isEmpty()) {
         answer(tab, tab.calls.remove(random.nextInt(tab.calls.size())));
       } else if (op < 88 && page != null) {
@@ -839,6 +866,10 @@ class RandomAppTest {
 
     void answer(BrowserTab tab, String id) {
       log.append("a call is answered\n");
+      String callback = tab.callbacks.remove(id);
+      if (callback != null) {
+        h.engine.onMessage(tab.conn, Json.object("type", "callback", "handler", callback, "args", "[]"));
+      }
       h.engine.onMessage(tab.conn, Json.object("type", "callResult", "id", id, "ok", true, "value", "\"title\""));
     }
 
@@ -941,6 +972,8 @@ class RandomAppTest {
         expect(tab, rest.contains(" n=" + n + " "), at + ": wanted n=" + n + " in " + rest);
         expect(tab, rest.contains(" doubled=" + 2 * n + " "), at + ": wanted doubled=" + 2 * n + " in " + rest);
         expect(tab, tab.doc.contains("[remote=r" + n + "]"), at + ": wanted remote r" + n);
+        expect(tab, tab.doc.contains("[q=" + queryIn(tab.wanted) + "]"), at + ": wanted its query");
+        expect(tab, tab.doc.contains("[kept=" + w.kept + "]"), at + ": wanted kept " + w.kept);
         String pageId = page.group(1);
         Integer locals = clicks.get("local" + pageId);
         expect(tab, rest.contains(" local=" + (locals == null ? 0 : locals) + "]") || rest.endsWith(" local=" + (locals == null ? 0 : locals)),
@@ -1031,6 +1064,32 @@ class RandomAppTest {
       }
     }
 
+    /** The server dies; the page remounts on the next one, which shows what was live. */
+    void crash() {
+      BrowserTab tab = tabs.get(0);
+      String page = someMarker(tab, "page");
+      if (page == null || tab.doc.contains("=notfound]") || idIn(tab.wanted) != null && idIn(tab.wanted).matches("nf|rd")) {
+        return;
+      }
+      int drafted = w.components.get(Integer.parseInt(page)).drafted;
+      log.append("the server dies, and tab0 remounts\n");
+      Map<String, String> cookies = cookie == null ? Collections.emptyMap() : Collections.singletonMap("j2-browser", cookie);
+      Exchange remount = Exchange.of(cookies, Collections.singletonMap(Retained.RESTORE_HEADER, Collections.singletonList(tab.token)));
+      try (Harness next = new Harness(ROUTES, b -> b
+        .withExecutor(threads)
+        .withRetainedStateStorage(storage)
+        .withReconnectGrace(Duration.ofSeconds(30)))) {
+        w.serving = true;
+        String html = next.engine.serve(tab.wanted, remount).html();
+        if (!Pattern.compile("\\[draft\\d+=" + drafted + "\\]").matcher(html).find()) {
+          fail("wanted draft " + drafted + " after a restart\n" + html.substring(Math.max(0, html.indexOf("<body"))) + "\n" + log);
+        }
+        if (!html.contains("[kept=" + w.kept + "]")) {
+          fail("wanted kept " + w.kept + " after a restart\n" + html.substring(Math.max(0, html.indexOf("<body"))) + "\n" + log);
+        }
+      }
+    }
+
     /** What a page no longer shows has stopped running; what it shows has one effect in place. */
     private void checkLifetimes() {
       for (Component c : w.components.values()) {
@@ -1102,6 +1161,7 @@ class RandomAppTest {
           }
         }
         d.atRest();
+        d.crash();
       } catch (AssertionError e) {
         if (e.getMessage() != null && e.getMessage().contains("seed " + seed + "\n")) {
           throw e;
