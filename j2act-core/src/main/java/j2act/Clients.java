@@ -291,11 +291,16 @@ final class Clients {
     outbox.clear();
   }
 
-  /** Lane-only. A socket is back, with what the last one may have lost: each call's time starts again. */
+  /**
+   * Lane-only. A socket is back, with what the last one may have lost: each call's time starts again. Not for one
+   * still in the outbox: a full buffer holds it back, and it must not time out and then go anyway.
+   */
   void redelivered() {
     long now = tab.engine.clock.millis();
     for (PendingCall call : calls.values()) {
-      call.deliveredAt = now;
+      if (call.wire == null) {
+        call.deliveredAt = now;
+      }
     }
   }
 

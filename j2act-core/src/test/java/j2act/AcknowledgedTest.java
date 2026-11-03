@@ -225,6 +225,32 @@ class AcknowledgedTest {
   }
 
   @Test
+  void aCallAFullBufferHoldsBackStartsItsClockWhenItGoesOut() {
+    TestClock clock = new TestClock();
+    try (Harness h = new Harness(Counter::new, b -> b.withClock(clock).withMaxUnacknowledged(1))) {
+      h.load();
+      h.connect();
+      long seen = lastNumber(h.conn);
+      Tab tab = h.engine.liveTab(h.token);
+      h.conn.deaf = true;
+      long patches = h.engine.stats.patches.get();
+      clickBlind(h, "add");
+      Harness.eventually(() -> h.engine.stats.patches.get() > patches, "this fills the buffer");
+      clickBlind(h, "call");
+      Harness.eventually(() -> callClocks(tab).equals(List.of(0L)), "the buffer holds it back");
+
+      Harness.FakeConnection next = reconnect(h, seen);
+      assertEquals(List.of(0L), callClocks(tab), "the reconnect did not send it");
+      assertTrue(next.since(0, m -> "windowCall".equals(m.get("type"))).isEmpty());
+
+      clock.now += 60_000;
+      h.engine.onMessage(next, "{\"type\":\"seen\",\"n\":" + lastNumber(next) + "}");
+      next.await(0, m -> "windowCall".equals(m.get("type")));
+      assertEquals(List.of(clock.now), callClocks(tab));
+    }
+  }
+
+  @Test
   void repliesToResultsAreNotKeptAndOnlyAnswerCallsThisTabMade() {
     try (Harness h = new Harness(Counter::new, b -> b.withRateLimit(auth -> RateLimit.unlimited()))) {
       h.load();
