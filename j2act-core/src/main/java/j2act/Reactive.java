@@ -680,7 +680,7 @@ public final class Reactive {
 
   private static ValueCell routeCell() {
     Scope scope = Tracking.scope();
-    return scope != null ? scope.routeCell() : ambientTab("pathParam()").routeCell;
+    return scope != null ? scope.routeCell() : ambientTab("pathParam()").handlersRoute();
   }
 
   private static Tab ambientTab(String what) {

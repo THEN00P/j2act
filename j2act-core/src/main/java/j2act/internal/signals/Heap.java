@@ -84,6 +84,11 @@ final class Heap {
     }
     n.flags = flags | REACTIVE_IN_HEAP_HEIGHT;
     actualInsertIntoHeap(n);
+    // Not in Solid, where a reader is always above what it reads: a view reads the effect of a component it places,
+    // which sits below it as its child. Left behind the cursor, this entry would stop the view being queued (ADR 0033).
+    if (n.height < min) {
+      min = n.height;
+    }
   }
 
   void deleteFromHeap(Node n) {

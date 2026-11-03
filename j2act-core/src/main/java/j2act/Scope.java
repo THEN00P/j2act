@@ -76,8 +76,8 @@ final class Scope {
   int settledCount = -1;
   /** Set on the root of a subtree mounted ahead of a navigation, until the click adopts it (ADR 0011). */
   Tab.PreloadedRoute preload;
-  /** The route this subtree reads instead of the tab's; see PreloadRouteCell. */
-  PreloadRouteCell routeOverride;
+  /** On a route frame: the route it and what it places read; see FrameRouteCell. */
+  FrameRouteCell frameRoute;
   boolean dirty;
   boolean rendering;
   boolean disposed;
@@ -299,6 +299,11 @@ final class Scope {
     }
     instance = component;
     component.scope = this;
+    if (component.routeFrame && frameRoute == null) {
+      ValueCell above = parent != null ? parent.routeCell() : tab.routeCell;
+      frameRoute = tab.rt.runWithOwner(slot, () -> tab.rt.untrack(() -> Tracking.in(tab, null,
+        () -> new FrameRouteCell(tab, above, null))));
+    }
     tab.engine.injector.inject(component);
     if (shapeChanged(component.getClass())) {
       startOver("its fields changed");
@@ -381,11 +386,11 @@ final class Scope {
     return false;
   }
 
-  /** The route cell pathParam()/queryParam() read here: a preloaded subtree's own, else the tab's. */
+  /** The route cell pathParam()/queryParam() read here: the nearest route frame's, as in Solid Router. */
   ValueCell routeCell() {
     for (Scope s = this; s != null; s = s.parent) {
-      if (s.routeOverride != null) {
-        return s.routeOverride;
+      if (s.frameRoute != null) {
+        return s.frameRoute;
       }
     }
     return tab.routeCell;
@@ -419,6 +424,21 @@ final class Scope {
     return true;
   }
 
+  /** A load of this scope, or of what it placed other than these, is under way. */
+  boolean loadingBesides(java.util.Set<Scope> besides) {
+    for (Cell cell : cells) {
+      if (cell instanceof ValueCell && ((ValueCell) cell).loading()) {
+        return true;
+      }
+    }
+    for (Scope child : children.values()) {
+      if (!besides.contains(child) && child.loadingBesides(besides)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** The first half of this scope's render effect. */
   Object renderPass(Object previous) {
     String out;
@@ -432,13 +452,13 @@ final class Scope {
       renderer.renderScope(this);
       out = renderer.out.toString();
     } catch (RouteException e) {
-      tab.deferRoute(e);
+      tab.deferRoute(this, e);
       return previous != null ? previous : "";
     } catch (NotReadyError e) {
       throw e;
     } catch (RuntimeException | Error t) {
       if (t.getCause() instanceof RouteException) {
-        tab.deferRoute((RouteException) t.getCause());
+        tab.deferRoute(this, (RouteException) t.getCause());
         return previous != null ? previous : "";
       }
       if (errorCatcherAbove()) {
@@ -517,6 +537,16 @@ final class Scope {
     return top != tab.root || tab.rootOnPage == top;
   }
 
+  /** Whether the page has this scope: it has shown, and so has everything around it. */
+  boolean onThePageAllTheWay() {
+    for (Scope s = this; s != null; s = s.parent) {
+      if (s.html == null || (s.parent == null ? s != tab.rootOnPage : !s.onThePage())) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /** The pass of a parent placing this scope: runs its effect inside that pass, and stops if it stopped. */
   String renderInParent() {
     boolean outer = inParent;
@@ -578,7 +608,8 @@ final class Scope {
     for (int i = cells.size() - 1; i >= 0; i--) {
       Cell cell = cells.get(i);
       cell.dispose();
-      tab.cells.remove(cell.address);
+      // A page still on screen can share its address with a new instance of its route.
+      tab.cells.remove(cell.address, cell);
     }
     if (slot != null) {
       try {
@@ -588,8 +619,8 @@ final class Scope {
       }
     }
     tab.forgetScope(this);
-    if (routeOverride != null) {
-      routeOverride.unfollow();
+    if (frameRoute != null) {
+      frameRoute.dispose();
     }
     if (instance != null && instance.scope == this) {
       instance.scope = null;

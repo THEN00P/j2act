@@ -543,6 +543,17 @@ class RandomAppTest {
     int acks;
     final Map<String, String> ackResults = new HashMap<>();
     final List<String> calls = new ArrayList<>();
+    int endedEarly;
+    final java.util.Set<String> ended = new java.util.HashSet<>();
+
+    /** A page left before it ever showed ended, and a pass that carried it can still reach the page for a moment. */
+    void leavingWhatNeverShowed(World world) {
+      for (Component c : world.components.values()) {
+        if (c.tab == tab && !doc.contains(">ping" + c.id + "<")) {
+          ended.add("ping" + c.id);
+        }
+      }
+    }
     /** The callback a client action was given, by call. */
     final Map<String, String> callbacks = new HashMap<>();
     final List<String> problems = new ArrayList<>();
@@ -783,6 +794,7 @@ class RandomAppTest {
           h.engine.onMessage(tab.conn, Json.object("type", "preload", "url", hover));
         }
         log.append("tab").append(tabs.indexOf(tab)).append(" navigates to ").append(url).append('\n');
+        tab.leavingWhatNeverShowed(w);
         tab.wanted = url;
         h.engine.onMessage(tab.conn, Json.object("type", "navigate", "url", url, "mode", "push"));
       } else if (op < 42 && !w.pending.isEmpty()) {
@@ -848,7 +860,7 @@ class RandomAppTest {
       settleLanes();
       // Not only at rest: a page being left is still the page the user is looking at.
       if (random.nextBoolean()) {
-        clickEverything();
+        clickEverything(true);
       }
     }
 
@@ -1127,11 +1139,29 @@ class RandomAppTest {
     void atRest() throws Exception {
       quiesce();
       check();
-      clickEverything();
+      clickEverything(false);
     }
 
-    /** What the page shows works. */
-    void clickEverything() {
+    /** A child its page stopped placing, whose patch a hold keeps back: it goes when the hold ends (ADR 0011). */
+    private boolean childGoing(BrowserTab tab, String ping) {
+      Component shown = w.components.get(Integer.parseInt(ping.substring("ping".length())));
+      if (shown == null || !shown.kind.equals("child")) {
+        return false;
+      }
+      for (Component c : w.components.values()) {
+        if (c.tab == tab.tab && !c.toggled && tab.doc.contains("[page" + c.id + "=")) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /**
+     * What the page shows works. On the way, a page that had a load of its own under way when it was left ended at the
+     * navigation, as it would keep the next page waiting, so what it shows can be refused until that page comes. So can
+     * a page left before it ever showed.
+     */
+    void clickEverything(boolean onTheWay) {
       long rejected = h.engine.stats().rejectedEvents.get();
       for (BrowserTab tab : tabs) {
         Matcher m = Pattern.compile(">(ping\\d+)<").matcher(tab.doc);
@@ -1140,14 +1170,85 @@ class RandomAppTest {
           pings.add(m.group(1));
         }
         for (String ping : pings) {
-          if (!click(tab, ping)) {
-            fail(ping + " on tab" + tabs.indexOf(tab) + " does not work\n" + log);
+          if (click(tab, ping)) {
+            continue;
+          }
+          // Its replacement can be on its way when a click is, as on any network: the answer comes after it.
+          boolean gone = !tab.doc.contains(">" + ping + "<");
+          if (tab.endedEarly != tab.tab.pagesEndedEarly) {
+            tab.endedEarly = tab.tab.pagesEndedEarly;
+            tab.ended.addAll(pings);
+          }
+          if (!onTheWay || !(gone || tab.ended.contains(ping) || childGoing(tab, ping))) {
+            fail(ping + " on tab" + tabs.indexOf(tab) + " does not work\n" + log + "\nits page: " + tab.doc);
           }
         }
       }
-      if (h.engine.stats().rejectedEvents.get() != rejected) {
+      if (!onTheWay && h.engine.stats().rejectedEvents.get() != rejected) {
         fail("what the page shows was refused\n" + log);
       }
+    }
+  }
+
+  /** Found at random: the view of a page to come, waiting on the effect of what it placed, was never run again. */
+  @org.junit.jupiter.api.Test
+  void aNavigationWithinThePageToComeAndThenAnotherComesToRest() throws Exception {
+    try (Driver d = new Driver(1)) {
+      BrowserTab tab = d.open("/d/1");
+      d.atRest();
+      for (String url : new String[] {"/b/1", "/b/1?q=2", "/a/2"}) {
+        tab.wanted = url;
+        d.h.engine.onMessage(tab.conn, Json.object("type", "navigate", "url", url, "mode", "push"));
+        d.settleLanes();
+      }
+      d.atRest();
+    }
+  }
+
+  /** Found at random: a page redirecting itself away, kept on screen, waited for good on the load that redirected. */
+  @org.junit.jupiter.api.Test
+  void aPageRedirectingItselfAwayInAHiddenTabComesToRest() throws Exception {
+    try (Driver d = new Driver(1)) {
+      BrowserTab tab = d.open("/a/1");
+      d.atRest();
+      tab.wanted = "/a/rd";
+      d.h.engine.onMessage(tab.conn, Json.object("type", "navigate", "url", "/a/rd", "mode", "push"));
+      d.settleLanes();
+      tab.hidden = true;
+      d.h.engine.onMessage(tab.conn, Json.object("type", "visibility", "hidden", true));
+      d.settleLanes();
+      for (Landing landing : new ArrayList<>(d.w.pending)) {
+        if ("grd".equals(landing.value)) {
+          d.w.pending.remove(landing);
+          landing.land();
+        }
+      }
+      d.settleLanes();
+      Gate gate = new Gate(false);
+      d.w.nextGate = gate;
+      if (d.click(tab, "act" + d.someMarker(tab, "page"))) {
+        d.gates.add(gate);
+        gate.started.await(5, TimeUnit.SECONDS);
+      }
+      d.atRest();
+    }
+  }
+
+  /** Found at random: the page on screen ending took the retained values of a new page at its address with it. */
+  @org.junit.jupiter.api.Test
+  void aPageEndingLeavesTheRetainedValuesOfTheOneAtItsAddress() throws Exception {
+    try (Driver d = new Driver(1)) {
+      BrowserTab tab = d.open("/b/2");
+      d.atRest();
+      for (String url : new String[] {"/d/nf", "/a/nf", "/b/2"}) {
+        tab.wanted = url;
+        d.h.engine.onMessage(tab.conn, Json.object("type", "navigate", "url", url, "mode", "push"));
+        d.settleLanes();
+      }
+      d.atRest();
+      d.click(tab, "draft" + d.someMarker(tab, "page"));
+      d.atRest();
+      d.crash();
     }
   }
 

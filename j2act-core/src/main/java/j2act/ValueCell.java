@@ -170,7 +170,7 @@ class ValueCell extends Cell {
         } else {
           tab.post(() -> {
             if (!replaced(run)) {
-              tab.onRouteException((RouteException) cause);
+              tab.onLoadsRouteException(creator, (RouteException) cause);
             }
           });
           return;

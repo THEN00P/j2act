@@ -107,7 +107,14 @@ public final class Tab {
   private Hold hold = Hold.NONE;
   private int holdSeq;
   private String heldUrl;
-  private Scope heldScope;
+  /** What the page shows while a navigation's page loads: it works until that page replaces it. */
+  private LeftPage leftPage;
+  private boolean goingByItsOwnLoad;
+  private int preloadSeq;
+  /** Whose handler is running. Lane-only. */
+  private Scope dispatching;
+  /** How often a page on screen ended at the navigation, since it could not stay; see leaveFrames. */
+  volatile int pagesEndedEarly;
 
   /** A notFound()/redirect() raised before the socket attached, for the SSR loop to act on. */
   volatile RouteException pendingRoute;
@@ -642,21 +649,21 @@ public final class Tab {
     while (common < frameIds.size() && common < next.size() && frameIds.get(common).equals(next.get(common).id)) {
       common++;
     }
-    for (int i = frames.size() - 1; i >= common; i--) {
-      ComponentTag leaving = frames.remove(i);
-      frameIds.remove(i);
-      // Now, not when the new page shows: left in place, it would load for the URL it is leaving behind.
-      if (i > 0 && leaving.scope != null) {
-        leaving.scope.dispose();
-      }
+    LeftPage back = leftPageFor(common, next);
+    leaveFrames(common);
+    PreloadedRoute adopted = back != null ? null : takePreload(resolution, common);
+    if (back != null) {
+      discardPreload();
     }
-    PreloadedRoute adopted = takePreload(resolution, common);
     for (int i = common; i < next.size(); i++) {
       ComponentTag instance;
-      if (adopted != null) {
+      if (back != null) {
+        instance = back.frames.get(i - common);
+      } else if (adopted != null) {
         instance = adopted.instances.get(i - common);
       } else {
         instance = next.get(i).factory.get();
+        instance.routeFrame = true;
         if (i > 0) {
           instance.withKey(next.get(i).id);
         }
@@ -681,24 +688,157 @@ public final class Tab {
     if (adopted != null) {
       adopt(adopted);
     }
-    if (common == 0 && root != null) {
+    LeftPage left = leftPage();
+    if (common == 0 && root != null && (left == null || left.top() != root)) {
       root.dispose();
+    }
+    if (back != null) {
+      for (ComponentTag frame : back.frames) {
+        frame.scope.frameRoute.follow();
+      }
+      leftPage = null;
     }
     // A write shows after a flush, and a new page's first run comes before one: it would load the last URL's data.
     if (common < next.size() && !rt.flushing()) {
       rt.flush();
     }
     if (common == 0) {
-      if (rootOwner == null) {
-        rootOwner = rt.createTabRoot();
+      if (back != null) {
+        root = frames.get(0).scope;
+      } else {
+        if (rootOwner == null) {
+          rootOwner = rt.createTabRoot();
+        }
+        root = new Scope(this, null, "frame:" + frameIds.get(0), rootOwner);
+        root.bind(frames.get(0));
       }
-      root = new Scope(this, null, "frame:" + frameIds.get(0), rootOwner);
-      root.bind(frames.get(0));
       markDirty(root);
-      heldScope = root;
     } else if (frames.get(common - 1).scope != null) {
       markDirty(frames.get(common - 1).scope);
-      heldScope = frames.get(common - 1).scope;
+    }
+  }
+
+  /** The frames a navigation is leaving, still on screen. As in Solid Router, they read the URL they show. */
+  private static final class LeftPage {
+    final int common;
+    final List<String> ids;
+    final List<ComponentTag> frames;
+    /** The URL it shows. */
+    final RouteInfo route;
+
+    LeftPage(int common, List<String> ids, List<ComponentTag> frames, RouteInfo route) {
+      this.common = common;
+      this.ids = ids;
+      this.frames = frames;
+      this.route = route;
+    }
+
+    Scope top() {
+      return frames.get(0).scope;
+    }
+
+    boolean holds(Scope scope) {
+      Scope top = top();
+      for (Scope s = scope; s != null; s = s.parent) {
+        if (s == top) {
+          return true;
+        }
+      }
+      return false;
+    }
+  }
+
+  /** The left page, unless what replaces it has come. */
+  private LeftPage leftPage() {
+    if (leftPage != null && leftPage.top() == null) {
+      leftPage = null;
+    }
+    return leftPage;
+  }
+
+  /** The left page if this navigation goes back to it: nothing replaced it, so it just carries on. */
+  private LeftPage leftPageFor(int common, List<PageMatch.Frame> next) {
+    LeftPage left = leftPage();
+    if (left == null || left.common != common || left.ids.size() != next.size() - common) {
+      return null;
+    }
+    for (int i = 0; i < left.ids.size(); i++) {
+      if (!left.ids.get(i).equals(next.get(common + i).id)) {
+        return null;
+      }
+    }
+    return left;
+  }
+
+  /**
+   * Lane-only. What the page shows stays until what replaces it comes: its parent's pass or the new root's patch ends
+   * it. Until then it reads its own URL, so it does not load for the one being navigated to. What no user ever saw goes
+   * now. So does a page with a load of its own under way in a hold: the next page could not show until it lands, and a
+   * load that ends in a redirect never does.
+   */
+  private void leaveFrames(int common) {
+    if (frames.size() <= common) {
+      return;
+    }
+    LeftPage left = leftPage();
+    // With a page already left under them, it is the rest of what the page shows, and they read the URL it shows.
+    int end = left == null ? frames.size() : left.common;
+    boolean onScreen = common < end && !goingByItsOwnLoad;
+    for (int i = common; onScreen && i < end; i++) {
+      Scope scope = frames.get(i).scope;
+      onScreen = scope != null && scope.onThePageAllTheWay() && !holdingForItself(scope, left);
+    }
+    if (!onScreen && common < end && frames.get(common).scope != null && frames.get(common).scope.onThePageAllTheWay()) {
+      pagesEndedEarly++;
+    }
+    if (onScreen) {
+      List<String> ids = new ArrayList<>(frameIds.subList(common, end));
+      List<ComponentTag> kept = new ArrayList<>(frames.subList(common, end));
+      FrameRouteCell top = kept.get(0).scope.frameRoute;
+      RouteInfo shows = left != null ? left.route : (RouteInfo) top.peek();
+      top.stop(shows);
+      if (left != null) {
+        ids.addAll(left.ids);
+        kept.addAll(left.frames);
+        for (int i = 0; i < end - common; i++) {
+          // What it placed last was never shown.
+          ((Layout) kept.get(i)).content = kept.get(i + 1);
+          markDirty(kept.get(i).scope);
+        }
+      }
+      leftPage = new LeftPage(common, ids, kept, shows);
+    }
+    for (int i = frames.size() - 1; i >= common; i--) {
+      ComponentTag leaving = frames.remove(i);
+      frameIds.remove(i);
+      if ((!onScreen || i >= end) && i > 0 && leaving.scope != null) {
+        leaving.scope.dispose();
+      }
+    }
+  }
+
+  /** Whether this frame, kept, would keep the next page from showing. A page left under it says nothing about it. */
+  private boolean holdingForItself(Scope scope, LeftPage left) {
+    if (!rt.holding()) {
+      return false;
+    }
+    if (left == null) {
+      return !scope.settledBelow();
+    }
+    java.util.Set<Scope> below = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    for (ComponentTag frame : frames) {
+      below.add(frame.scope);
+    }
+    below.add(left.top());
+    return scope.loadingBesides(below);
+  }
+
+  /** Lane-only. Nothing of it may go on, as when the identity it ran as is gone. */
+  private void discardLeftPage() {
+    LeftPage left = leftPage();
+    leftPage = null;
+    if (left != null) {
+      left.top().dispose();
     }
   }
 
@@ -769,6 +909,30 @@ public final class Tab {
   private static PageMatch messageMatch(String title) {
     return PageMatch.fallback(java.util.Collections.singletonList(
       new PageMatch.Frame("builtin:" + title, () -> new MessagePage(title))));
+  }
+
+  /** Lane-only. A load's notFound() or redirect(). A page gone or being left no longer says where the user goes. */
+  void onLoadsRouteException(Scope scope, RouteException e) {
+    if (scope != null && scope.disposed) {
+      return;
+    }
+    if (onLeftPage(scope)) {
+      discardLeftPage();
+      pagesEndedEarly++;
+    } else {
+      // That load never lands, so the page it is on cannot stay until the next one comes.
+      goingByItsOwnLoad = true;
+      try {
+        onRouteException(e);
+      } finally {
+        goingByItsOwnLoad = false;
+      }
+    }
+  }
+
+  private boolean onLeftPage(Scope scope) {
+    LeftPage left = leftPage();
+    return left != null && scope != null && left.holds(scope);
   }
 
   /** Lane-only. A notFound()/redirect() from a render, loader or handler. */
@@ -850,6 +1014,7 @@ public final class Tab {
   }
 
   private void remountFrom(int index) {
+    discardLeftPage();
     String url = ((RouteInfo) rt.peek(routeCell.node)).url();
     Scope stale = frames.get(index).scope;
     if (index > 0 && stale != null) {
@@ -927,8 +1092,8 @@ public final class Tab {
     return shellSent ? null : nonce;
   }
 
-  void deferRoute(RouteException e) {
-    if (deferredRoute == null) {
+  void deferRoute(Scope scope, RouteException e) {
+    if (deferredRoute == null && !onLeftPage(scope)) {
       deferredRoute = e;
     }
   }
@@ -977,14 +1142,19 @@ public final class Tab {
         }
       } else {
         scope.sent = scope.html;
-        if (scope == root) {
+        if (scope == root && rootOnPage != root) {
+          Scope replaced = rootOnPage;
           rootOnPage = root;
+          // It stayed until now so that it kept working; its page is what this patch replaces.
+          if (replaced != null) {
+            replaced.dispose();
+          }
         }
         // What an ancestor last sent no longer describes the page below it.
         for (Scope s = scope.parent; s != null; s = s.parent) {
           s.sent = null;
         }
-        send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope == root ? true : null, "html", scope.html));
+        send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope.parent == null ? true : null, "html", scope.html));
         engine.stats.patches.incrementAndGet();
         behindThisPatch(scope, scope.html, scopes, i + 1);
       }
@@ -1008,6 +1178,23 @@ public final class Tab {
         scopes.add(next, child);
       }
     }
+  }
+
+  /** During a hold: the page on screen goes on working, and nothing of the page to come is in what it patches. */
+  private void sendLeftPage() {
+    LeftPage left = leftPage();
+    if (left == null) {
+      return;
+    }
+    List<Scope> others = new ArrayList<>();
+    for (Scope scope : unsent) {
+      if (!left.holds(scope)) {
+        others.add(scope);
+      }
+    }
+    unsent.removeAll(others);
+    sendUnsent();
+    unsent.addAll(others);
   }
 
   private static int depth(Scope scope) {
@@ -1041,13 +1228,22 @@ public final class Tab {
       }
       return;
     }
+    // What replaces the page on screen is ready, and that page has gone: it cannot wait for anything else.
+    boolean replaced = leftPage != null && leftPage() == null;
     if (hold == Hold.SHOWING_LOADING) {
+      if (replaced) {
+        sendUnsent();
+      } else {
+        sendLeftPage();
+      }
       return; // loading() stays up until its minimum time; the timer sends what waited
     }
     if (hold == Hold.AWAITING_DATA) {
       // It rendered, so the new page's loads started, but the old page stays on screen.
-      if (!awaitingData()) {
+      if (replaced || !awaitingData()) {
         showHeldPage(holdSeq);
+      } else {
+        sendLeftPage();
       }
       return;
     }
@@ -1276,6 +1472,7 @@ public final class Tab {
       return false;
     }
     lastActivity = engine.clock.millis();
+    dispatching = entry.scope;
     try {
       Handlers.invoke(entry, message);
       return true;
@@ -1286,7 +1483,15 @@ public final class Tab {
       engine.log(System.Logger.Level.WARNING, "event handler failed in "
         + entry.scope.instance.getClass().getName(), t);
       return false;
+    } finally {
+      dispatching = null;
     }
+  }
+
+  /** The route a handler reads: that of the page it is on, which may be one being left. Elsewhere, the tab's. */
+  ValueCell handlersRoute() {
+    Scope scope = dispatching;
+    return scope != null && lane.isCurrent() ? scope.routeCell() : routeCell;
   }
 
   /** Lane-only. A soft navigation requested by the client: a link click or back/forward. */
@@ -1395,6 +1600,9 @@ public final class Tab {
     if (root != null) {
       root.dispose();
     }
+    if (rootOnPage != null) {
+      rootOnPage.dispose();
+    }
     if (rootOwner != null) {
       rootOwner.dispose();
     }
@@ -1439,11 +1647,11 @@ public final class Tab {
     final List<String> frameIds;
     final List<ComponentTag> instances;
     final Scope root;
-    final PreloadRouteCell route;
+    final FrameRouteCell route;
     boolean dirty;
 
     PreloadedRoute(String url, int common, Scope parent, List<String> frameIds, List<ComponentTag> instances,
-      Scope root, PreloadRouteCell route) {
+      Scope root, FrameRouteCell route) {
       this.url = url;
       this.common = common;
       this.parent = parent;
@@ -1480,10 +1688,14 @@ public final class Tab {
     if (common == 0 || common >= next.size() || frames.get(common - 1).scope == null) {
       return;
     }
+    if (leftPageFor(common, next) != null) {
+      return; // It is what the page still shows, so there is nothing to mount.
+    }
     List<ComponentTag> instances = new ArrayList<>();
     List<String> ids = new ArrayList<>();
     for (int i = common; i < next.size(); i++) {
       ComponentTag instance = next.get(i).factory.get();
+      instance.routeFrame = true;
       instance.withKey(next.get(i).id);
       instances.add(instance);
       ids.add(next.get(i).id);
@@ -1498,11 +1710,12 @@ public final class Tab {
       ((Layout) instances.get(instances.size() - 1)).content = null;
     }
     Scope parent = frames.get(common - 1).scope;
-    PreloadRouteCell route = new PreloadRouteCell(this, new RouteInfo(resolution.url, resolution.match.params));
-    Scope root = new Scope(this, parent, parent.address + "/preload:" + ids.get(0));
+    FrameRouteCell route = new FrameRouteCell(this, parent.routeCell(), new RouteInfo(resolution.url, resolution.match.params));
+    // An adopted page keeps this address, and may still be on the page when its route is preloaded again.
+    Scope root = new Scope(this, parent, parent.address + "/preload" + ++preloadSeq + ":" + ids.get(0));
     PreloadedRoute p = new PreloadedRoute(resolution.url, common, parent, ids, instances, root, route);
     root.preload = p;
-    root.routeOverride = route;
+    root.frameRoute = route;
     preload = p;
     root.bind(instances.get(0));
     renderPreload(p);

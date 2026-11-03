@@ -4,6 +4,7 @@ import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import j2act.internal.json.Json;
 import java.time.Duration;
@@ -45,9 +46,15 @@ class LeavingPageTest {
     @Override protected View setup() {
       setups.incrementAndGet();
       var count = createSignal(0);
+      var kept = createRetained("kept", 1);
       var loaded = createMemo((AsyncSupplier<String>) () -> {
         String id = pathParam("id");
         loads.incrementAndGet();
+        if ("away".equals(id)) {
+          return slow.thenApply(value -> {
+            throw RouteException.redirect("/alone/quick/x");
+          });
+        }
         return CompletableFuture.completedFuture("for" + id);
       });
       onCleanup(cleanups::incrementAndGet);
@@ -284,6 +291,30 @@ class LeavingPageTest {
   }
 
   @Test
+  void aPageThatRedirectsItselfAwayHoldsNothing() {
+    aPageThatRedirectsItselfAwayHoldsNothing(LONG_HOLD);
+  }
+
+  @Test
+  void aPageThatRedirectsItselfAwayAfterTheHoldEndedHoldsNothing() {
+    aPageThatRedirectsItselfAwayHoldsNothing(NO_HOLD);
+  }
+
+  private void aPageThatRedirectsItselfAwayHoldsNothing(Consumer<J2Act.Builder> times) {
+    try (Harness h = new Harness(ROUTES, times)) {
+      h.load("/shell/item/1", Exchange.empty());
+      h.connect();
+      go(h, "/shell/item/away");
+      int landing = h.conn.size();
+      slow.complete("landed");
+      h.awaitPatch(landing, p -> p.contains("quick;"));
+      Tab tab = h.engine.liveTab(h.token);
+      Harness.eventually(() -> !tab.rt.holding(), "nothing stays held");
+      h.conn.await(landing, m -> "url".equals(m.get("type")));
+    }
+  }
+
+  @Test
   void aPageStillShownAfterTheHoldEndedKeepsWorking() {
     try (Harness h = new Harness(ROUTES, NO_HOLD)) {
       h.load("/shell/item/1", Exchange.empty());
@@ -300,6 +331,56 @@ class LeavingPageTest {
       h.awaitPatch(clicked, p -> p.contains("count=1;"));
       assertEquals(1, loads.get());
     }
+  }
+
+  @Test
+  void aPageBeingLeftNoLongerSaysWhereTheUserGoes() {
+    try (Harness h = new Harness(ROUTES, NO_HOLD)) {
+      h.load("/alone/item/1", Exchange.empty());
+      h.connect();
+      Tab tab = h.engine.liveTab(h.token);
+      // Its reload, under way when the link is clicked, then ends in a redirect.
+      go(h, "/alone/item/away");
+      int start = h.conn.size();
+      go(h, "/alone/quick/x");
+      h.awaitPatch(start, p -> p.contains("quick;"));
+      slow.complete("landed");
+      settle(h);
+      Harness.eventually(() -> !tab.rt.holding(), "nothing stays held");
+      assertEquals(1, h.conn.since(start, m -> "url".equals(m.get("type")) && "/alone/quick/x".equals(m.get("url"))).size(),
+        "the redirect of a page already gone goes nowhere");
+    }
+  }
+
+  @Test
+  void aPreloadOfThePageBeingLeftLeavesItsRetainedValuesAlone() {
+    try (Harness h = new Harness(ROUTES, LONG_HOLD)) {
+      h.load("/shell/quick/x", Exchange.empty());
+      h.connect();
+      // A preloaded page keeps the address it was preloaded under once adopted.
+      h.send("type", "preload", "url", "/shell/item/1");
+      settle(h);
+      go(h, "/shell/item/1");
+      Tab tab = h.engine.liveTab(h.token);
+      Harness.eventually(() -> tab.snapshot.values().containsKey(retainedKey(tab)), "the value is kept");
+
+      go(h, "/shell/slow/x");
+      h.send("type", "preload", "url", "/shell/item/1");
+      settle(h);
+      go(h, "/shell/item/1");
+      settle(h);
+      assertEquals(1, setups.get());
+      assertTrue(tab.snapshot.values().containsKey(retainedKey(tab)), "its value would not survive a restart");
+    }
+  }
+
+  private static String retainedKey(Tab tab) {
+    for (String key : tab.snapshot.values().keySet()) {
+      if (key.endsWith("#kept")) {
+        return key;
+      }
+    }
+    return "no retained value at all";
   }
 
   @Test
