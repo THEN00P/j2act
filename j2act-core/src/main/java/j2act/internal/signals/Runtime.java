@@ -369,6 +369,11 @@ public final class Runtime {
     return (node.statusFlags & Constants.STATUS_ERROR) != 0;
   }
 
+  /** Whether a load of this node has ever given it a value; one that only failed has none to keep. */
+  public boolean hasValue(Node node) {
+    return (node.statusFlags & (Constants.STATUS_UNINITIALIZED | Constants.STATUS_NO_VALUE)) == 0;
+  }
+
   public boolean uninitialized(Node node) {
     return (node.statusFlags & Constants.STATUS_UNINITIALIZED) != 0;
   }

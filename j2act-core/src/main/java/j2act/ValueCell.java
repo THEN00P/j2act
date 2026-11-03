@@ -176,7 +176,7 @@ class ValueCell extends Cell {
    */
   private CompletionStage<Object> keepingOldValue(CompletionStage<?> flight, long run) {
     // The first run happens while this cell is being made, with no node yet and nothing to keep.
-    boolean hasValue = node != null && !rt.uninitialized(node);
+    boolean hasValue = node != null && rt.hasValue(node);
     Object old = hasValue ? rt.committed(node) : null;
     CompletableFuture<Object> answer = new CompletableFuture<>();
     flight.whenComplete((value, failure) -> {

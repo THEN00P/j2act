@@ -51,6 +51,30 @@ class SharedRuntimeTest {
     }
   }
 
+  static final class NeverLoads extends LiveComponent {
+    static volatile CompletableFuture<String> again;
+
+    @Override protected View setup() {
+      var value = createMemo((AsyncSupplier<String>) () -> CompletableFuture.failedFuture(new IllegalStateException("down")))
+        .withStaleOnError();
+      return () -> T.page("t",
+        Reactive.errored(() -> T.span("value:" + value.get() + ";")).withFallback(e -> T.span("failed;")),
+        T.button("again").onClick(e -> again = refresh(value)));
+    }
+  }
+
+  @Test
+  void aStaleOnErrorMemoThatNeverLoadedHasNoOldValueToKeep() throws Exception {
+    NeverLoads.again = null;
+    try (Harness h = new Harness(NeverLoads::new)) {
+      assertTrue(h.load().contains("failed;"), h.html);
+      h.connect();
+      h.click(Harness.clickOn(h.html, "again"));
+      Harness.eventually(() -> NeverLoads.again != null && NeverLoads.again.isDone(), "the second load ends");
+      assertTrue(NeverLoads.again.isCompletedExceptionally(), "it failed too, and nothing can stand in for it");
+    }
+  }
+
   // ---- what is around code that runs again later
 
   static final class WaitsPage extends LiveComponent {
