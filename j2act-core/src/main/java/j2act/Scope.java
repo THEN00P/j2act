@@ -517,15 +517,13 @@ final class Scope {
       inParent = outer;
     }
     if (effect != null && (tab.rt.pending(effect) || tab.rt.failed(effect))) {
-      // This read can run it once more, which is not the same object placed twice.
+      // This read can run it once more, as a pass of its own: not this object, or its client, placed twice.
       long placed = renderedEpoch;
-      renderedEpoch = -1;
+      tab.nextRenderPass();
       try {
         tab.rt.read(effect);
       } finally {
-        if (renderedEpoch == -1) {
-          renderedEpoch = placed;
-        }
+        renderedEpoch = placed;
       }
     }
     if (renderFailure != null) {

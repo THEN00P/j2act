@@ -914,6 +914,10 @@ public final class Tab {
     renderDepth--;
   }
 
+  void nextRenderPass() {
+    renderEpoch++;
+  }
+
   long renderEpoch() {
     return renderEpoch;
   }
