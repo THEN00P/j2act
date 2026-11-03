@@ -217,6 +217,24 @@ class RoutingTest {
   }
 
   @Test
+  void aPageLoadsOnlyTheUrlItCameForOnAFullLoadAndASoftNavigation() {
+    LOGGED_IN.put("s1", AuthCtx.of("ada", Set.of("admin")));
+    try (Harness h = harness()) {
+      int before = userLoads.get();
+      ServeResult direct = h.engine.serve("/admin/users/1", as("s1"));
+      assertTrue(direct.html().contains("<h1>user 1</h1>"), direct.html());
+      assertEquals(before + 1, userLoads.get(), "a full load");
+    }
+    try (Harness h = admin("/admin")) {
+      int before = userLoads.get();
+      int from = h.conn.size();
+      h.nav("/admin/users/2");
+      h.awaitPatch(from, p -> p.contains("user 2"));
+      assertEquals(before + 1, userLoads.get(), "a new page under a layout that stays");
+    }
+  }
+
+  @Test
   void notFoundFromALoaderIs404OnFullLoadAndTheFallbackOverTheSocket() {
     try (Harness h = admin("/admin/users/1")) {
       ServeResult direct = h.engine.serve("/admin/users/404", as("s1"));

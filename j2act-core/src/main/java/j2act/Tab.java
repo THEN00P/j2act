@@ -548,8 +548,10 @@ public final class Tab {
 
   /** Tracked read for auth(): a render or loader that reads it re-runs when identity changes. */
   AuthCtx readAuth() {
-    currentAuth();
-    return (AuthCtx) authCell.read();
+    AuthCtx resolved = currentAuth();
+    Object value = authCell.read();
+    // On a loader's thread, this read can get ahead of the write currentAuth() posted.
+    return value == UNRESOLVED ? resolved : (AuthCtx) value;
   }
 
   /**
@@ -671,10 +673,14 @@ public final class Tab {
     if (adopted != null) {
       adopt(adopted);
     }
+    if (common == 0 && root != null) {
+      root.dispose();
+    }
+    // A write shows after a flush, and a new page's first run comes before one: it would load the last URL's data.
+    if (common < next.size() && !rt.flushing()) {
+      rt.flush();
+    }
     if (common == 0) {
-      if (root != null) {
-        root.dispose();
-      }
       if (rootOwner == null) {
         rootOwner = rt.createTabRoot();
       }
