@@ -412,6 +412,19 @@ class LeavingPageTest {
   }
 
   @Test
+  void aPageAskingToBeRepairedDuringTheHoldGetsWhatItShows() {
+    try (Harness h = new Harness(ROUTES, LONG_HOLD)) {
+      h.load("/alone/item/1", Exchange.empty());
+      h.connect();
+      go(h, "/alone/slow/x");
+      int asked = h.conn.size();
+      h.send("type", "resync");
+      Map<String, String> patch = h.awaitPatch(asked, p -> p.contains("item for1"));
+      assertEquals("true", patch.get("root"), "the client takes it as the whole page");
+    }
+  }
+
+  @Test
   void aTabEndingDuringTheHoldEndsThePageItStillShowed() {
     Harness h = new Harness(ROUTES, LONG_HOLD);
     try {

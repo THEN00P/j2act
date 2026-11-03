@@ -1649,11 +1649,18 @@ public final class Tab {
 
   /** Lane-only. The client found a gap it cannot fill, so it gets the whole page to morph in (ADR 0032). */
   void resync() {
-    if (root != null) {
+    // During a navigation to a new root, the page has the one it is leaving.
+    Scope page = rootOnPage != null && !rootOnPage.disposed ? rootOnPage : root;
+    if (page != null) {
       // The same HTML goes out again: what the page has is what is in doubt.
-      root.sent = null;
-      markDirty(root);
+      page.sent = null;
+      markDirty(page);
     }
+  }
+
+  /** The client is behind by as much as it may be, so what the server did has not all gone to it yet. */
+  boolean waitingForRoom() {
+    return unacknowledged.full();
   }
 
   /** Messages the client has not acknowledged. */

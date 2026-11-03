@@ -1267,6 +1267,9 @@ class RandomAppTest {
     void clickEverything(boolean onTheWay) {
       long rejected = h.engine.stats().rejectedEvents.get();
       for (BrowserTab tab : tabs) {
+        if (tab.conn.deaf) {
+          continue; // Nothing reaches the server from here until it reconnects.
+        }
         Matcher m = Pattern.compile(">(ping\\d+)<").matcher(tab.doc);
         List<String> pings = new ArrayList<>();
         while (m.find()) {
@@ -1277,7 +1280,7 @@ class RandomAppTest {
             continue;
           }
           // Its replacement can be on its way when a click is, as on any network: the answer comes after it.
-          boolean gone = !tab.doc.contains(">" + ping + "<");
+          boolean gone = !tab.doc.contains(">" + ping + "<") || tab.tab.waitingForRoom();
           if (tab.endedEarly != tab.tab.pagesEndedEarly) {
             tab.endedEarly = tab.tab.pagesEndedEarly;
             tab.ended.addAll(pings);
