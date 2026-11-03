@@ -44,7 +44,8 @@ final class Snapshots {
 
   /** As persist(tab), with the snapshot kept for this long, such as a closed tab's (ADR 0030). */
   CompletableFuture<Boolean> persist(Tab tab, long keepMillis) {
-    tab.snapshot.dirty = false;
+    // A write still held has not committed, so this save cannot have it: the next checkpoint looks again.
+    tab.snapshot.dirty = tab.rt.holding();
     String snapshot = snapshot(tab, keepMillis);
     if (snapshot != null) {
       tab.snapshot.stored = true;
@@ -203,7 +204,8 @@ final class Snapshots {
    */
   CompletableFuture<Void> persistBrowser(Browser browser) {
     Tab hub = browser.hub;
-    hub.snapshot.dirty = false;
+    // A write still held has not committed, so this save cannot have it: the next checkpoint looks again.
+    hub.snapshot.dirty = hub.rt.holding();
     String id = Retained.id("browser:" + browser.cookie);
     String snapshot = null;
     try {

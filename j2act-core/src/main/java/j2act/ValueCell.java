@@ -264,6 +264,7 @@ class ValueCell extends Cell {
     return value[0];
   }
 
+  /** Lane-only: a checkpoint queued ahead of this write would otherwise clear it, and save the old value. */
   private void markRetainedDirty() {
     if (retainedName != null) {
       tab.snapshot.dirty = true;
@@ -271,18 +272,22 @@ class ValueCell extends Cell {
   }
 
   final void write(Object next) {
-    markRetainedDirty();
     if (tab.lane.isCurrent()) {
+      markRetainedDirty();
       rt.write(node, next);
       return;
     }
     Action.Call call = Action.Call.current();
     if (call != null) {
-      call.enter(tab, () -> rt.write(node, next));
+      call.enter(tab, () -> {
+        markRetainedDirty();
+        return rt.write(node, next);
+      });
       return;
     }
     tab.host.writeFromOutside(() -> {
       if (!tab.disposed) {
+        markRetainedDirty();
         rt.write(node, next);
       }
     });
@@ -290,18 +295,22 @@ class ValueCell extends Cell {
 
   @SuppressWarnings("unchecked")
   final void update(UnaryOperator fn) {
-    markRetainedDirty();
     if (tab.lane.isCurrent()) {
+      markRetainedDirty();
       rt.update(node, fn);
       return;
     }
     Action.Call call = Action.Call.current();
     if (call != null) {
-      call.enter(tab, () -> rt.update(node, fn));
+      call.enter(tab, () -> {
+        markRetainedDirty();
+        return rt.update(node, fn);
+      });
       return;
     }
     tab.host.writeFromOutside(() -> {
       if (!tab.disposed) {
+        markRetainedDirty();
         rt.update(node, fn);
       }
     });
@@ -357,6 +366,8 @@ class ValueCell extends Cell {
 
   /** The node's engine state is gone with its owner; a value with none of its own goes with the runtime. */
   @Override void dispose() {
+    // What is saved still has this value, which a crash would bring back.
+    markRetainedDirty();
     super.dispose();
     if (body != null || asyncBody != null || source != null) {
       rt.disposeNode(node);
