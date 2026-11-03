@@ -4,6 +4,7 @@ import static j2act.Reactive.action;
 import static j2act.Reactive.async;
 import static j2act.Reactive.createEffect;
 import static j2act.Reactive.createMemo;
+import static j2act.Reactive.createRetained;
 import static j2act.Reactive.createSignal;
 import static j2act.Reactive.errored;
 import static j2act.Reactive.failed;
@@ -51,7 +52,8 @@ import org.junit.jupiter.api.Test;
  * <li>a new page loads for its own URL, and nothing runs twice for the same inputs;</li>
  * <li>what runs again later knows its tab, in whatever job it lands;</li>
  * <li>what was removed has stopped running, and its effects were cleaned up;</li>
- * <li>actions and calls finish, nothing stays held, and nothing unplanned is logged.</li>
+ * <li>actions and calls finish, nothing stays held, and nothing unplanned is logged;</li>
+ * <li>what a checkpoint saved is what is live, since a crash would restore it (ADR 0026).</li>
  * </ul>
  *
  * <p>{@code ./mvnw -pl j2act-core test -Dtest=RandomAppTest -Dapp.seed=<n> -Dapp.seeds=<count>}; a failure prints its seed and steps.
@@ -71,6 +73,9 @@ class RandomAppTest {
     final AtomicInteger ids = new AtomicInteger();
     final AtomicInteger written = new AtomicInteger();
     final AtomicInteger offLane = new AtomicInteger();
+    final AtomicInteger drafts = new AtomicInteger();
+    volatile java.util.concurrent.Executor threads;
+    volatile CompletableFuture<Void> offLaneWrites = CompletableFuture.completedFuture(null);
     volatile int shown;
     volatile boolean serving = true;
     volatile Gate nextGate;
@@ -94,6 +99,12 @@ class RandomAppTest {
       pending.add(landing);
       return landing.future;
     }
+
+    int keptValue(Tab tab) {
+      return kept = drafts.incrementAndGet();
+    }
+
+    volatile int kept;
 
     void write(Signal<Integer> n) {
       int value = written.incrementAndGet();
@@ -157,6 +168,8 @@ class RandomAppTest {
     /** Handlers write these, not what they read: during a hold, a read gives what is on the screen, as in Solid. */
     int counted;
     boolean toggled;
+    /** The last value written to this component's retained draft. */
+    volatile int drafted;
     String lastInputs;
     int lastRefreshes;
     boolean loaded;
@@ -218,6 +231,7 @@ class RandomAppTest {
   @BrowserScoped
   public static class Shared extends Store {
     final Signal<Integer> n = createSignal(0);
+    final RetainedSignal<Integer> kept = createRetained("kept", 0);
     final Memo<Integer> doubled = createMemo(() -> n.get() * 2);
     final Memo<String> remote = createMemo((AsyncSupplier<String>) () -> world.landing("r" + n.get(), null));
   }
@@ -302,6 +316,7 @@ class RandomAppTest {
       Shared shared = useBrowserStore(Shared.class);
       effectOn(me, shared);
       var clicks = createSignal(0);
+      var draft = createRetained("childDraft", 0);
       var doubled = createMemo(() -> {
         me.running("a child's memo");
         return shared.n.get() * 2;
@@ -313,6 +328,7 @@ class RandomAppTest {
           T.button("cclick" + me.id).onClick(e -> {
             me.running("a child's handler");
             clicks.set(++me.counted);
+            draft.set(me.counted);
           }),
           T.button("ping" + me.id).onClick(e -> me.running("a ping")));
       };
@@ -341,6 +357,7 @@ class RandomAppTest {
       effectOn(me, shared);
       var local = createSignal(0);
       var child = createSignal(false);
+      var draft = createRetained("draft", 0);
       String expected = idIn(url);
 
       var guard = createMemo((AsyncSupplier<String>) () -> {
@@ -382,6 +399,8 @@ class RandomAppTest {
       var save = action((Gate gate) -> {
         me.knowsTab("an action's body");
         world.write(shared.n);
+        me.drafted = world.drafts.incrementAndGet();
+        draft.set(me.drafted);
         gate.started.countDown();
         gate.open.get(10, TimeUnit.SECONDS);
         if (gate.fails) {
@@ -396,6 +415,21 @@ class RandomAppTest {
         List<DomContent> kids = new ArrayList<>(Arrays.asList(
           T.span("[page" + me.id + "=" + kind + " guard=" + guard.get() + " id=" + id + " n=" + shared.n.get()
             + " doubled=" + shared.doubled.get() + " local=" + local.get() + "]"),
+          T.span("[draft" + me.id + "=" + draft.get() + "]"),
+          T.button("draft" + me.id).onClick(e -> {
+            me.drafted = world.drafts.incrementAndGet();
+            draft.set(me.drafted);
+          }),
+          T.button("offdraft" + me.id).onClick(e -> {
+            int first = world.drafts.addAndGet(3) - 2;
+            me.drafted = first + 2;
+            world.offLaneWrites = CompletableFuture.runAsync(() -> {
+              for (int i = 0; i < 3; i++) {
+                draft.set(first + i);
+              }
+            }, world.threads);
+          }),
+          T.button("kept" + me.id).onClick(e -> shared.kept.set(world.keptValue(me.tab))),
           T.button("local" + me.id).onClick(e -> {
             me.running("a handler");
             local.set(++me.counted);
@@ -578,6 +612,8 @@ class RandomAppTest {
     final StringBuilder log;
     final Harness h;
     final java.util.concurrent.ExecutorService threads = java.util.concurrent.Executors.newCachedThreadPool();
+    final MemoryRetainedStateStorage storage = new MemoryRetainedStateStorage(1000);
+    final List<String> closed = new ArrayList<>();
     final List<BrowserTab> tabs = new ArrayList<>();
     final List<Gate> gates = new ArrayList<>();
     final Map<String, Integer> clicks = new HashMap<>();
@@ -609,12 +645,17 @@ class RandomAppTest {
       random = new Random(seed);
       log = new StringBuilder("seed " + seed + "\n");
       world = w;
+      w.threads = threads;
       Duration pending = Duration.ofMillis(random.nextBoolean() ? 0 : 5);
       Duration minimum = Duration.ofMillis(random.nextBoolean() ? 0 : 5);
       Logger.getLogger("").addHandler(handler);
       // Loads here block a thread until the test lands them, and lanes run on the same threads.
       h = new Harness(ROUTES, b -> b
         .withExecutor(threads)
+        .withRetainedStateStorage(storage)
+        // Kept a while, a closed tab's save can come back with its page; without that, it must be gone.
+        .withClosedTabRetention(Duration.ZERO)
+        .withCheckpointInterval(Duration.ofMillis(2))
         .withReconnectGrace(Duration.ofSeconds(30))
         .withPendingTimes(pending, minimum)
         .withRateLimit(auth -> RateLimit.perMinute(10_000_000)));
@@ -728,7 +769,10 @@ class RandomAppTest {
           toggled.merge(page, true, (a, b) -> !a);
         }
       } else if (op < 62 && page != null) {
-        click(tab, "local" + page);
+        int which = random.nextInt(4);
+        click(tab, (which == 0 ? "local" : which == 1 ? "draft" : which == 2 ? "offdraft" : "kept") + page);
+        // One writer at a time, so the last value written is known.
+        w.offLaneWrites.get(5, TimeUnit.SECONDS);
       } else if (op < 66 && page != null) {
         click(tab, "refresh" + page);
       } else if (op < 72 && page != null && gates.size() < 3) {
@@ -803,6 +847,7 @@ class RandomAppTest {
       Tab server = tab.tab;
       h.engine.onMessage(tab.conn, Json.object("type", "bye"));
       Harness.eventually(() -> server.disposed, "the closed tab ends");
+      closed.add(tab.token);
     }
 
     /** Everything lets go, and every tab comes to rest. */
@@ -915,6 +960,7 @@ class RandomAppTest {
         expect(tab, !tab.doc.contains("=loading]"), at + ": still showing a loading fallback");
       }
       checkLifetimes();
+      checkSaved();
       for (Wait wait : w.waits) {
         if ((wait.target <= n || wait.tab.disposed) && !wait.result.isDone()) {
           fail("a wait for " + wait.target + " is still open with n=" + n + ", its tab ended: " + wait.tab.disposed + "\n" + log);
@@ -932,6 +978,56 @@ class RandomAppTest {
       if (!ok) {
         fail(what + "\n" + tab.doc.substring(Math.max(0, tab.doc.indexOf("<body"))).replaceAll("<button[^>]*>[^<]*</button>", "")
           + "\nlast patches:\n  " + String.join("\n  ", tab.recent) + "\n" + log);
+      }
+    }
+
+    /** What a crash would restore is what is live: a checkpoint has caught up with every value and every removal. */
+    private void checkSaved() {
+      for (BrowserTab tab : tabs) {
+        String page = someMarker(tab, "page");
+        if (page != null && !tab.doc.contains("=notfound]")) {
+          int drafted = w.components.get(Integer.parseInt(page)).drafted;
+          expect(tab, tab.doc.contains("[draft" + page + "=" + drafted + "]"), "wanted draft " + drafted);
+        }
+        savedMatches(tab.tab, Retained.id(tab.token), "tab" + tabs.indexOf(tab));
+      }
+      if (!tabs.isEmpty() && cookie != null) {
+        savedMatches(tabs.get(0).tab.browser.hub, Retained.id("browser:" + cookie), "the browser");
+      }
+      for (String token : closed) {
+        if (storage.load(Retained.id(token)).isPresent()) {
+          fail("a closed tab's save is still there\n" + log);
+        }
+      }
+    }
+
+    /** A value still at its initial 0 restores the same whether it was saved or not. */
+    private static Map<String, String> changed(Map<String, String> entries) {
+      Map<String, String> out = new HashMap<>(entries);
+      out.values().removeIf("0"::equals);
+      return out;
+    }
+
+    private void savedMatches(Tab tab, String id, String who) {
+      long deadline = System.currentTimeMillis() + 1000;
+      while (true) {
+        CompletableFuture<Map<String, String>> live = new CompletableFuture<>();
+        tab.post(() -> live.complete(tab.snapshot.values()));
+        Map<String, String> values = changed(live.join());
+        java.util.Optional<String> saved = storage.load(id);
+        Map<String, String> entries = saved.isPresent() ? changed(Retained.decode(saved.get()).entries) : new HashMap<>();
+        String problem = entries.equals(values) ? null : who + " saved " + entries + " but has " + values;
+        if (problem == null) {
+          return;
+        }
+        if (System.currentTimeMillis() > deadline) {
+          fail(problem + "\n" + log);
+        }
+        try {
+          Thread.sleep(1);
+        } catch (InterruptedException e) {
+          throw new IllegalStateException(e);
+        }
       }
     }
 
