@@ -154,6 +154,9 @@ class RandomAppTest {
     final AtomicInteger cleanedUp = new AtomicInteger();
     volatile boolean removed;
     volatile int refreshes;
+    /** Handlers write these, not what they read: during a hold, a read gives what is on the screen, as in Solid. */
+    int counted;
+    boolean toggled;
     String lastInputs;
     int lastRefreshes;
     boolean loaded;
@@ -230,16 +233,17 @@ class RandomAppTest {
       return landing;
     }
     world.offLane.incrementAndGet();
-    return async(() -> {
+    CompletableFuture<String> run = async(() -> {
+      me.knowsTab(what + " off the lane");
       try {
-        me.knowsTab(what + " off the lane");
         return landing.get(10, TimeUnit.SECONDS);
       } catch (java.util.concurrent.ExecutionException e) {
         throw (RuntimeException) e.getCause();
-      } finally {
-        world.offLane.decrementAndGet();
       }
     });
+    // A run stopped before it started never reaches its body.
+    run.whenComplete((landed, error) -> world.offLane.decrementAndGet());
+    return run;
   }
 
   private static void effectOn(Component me, Shared shared) {
@@ -278,7 +282,7 @@ class RandomAppTest {
           T.span("[layout" + me.id + "=" + clicks.get() + " where=" + pathParam("id") + " n=" + shared.n.get() + "]"),
           T.button("lclick" + me.id).onClick(e -> {
             me.running("a layout's handler");
-            clicks.set(clicks.get() + 1);
+            clicks.set(++me.counted);
           }),
           T.button("ping" + me.id).onClick(e -> me.running("a ping")),
           child);
@@ -308,7 +312,7 @@ class RandomAppTest {
           T.span("[child" + me.id + "=" + clicks.get() + " d=" + doubled.get() + "]"),
           T.button("cclick" + me.id).onClick(e -> {
             me.running("a child's handler");
-            clicks.set(clicks.get() + 1);
+            clicks.set(++me.counted);
           }),
           T.button("ping" + me.id).onClick(e -> me.running("a ping")));
       };
@@ -372,7 +376,7 @@ class RandomAppTest {
       var stale = createMemo((AsyncSupplier<String>) () -> {
         me.running("a stale load");
         int n = shared.n.get();
-        return load(me, "a stale load", "s" + n, staleFails(n) ? planned("stale load") : null, n);
+        return load(me, "a stale load", "s" + n, staleFails(n) ? planned("stale load") : null, n + (me.id % 3));
       }).withStaleOnError();
 
       var save = action((Gate gate) -> {
@@ -394,7 +398,7 @@ class RandomAppTest {
             + " doubled=" + shared.doubled.get() + " local=" + local.get() + "]"),
           T.button("local" + me.id).onClick(e -> {
             me.running("a handler");
-            local.set(local.get() + 1);
+            local.set(++me.counted);
           }),
           T.button("store" + me.id).onClick(e -> {
             me.running("a handler");
@@ -402,7 +406,8 @@ class RandomAppTest {
           }),
           T.button("toggle" + me.id).onClick(e -> {
             me.running("a handler");
-            child.set(!child.get());
+            me.toggled = !me.toggled;
+            child.set(me.toggled);
           }),
           T.button("refresh" + me.id).onClick(e -> {
             me.running("a handler");
@@ -489,6 +494,7 @@ class RandomAppTest {
     final Map<String, String> ackResults = new HashMap<>();
     final List<String> calls = new ArrayList<>();
     final List<String> problems = new ArrayList<>();
+    final List<String> recent = new ArrayList<>();
 
     BrowserTab(J2Act engine, ServeResult served, String url) {
       doc = served.html();
@@ -497,12 +503,28 @@ class RandomAppTest {
       wanted = url;
     }
 
-    void apply() {
+    /** What the rest of the response brings: each boundary's HTML, swapped in. */
+    synchronized void stream(String chunk) {
+      Matcher m = STREAMED.matcher(chunk);
+      while (m.find()) {
+        String next = replaceScope(doc, m.group(1), m.group(2));
+        if (next != null) {
+          doc = next;
+        }
+      }
+    }
+
+    synchronized void apply() {
       List<Map<String, String>> messages = conn.since(read, m -> true);
       read += messages.size();
       for (Map<String, String> m : messages) {
         String type = m.get("type");
         if ("patch".equals(type)) {
+          String shown = m.get("html").replaceAll("<button[^>]*>[^<]*</button>", "");
+          recent.add(m.get("anchor") + ": " + shown.substring(shown.indexOf('>') + 1));
+          if (recent.size() > 8) {
+            recent.remove(0);
+          }
           if ("true".equals(m.get("root"))) {
             doc = m.get("html");
           } else {
@@ -524,6 +546,7 @@ class RandomAppTest {
     }
   }
 
+  private static final Pattern STREAMED = Pattern.compile("<template id=\"j2t-([^\"]+)\">(.*?)</template>", Pattern.DOTALL);
   private static final Pattern TAG = Pattern.compile("<(/?)([a-zA-Z0-9]+)([^>]*?)(/?)>");
 
   /** Puts html where the element carrying this anchor is; null if there is none. */
@@ -551,7 +574,7 @@ class RandomAppTest {
 
   private static final class Driver implements AutoCloseable {
     final World w = new World();
-    final Random random;
+    Random random;
     final StringBuilder log;
     final Harness h;
     final java.util.concurrent.ExecutorService threads = java.util.concurrent.Executors.newCachedThreadPool();
@@ -623,6 +646,16 @@ class RandomAppTest {
         w.violation(url + " answered " + served.status() + " on a full load");
       }
       BrowserTab tab = new BrowserTab(h.engine, served, url);
+      if (served.streams()) {
+        served.streamTo(new ServeResult.ChunkSink() {
+          @Override public void write(String chunk) {
+            tab.stream(chunk);
+          }
+
+          @Override public void end() {
+          }
+        });
+      }
       h.engine.onMessage(tab.conn, Json.object("type", "hello", "tab",
         Harness.find(served.html(), "name=\"j2-tab\" content=\"([^\"]+)\""), "token", tab.token));
       tab.conn.await(0, m -> "ready".equals(m.get("type")));
@@ -726,6 +759,7 @@ class RandomAppTest {
         close(tab);
       } else if (op < 96) {
         tab.hidden = !tab.hidden;
+        shownAgain(tab);
         log.append("tab").append(tabs.indexOf(tab)).append(tab.hidden ? " hides\n" : " shows\n");
         h.engine.onMessage(tab.conn, Json.object("type", "visibility", "hidden", tab.hidden));
       } else {
@@ -739,6 +773,15 @@ class RandomAppTest {
         }
       }
       settleLanes();
+    }
+
+    /** A tab coming back may load again what a change left it holding. */
+    void shownAgain(BrowserTab tab) {
+      for (Component c : w.components.values()) {
+        if (c.tab == tab.tab) {
+          c.refreshes++;
+        }
+      }
     }
 
     /** A new tab's response waits for what it reads, which may be another tab's load, so loads keep landing. */
@@ -768,6 +811,7 @@ class RandomAppTest {
       for (BrowserTab tab : tabs) {
         if (tab.hidden) {
           tab.hidden = false;
+          shownAgain(tab);
           h.engine.onMessage(tab.conn, Json.object("type", "visibility", "hidden", false));
         }
       }
@@ -886,7 +930,8 @@ class RandomAppTest {
 
     private void expect(BrowserTab tab, boolean ok, String what) {
       if (!ok) {
-        fail(what + "\n" + tab.doc.substring(Math.max(0, tab.doc.indexOf("<body"))) + "\n" + log);
+        fail(what + "\n" + tab.doc.substring(Math.max(0, tab.doc.indexOf("<body"))).replaceAll("<button[^>]*>[^<]*</button>", "")
+          + "\nlast patches:\n  " + String.join("\n  ", tab.recent) + "\n" + log);
       }
     }
 
@@ -918,6 +963,12 @@ class RandomAppTest {
       return c.kind.equals("layout") || c.kind.equals("child") ? c.kind : "page";
     }
 
+    void atRest() throws Exception {
+      quiesce();
+      check();
+      clickEverything();
+    }
+
     /** What the page shows works. */
     void clickEverything() {
       long rejected = h.engine.stats().rejectedEvents.get();
@@ -939,21 +990,22 @@ class RandomAppTest {
     }
   }
 
-  private static void run(long seed, int steps) throws Exception {
+  /** Runs the steps of this seed but the skipped ones; a step's choices don't depend on those before it. */
+  private static void run(long seed, int steps, java.util.Set<Integer> skipped) throws Exception {
     try (Driver d = new Driver(seed)) {
       try {
         d.open(URLS[d.random.nextInt(8)]);
         for (int step = 0; step < steps; step++) {
-          d.step();
+          if (!skipped.contains(step)) {
+            d.random = new Random(seed * 1_000_003 + step);
+            d.log.append("#").append(step).append(' ');
+            d.step();
+          }
           if (step % 12 == 11) {
-            d.quiesce();
-            d.check();
-            d.clickEverything();
+            d.atRest();
           }
         }
-        d.quiesce();
-        d.check();
-        d.clickEverything();
+        d.atRest();
       } catch (AssertionError e) {
         if (e.getMessage() != null && e.getMessage().contains("seed " + seed + "\n")) {
           throw e;
@@ -967,12 +1019,47 @@ class RandomAppTest {
     return message == null || message.length() < 600 ? message : "..." + message.substring(message.length() - 600);
   }
 
+  /** The kind of failure, without what differs from run to run. */
+  private static String kindOf(AssertionError e) {
+    String first = String.valueOf(e.getMessage()).split("\n")[0];
+    return first.replaceAll("[0-9]+", "#").replaceAll("\\[.*", "");
+  }
+
+  /** The fewest steps of this seed that still fail the same way, with -Dapp.shrink=true. */
+  private static AssertionError shrunk(long seed, int steps, AssertionError failure) throws Exception {
+    String kind = kindOf(failure);
+    java.util.Set<Integer> skipped = new java.util.TreeSet<>();
+    AssertionError smallest = failure;
+    for (int round = 0; round < 2; round++) {
+      for (int step = steps - 1; step >= 0; step--) {
+        if (skipped.add(step)) {
+          try {
+            run(seed, steps, skipped);
+            skipped.remove(step);
+          } catch (AssertionError e) {
+            if (kindOf(e).equals(kind)) {
+              smallest = e;
+            } else {
+              skipped.remove(step);
+            }
+          }
+        }
+      }
+    }
+    return smallest;
+  }
+
   @Test
   void wholeAppsDrivenAtRandomEndUpShowingTheirState() throws Exception {
     long start = Long.getLong("app.seed", 1L);
     int seeds = Integer.getInteger("app.seeds", 40);
+    int steps = 40;
     for (long seed = start; seed < start + seeds; seed++) {
-      run(seed, 40);
+      try {
+        run(seed, steps, java.util.Collections.emptySet());
+      } catch (AssertionError e) {
+        throw Boolean.getBoolean("app.shrink") ? shrunk(seed, steps, e) : e;
+      }
     }
   }
 }
