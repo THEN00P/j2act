@@ -50,7 +50,7 @@ import org.junit.jupiter.api.Test;
  *
  * <ul>
  * <li>a page applying its patches ends up showing what its URL and state say, in every tab;</li>
- * <li>what a page shows works when clicked;</li>
+ * <li>what a page shows works when clicked, at any moment, also while the next page loads;</li>
  * <li>a new page loads for its own URL, and nothing runs twice for the same inputs;</li>
  * <li>what runs again later knows its tab, in whatever job it lands;</li>
  * <li>what was removed has stopped running, and its effects were cleaned up;</li>
@@ -846,6 +846,10 @@ class RandomAppTest {
         }
       }
       settleLanes();
+      // Not only at rest: a page being left is still the page the user is looking at.
+      if (random.nextBoolean()) {
+        clickEverything();
+      }
     }
 
     /** A tab coming back may load again what a change left it holding. */
