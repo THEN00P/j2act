@@ -73,8 +73,11 @@ final class Renderer {
     String shown;
     if (scope.boundaryOutput == null) {
       // Each of these runs again on its own, in whatever job its flush falls in.
-      java.util.function.Supplier<?> on = boundary instanceof Loading && ((Loading) boundary).on != null
-        ? () -> Tracking.in(tab, scope, ((Loading) scope.instance).on) : null;
+      // A later description may add an on, or take it away, so one is there either way.
+      java.util.function.Supplier<?> on = !(boundary instanceof Loading) ? null : () -> {
+        java.util.function.Supplier<?> current = ((Loading) scope.instance).on;
+        return current == null ? null : Tracking.in(tab, scope, current);
+      };
       scope.boundaryOutput = tab.rt.runWithOwner(scope.slot, () -> tab.rt.boundaryNode(boundary instanceof Loading,
         previous -> Tracking.in(tab, scope, () -> renderContent(scope)),
         () -> Tracking.in(tab, scope, () -> renderLoadingFallback(scope)),
