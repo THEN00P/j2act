@@ -58,9 +58,9 @@ function start(): void {
   });
 
   const handlers: Handlers = {
-    ready: () => {
+    ready: (m) => {
       connection.opened();
-      clients.resendResults();
+      clients.resendResults(m.maxFrame);
       acknowledgeSoon();
       retained.connected();
       if (document.hidden) {

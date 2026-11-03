@@ -73,6 +73,17 @@ describe("Clients", () => {
       }
     });
 
+    it("fails a call whose result is past the socket's limit, which would close every socket it went on", () => {
+      up = false;
+      clients.reply("7", true, "x".repeat(1000));
+      up = true;
+      clients.resendResults(100);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ type: "callResult", id: "7", ok: false });
+      expect(JSON.stringify(sent[0])).toContain("RangeError");
+      expect(JSON.stringify(sent[0]).length).toBeLessThan(200);
+    });
+
     it("forgets results a new server-side tab never asked for", () => {
       clients.reply("7", true, "value");
       clients.forgetResults();

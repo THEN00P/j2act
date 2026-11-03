@@ -34,7 +34,7 @@ export interface ClientCall {
 export type BoundCall = { window: WebCall } | { window?: undefined; client: string; action: string; args: unknown[] };
 
 export type ServerMessage =
-  | { type: "ready" }
+  | { type: "ready"; maxFrame: number }
   | { type: "patch"; anchor: string; html: string; root?: true }
   | { type: "head"; html: string }
   | { type: "url"; url: string; mode: NavMode }

@@ -29,7 +29,7 @@ public final class Json {
       string((String) keysAndValues[i], b);
       b.append(':');
       Object value = keysAndValues[i + 1];
-      if (value instanceof Boolean) {
+      if (value instanceof Boolean || value instanceof Number) {
         b.append(value);
       } else {
         string((String) value, b);

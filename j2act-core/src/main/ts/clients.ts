@@ -134,6 +134,7 @@ export function createClients({ send, connected, uploads, morphSlot }: ClientsOp
 
   /** Results the server has not acknowledged: a socket can die with one on its way (ADR 0032). */
   const unseenResults = new Map<string, { message: ClientMessage; sentAt: number }>();
+  let maxFrame = Number.POSITIVE_INFINITY;
   let resultAllowance = RESULTS_PER_SECOND;
   let resultTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -148,11 +149,17 @@ export function createClients({ send, connected, uploads, morphSlot }: ClientsOp
       return; // "ready" sends them
     }
     const now = Date.now();
-    for (const result of unseenResults.values()) {
+    for (const [id, result] of unseenResults) {
       if (resultAllowance === 0) {
         break;
       }
       if (now - result.sentAt >= RESULT_RETRY_MS) {
+        // The server closes a socket over a frame past its limit, so this one would come back with every socket.
+        const size = JSON.stringify(result.message).length;
+        if (size > maxFrame) {
+          result.message = { type: "callResult", id: id, ok: false,
+            error: "RangeError: the result is " + size + " characters, over the socket's limit of " + maxFrame };
+        }
         result.sentAt = now;
         resultAllowance--;
         send(result.message);
@@ -173,7 +180,8 @@ export function createClients({ send, connected, uploads, morphSlot }: ClientsOp
   }
 
   /** The socket is back: what the old one may have lost is due again, and the server ignores what it settled. */
-  function resendResults(): void {
+  function resendResults(limit: number = maxFrame): void {
+    maxFrame = limit;
     unseenResults.forEach((result) => {
       result.sentAt = 0;
     });

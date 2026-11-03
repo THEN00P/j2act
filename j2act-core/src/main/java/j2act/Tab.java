@@ -1571,7 +1571,7 @@ public final class Tab {
     // What starts with the socket has started by the time the page hears it is ready.
     host.endJob();
     // Says this socket is up, so it belongs to no sequence.
-    write(Json.object("type", "ready"));
+    write(Json.object("type", "ready", "maxFrame", engine.maxFrameSize()));
   }
 
   void detach(Connection closed) {

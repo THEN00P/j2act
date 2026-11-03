@@ -251,6 +251,15 @@ class AcknowledgedTest {
   }
 
   @Test
+  void readyTellsThePageTheLargestFrameTheServerTakes() {
+    try (Harness h = new Harness(Counter::new)) {
+      h.load();
+      h.connect();
+      assertEquals(String.valueOf(h.engine.maxFrameSize()), h.conn.await(0, m -> "ready".equals(m.get("type"))).get("maxFrame"));
+    }
+  }
+
+  @Test
   void repliesToResultsAreNotKeptAndOnlyAnswerCallsThisTabMade() {
     try (Harness h = new Harness(Counter::new, b -> b.withRateLimit(auth -> RateLimit.unlimited()))) {
       h.load();
