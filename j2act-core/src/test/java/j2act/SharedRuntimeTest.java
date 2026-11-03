@@ -135,6 +135,9 @@ class SharedRuntimeTest {
       int next = h.conn.size();
       h.click(Harness.clickOn(h.html, "clicks:0;"));
       h.awaitPatch(next, p -> p.contains("clicks:1;"));
+      int after = h.conn.size();
+      HasAFallback.shown.set(1);
+      h.awaitPatch(after, p -> p.contains("waiting:1;") && p.contains("clicks:1;"));
     }
   }
 
@@ -276,6 +279,108 @@ class SharedRuntimeTest {
       h.awaitPatch(lost, p -> p.contains("value:two;"));
       assertTrue(h.conn.since(lost, m -> "patch".equals(m.get("type")) && m.get("html").contains("waiting;")).isEmpty(),
         "without an on, a reload keeps what is there");
+    }
+  }
+
+  static final class ReadsItsOn extends LiveComponent {
+    static final Map<Integer, CompletableFuture<String>> LOADS = new java.util.concurrent.ConcurrentHashMap<>();
+    static volatile Signal<Integer> filter;
+
+    @Override protected View setup() {
+      var f = createSignal(0);
+      filter = f;
+      var value = createMemo((AsyncSupplier<String>) () -> {
+        int n = f.get();
+        return n == 0 ? CompletableFuture.completedFuture("zero") : LOADS.computeIfAbsent(n, k -> new CompletableFuture<>());
+      });
+      return () -> T.page("t", T.span("filter:" + f.get() + ";"),
+        loading(() -> T.span("value:" + value.get() + ";")).on(f).withFallback(T.span("waiting;")));
+    }
+  }
+
+  @Test
+  void aBoundaryShowsItsFallbackWhenItsParentReadsTheSameOn() {
+    ReadsItsOn.LOADS.clear();
+    try (Harness h = new Harness(ReadsItsOn::new)) {
+      assertTrue(h.load().contains("value:zero;"), h.html);
+      h.connect();
+      int from = h.conn.size();
+      ReadsItsOn.filter.set(1);
+      h.awaitPatch(from, p -> p.contains("waiting;"));
+    }
+  }
+
+  // ---- what runs after an action knows its tab
+
+  static final class AfterAnAction extends LiveComponent {
+    static volatile CompletableFuture<Tab> seen;
+
+    @Override protected View setup() {
+      var save = Reactive.action((String v) -> v);
+      return () -> T.page("t", T.button("save").onClick(e -> {
+        CompletableFuture<Tab> found = new CompletableFuture<>();
+        seen = found;
+        save.run("x").whenComplete((value, failure) -> {
+          try {
+            found.complete(useTab());
+          } catch (RuntimeException ex) {
+            found.completeExceptionally(ex);
+          }
+        });
+      }));
+    }
+  }
+
+  @Test
+  void whatRunsAfterAnActionKnowsItsTab() throws Exception {
+    try (Harness h = new Harness(AfterAnAction::new)) {
+      h.load();
+      h.connect();
+      h.click(Harness.clickOn(h.html, "save"));
+      assertTrue(AfterAnAction.seen.get(5, java.util.concurrent.TimeUnit.SECONDS) == h.engine.liveTab(h.token));
+    }
+  }
+
+  // ---- failed(x) says whether, not when
+
+  static final class ShowsFailedOutside extends LiveComponent {
+    @Override protected View setup() {
+      var value = createMemo((AsyncSupplier<String>) () -> new CompletableFuture<>());
+      return () -> T.page("t", loading(() -> T.span("value:" + value.get() + ";")).withFallback(T.span("waiting;")),
+        T.span("failed:" + failed(value) + ";"));
+    }
+  }
+
+  @Test
+  void failedOutsideTheBoundaryDoesNotHoldThePage() {
+    try (Harness h = new Harness(ShowsFailedOutside::new)) {
+      String html = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(Duration.ofSeconds(5), () -> h.load());
+      assertTrue(html.contains("waiting;") && html.contains("failed:false;"), html);
+    }
+  }
+
+  // ---- until(...) takes any value but null and false
+
+  static final class WaitsForZero extends LiveComponent {
+    static volatile CompletableFuture<Object> zero;
+    static volatile CompletableFuture<Object> empty;
+
+    @Override protected View setup() {
+      return () -> T.page("t", T.button("wait").onClick(e -> {
+        zero = until(() -> 0);
+        empty = until(() -> "");
+      }));
+    }
+  }
+
+  @Test
+  void untilTakesZeroAndAnEmptyString() throws Exception {
+    try (Harness h = new Harness(WaitsForZero::new)) {
+      h.load();
+      h.connect();
+      h.click(Harness.clickOn(h.html, "wait"));
+      assertEquals(0, WaitsForZero.zero.get(5, java.util.concurrent.TimeUnit.SECONDS));
+      assertEquals("", WaitsForZero.empty.get(5, java.util.concurrent.TimeUnit.SECONDS));
     }
   }
 
