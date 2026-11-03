@@ -220,6 +220,65 @@ class SharedRuntimeTest {
     }
   }
 
+  static final class LosesAndGainsOn extends LiveComponent {
+    static final Map<Integer, CompletableFuture<String>> LOADS = new java.util.concurrent.ConcurrentHashMap<>();
+    static volatile Signal<Integer> mode;
+    static volatile Signal<Integer> subject;
+
+    @Override protected View setup() {
+      var which = createSignal(0);
+      var about = createSignal(0);
+      mode = which;
+      subject = about;
+      var value = createMemo((AsyncSupplier<String>) () -> {
+        int n = about.get();
+        return n == 0 ? CompletableFuture.completedFuture("zero") : LOADS.computeIfAbsent(n, k -> new CompletableFuture<>());
+      });
+      return () -> {
+        Loading boundary = loading(() -> T.span("value:" + value.get() + ";")).withFallback(T.span("waiting;"));
+        if (which.get() == 1) {
+          boundary.on(about);
+        }
+        return T.page("t", T.span("mode:" + which.get() + ";"), boundary);
+      };
+    }
+  }
+
+  private static void onItsLane(Harness h) {
+    CompletableFuture<Void> lane = new CompletableFuture<>();
+    h.engine.liveTab(h.token).post(() -> lane.complete(null));
+    lane.join();
+  }
+
+  @Test
+  void aBoundaryCanGainAnOnAndLoseIt() {
+    LosesAndGainsOn.LOADS.clear();
+    try (Harness h = new Harness(LosesAndGainsOn::new)) {
+      assertTrue(h.load().contains("value:zero;"), h.html);
+      h.connect();
+
+      int gained = h.conn.size();
+      LosesAndGainsOn.mode.set(1);
+      h.awaitPatch(gained, p -> p.contains("mode:1;"));
+      LosesAndGainsOn.subject.set(1);
+      h.awaitPatch(gained, p -> p.contains("waiting;"));
+      LosesAndGainsOn.LOADS.get(1).complete("one");
+      h.awaitPatch(gained, p -> p.contains("value:one;"));
+
+      int lost = h.conn.size();
+      LosesAndGainsOn.mode.set(0);
+      h.awaitPatch(lost, p -> p.contains("mode:0;"));
+      onItsLane(h);
+      LosesAndGainsOn.subject.set(2);
+      onItsLane(h);
+      assertFalse(h.engine.liveTab(h.token).rt.halted(), "removing it must not stop the page");
+      LosesAndGainsOn.LOADS.get(2).complete("two");
+      h.awaitPatch(lost, p -> p.contains("value:two;"));
+      assertTrue(h.conn.since(lost, m -> "patch".equals(m.get("type")) && m.get("html").contains("waiting;")).isEmpty(),
+        "without an on, a reload keeps what is there");
+    }
+  }
+
   // ---- what is around code that runs again later
 
   static final class WaitsPage extends LiveComponent {
