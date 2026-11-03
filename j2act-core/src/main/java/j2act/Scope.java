@@ -82,6 +82,10 @@ final class Scope {
   boolean rendering;
   boolean disposed;
   long renderedEpoch = -1;
+  /** On a boundary: its fallback runs again for a new description, and keeps its scope. */
+  boolean fallbackRedescribed;
+  /** On a boundary's fallback scope: how often it has rendered. */
+  int fallbackRuns;
   /** The engine's code epoch this scope last rendered with; behind it after a class swap (dev mode). */
   long codeEpoch;
   /** The component class's instance fields when its primitives settled, while dev mode watches classes. */

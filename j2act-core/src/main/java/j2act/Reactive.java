@@ -206,7 +206,10 @@ public final class Reactive {
     } else if (cell.tab.lane.isCurrent()) {
       start.run();
     } else {
-      cell.tab.host.job(start);
+      cell.tab.host.job(() -> Tracking.in(cell.tab, null, () -> {
+        start.run();
+        return null;
+      }));
     }
     return (CompletableFuture<T>) landed;
   }
@@ -224,7 +227,11 @@ public final class Reactive {
   /** {@link #until(Supplier)}, failing with a TimeoutException if nothing confirms it in time. */
   public static <T> CompletableFuture<T> until(Supplier<T> fn, java.time.Duration timeout) {
     Long millis = timeout == null ? null : Long.valueOf(timeout.toMillis());
-    return waiting("until", fn, (rt, around) -> rt.until(around, millis), timeout);
+    // The engine goes by JS truthiness, where 0 and "" are false, so what counts is decided here.
+    return waiting("until", fn, (rt, around) -> rt.until(() -> {
+      Object value = around.get();
+      return value == null || Boolean.FALSE.equals(value) ? value : new Object[] {value};
+    }, millis).thenApply(found -> ((Object[]) found)[0]), timeout);
   }
 
   /** Finishes with the first value fn settles on, whatever it is, once what it reads has loaded (ADR 0031). */
@@ -295,7 +302,10 @@ public final class Reactive {
     } else if (tab.lane.isCurrent()) {
       begin.run();
     } else {
-      tab.host.job(begin);
+      tab.host.job(() -> Tracking.in(tab, scope, () -> {
+        begin.run();
+        return null;
+      }));
     }
     return (CompletableFuture<T>) result;
   }

@@ -64,13 +64,14 @@ public final class Action<V, R> {
     if (tab.lane.isCurrent()) {
       start(tab, scope, variables, result);
     } else {
-      tab.host.job(() -> {
+      tab.host.job(() -> Tracking.in(tab, scope, () -> {
         if (tab.disposed) {
           result.completeExceptionally(new IllegalStateException("tab " + tab.id + " has ended"));
         } else {
           start(tab, scope, variables, result);
         }
-      });
+        return null;
+      }));
     }
     return result;
   }
@@ -105,7 +106,11 @@ public final class Action<V, R> {
         }
         R ended = value;
         Throwable failed = failure;
-        tab.host.job(() -> run.end(ended, failed));
+        // Not tab.post: it ends even if the tab has, and what waits on its future runs as this tab's.
+        tab.host.job(() -> Tracking.in(tab, scope, () -> {
+          run.end(ended, failed);
+          return null;
+        }));
       });
     } catch (RejectedExecutionException e) {
       run.end(null, e);

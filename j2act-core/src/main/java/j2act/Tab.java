@@ -1146,7 +1146,7 @@ public final class Tab {
       boolean hidden = pageHidden || (connection == null && stream == null && shellSent);
       rt.setTabHidden(rootOwner, hidden);
       // A change could go through without this tab while it was out of sight: it reads what that left behind again.
-      if (outOfSight && !hidden && root != null && rt.clock() != outOfSightAt) {
+      if (live && outOfSight && !hidden && root != null && rt.clock() != outOfSightAt) {
         markDirty(root);
       }
       if (hidden && !outOfSight) {

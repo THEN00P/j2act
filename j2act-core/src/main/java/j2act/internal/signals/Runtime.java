@@ -508,8 +508,8 @@ public final class Runtime {
   }
 
   /** Its parent gave this boundary a new description, which its fallback has to follow. */
-  public void boundaryRedescribed(Node output) {
-    boundaries.redescribed(output);
+  public boolean boundaryRedescribed(Node output) {
+    return boundaries.redescribed(output);
   }
 
   /** Whether what this boundary's node gives now is its fallback. */

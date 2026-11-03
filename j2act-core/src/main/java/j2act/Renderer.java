@@ -85,7 +85,7 @@ final class Renderer {
     } else if (scope.contentNode != null) {
       // A new description from the parent: what it wraps may be something else now.
       tab.rt.recomputeNow(scope.contentNode);
-      tab.rt.boundaryRedescribed(scope.boundaryOutput);
+      scope.fallbackRedescribed = tab.rt.boundaryRedescribed(scope.boundaryOutput);
     }
     shown = (String) tab.rt.read(scope.boundaryOutput);
     boolean showingFallback = tab.rt.showsFallback(scope.boundaryOutput);
@@ -145,18 +145,30 @@ final class Renderer {
 
   /** The fallback renders as a scope of its own, which goes when the content takes over. */
   private String renderFallback(Scope scope, DomContent fallback) {
-    Scope own = new Scope(tab, scope, scope.address + "/fallback");
-    own.instance = scope.instance;
-    if (scope.fallbackScope != null) {
-      scope.fallbackScope.dispose();
+    // A new description from the parent runs this again with the same fallback on screen, so what is in it keeps its
+    // state. Any other run is a fallback coming back, which starts over.
+    Scope kept = scope.fallbackScope;
+    boolean same = scope.fallbackRedescribed && kept != null && !kept.disposed;
+    scope.fallbackRedescribed = false;
+    if (kept != null && !same) {
+      kept.dispose();
     }
+    Scope own = same ? kept : new Scope(tab, scope, scope.address + "/fallback");
+    own.instance = scope.instance;
     scope.fallbackScope = own;
+    int run = ++own.fallbackRuns;
     tab.rt.onCleanup(() -> {
+      // During a hold this comes at the commit, so a later run may have taken the scope already.
+      if (scope.fallbackRedescribed || own.fallbackRuns != run) {
+        return;
+      }
       if (scope.fallbackScope == own) {
         scope.fallbackScope = null;
       }
       own.dispose();
     });
+    own.previousChildren = own.children;
+    own.children = new java.util.LinkedHashMap<>();
     tab.enterRender();
     Renderer inner = new Renderer(tab, tab.renderEpoch());
     inner.enclosing = enclosing;
@@ -171,6 +183,9 @@ final class Renderer {
       Tracking.swapScope(previousScope);
       tab.exitRender();
     }
+    // No effect of its own shows this, so what it no longer places goes now.
+    own.removing.forEach(Scope::dispose);
+    own.removing.clear();
     // What is in the fallback patches itself, so it needs to find itself in what is around it.
     own.html = inner.out.toString();
     return own.html;

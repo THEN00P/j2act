@@ -48,9 +48,13 @@ final class Boundaries {
     Node error;
     Function<Boundary, Object> show;
     Node fb;
+    /** A new description came while the fallback was not showing: it renders again before it next does. */
+    boolean fbStale;
     Node onNode;
     /** Its `on` has run, so what it reads changing now means a new subject. */
     boolean onMounted;
+    /** It runs because of a new description, so only a value that differs means a new subject. */
+    boolean onRedescribed;
   }
 
   private final Runtime rt;
@@ -437,8 +441,9 @@ final class Boundaries {
     }
     if (onFn != null) {
       b.onNode = rt.core.runWithOwner(owner, () -> rt.core.computed(prev -> {
+        Object read = null;
         try {
-          onFn.get();
+          read = onFn.get();
         } catch (Throwable e) {
           if (!(e instanceof NotReadyError)) {
             if (!s().notify((Node) rt.core.context, STATUS_ERROR, STATUS_ERROR, e)) {
@@ -448,12 +453,12 @@ final class Boundaries {
             return null;
           }
         }
-        if (b.onMounted) {
+        if (b.onMounted && (!b.onRedescribed || !java.util.Objects.equals(prev, read))) {
           arm(b);
-        } else {
-          b.onMounted = true;
         }
-        return null;
+        b.onMounted = true;
+        b.onRedescribed = false;
+        return read;
       }, null));
       b.onNode.config |= CONFIG_REDERIVE;
     }
@@ -585,6 +590,10 @@ final class Boundaries {
         return rt.core.computed(prev -> b.show.apply(b), lazy);
       });
     }
+    if (b.fbStale) {
+      b.fbStale = false;
+      rt.core.recompute(b.fb, false);
+    }
     Transaction p = q.passLane;
     int f = out.flags;
     Object v = rt.core.read(b.fb);
@@ -593,28 +602,31 @@ final class Boundaries {
     return v;
   }
 
-  /** A fallback on screen renders again; one that is not is made anew if it is ever needed. */
-  void redescribed(Node output) {
+  /**
+   * A fallback showing renders again; one that is not does so before it next shows. It is never dropped here: until
+   * what replaces it commits, it can be on screen with the boundary no longer showing it, as in Solid.
+   */
+  boolean redescribed(Node output) {
     Boundary b = byOutput.get(output);
     if (b == null) {
-      return;
+      return false;
     }
     if (b.onNode != null) {
-      // It reads what the new description says from now on, which is no change of subject yet.
-      b.onMounted = false;
+      // It reads what the new description says from now on, which alone is no change of subject.
+      b.onRedescribed = true;
       s().dirtyQueue.enqueueSub(b.onNode);
       s().schedule();
     }
     if (b.fb == null) {
-      return;
+      return false;
     }
     if (b.fallback) {
       s().dirtyQueue.enqueueSub(b.fb);
       s().schedule();
-    } else {
-      rt.owners.dispose(b.fb);
-      b.fb = null;
+      return true;
     }
+    b.fbStale = true;
+    return false;
   }
 
   boolean showsFallback(Node output) {

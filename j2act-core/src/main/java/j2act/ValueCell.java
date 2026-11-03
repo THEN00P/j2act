@@ -242,7 +242,8 @@ class ValueCell extends Cell {
         rt.read(node);
         return false;
       } catch (NotReadyError e) {
-        throw e;
+        // It has not failed, and a read of what is loading must not hold the page: this says whether, not when.
+        return false;
       } catch (Error | RuntimeException e) {
         return true;
       }
@@ -292,8 +293,10 @@ class ValueCell extends Cell {
     }
     tab.host.writeFromOutside(() -> {
       if (!tab.disposed) {
-        markRetainedDirty();
-        rt.write(node, next);
+        Tracking.in(tab, null, () -> {
+          markRetainedDirty();
+          return rt.write(node, next);
+        });
       }
     });
   }
@@ -315,8 +318,10 @@ class ValueCell extends Cell {
     }
     tab.host.writeFromOutside(() -> {
       if (!tab.disposed) {
-        markRetainedDirty();
-        rt.update(node, fn);
+        Tracking.in(tab, null, () -> {
+          markRetainedDirty();
+          return rt.update(node, fn);
+        });
       }
     });
   }
