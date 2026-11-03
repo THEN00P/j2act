@@ -688,7 +688,9 @@ final class Scheduler {
       return;
     }
     boolean inFlight = n.pendingValue == NOT_PENDING && (n.statusFlags & STATUS_PENDING) != 0;
-    int err = n.config & CONFIG_STAGED_ERROR;
+    // A value can land over a staged error with the flag left on. Solid then reports the value as the error, which
+    // JS allows; a value is not a Throwable here, and it is what happened, so it commits as one (ADR 0033).
+    int err = n.pendingValue instanceof Throwable ? n.config & CONFIG_STAGED_ERROR : 0;
     if (!inFlight && n.x != null) {
       n.x.shownError = null;
     }

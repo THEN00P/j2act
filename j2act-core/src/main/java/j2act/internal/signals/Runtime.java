@@ -486,6 +486,11 @@ public final class Runtime {
   }
 
   /** Whether a change is held waiting for something: a transaction not landed yet. */
+  /** Counts the flushes that did something. */
+  public long clock() {
+    return scheduler.clock;
+  }
+
   public boolean holding() {
     return scheduler.transactionsOpen();
   }

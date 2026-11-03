@@ -189,7 +189,7 @@ final class Verdict {
   }
 
   private Object staged(Node el) {
-    if ((el.config & CONFIG_STAGED_ERROR) != 0) {
+    if ((el.config & CONFIG_STAGED_ERROR) != 0 && el.pendingValue instanceof Throwable) {
       throw Errors.<RuntimeException>sneak((Throwable) el.pendingValue);
     }
     return el.pendingValue;

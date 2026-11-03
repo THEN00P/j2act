@@ -829,7 +829,7 @@ final class Core {
       return el.value;
     }
     stagedRead(c, el);
-    if ((el.config & CONFIG_STAGED_ERROR) != 0) {
+    if ((el.config & CONFIG_STAGED_ERROR) != 0 && el.pendingValue instanceof Throwable) {
       throw Errors.<RuntimeException>sneak((Throwable) el.pendingValue);
     }
     return el.pendingValue;

@@ -66,6 +66,8 @@ public final class Tab {
   private PageStream stream;
   /** The shell went out, so a load's notFound() can no longer change the response (ADR 0031). */
   private boolean shellSent;
+  private boolean outOfSight;
+  private long outOfSightAt;
   /** The served page's render stopped outside any loading(...) on a value not loaded yet: it waits for it (ADR 0031). */
   private boolean waitingOnRead;
   /** Effects wait for this tab's first socket, or a browser's first tab with one (ADR 0031). */
@@ -111,6 +113,8 @@ public final class Tab {
   volatile RouteException pendingRoute;
 
   Scope root;
+  /** The root the browser has, which a navigation's new root is not until its patch goes. */
+  Scope rootOnPage;
   volatile Connection connection;
   volatile long lastActivity;
   volatile long disconnectedAt;
@@ -639,8 +643,12 @@ public final class Tab {
       common++;
     }
     for (int i = frames.size() - 1; i >= common; i--) {
-      frames.remove(i);
+      ComponentTag leaving = frames.remove(i);
       frameIds.remove(i);
+      // Now, not when the new page shows: left in place, it would load for the URL it is leaving behind.
+      if (i > 0 && leaving.scope != null) {
+        leaving.scope.dispose();
+      }
     }
     PreloadedRoute adopted = takePreload(resolution, common);
     for (int i = common; i < next.size(); i++) {
@@ -946,8 +954,15 @@ public final class Tab {
     }
     List<Scope> scopes = new ArrayList<>(unsent);
     unsent.clear();
-    for (Scope scope : scopes) {
+    // Outermost first: a patch of what is around a scope would undo one of the scope itself.
+    scopes.sort(java.util.Comparator.comparingInt(Tab::depth));
+    for (int i = 0; i < scopes.size(); i++) {
+      Scope scope = scopes.get(i);
       if (scope.disposed || scope.html == null) {
+        continue;
+      }
+      if (!scope.onThePage()) {
+        scope.sent = null;
         continue;
       }
       if (connection == null) {
@@ -958,14 +973,45 @@ public final class Tab {
         }
       } else {
         scope.sent = scope.html;
+        if (scope == root) {
+          rootOnPage = root;
+        }
         // What an ancestor last sent no longer describes the page below it.
         for (Scope s = scope.parent; s != null; s = s.parent) {
           s.sent = null;
         }
         send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope == root ? true : null, "html", scope.html));
         engine.stats.patches.incrementAndGet();
+        behindThisPatch(scope, scope.html, scopes, i + 1);
       }
     }
+  }
+
+  /**
+   * A render during a hold can carry a scope below it as it was before the hold, so what the page has of that scope
+   * is now older than the scope itself: it needs its own patch, or nothing would ever correct it.
+   */
+  private void behindThisPatch(Scope scope, String sent, List<Scope> scopes, int next) {
+    for (Scope child : scope.children.values()) {
+      if (child.disposed || child.html == null || child.detached || !sent.contains("data-j2-scope=\"" + child.anchor + "\"")) {
+        continue;
+      }
+      if (sent.contains(child.html)) {
+        behindThisPatch(child, child.html, scopes, next);
+      } else {
+        // Next, even if it already went: this patch replaced it.
+        scopes.subList(next, scopes.size()).remove(child);
+        scopes.add(next, child);
+      }
+    }
+  }
+
+  private static int depth(Scope scope) {
+    int depth = 0;
+    for (Scope s = scope.parent; s != null; s = s.parent) {
+      depth++;
+    }
+    return depth;
   }
 
   /** Lane-only. Re-renders what changed and sends it. Runs the whole browser's reactivity. */
@@ -1021,6 +1067,12 @@ public final class Tab {
    */
   PageStream openStream(String html) {
     shellSent = true;
+    rootOnPage = root;
+    if (root.html != null && !html.equals("<!DOCTYPE html>" + root.html)) {
+      // A change came between rendering this response and sending it: the page gets what it missed as a patch.
+      root.sent = null;
+      unsent.add(root);
+    }
     if (showingFallback.isEmpty() || !html.endsWith("</body></html>")) {
       applyVisibility();
       return null;
@@ -1087,7 +1139,16 @@ public final class Tab {
   private void applyVisibility() {
     if (hubFor == null && rootOwner != null) {
       // With no socket, and no response still streaming, nobody is looking at what this tab shows.
-      rt.setTabHidden(rootOwner, pageHidden || (connection == null && stream == null && shellSent));
+      boolean hidden = pageHidden || (connection == null && stream == null && shellSent);
+      rt.setTabHidden(rootOwner, hidden);
+      // A change could go through without this tab while it was out of sight: it reads what that left behind again.
+      if (outOfSight && !hidden && root != null && rt.clock() != outOfSightAt) {
+        markDirty(root);
+      }
+      if (hidden && !outOfSight) {
+        outOfSightAt = rt.clock();
+      }
+      outOfSight = hidden;
     }
   }
 

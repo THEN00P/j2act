@@ -708,7 +708,11 @@ final class Async {
     }
     if (el.type != 0 && rt.core.effectStatusNotify != null) {
       rt.core.effectStatusNotify.accept(el);
-      return;
+      // In Solid nothing reads an effect. Here a view reads the effect of a component it places (ADR 0033), and would
+      // otherwise wait for good on what has failed.
+      if (el.subs == null) {
+        return;
+      }
     }
     propagateStatus(el, status, error);
   }

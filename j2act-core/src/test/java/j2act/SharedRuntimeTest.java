@@ -75,6 +75,33 @@ class SharedRuntimeTest {
     }
   }
 
+  static final class ThrowsOnItsSecondRun extends LiveComponent {
+    static volatile Signal<Integer> input;
+
+    @Override protected View setup() {
+      var n = createSignal(0);
+      input = n;
+      var value = createMemo((AsyncSupplier<String>) () -> {
+        if (n.get() == 1) {
+          throw new IllegalStateException("before it had a future");
+        }
+        return CompletableFuture.completedFuture("ok");
+      }).withStaleOnError();
+      return () -> T.page("t", T.span("value:" + value.get() + ";failed:" + failed(value) + ";"));
+    }
+  }
+
+  @Test
+  void aStaleOnErrorLoadThatThrowsWhereItStandsKeepsItsOldValue() {
+    try (Harness h = new Harness(ThrowsOnItsSecondRun::new)) {
+      assertTrue(h.load().contains("value:ok;failed:false;"), h.html);
+      h.connect();
+      int from = h.conn.size();
+      ThrowsOnItsSecondRun.input.set(1);
+      h.awaitPatch(from, p -> p.contains("value:ok;failed:true;"));
+    }
+  }
+
   // ---- what is around code that runs again later
 
   static final class WaitsPage extends LiveComponent {

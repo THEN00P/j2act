@@ -484,6 +484,25 @@ final class Scope {
     }
   }
 
+  /**
+   * Whether the page has a place for this: what is around it shows it. If not, as when it is around a fallback or has
+   * not shown itself, a patch would find nothing, and what is around it brings this along when it shows it.
+   */
+  boolean onThePage() {
+    if (detached || parent == null) {
+      return true;
+    }
+    if (parent.html == null || !parent.html.contains("data-j2-scope=\"" + anchor + "\"")) {
+      return false;
+    }
+    Scope top = parent;
+    while (top.parent != null) {
+      top = top.parent;
+    }
+    // A new page's root, whose response or patch is still to go, brings all of this along.
+    return top != tab.root || tab.rootOnPage == top;
+  }
+
   /** The pass of a parent placing this scope: runs its effect inside that pass, and stops if it stopped. */
   String renderInParent() {
     boolean outer = inParent;
@@ -498,7 +517,16 @@ final class Scope {
       inParent = outer;
     }
     if (effect != null && (tab.rt.pending(effect) || tab.rt.failed(effect))) {
-      tab.rt.read(effect);
+      // This read can run it once more, which is not the same object placed twice.
+      long placed = renderedEpoch;
+      renderedEpoch = -1;
+      try {
+        tab.rt.read(effect);
+      } finally {
+        if (renderedEpoch == -1) {
+          renderedEpoch = placed;
+        }
+      }
     }
     if (renderFailure != null) {
       if (renderFailure instanceof RuntimeException) {

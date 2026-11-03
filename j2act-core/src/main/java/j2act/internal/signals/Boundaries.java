@@ -113,7 +113,9 @@ final class Boundaries {
       collecting.remove(b);
     }
     // A hold that started while this tab could be seen may have only this tab to wait for now.
-    s().schedule();
+    if (s().transactionsOpen()) {
+      s().schedule();
+    }
   }
 
   private void record(Boundary b, Node node, Node source) {
@@ -510,10 +512,13 @@ final class Boundaries {
       throw Errors.<RuntimeException>sneak(tree.x.error);
     }
     if (isCollecting(b)) {
+      // Linked, which Solid does not do here (ADR 0033): a reader can fail rather than settle, and only the tree says so.
       if (!b.readers.isEmpty() && (self.statusFlags & STATUS_UNINITIALIZED) != 0 && (self.config & CONFIG_HELD) == 0) {
+        rt.graph.link(tree, self);
         return fallback(b);
       }
       if (prune(b, 1) != 0) {
+        rt.graph.link(tree, self);
         return fallback(b);
       }
     }

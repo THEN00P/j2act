@@ -125,7 +125,18 @@ class ValueCell extends Cell {
         return value;
       }
       long run = ++loadRun;
-      CompletionStage<?> flight = watchingRoute(asyncBody.get(), run);
+      CompletionStage<?> started;
+      try {
+        started = asyncBody.get();
+      } catch (RuntimeException e) {
+        // AsyncSupplier may throw before it has a future. A read not ready yet is no RuntimeException, and a
+        // notFound() or redirect() belongs to the route.
+        if (!staleOnError || e instanceof RouteException) {
+          throw e;
+        }
+        started = CompletableFuture.failedFuture(e);
+      }
+      CompletionStage<?> flight = watchingRoute(started, run);
       return staleOnError ? keepingOldValue(flight, run) : flight;
     } finally {
       Tracking.swapScope(previous);
@@ -161,7 +172,10 @@ class ValueCell extends Cell {
         }
       }
       if (cause != null) {
-        tab.engine.log(System.Logger.Level.WARNING, "load failed at " + address, cause);
+        // A newer run stopped this one (async(...)): that is no failure, and the engine ignores its answer.
+        if (!(cause instanceof InterruptedException)) {
+          tab.engine.log(System.Logger.Level.WARNING, "load failed at " + address, cause);
+        }
         answer.completeExceptionally(cause);
       } else {
         answer.complete(value);
