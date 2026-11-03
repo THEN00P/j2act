@@ -7,12 +7,14 @@ describe("Clients", () => {
   let sent: ClientMessage[];
   let morphed: [Element, string][];
   let clients: Clients;
+  let up: boolean;
 
   beforeEach(() => {
     sent = [];
+    up = true;
     morphed = [];
     const send = (m: ClientMessage) => sent.push(m);
-    clients = createClients({ send: send, uploads: createUploads(send, () => "tok"), morphSlot: (el, html) => morphed.push([el, html]) });
+    clients = createClients({ send: send, connected: () => up, uploads: createUploads(send, () => "tok"), morphSlot: (el, html) => morphed.push([el, html]) });
     document.body.innerHTML = "";
   });
 
@@ -26,6 +28,49 @@ describe("Clients", () => {
       clients.resultSeen("7");
       clients.resendResults();
       expect(sent).toHaveLength(2);
+    });
+
+    it("keeps a result back while the socket is down, and sends it once when it is up", () => {
+      up = false;
+      clients.reply("7", true, "value");
+      expect(sent).toHaveLength(0);
+      up = true;
+      clients.resendResults();
+      expect(sent).toHaveLength(1);
+    });
+
+    it("sends results no faster than the server's limit allows", () => {
+      vi.useFakeTimers();
+      try {
+        up = false;
+        for (let i = 0; i < 80; i++) {
+          clients.reply(String(i), true, i);
+        }
+        up = true;
+        clients.resendResults();
+        expect(sent).toHaveLength(20);
+        vi.advanceTimersByTime(1000);
+        expect(sent).toHaveLength(40);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("sends a result the server gave no answer to again while the socket stays up", () => {
+      vi.useFakeTimers();
+      try {
+        clients.reply("7", true, "value");
+        expect(sent).toHaveLength(1);
+        vi.advanceTimersByTime(1000);
+        expect(sent).toHaveLength(1);
+        vi.advanceTimersByTime(1000);
+        expect(sent).toHaveLength(2);
+        clients.resultSeen("7");
+        vi.advanceTimersByTime(10000);
+        expect(sent).toHaveLength(2);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("forgets results a new server-side tab never asked for", () => {

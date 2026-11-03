@@ -1608,6 +1608,11 @@ public final class Tab {
     write(unacknowledged.add(message));
   }
 
+  /** Lane-only. A message that is worth nothing if it is lost: it takes no number and nothing keeps it. */
+  void sendUnnumbered(String message) {
+    write(message);
+  }
+
   private void takeNumbersForWaitingUpdates() {
     if (waitingUpdates.isEmpty()) {
       return;

@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-a6121fa083e8951e618da7598d7e826a6a66d525d37b3bc6edad12af6a23581d */
+* sources: sha256-0aa6cf1591300e5378020341d1de53c6a1bab04c8b1f1dc6afc46c9c93646a32 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -26,7 +26,11 @@
 	}
 	//#endregion
 	//#region src/main/ts/clients.ts
-	function createClients({ send, uploads, morphSlot }) {
+	/** At most this many results a second, well under the server's default limit of 30 a second. */
+	var RESULTS_PER_SECOND = 20;
+	/** A result with no answer after this long goes again: the server's rate limit refuses without one. */
+	var RESULT_RETRY_MS = 2e3;
+	function createClients({ send, connected, uploads, morphSlot }) {
 		const clients = /* @__PURE__ */ new Map();
 		const liveAnchors = /* @__PURE__ */ new Set();
 		const lostSlots = /* @__PURE__ */ new Set();
@@ -94,17 +98,43 @@
 		}
 		/** Results the server has not acknowledged: a socket can die with one on its way (ADR 0032). */
 		const unseenResults = /* @__PURE__ */ new Map();
+		let resultAllowance = RESULTS_PER_SECOND;
+		let resultTimer = null;
 		function sendResult(id, result) {
-			unseenResults.set(id, result);
-			send(result);
+			unseenResults.set(id, {
+				message: result,
+				sentAt: 0
+			});
+			sendResults();
+		}
+		/** The oldest that are due, as many as this second allows; a timer sees to the rest while any has no answer. */
+		function sendResults() {
+			if (!connected()) return;
+			const now = Date.now();
+			for (const result of unseenResults.values()) {
+				if (resultAllowance === 0) break;
+				if (now - result.sentAt >= RESULT_RETRY_MS) {
+					result.sentAt = now;
+					resultAllowance--;
+					send(result.message);
+				}
+			}
+			if (unseenResults.size > 0 && resultTimer === null) resultTimer = setTimeout(() => {
+				resultTimer = null;
+				resultAllowance = RESULTS_PER_SECOND;
+				sendResults();
+			}, 1e3);
 		}
 		/** The server has this result. */
 		function resultSeen(id) {
 			unseenResults.delete(id);
 		}
-		/** The socket is back: what the old one may have lost goes again, and the server ignores what it settled. */
+		/** The socket is back: what the old one may have lost is due again, and the server ignores what it settled. */
 		function resendResults() {
-			unseenResults.forEach((result) => send(result));
+			unseenResults.forEach((result) => {
+				result.sentAt = 0;
+			});
+			sendResults();
 		}
 		/** A new server-side tab: it never made those calls. */
 		function forgetResults() {
@@ -2211,6 +2241,7 @@
 		const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
 		const clients = createClients({
 			send,
+			connected: () => connection.ready,
 			uploads,
 			morphSlot: (live, html) => morpher.slot(live, html)
 		});

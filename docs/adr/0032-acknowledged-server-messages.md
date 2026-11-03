@@ -12,7 +12,7 @@ The client's `hello` carries the highest number it applied. The server drops the
 
 Client actions and window() calls are buffered like patches, so a call lost in flight is delivered on reconnect and runs exactly once. Its 30-second timeout counts from when it was delivered, not from when it was buffered behind a dead socket; a call still undelivered when the tab ends fails with a ClientException naming the disconnect, never silently.
 
-A call can also run in the browser and lose its result on the way back. So the browser keeps each call's result, by call id, until the server acknowledges it, and its `hello` after a reconnect resends the unacknowledged ones; the server ignores a result for a call it already settled. A call the browser already ran is never run again for a resend, since its id is applied at most once. This is the one piece of reliability in the client-to-server direction, and only for call results.
+A call can also run in the browser and lose its result on the way back. So the browser keeps each call's result, by call id, until the server acknowledges it. It sends the unacknowledged ones again on a new socket, and again after two seconds without an answer, since the server's rate limit refuses a result without saying so; it sends at most 20 results a second, under the default limit. The server ignores a result for a call it already settled. A call the browser already ran is never run again for a resend, since its id is applied at most once. This is the one piece of reliability in the client-to-server direction, and only for call results.
 
 ## The buffer is bounded by backpressure
 
@@ -28,7 +28,7 @@ Apart from call results (above), events the client sends into a socket that has 
 
 ## In the code
 
-`Unacknowledged` holds the numbered messages, and `Tab.send` is the one way in. `n` goes first in each message on the wire; `ready` says a socket is up, so it belongs to no sequence, and the `expired` and rate-limit answers written straight to a connection stay outside it too. The client acknowledges with `{type: "seen", n}` at most every 100 ms and sends `seen` in its `hello`. A patch whose anchor is not on the page and is not live content asks for `{type: "resync"}`, as does a gap in the numbers. Before a tab's first hello nothing is buffered, since the page response and its stream carry that. A hello without `seen` has nothing owed to it.
+`Unacknowledged` holds the numbered messages, and `Tab.send` is the one way in. `n` goes first in each message on the wire; `ready` says a socket is up, so it belongs to no sequence, and the `expired` and rate-limit answers written straight to a connection stay outside it too. So does `callSeen`, which answers only ids this tab issued: if one is lost, the browser sends the result again and hears it again, so a client withholding `seen` cannot grow the buffer with them. The client acknowledges with `{type: "seen", n}` at most every 100 ms and sends `seen` in its `hello`. A patch whose anchor is not on the page and is not live content asks for `{type: "resync"}`, as does a gap in the numbers. Before a tab's first hello nothing is buffered, since the page response and its stream carry that. A hello without `seen` has nothing owed to it.
 
 ## Before code
 

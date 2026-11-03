@@ -29,7 +29,7 @@ final class Clients {
   private final Tab tab;
   private final Map<String, ClientCell> byId = new HashMap<>();
   private final Map<String, PendingCall> calls = new HashMap<>();
-  private final List<String> outbox = new ArrayList<>();
+  private final List<PendingCall> outbox = new ArrayList<>();
   /** Live components given to actions, by anchor. */
   private final Map<String, Scope> live = new HashMap<>();
   private long callSeq;
@@ -166,6 +166,15 @@ final class Clients {
 
   Object call(ClientCell cell, Method method, Object[] args) {
     String name = cell.type.getSimpleName() + "." + method.getName();
+    // Before the arguments: encoding one replaces the callback or live content an earlier call of this action holds.
+    if (calls.size() >= tab.engine.maxPendingClientCalls) {
+      ClientException refused = new ClientException("QuotaExceededError", name
+        + " has too many calls waiting; withMaxPendingClientCalls allows " + tab.engine.maxPendingClientCalls);
+      if (method.getReturnType() == void.class) {
+        throw refused;
+      }
+      return CompletableFuture.failedFuture(refused);
+    }
     String id = String.valueOf(++callSeq);
     Class<?>[] classes = method.getParameterTypes();
     Type[] types = method.getGenericParameterTypes();
@@ -176,20 +185,12 @@ final class Clients {
         handler -> tab.handlers.registerAction(cell.owner, key, handler),
         component -> live(cell, key, component), name));
     }
-    if (calls.size() >= tab.engine.maxPendingClientCalls) {
-      ClientException refused = new ClientException("QuotaExceededError", name
-        + " has too many calls waiting; withMaxPendingClientCalls allows " + tab.engine.maxPendingClientCalls);
-      if (method.getReturnType() == void.class) {
-        throw refused;
-      }
-      return CompletableFuture.failedFuture(refused);
-    }
-    outbox.add(Json.object("type", "clientCall", "id", id, "client", cell.id, "action", method.getName(),
-      "args", json.append(']').toString()));
+    String wire = Json.object("type", "clientCall", "id", id, "client", cell.id, "action", method.getName(),
+      "args", json.append(']').toString());
     CompletableFuture<Object> future = new CompletableFuture<>();
     Function<String, Object> decode = method.getReturnType() == void.class ? result -> null
       : result -> tab.engine.json.read(result, ClientCall.valueType(method));
-    calls.put(id, new PendingCall(cell, cell.owner, "client action " + name, decode, false, future));
+    enqueue(id, new PendingCall(cell, cell.owner, "client action " + name, decode, false, future, wire));
     timeOut(id, TIMEOUT_MILLIS, () -> new ClientException("TimeoutError", name + " did not settle within 30 seconds"));
     return method.getReturnType() == void.class ? null : future;
   }
@@ -228,12 +229,16 @@ final class Clients {
         + " has too many calls waiting; withMaxPendingClientCalls allows " + tab.engine.maxPendingClientCalls));
     }
     String id = String.valueOf(++callSeq);
-    outbox.add(Json.object("type", "windowCall", "id", id, "call", json));
     CompletableFuture<Object> future = new CompletableFuture<>();
-    calls.put(id, new PendingCall(null, scope, "window call " + name, text -> decoder.decode(Json.parse(text)), true,
-      future));
+    enqueue(id, new PendingCall(null, scope, "window call " + name, text -> decoder.decode(Json.parse(text)), true,
+      future, Json.object("type", "windowCall", "id", id, "call", json)));
     timeOut(id, TIMEOUT_MILLIS, () -> new BrowserException("TimeoutError", name + " did not settle within 30 seconds"));
     return future;
+  }
+
+  private void enqueue(String id, PendingCall call) {
+    calls.put(id, call);
+    outbox.add(call);
   }
 
   /**
@@ -274,19 +279,33 @@ final class Clients {
 
   /** Sends the calls made during this update, after its patches. */
   void sendOutbox() {
-    for (String message : outbox) {
-      tab.send(message);
+    long now = tab.engine.clock.millis();
+    for (PendingCall call : outbox) {
+      tab.send(call.wire);
+      call.wire = null;
+      // A call's time counts from when it went to a socket, not from behind a dead one (ADR 0032).
+      if (tab.connection != null) {
+        call.deliveredAt = now;
+      }
     }
     outbox.clear();
-    redelivered();
   }
 
-  /** Lane-only. A call's time counts from when it was delivered, not from behind a dead socket (ADR 0032). */
+  /** Lane-only. A socket is back, with what the last one may have lost: each call's time starts again. */
   void redelivered() {
-    long now = System.currentTimeMillis();
+    long now = tab.engine.clock.millis();
     for (PendingCall call : calls.values()) {
       call.deliveredAt = now;
     }
+  }
+
+  /** Lane-only. When each waiting call's time started; 0 for one still waiting for a socket. */
+  List<Long> deliveredTimes() {
+    List<Long> times = new ArrayList<>();
+    for (PendingCall call : calls.values()) {
+      times.add(call.deliveredAt);
+    }
+    return times;
   }
 
   /** Lane-only. The socket went: what was sent may not have arrived, and comes again with the next one. */
@@ -302,7 +321,7 @@ final class Clients {
       if (call == null) {
         return;
       }
-      long used = call.deliveredAt == 0 ? 0 : System.currentTimeMillis() - call.deliveredAt;
+      long used = call.deliveredAt == 0 ? 0 : tab.engine.clock.millis() - call.deliveredAt;
       if (call.deliveredAt != 0 && used >= TIMEOUT_MILLIS) {
         settle(id, null, failure.get());
       } else {
@@ -314,11 +333,13 @@ final class Clients {
   /** The browser's reply to a call: {type: "callResult", id, ok, value or error}. */
   void onResult(Map<String, String> message) {
     String id = message.get("id");
-    if (id != null) {
-      // Either way it has this one: the browser keeps a result until it hears so (ADR 0032).
-      tab.send(Json.object("type", "callSeen", "id", id));
+    if (!issued(id)) {
+      return;
     }
-    PendingCall call = id == null ? null : calls.get(id);
+    // Settled or not, the server has this one: the browser keeps a result until it hears so. If this reply is lost
+    // the browser sends the result again and hears it again, so nothing keeps it, however many a client asks for (ADR 0032).
+    tab.sendUnnumbered(Json.object("type", "callSeen", "id", id));
+    PendingCall call = calls.get(id);
     if (call == null) {
       return;
     }
@@ -335,6 +356,19 @@ final class Clients {
       return;
     }
     settle(id, value, null);
+  }
+
+  /** Whether this tab ever made a call with this id; a browser has no result for any other. */
+  private boolean issued(String id) {
+    if (id == null || id.isEmpty() || id.length() > 19) {
+      return false;
+    }
+    try {
+      long number = Long.parseLong(id);
+      return number >= 1 && number <= callSeq;
+    } catch (NumberFormatException e) {
+      return false;
+    }
   }
 
   /** A client failed outside a call: its mount, update or cleanup threw, or its export is missing. */
@@ -492,17 +526,20 @@ final class Clients {
     final Function<String, Object> decode;
     final boolean browser;
     final CompletableFuture<Object> future;
+    /** The message, until it goes out. */
+    String wire;
     /** When it last went to a socket; 0 while it is waiting for one. */
     long deliveredAt;
 
     PendingCall(ClientCell cell, Scope owner, String name, Function<String, Object> decode, boolean browser,
-                CompletableFuture<Object> future) {
+                CompletableFuture<Object> future, String wire) {
       this.cell = cell;
       this.owner = owner;
       this.name = name;
       this.decode = decode;
       this.browser = browser;
       this.future = future;
+      this.wire = wire;
     }
   }
 }

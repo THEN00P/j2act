@@ -156,6 +156,101 @@ class AcknowledgedTest {
     }
   }
 
+  /** A clock a test moves by hand. */
+  static final class TestClock extends java.time.Clock {
+    volatile long now = 1_000_000;
+
+    @Override public java.time.ZoneId getZone() {
+      return java.time.ZoneOffset.UTC;
+    }
+
+    @Override public java.time.Clock withZone(java.time.ZoneId zone) {
+      return this;
+    }
+
+    @Override public java.time.Instant instant() {
+      return java.time.Instant.ofEpochMilli(now);
+    }
+  }
+
+  private static List<Long> callClocks(Tab tab) {
+    CompletableFuture<List<Long>> times = new CompletableFuture<>();
+    tab.post(() -> times.complete(tab.clients.deliveredTimes()));
+    return times.join();
+  }
+
+  @Test
+  void anUnrelatedUpdateLeavesAWaitingCallsClockAlone() {
+    TestClock clock = new TestClock();
+    try (Harness h = new Harness(Counter::new, b -> b.withClock(clock))) {
+      h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(h.html, "call"));
+      h.conn.await(from, m -> "windowCall".equals(m.get("type")));
+      long sentAt = clock.now;
+      Tab tab = h.engine.liveTab(h.token);
+      assertEquals(List.of(sentAt), callClocks(tab));
+
+      clock.now += 20_000;
+      int more = h.conn.size();
+      h.click(Harness.clickOn(h.html, "add"));
+      h.awaitPatch(more, html -> html.contains("count:1;"));
+      assertEquals(List.of(sentAt), callClocks(tab), "the update sent nothing for this call");
+    }
+  }
+
+  @Test
+  void aCallMadeWithTheSocketGoneStartsItsClockWhenOneComesBack() {
+    TestClock clock = new TestClock();
+    try (Harness h = new Harness(Counter::new, b -> b.withClock(clock))) {
+      h.load();
+      h.connect();
+      long seen = lastNumber(h.conn);
+      Tab tab = h.engine.liveTab(h.token);
+      h.disconnect();
+      CompletableFuture<Void> called = new CompletableFuture<>();
+      tab.post(() -> {
+        Tracking.in(tab, null, () -> Counter.called = window().document().title().toCompletableFuture());
+        called.complete(null);
+      });
+      called.join();
+      Harness.eventually(() -> callClocks(tab).equals(List.of(0L)), "it waits for a socket");
+
+      clock.now += 60_000;
+      Harness.FakeConnection next = reconnect(h, seen);
+      next.await(0, m -> "windowCall".equals(m.get("type")));
+      assertEquals(List.of(clock.now), callClocks(tab));
+    }
+  }
+
+  @Test
+  void repliesToResultsAreNotKeptAndOnlyAnswerCallsThisTabMade() {
+    try (Harness h = new Harness(Counter::new, b -> b.withRateLimit(auth -> RateLimit.unlimited()))) {
+      h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(h.html, "call"));
+      Map<String, String> call = h.conn.await(from, m -> "windowCall".equals(m.get("type")));
+      Tab tab = h.engine.liveTab(h.token);
+      h.engine.onMessage(h.conn, "{\"type\":\"seen\",\"n\":" + lastNumber(h.conn) + "}");
+      Harness.eventually(() -> tab.unacknowledged() == 0, "everything so far is acknowledged");
+
+      int before = h.conn.size();
+      for (int i = 0; i < 40; i++) {
+        h.send("type", "callResult", "id", "nobody-" + i, "ok", true, "value", "1");
+      }
+      h.send("type", "callResult", "id", "999999", "ok", true, "value", "1");
+      for (int i = 0; i < 40; i++) {
+        h.send("type", "callResult", "id", call.get("id"), "ok", true, "value", "\"page\"");
+      }
+      Harness.eventually(() -> h.conn.since(before, m -> "callSeen".equals(m.get("type"))).size() == 40, "the real one is answered");
+      assertTrue(h.conn.since(before, m -> "callSeen".equals(m.get("type"))).stream().allMatch(m -> call.get("id").equals(m.get("id"))));
+      assertTrue(h.conn.since(before, m -> "callSeen".equals(m.get("type"))).stream().noneMatch(m -> m.get("n") != null));
+      assertEquals(0, tab.unacknowledged(), "nothing keeps them");
+    }
+  }
+
   @Test
   void updatesWhileDisconnectedCollapseButNeverCrossAnotherMessage() {
     try (Harness h = new Harness(Counter::new)) {

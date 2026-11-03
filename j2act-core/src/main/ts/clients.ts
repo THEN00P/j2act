@@ -32,6 +32,8 @@ interface Client {
 
 export interface ClientsOptions {
   send: Send;
+  /** Whether a message sent now goes into a socket rather than a queue. */
+  connected: () => boolean;
   uploads: Uploads;
   /** Morphs a slot's live element to the slot's fresh markup. */
   morphSlot: (live: Element, html: string) => void;
@@ -39,7 +41,12 @@ export interface ClientsOptions {
 
 export type Clients = ReturnType<typeof createClients>;
 
-export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
+/** At most this many results a second, well under the server's default limit of 30 a second. */
+const RESULTS_PER_SECOND = 20;
+/** A result with no answer after this long goes again: the server's rate limit refuses without one. */
+const RESULT_RETRY_MS = 2000;
+
+export function createClients({ send, connected, uploads, morphSlot }: ClientsOptions) {
   const clients = new Map<string, Client>();       // client id ->
   const liveAnchors = new Set<string>();           // anchors of live components handed to actions
   const lostSlots = new Set<string>();             // slot ids already reported as gone
@@ -126,11 +133,38 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
   }
 
   /** Results the server has not acknowledged: a socket can die with one on its way (ADR 0032). */
-  const unseenResults = new Map<string, ClientMessage>();
+  const unseenResults = new Map<string, { message: ClientMessage; sentAt: number }>();
+  let resultAllowance = RESULTS_PER_SECOND;
+  let resultTimer: ReturnType<typeof setTimeout> | null = null;
 
   function sendResult(id: string, result: ClientMessage): void {
-    unseenResults.set(id, result);
-    send(result);
+    unseenResults.set(id, { message: result, sentAt: 0 });
+    sendResults();
+  }
+
+  /** The oldest that are due, as many as this second allows; a timer sees to the rest while any has no answer. */
+  function sendResults(): void {
+    if (!connected()) {
+      return; // "ready" sends them
+    }
+    const now = Date.now();
+    for (const result of unseenResults.values()) {
+      if (resultAllowance === 0) {
+        break;
+      }
+      if (now - result.sentAt >= RESULT_RETRY_MS) {
+        result.sentAt = now;
+        resultAllowance--;
+        send(result.message);
+      }
+    }
+    if (unseenResults.size > 0 && resultTimer === null) {
+      resultTimer = setTimeout(() => {
+        resultTimer = null;
+        resultAllowance = RESULTS_PER_SECOND;
+        sendResults();
+      }, 1000);
+    }
   }
 
   /** The server has this result. */
@@ -138,9 +172,12 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
     unseenResults.delete(id);
   }
 
-  /** The socket is back: what the old one may have lost goes again, and the server ignores what it settled. */
+  /** The socket is back: what the old one may have lost is due again, and the server ignores what it settled. */
   function resendResults(): void {
-    unseenResults.forEach((result) => send(result));
+    unseenResults.forEach((result) => {
+      result.sentAt = 0;
+    });
+    sendResults();
   }
 
   /** A new server-side tab: it never made those calls. */

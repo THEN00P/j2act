@@ -46,7 +46,7 @@ function start(): void {
   const pending = createPending();
   const uploads = createUploads(send, () => connection.token);
   const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
-  const clients = createClients({ send: send, uploads: uploads, morphSlot: (live, html) => morpher.slot(live, html) });
+  const clients = createClients({ send: send, connected: () => connection.ready, uploads: uploads, morphSlot: (live, html) => morpher.slot(live, html) });
   const navigation = createNavigation(send, base, meta(document, "j2-preload") === "intent");
   const retained = createRetained({
     sendIfReady: (message) => connection.sendIfReady(message),
