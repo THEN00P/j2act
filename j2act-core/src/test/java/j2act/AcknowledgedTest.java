@@ -251,6 +251,39 @@ class AcknowledgedTest {
     }
   }
 
+  private static void sendOnLane(Tab tab, String message) {
+    CompletableFuture<Void> sent = new CompletableFuture<>();
+    tab.post(() -> {
+      tab.send(message);
+      sent.complete(null);
+    });
+    sent.join();
+  }
+
+  @Test
+  void aClientThatStopsAcknowledgingLosesItsSocketButOneLargeMessageDoesNotCloseIt() {
+    try (Harness h = new Harness(Counter::new, b -> b.withMaxUnacknowledged(1000))) {
+      h.load();
+      h.connect();
+      long seen = lastNumber(h.conn);
+      h.engine.onMessage(h.conn, "{\"type\":\"seen\",\"n\":" + seen + "}");
+      Tab tab = h.engine.liveTab(h.token);
+      Harness.eventually(() -> tab.unacknowledged() == 0, "everything so far is acknowledged");
+
+      String large = Json.object("type", "download", "url", "x".repeat(200_000));
+      sendOnLane(tab, large);
+      assertFalse(h.conn.closed, "it went while there was room, however large");
+
+      sendOnLane(tab, Json.object("type", "download", "url", "x".repeat(70_000)));
+      assertTrue(h.conn.closed, "as much again went with the buffer full, and nothing came back");
+      Harness.eventually(() -> !tab.connected(), "the tab knows");
+
+      Harness.FakeConnection next = reconnect(h, seen);
+      assertEquals(2, next.since(0, m -> "download".equals(m.get("type"))).size(), "a client that comes back gets it all");
+      assertFalse(next.closed);
+    }
+  }
+
   @Test
   void updatesWhileDisconnectedCollapseButNeverCrossAnotherMessage() {
     try (Harness h = new Harness(Counter::new)) {

@@ -1606,6 +1606,13 @@ public final class Tab {
     }
     takeNumbersForWaitingUpdates();
     write(unacknowledged.add(message));
+    Connection current = connection;
+    if (current != null && unacknowledged.stuck()) {
+      // What it was sent stays here, and goes again if it comes back and acknowledges (ADR 0032).
+      engine.log(System.Logger.Level.WARNING, "tab " + id + " stopped acknowledging what it was sent; closing its socket", null);
+      engine.onClose(current);
+      current.close();
+    }
   }
 
   /** Lane-only. A message that is worth nothing if it is lost: it takes no number and nothing keeps it. */

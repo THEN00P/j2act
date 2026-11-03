@@ -21,10 +21,15 @@ final class Unacknowledged {
     }
   }
 
+  /** So a small cap, which only asks to stop patches sooner, does not close a socket over a few acknowledgements. */
+  private static final long MIN_PAST_FULL_CHARS = 64 * 1024;
+
   private final long maxChars;
   private final Deque<Sent> sent = new ArrayDeque<>();
   private long lastNumber;
   private long chars;
+  /** What was added with the buffer already full, since it was last below its cap. */
+  private long pastFull;
 
   Unacknowledged(long maxChars) {
     this.maxChars = maxChars;
@@ -35,6 +40,9 @@ final class Unacknowledged {
     long number = ++lastNumber;
     // Every message is a JSON object, so the number goes first.
     String wire = "{\"n\":" + number + "," + message.substring(1);
+    if (full()) {
+      pastFull += wire.length();
+    }
     sent.addLast(new Sent(number, wire));
     chars += wire.length();
     return wire;
@@ -44,6 +52,9 @@ final class Unacknowledged {
   void acknowledge(long upTo) {
     while (!sent.isEmpty() && sent.peekFirst().number <= upTo) {
       chars -= sent.removeFirst().wire.length();
+    }
+    if (!full()) {
+      pastFull = 0;
     }
   }
 
@@ -59,6 +70,14 @@ final class Unacknowledged {
   /** At the cap, the tab stops producing patches: what changes stays marked dirty instead. */
   boolean full() {
     return chars >= maxChars;
+  }
+
+  /**
+   * Some messages still go when the buffer is full, such as the answer to an event. If as much again has gone that
+   * way, this client is not acknowledging. One large patch does not count: it was added below the cap.
+   */
+  boolean stuck() {
+    return pastFull >= Math.max(maxChars, MIN_PAST_FULL_CHARS);
   }
 
   int size() {
