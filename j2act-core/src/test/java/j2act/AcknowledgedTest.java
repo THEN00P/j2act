@@ -227,7 +227,9 @@ class AcknowledgedTest {
   @Test
   void aCallAFullBufferHoldsBackStartsItsClockWhenItGoesOut() {
     TestClock clock = new TestClock();
-    try (Harness h = new Harness(Counter::new, b -> b.withClock(clock).withMaxUnacknowledged(1))) {
+    try (Harness h = new Harness(Counter::new, b -> b
+      .withClock(clock)
+      .withMaxUnacknowledged(1))) {
       h.load();
       h.connect();
       long seen = lastNumber(h.conn);
@@ -256,6 +258,56 @@ class AcknowledgedTest {
       h.load();
       h.connect();
       assertEquals(String.valueOf(h.engine.maxFrameSize()), h.conn.await(0, m -> "ready".equals(m.get("type"))).get("maxFrame"));
+    }
+  }
+
+  static final class Large extends ComponentTag {
+    private final Signal<Integer> version;
+    private final String name;
+
+    Large(Signal<Integer> version, String name) {
+      this.version = version;
+      this.name = name;
+    }
+
+    @Override protected View setup() {
+      return () -> T.span(name + version.get() + ";" + "x".repeat(40_000));
+    }
+  }
+
+  static final class ThreeLarge extends LiveComponent {
+    static volatile Signal<Integer> version;
+
+    @Override protected View setup() {
+      var v = createSignal(0);
+      version = v;
+      return () -> T.page("t", T.div(new Large(v, "a"), new Large(v, "b"), new Large(v, "c")));
+    }
+  }
+
+  @Test
+  void severalLargePatchesInOneUpdateWaitForRoomInsteadOfClosingTheSocket() {
+    try (Harness h = new Harness(ThreeLarge::new, b -> b.withMaxUnacknowledged(1000))) {
+      h.load();
+      h.connect();
+      h.engine.onMessage(h.conn, "{\"type\":\"seen\",\"n\":" + lastNumber(h.conn) + "}");
+      Tab tab = h.engine.liveTab(h.token);
+      Harness.eventually(() -> tab.unacknowledged() == 0, "everything so far is acknowledged");
+
+      int from = h.conn.size();
+      ThreeLarge.version.set(1);
+      h.awaitPatch(from, p -> p.contains("a1;"));
+      CompletableFuture<Void> lane = new CompletableFuture<>();
+      tab.post(() -> lane.complete(null));
+      lane.join();
+      assertFalse(h.conn.closed, "this client has had no chance to acknowledge yet");
+      assertEquals(1, h.conn.since(from, m -> "patch".equals(m.get("type"))).size(), "the rest wait for room");
+
+      h.engine.onMessage(h.conn, "{\"type\":\"seen\",\"n\":" + lastNumber(h.conn) + "}");
+      h.awaitPatch(from, p -> p.contains("b1;"));
+      h.engine.onMessage(h.conn, "{\"type\":\"seen\",\"n\":" + lastNumber(h.conn) + "}");
+      h.awaitPatch(from, p -> p.contains("c1;"));
+      assertFalse(h.conn.closed);
     }
   }
 
