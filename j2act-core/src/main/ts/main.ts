@@ -4,6 +4,7 @@ import { listenForEvents } from "./events.ts";
 import { createMorpher } from "./morph.ts";
 import { createNavigation } from "./navigation.ts";
 import { createPending } from "./pending.ts";
+import { createRepair } from "./repair.ts";
 import type { ClientMessage, ServerMessage } from "./protocol.ts";
 import { navigationType, remember, takePrevious } from "./reopen.ts";
 import { createRetained } from "./retained.ts";
@@ -46,6 +47,7 @@ function start(): void {
   const pending = createPending();
   const uploads = createUploads(send, () => connection.token);
   const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
+  const repair = createRepair((message) => connection.sendIfReady(message));
   const clients = createClients({ send: send, connected: () => connection.ready, uploads: uploads, morphSlot: (live, html) => morpher.slot(live, html) });
   const navigation = createNavigation(send, base, meta(document, "j2-preload") === "intent");
   const retained = createRetained({
@@ -70,7 +72,10 @@ function start(): void {
     patch: (m) => {
       if (!morpher.patch(m.anchor, m.html, m.root === true) && !clients.anchorGone(m.anchor)) {
         // Its place is not on the page, so the page has drifted from the server (ADR 0032).
-        send({ type: "resync" });
+        repair.ask();
+      }
+      if (m.root === true) {
+        repair.arrived();
       }
       clients.scan();
     },
@@ -130,7 +135,7 @@ function start(): void {
         return; // a resend of what an acknowledgement lost on its way did not cover
       }
       if (n > applied + 1) {
-        send({ type: "resync" }); // a gap nothing can fill: the whole page, morphed in
+        repair.ask(); // a gap nothing can fill: the whole page, morphed in
       }
     }
     try {
@@ -167,6 +172,7 @@ function start(): void {
         pending.clear();
         applied = 0;
         clients.forgetResults();
+        repair.arrived();
         morpher.body(doc.body);
         clients.scan();
         remounting = false;

@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-d82187fafec843b1db148613e96cb966a31b40a53072f9c67f782e39a272d9e4 */
+* sources: sha256-09cbeb6ce5ee9deab0fa4b70ee2abf239a13ed83c130a198bf9cf073f63f4dfb */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1914,6 +1914,30 @@
 		};
 	}
 	//#endregion
+	//#region src/main/ts/repair.ts
+	var RETRY_MS$1 = 2e3;
+	/**
+	* Asks for the whole page when the page has drifted from the server (ADR 0032). The server's rate limit refuses a
+	* request without an answer, and what drifted was already acknowledged, so this asks until a whole page arrives.
+	*/
+	function createRepair(send) {
+		let timer = null;
+		return {
+			ask() {
+				if (timer === null) {
+					send({ type: "resync" });
+					timer = setInterval(() => send({ type: "resync" }), RETRY_MS$1);
+				}
+			},
+			arrived() {
+				if (timer !== null) {
+					clearInterval(timer);
+					timer = null;
+				}
+			}
+		};
+	}
+	//#endregion
 	//#region src/main/ts/reopen.ts
 	var KEY = "j2act:tabs";
 	/** URLs remembered per browser tab, oldest dropped first. */
@@ -2263,6 +2287,7 @@
 		const pending = createPending();
 		const uploads = createUploads(send, () => connection.token);
 		const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
+		const repair = createRepair((message) => connection.sendIfReady(message));
 		const clients = createClients({
 			send,
 			connected: () => connection.ready,
@@ -2290,7 +2315,8 @@
 				});
 			},
 			patch: (m) => {
-				if (!morpher.patch(m.anchor, m.html, m.root === true) && !clients.anchorGone(m.anchor)) send({ type: "resync" });
+				if (!morpher.patch(m.anchor, m.html, m.root === true) && !clients.anchorGone(m.anchor)) repair.ask();
+				if (m.root === true) repair.arrived();
 				clients.scan();
 			},
 			head: (m) => morpher.head(m.html),
@@ -2342,7 +2368,7 @@
 			const n = m.n;
 			if (n !== void 0) {
 				if (n <= applied) return;
-				if (n > applied + 1) send({ type: "resync" });
+				if (n > applied + 1) repair.ask();
 			}
 			try {
 				handlers[m.type]?.(m);
@@ -2373,6 +2399,7 @@
 				pending.clear();
 				applied = 0;
 				clients.forgetResults();
+				repair.arrived();
 				morpher.body(doc.body);
 				clients.scan();
 				remounting = false;

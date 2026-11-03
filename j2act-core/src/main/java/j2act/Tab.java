@@ -1136,6 +1136,11 @@ public final class Tab {
     scopes.sort(java.util.Comparator.comparingInt(Tab::depth));
     for (int i = 0; i < scopes.size(); i++) {
       Scope scope = scopes.get(i);
+      if (connection != null && unacknowledged.full()) {
+        // The rest wait for room, or a client that had no chance to acknowledge would look stuck (ADR 0032).
+        unsent.addAll(scopes.subList(i, scopes.size()));
+        return;
+      }
       if (scope.disposed || scope.html == null) {
         continue;
       }
@@ -1260,6 +1265,9 @@ public final class Tab {
       return;
     }
     sendUnsent();
+    if (!unsent.isEmpty()) {
+      return; // What follows comes after these patches, which wait for room.
+    }
     sendHead();
     clients.sendOutbox();
     fireSettled();
