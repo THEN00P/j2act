@@ -145,10 +145,7 @@ final class Scope {
   void bindStore(Store s) {
     store = s;
     s.scope = this;
-    List<Primitive> primitives = s.primitives;
-    for (int i = 0; i < primitives.size(); i++) {
-      bindPrimitive(primitives.get(i), i);
-    }
+    bindAll(s.primitives);
     settledCount = cells.size();
     tab.snapshot.settleUnnamed(this);
   }
@@ -311,16 +308,29 @@ final class Scope {
   }
 
   private void bindFields(ComponentTag component) {
-    List<Primitive> primitives = component.primitives;
-    for (int i = 0; i < primitives.size(); i++) {
-      bindPrimitive(primitives.get(i), i);
-    }
+    bindAll(component.primitives);
     if (view == null && settledCount < 0) {
       try {
         runSetup();
       } catch (NotReadyError | j2act.internal.signals.Errors.StatusError e) {
         // It read a value not loaded yet. The render that follows runs setup again, where a
         // boundary can catch this; what it created so far is found again by creation order.
+      }
+    }
+  }
+
+  /** A memo's first run comes as it binds, so one reading a field after it tracked nothing, and runs again now. */
+  private void bindAll(List<Primitive> primitives) {
+    Primitive.READ_UNBOUND.remove();
+    for (int i = 0; i < primitives.size(); i++) {
+      bindPrimitive(primitives.get(i), i);
+    }
+    if (Primitive.READ_UNBOUND.get() != null) {
+      Primitive.READ_UNBOUND.remove();
+      for (Cell cell : cells) {
+        if (cell instanceof ValueCell) {
+          ((ValueCell) cell).computeAgain();
+        }
       }
     }
   }

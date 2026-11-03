@@ -48,6 +48,9 @@ final class Boundaries {
     Node error;
     Function<Boundary, Object> show;
     Node fb;
+    Node onNode;
+    /** Its `on` has run, so what it reads changing now means a new subject. */
+    boolean onMounted;
   }
 
   private final Runtime rt;
@@ -433,8 +436,7 @@ final class Boundaries {
       }, rt.core.context);
     }
     if (onFn != null) {
-      boolean[] mounted = new boolean[1];
-      rt.core.runWithOwner(owner, () -> rt.core.computed(prev -> {
+      b.onNode = rt.core.runWithOwner(owner, () -> rt.core.computed(prev -> {
         try {
           onFn.get();
         } catch (Throwable e) {
@@ -446,13 +448,14 @@ final class Boundaries {
             return null;
           }
         }
-        if (mounted[0]) {
+        if (b.onMounted) {
           arm(b);
         } else {
-          mounted[0] = true;
+          b.onMounted = true;
         }
         return null;
-      }, null)).config |= CONFIG_REDERIVE;
+      }, null));
+      b.onNode.config |= CONFIG_REDERIVE;
     }
     Map<Object, Object> context = new java.util.HashMap<>(owner.ctx);
     context.put(BOUNDARY, b);
@@ -593,7 +596,16 @@ final class Boundaries {
   /** A fallback on screen renders again; one that is not is made anew if it is ever needed. */
   void redescribed(Node output) {
     Boundary b = byOutput.get(output);
-    if (b == null || b.fb == null) {
+    if (b == null) {
+      return;
+    }
+    if (b.onNode != null) {
+      // It reads what the new description says from now on, which is no change of subject yet.
+      b.onMounted = false;
+      s().dirtyQueue.enqueueSub(b.onNode);
+      s().schedule();
+    }
+    if (b.fb == null) {
       return;
     }
     if (b.fallback) {

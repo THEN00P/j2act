@@ -369,6 +369,13 @@ class ValueCell extends Cell {
     restored = true;
   }
 
+  /** Lane-only. A derived value runs again; anything else has nothing to run. */
+  final void computeAgain() {
+    if (body != null || asyncBody != null) {
+      rt.rerun(node);
+    }
+  }
+
   /**
    * One parameter of this route, as Solid Router's createMemoObject gives them: a memo per key, so what reads one runs
    * again only when that one changes, not on every navigation. Off the lane nothing tracks, so the route will do.
