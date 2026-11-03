@@ -361,6 +361,7 @@ class RandomAppTest {
       var child = createSignal(false);
       var draft = createRetained("draft", 0);
       var meter = createClient(ClientTest.Meter.class);
+      var inner = createClient(ClientTest.Meter.class);
       String expected = idIn(url);
 
       var guard = createMemo((AsyncSupplier<String>) () -> {
@@ -385,11 +386,11 @@ class RandomAppTest {
           if (!java.util.Objects.equals(id, expected)) {
             world.violation(me + ": its first load read id " + id);
           }
-        } else if ((id + "." + n + "." + queryParam("q")).equals(me.lastInputs) && me.refreshes == me.lastRefreshes && !plainFails(id)) {
+        } else if ((id + "." + n).equals(me.lastInputs) && me.refreshes == me.lastRefreshes && !plainFails(id)) {
           // In Solid a later read runs a memo that failed again, so only one that worked counts.
           world.violation(me + ": a load ran again for the same " + id + "." + n);
         }
-        me.lastInputs = id + "." + n + "." + queryParam("q");
+        me.lastInputs = id + "." + n;
         me.lastRefreshes = me.refreshes;
         return load(me, "a load", plainValue(id, n), plainFails(id) ? planned("load") : null, n);
       });
@@ -485,7 +486,8 @@ class RandomAppTest {
             .withFallback((e, reset) -> T.div(
               T.span("[stale=err]"),
               T.button("sretry" + me.id).onClick(click -> reset.run()))),
-          loading(() -> T.span("[remote=" + shared.remote.get() + "]")).withFallback(T.span("[remote=loading]"))));
+          loading(() -> T.span("[remote=" + shared.remote.get() + "]")).withFallback(T.span("[remote=loading]")),
+          loading(() -> T.div().withId("inner" + me.id + "n" + shared.n.get()).withClient(inner)).withFallback(T.span("[inner=loading]"))));
         if (child.get()) {
           kids.add(new Child(url));
         }

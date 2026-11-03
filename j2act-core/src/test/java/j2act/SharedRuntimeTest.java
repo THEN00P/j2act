@@ -102,6 +102,53 @@ class SharedRuntimeTest {
     }
   }
 
+  // ---- a boundary's fallback
+
+  static final class ClicksInAFallback extends ComponentTag {
+    @Override protected View setup() {
+      var clicks = createSignal(0);
+      return () -> T.button("clicks:" + clicks.get() + ";").onClick(e -> clicks.set(clicks.get() + 1));
+    }
+  }
+
+  static final class HasAFallback extends LiveComponent {
+    static volatile CompletableFuture<String> landing;
+    static volatile Signal<Integer> shown;
+
+    @Override protected View setup() {
+      var word = createSignal(0);
+      shown = word;
+      var value = createMemo((AsyncSupplier<String>) () -> landing);
+      return () -> T.page("t",
+        loading(() -> T.span("value:" + value.get() + ";"))
+          .withFallback(T.div(T.span("waiting:" + word.get() + ";"), new ClicksInAFallback())));
+    }
+  }
+
+  @Test
+  void aComponentInAFallbackSendsItsOwnPatches() {
+    HasAFallback.landing = new CompletableFuture<>();
+    try (Harness h = new Harness(HasAFallback::new)) {
+      assertTrue(h.load().contains("clicks:0;"), h.html);
+      h.connect();
+      int next = h.conn.size();
+      h.click(Harness.clickOn(h.html, "clicks:0;"));
+      h.awaitPatch(next, p -> p.contains("clicks:1;"));
+    }
+  }
+
+  @Test
+  void aFallbackFollowsANewDescription() {
+    HasAFallback.landing = new CompletableFuture<>();
+    try (Harness h = new Harness(HasAFallback::new)) {
+      assertTrue(h.load().contains("waiting:0;"), h.html);
+      h.connect();
+      int next = h.conn.size();
+      HasAFallback.shown.set(1);
+      h.awaitPatch(next, p -> p.contains("waiting:1;"));
+    }
+  }
+
   // ---- what is around code that runs again later
 
   static final class WaitsPage extends LiveComponent {
