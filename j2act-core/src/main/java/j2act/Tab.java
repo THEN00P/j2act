@@ -1116,11 +1116,13 @@ public final class Tab {
   void queuePatch(Scope scope) {
     if (scope.preloading()) {
       forget(scope);
+      scope.pageHas(scope.html);
       return;
     }
     if (scope == root && !shellSent) {
       // The served page takes this HTML itself.
       scope.sent = scope.html;
+      scope.pageHas(scope.html);
       return;
     }
     unsent.add(scope);
@@ -1146,11 +1148,13 @@ public final class Tab {
       }
       if (!scope.onThePage()) {
         scope.sent = null;
+        scope.pageHas(scope.html);
         continue;
       }
       if (connection == null) {
         if (scope != root) {
           stream.patch(scope.anchor, scope.html);
+          scope.pageHas(scope.html);
         } else {
           unsent.add(scope);
         }
@@ -1170,6 +1174,7 @@ public final class Tab {
         }
         send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope.parent == null ? true : null, "html", scope.html));
         engine.stats.patches.incrementAndGet();
+        scope.pageHas(scope.html);
         behindThisPatch(scope, scope.html, scopes, i + 1);
       }
     }
@@ -1245,19 +1250,13 @@ public final class Tab {
     if (unacknowledged.full()) {
       return; // What rendered waits for room, and goes when the client catches up.
     }
-    // What replaces the page on screen is ready, and that page has gone: it cannot wait for anything else.
-    boolean replaced = leftPage != null && leftPage() == null;
     if (hold == Hold.SHOWING_LOADING) {
-      if (replaced) {
-        sendUnsent();
-      } else {
-        sendLeftPage();
-      }
+      sendLeftPage();
       return; // loading() stays up until its minimum time; the timer sends what waited
     }
     if (hold == Hold.AWAITING_DATA) {
       // It rendered, so the new page's loads started, but the old page stays on screen.
-      if (replaced || !awaitingData()) {
+      if (!awaitingData()) {
         showHeldPage(holdSeq);
       } else {
         sendLeftPage();
@@ -1656,11 +1655,6 @@ public final class Tab {
       page.sent = null;
       markDirty(page);
     }
-  }
-
-  /** The client is behind by as much as it may be, so what the server did has not all gone to it yet. */
-  boolean waitingForRoom() {
-    return unacknowledged.full();
   }
 
   /** Messages the client has not acknowledged. */

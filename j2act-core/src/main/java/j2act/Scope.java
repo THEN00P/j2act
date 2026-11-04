@@ -58,7 +58,7 @@ final class Scope {
   Node contentNode;
   /** A view failed with nothing to catch it: the page keeps what it shows, and a served page reports it. */
   Throwable renderFailure;
-  /** Children no pass placed again and handlers no element uses: they go when the pass shows (ADR 0033). */
+  /** Children no pass placed again and handlers no element uses: the page has them until the patch goes (ADR 0013). */
   final List<Scope> removing = new ArrayList<>();
   final List<String> droppedHandlers = new ArrayList<>();
   Map<String, Scope> children = new LinkedHashMap<>();
@@ -501,20 +501,30 @@ final class Scope {
     });
   }
 
-  /** The second half: the frame can show, so what it replaced goes, and its patch is on its way. */
+  /** The second half: the frame can show, so its patch is on its way, and what it replaced goes with that. */
   private void shown(String value) {
     html = value;
+    if (value == embedded) {
+      // What is around it brings this along, in its own patch.
+      sent = value;
+    } else if (value.equals(sent)) {
+      pageHas(value);
+    } else {
+      tab.queuePatch(this);
+    }
+  }
+
+  /** The page has this, or never will: nothing on it can reach what the pass behind it removed. */
+  void pageHas(String what) {
     for (Scope old : removing) {
       old.dispose();
     }
     removing.clear();
     tab.handlers.drop(this);
-    if (value == embedded) {
-      sent = value;
-      return;
-    }
-    if (!value.equals(sent)) {
-      tab.queuePatch(this);
+    for (Scope child : new ArrayList<>(children.values())) {
+      if (!child.disposed && child.html != null && !child.detached && what.contains(child.html)) {
+        child.pageHas(child.html);
+      }
     }
   }
 
@@ -523,7 +533,8 @@ final class Scope {
    * not shown itself, a patch would find nothing, and what is around it brings this along when it shows it.
    */
   boolean onThePage() {
-    if (detached || parent == null) {
+    if (detached || parent == null || parent.removing.contains(this)) {
+      // A pass of its parent removed this, but the patch saying so has not gone.
       return true;
     }
     if (parent.html == null || !parent.html.contains("data-j2-scope=\"" + anchor + "\"")) {
