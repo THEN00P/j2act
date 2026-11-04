@@ -1245,20 +1245,6 @@ class RandomAppTest {
       clickEverything(false);
     }
 
-    /** A child its page stopped placing, whose patch a hold keeps back: it goes when the hold ends (ADR 0011). */
-    private boolean childGoing(BrowserTab tab, String ping) {
-      Component shown = w.components.get(Integer.parseInt(ping.substring("ping".length())));
-      if (shown == null || !shown.kind.equals("child")) {
-        return false;
-      }
-      for (Component c : w.components.values()) {
-        if (c.tab == tab.tab && !c.toggled && tab.doc.contains("[page" + c.id + "=")) {
-          return true;
-        }
-      }
-      return false;
-    }
-
     /**
      * What the page shows works. On the way, a page that had a load of its own under way when it was left ended at the
      * navigation, as it would keep the next page waiting, so what it shows can be refused until that page comes. So can
@@ -1280,12 +1266,12 @@ class RandomAppTest {
             continue;
           }
           // Its replacement can be on its way when a click is, as on any network: the answer comes after it.
-          boolean gone = !tab.doc.contains(">" + ping + "<") || tab.tab.waitingForRoom();
+          boolean gone = !tab.doc.contains(">" + ping + "<");
           if (tab.endedEarly != tab.tab.pagesEndedEarly) {
             tab.endedEarly = tab.tab.pagesEndedEarly;
             tab.ended.addAll(pings);
           }
-          if (!onTheWay || !(gone || tab.ended.contains(ping) || childGoing(tab, ping))) {
+          if (!onTheWay || !(gone || tab.ended.contains(ping))) {
             fail(ping + " on tab" + tabs.indexOf(tab) + " does not work\n" + log + "\nits page: " + tab.doc);
           }
         }
