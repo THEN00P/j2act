@@ -818,7 +818,9 @@ public final class Tab {
           markDirty(kept.get(i).scope);
         }
       }
+      boolean noReturn = left != null && left.noReturn;
       leftPage = new LeftPage(common, ids, kept, shows);
+      leftPage.noReturn = noReturn;
     }
     for (int i = frames.size() - 1; i >= common; i--) {
       ComponentTag leaving = frames.remove(i);
@@ -1106,6 +1108,16 @@ public final class Tab {
   void forgetScope(Scope scope) {
     dirty.remove(scope);
     unsent.remove(scope);
+  }
+
+  /** Whether a patch still to go, of this scope or what is around it, covers it. */
+  boolean patchWaitsAround(Scope scope) {
+    for (Scope s = scope; s != null; s = s.parent) {
+      if (unsent.contains(s)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** The second half of a scope's render effect: its patch goes when this flush ends, if it can. */

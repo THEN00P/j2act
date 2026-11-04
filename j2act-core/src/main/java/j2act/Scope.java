@@ -494,7 +494,10 @@ final class Scope {
       // What is around it brings this along, in its own patch.
       sent = value;
     } else if (value.equals(sent)) {
-      pageHas(value);
+      // If what is around it has a patch waiting, this came along in that, and goes when it does.
+      if (!tab.patchWaitsAround(this)) {
+        pageHas(value);
+      }
     } else {
       tab.queuePatch(this);
     }
@@ -511,6 +514,9 @@ final class Scope {
       if (!child.disposed && child.html != null && !child.detached && what.contains(child.html)) {
         child.pageHas(child.html);
       }
+    }
+    if (fallbackScope != null && fallbackScope.html != null && what.contains(fallbackScope.html)) {
+      fallbackScope.pageHas(fallbackScope.html);
     }
   }
 
