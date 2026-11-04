@@ -334,6 +334,41 @@ class LeavingPageTest {
   }
 
   @Test
+  void aPageWithALoadOfItsOwnUnderWayKeepsWorkingAndHoldsNothing() {
+    try (Harness h = new Harness(ROUTES, LONG_HOLD)) {
+      h.load("/shell/item/1", Exchange.empty());
+      h.connect();
+      String add = Harness.clickOn(h.html, "add");
+      // Its own load is under way when the user goes elsewhere, and it does not end.
+      go(h, "/shell/item/away");
+      int start = h.conn.size();
+      go(h, "/shell/quick/x");
+      h.awaitPatch(start, p -> p.contains("quick;"));
+      h.conn.await(start, m -> "url".equals(m.get("type")) && "/shell/quick/x".equals(m.get("url")));
+      Tab tab = h.engine.liveTab(h.token);
+      Harness.eventually(() -> !tab.rt.holding(), "nothing it was loading holds the page that replaced it");
+      assertFalse(slow.isDone());
+      h.click(add);
+      assertEquals(1, h.engine.stats().rejectedEvents.get(), "once replaced, it is gone");
+    }
+  }
+
+  @Test
+  void aButtonWorksOnAPageWithALoadOfItsOwnUnderWayWhileTheNextOneLoads() {
+    try (Harness h = new Harness(ROUTES, LONG_HOLD)) {
+      h.load("/shell/item/1", Exchange.empty());
+      h.connect();
+      String add = Harness.clickOn(h.html, "add");
+      go(h, "/shell/item/away");
+      go(h, "/alone/slow/x");
+      int clicked = h.conn.size();
+      h.click(add);
+      assertEquals(0, h.engine.stats().rejectedEvents.get(), "the page on screen refused a click");
+      h.awaitPatch(clicked, p -> p.contains("count=1;"));
+    }
+  }
+
+  @Test
   void aPageBeingLeftNoLongerSaysWhereTheUserGoes() {
     try (Harness h = new Harness(ROUTES, NO_HOLD)) {
       h.load("/alone/item/1", Exchange.empty());
