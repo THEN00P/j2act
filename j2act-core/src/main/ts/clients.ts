@@ -49,6 +49,7 @@ const RESULT_RETRY_MS = 2000;
 export function createClients({ send, connected, uploads, morphSlot }: ClientsOptions) {
   const clients = new Map<string, Client>();       // client id ->
   const liveAnchors = new Set<string>();           // anchors of live components handed to actions
+  const goneAnchors = new Set<string>();           // those that left the document, for which patches can still come
   const lostSlots = new Set<string>();             // slot ids already reported as gone
   const serverAttrs = new WeakMap<Element, string[]>(); // the attributes the last render set
   const stylesheets = new Map<string, Promise<void>>(); // url -> its <link> having loaded
@@ -98,11 +99,15 @@ export function createClients({ send, connected, uploads, morphSlot }: ClientsOp
 
   /**
    * A patch found no element for its anchor. If it was live content given to an action, the
-   * client dropped it, and the server stops patching it.
+   * client dropped it, and the server stops patching it. It says so again on each later patch: a
+   * resend can bring several, and the rate limit can refuse this message without an answer.
    */
   function anchorGone(anchor: string): boolean {
     if (liveAnchors.delete(anchor)) {
+      goneAnchors.add(anchor);
       console.warn("j2act: live content " + anchor + " passed to a client action left the document (ADR 0022)");
+    }
+    if (goneAnchors.has(anchor)) {
       send({ type: "liveGone", anchor: anchor });
       return true;
     }

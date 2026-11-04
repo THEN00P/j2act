@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-09cbeb6ce5ee9deab0fa4b70ee2abf239a13ed83c130a198bf9cf073f63f4dfb */
+* sources: sha256-05c72de4c84f150531cc8b2dbf0881d391dbf512373a2fb0565e47b31157a4e7 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -33,6 +33,7 @@
 	function createClients({ send, connected, uploads, morphSlot }) {
 		const clients = /* @__PURE__ */ new Map();
 		const liveAnchors = /* @__PURE__ */ new Set();
+		const goneAnchors = /* @__PURE__ */ new Set();
 		const lostSlots = /* @__PURE__ */ new Set();
 		const serverAttrs = /* @__PURE__ */ new WeakMap();
 		const stylesheets = /* @__PURE__ */ new Map();
@@ -69,11 +70,15 @@
 		}
 		/**
 		* A patch found no element for its anchor. If it was live content given to an action, the
-		* client dropped it, and the server stops patching it.
+		* client dropped it, and the server stops patching it. It says so again on each later patch: a
+		* resend can bring several, and the rate limit can refuse this message without an answer.
 		*/
 		function anchorGone(anchor) {
 			if (liveAnchors.delete(anchor)) {
+				goneAnchors.add(anchor);
 				console.warn("j2act: live content " + anchor + " passed to a client action left the document (ADR 0022)");
+			}
+			if (goneAnchors.has(anchor)) {
 				send({
 					type: "liveGone",
 					anchor

@@ -1243,7 +1243,7 @@ public final class Tab {
       return;
     }
     if (unacknowledged.full()) {
-      return; // What changed stays dirty, and renders once with its latest state when the client catches up.
+      return; // What rendered waits for room, and goes when the client catches up.
     }
     // What replaces the page on screen is ready, and that page has gone: it cannot wait for anything else.
     boolean replaced = leftPage != null && leftPage() == null;

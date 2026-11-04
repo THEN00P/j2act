@@ -133,13 +133,16 @@ describe("Clients", () => {
         fileType: "text/plain" }]);
     });
 
-    it("tracks live content, and reports it once it left the document", () => {
+    it("tracks live content, and reports it for as long as patches come for it", () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const root = clients.revive('{"$live":"<div data-j2-scope=\\"a7\\">x</div>"}') as Element;
       expect(root.getAttribute("data-j2-scope")).toBe("a7");
-      clients.anchorGone("a7");
-      clients.anchorGone("a7");
-      expect(sent).toEqual([{ type: "liveGone", anchor: "a7" }]);
+      // Each is no damage to the page, or it would be repaired: patches buffered in a drop can follow, and a report can be lost.
+      expect(clients.anchorGone("a7")).toBe(true);
+      expect(clients.anchorGone("a7")).toBe(true);
+      expect(sent).toEqual([{ type: "liveGone", anchor: "a7" }, { type: "liveGone", anchor: "a7" }]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(clients.anchorGone("a8")).toBe(false);
       warn.mockRestore();
     });
   });
