@@ -115,12 +115,9 @@ public final class Tab {
   private String heldUrl;
   /** What the page shows while a navigation's page loads: it works until that page replaces it. */
   private LeftPage leftPage;
-  private boolean goingByItsOwnLoad;
   private int preloadSeq;
   /** Whose handler is running. Lane-only. */
   private Scope dispatching;
-  /** How often a page on screen ended at the navigation, since it could not stay; see leaveFrames. */
-  volatile int pagesEndedEarly;
 
   /** A notFound()/redirect() raised before the socket attached, for the SSR loop to act on. */
   volatile RouteException pendingRoute;
@@ -704,6 +701,7 @@ public final class Tab {
     if (back != null) {
       for (ComponentTag frame : back.frames) {
         frame.scope.frameRoute.follow();
+        frame.scope.leftBehind(false);
       }
       leftPage = null;
     }
@@ -734,6 +732,8 @@ public final class Tab {
     final List<ComponentTag> frames;
     /** The URL it shows. */
     final RouteInfo route;
+    /** One of its own loads redirected it, and will not land, so going back mounts it anew. */
+    boolean noReturn;
 
     LeftPage(int common, List<String> ids, List<ComponentTag> frames, RouteInfo route) {
       this.common = common;
@@ -768,7 +768,7 @@ public final class Tab {
   /** The left page if this navigation goes back to it: nothing replaced it, so it just carries on. */
   private LeftPage leftPageFor(int common, List<PageMatch.Frame> next) {
     LeftPage left = leftPage();
-    if (left == null || left.common != common || left.ids.size() != next.size() - common) {
+    if (left == null || left.noReturn || left.common != common || left.ids.size() != next.size() - common) {
       return null;
     }
     for (int i = 0; i < left.ids.size(); i++) {
@@ -780,10 +780,9 @@ public final class Tab {
   }
 
   /**
-   * Lane-only. What the page shows stays until what replaces it comes: its parent's pass or the new root's patch ends
-   * it. Until then it reads its own URL, so it does not load for the one being navigated to. What no user ever saw goes
-   * now. So does a page with a load of its own under way in a hold: the next page could not show until it lands, and a
-   * load that ends in a redirect never does.
+   * Lane-only. What the page shows stays until what replaces it comes: the patch of its parent or of the new root ends
+   * it. Until then it reads its own URL, so it does not load for the one being navigated to, and what it is loading
+   * holds nothing back. What no user ever saw goes now, with the patch that was to bring it.
    */
   private void leaveFrames(int common) {
     if (frames.size() <= common) {
@@ -792,13 +791,10 @@ public final class Tab {
     LeftPage left = leftPage();
     // With a page already left under them, it is the rest of what the page shows, and they read the URL it shows.
     int end = left == null ? frames.size() : left.common;
-    boolean onScreen = common < end && !goingByItsOwnLoad;
+    boolean onScreen = common < end;
     for (int i = common; onScreen && i < end; i++) {
       Scope scope = frames.get(i).scope;
-      onScreen = scope != null && scope.onThePageAllTheWay() && !holdingForItself(scope, left);
-    }
-    if (!onScreen && common < end && frames.get(common).scope != null && frames.get(common).scope.onThePageAllTheWay()) {
-      pagesEndedEarly++;
+      onScreen = scope != null && scope.onThePageAllTheWay();
     }
     if (onScreen) {
       List<String> ids = new ArrayList<>(frameIds.subList(common, end));
@@ -806,6 +802,7 @@ public final class Tab {
       FrameRouteCell top = kept.get(0).scope.frameRoute;
       RouteInfo shows = left != null ? left.route : (RouteInfo) top.peek();
       top.stop(shows);
+      kept.get(0).scope.leftBehind(true);
       if (left != null) {
         ids.addAll(left.ids);
         kept.addAll(left.frames);
@@ -822,24 +819,10 @@ public final class Tab {
       frameIds.remove(i);
       if ((!onScreen || i >= end) && i > 0 && leaving.scope != null) {
         leaving.scope.dispose();
+        // A patch still waiting carries it, dead: the next pass of what is around it brings what replaces it.
+        unsent.remove(frames.get(i - 1).scope);
       }
     }
-  }
-
-  /** Whether this frame, kept, would keep the next page from showing. A page left under it says nothing about it. */
-  private boolean holdingForItself(Scope scope, LeftPage left) {
-    if (!rt.holding()) {
-      return false;
-    }
-    if (left == null) {
-      return !scope.settledBelow();
-    }
-    java.util.Set<Scope> below = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-    for (ComponentTag frame : frames) {
-      below.add(frame.scope);
-    }
-    below.add(left.top());
-    return scope.loadingBesides(below);
   }
 
   /** Lane-only. Nothing of it may go on, as when the identity it ran as is gone. */
@@ -925,17 +908,11 @@ public final class Tab {
     if (scope != null && scope.disposed) {
       return;
     }
+    if (!onLeftPage(scope)) {
+      onRouteException(e);
+    }
     if (onLeftPage(scope)) {
-      discardLeftPage();
-      pagesEndedEarly++;
-    } else {
-      // That load never lands, so the page it is on cannot stay until the next one comes.
-      goingByItsOwnLoad = true;
-      try {
-        onRouteException(e);
-      } finally {
-        goingByItsOwnLoad = false;
-      }
+      leftPage.noReturn = true;
     }
   }
 

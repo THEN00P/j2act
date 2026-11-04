@@ -78,6 +78,7 @@ final class Scope {
   Tab.PreloadedRoute preload;
   /** On a route frame: the route it and what it places read; see FrameRouteCell. */
   FrameRouteCell frameRoute;
+  private boolean leftBehind;
   boolean dirty;
   boolean rendering;
   boolean disposed;
@@ -424,21 +425,6 @@ final class Scope {
     return true;
   }
 
-  /** A load of this scope, or of what it placed other than these, is under way. */
-  boolean loadingBesides(java.util.Set<Scope> besides) {
-    for (Cell cell : cells) {
-      if (cell instanceof ValueCell && ((ValueCell) cell).loading()) {
-        return true;
-      }
-    }
-    for (Scope child : children.values()) {
-      if (!besides.contains(child) && child.loadingBesides(besides)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   /** The first half of this scope's render effect. */
   Object renderPass(Object previous) {
     String out;
@@ -590,11 +576,20 @@ final class Scope {
     return rendered;
   }
 
+  /** A navigation is leaving this, or no longer is: see Tab.leaveFrames. */
+  void leftBehind(boolean behind) {
+    leftBehind = behind;
+    tab.rt.setLeftBehind(slot, behind);
+  }
+
   void dispose() {
     if (disposed) {
       return;
     }
     disposed = true;
+    if (leftBehind) {
+      leftBehind(false);
+    }
     for (Scope child : new ArrayList<>(children.values())) {
       child.dispose();
     }
