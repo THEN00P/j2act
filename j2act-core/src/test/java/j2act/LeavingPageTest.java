@@ -315,21 +315,30 @@ class LeavingPageTest {
   }
 
   @Test
-  void aPageStillShownAfterTheHoldEndedKeepsWorking() {
+  void theAddressBarWaitsForThePageHoweverLongTheHold() throws Exception {
     try (Harness h = new Harness(ROUTES, NO_HOLD)) {
       h.load("/shell/item/1", Exchange.empty());
       h.connect();
       String add = Harness.clickOn(h.html, "add");
       int start = h.conn.size();
       go(h, "/shell/slow/x");
-      h.conn.await(start, m -> "url".equals(m.get("type")));
+      // The hold has no time at all, and there is still nothing to show for this URL.
+      Thread.sleep(100);
       settle(h);
+      assertEquals(0, h.conn.since(start, m -> "url".equals(m.get("type"))).size(), "a reload would go to a page nobody has seen");
 
       int clicked = h.conn.size();
       h.click(add);
       assertEquals(0, h.engine.stats().rejectedEvents.get(), "nothing replaced it yet");
       h.awaitPatch(clicked, p -> p.contains("count=1;"));
       assertEquals(1, loads.get());
+
+      int landing = h.conn.size();
+      slow.complete("landed");
+      h.conn.await(landing, m -> "url".equals(m.get("type")));
+      java.util.List<Map<String, String>> sent = h.conn.since(landing, m -> "patch".equals(m.get("type")) || "url".equals(m.get("type")));
+      assertTrue(sent.get(0).get("html").contains("slow landed;"), "the page first, then its URL: " + sent);
+      assertEquals("/shell/slow/x", sent.get(sent.size() - 1).get("url"));
     }
   }
 

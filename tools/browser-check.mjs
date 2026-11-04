@@ -262,6 +262,8 @@ async function main() {
     await js(`${navLink(slow)}.click(); ${btn("A:")}.click(); true`);
     check(`a button on the page being left works and shows it, ${how}`, await until(`${btn("A:")}?.textContent === 'A: 2'`, 1500));
     check(`that page stays until the next is ready, ${how}`, await js(`location.pathname === '/' && !document.body.textContent.includes('Slow page')`));
+    await sleep(1300); // past pendingMs: there is still nothing to show, so a reload must come back here
+    check(`the address bar waits for the page, ${how}`, await js(`location.pathname === '/' && !document.body.textContent.includes('Slow page')`));
     await until(`${h1} === 'Slow page ready'`, 4000);
     check(`the slow page comes in the end, ${how}`, await js(`${h1} === 'Slow page ready' && location.pathname.startsWith('/slow')`));
 
