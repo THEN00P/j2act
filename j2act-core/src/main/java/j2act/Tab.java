@@ -113,6 +113,9 @@ public final class Tab {
   private Hold hold = Hold.NONE;
   private int holdSeq;
   private String heldUrl;
+  private RouteInfo heldRoute;
+  /** The route of the URL the browser last heard, which a page being left goes on reading. */
+  private RouteInfo addressBar;
   /** What the page shows while a navigation's page loads: it works until that page replaces it. */
   private LeftPage leftPage;
   private int preloadSeq;
@@ -689,6 +692,9 @@ public final class Tab {
     }
     guards = new ArrayList<>(match.guards);
     RouteInfo nextRoute = new RouteInfo(resolution.url, match.params);
+    if (addressBar == null) {
+      addressBar = nextRoute; // The page as it was served.
+    }
     // The same page with new parameters: what it reloads holds the route, as any write (ADR 0031).
     routeCell.write(nextRoute);
     if (adopted != null) {
@@ -800,7 +806,7 @@ public final class Tab {
       List<String> ids = new ArrayList<>(frameIds.subList(common, end));
       List<ComponentTag> kept = new ArrayList<>(frames.subList(common, end));
       FrameRouteCell top = kept.get(0).scope.frameRoute;
-      RouteInfo shows = left != null ? left.route : (RouteInfo) top.peek();
+      RouteInfo shows = left != null ? left.route : addressBar != null ? addressBar : (RouteInfo) top.peek();
       top.stop(shows);
       kept.get(0).scope.leftBehind(true);
       if (left != null) {
@@ -846,6 +852,7 @@ public final class Tab {
     applyRoute(resolution);
     String finalMode = resolution.url.equals(url) ? mode : "pop".equals(mode) ? "replace" : mode;
     heldUrl = Json.object("type", "url", "url", engine.contextPath + resolution.url, "mode", finalMode);
+    heldRoute = (RouteInfo) rt.peek(routeCell.node);
     hold = Hold.AWAITING_DATA;
     int seq = ++holdSeq;
     engine.later(this, engine.pendingMillis, () -> {
@@ -867,6 +874,7 @@ public final class Tab {
     if (heldUrl != null) {
       send(heldUrl);
       heldUrl = null;
+      addressBar = heldRoute;
     }
     if (stillLoading && engine.pendingMinMillis > 0) {
       hold = Hold.SHOWING_LOADING;
