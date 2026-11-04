@@ -581,6 +581,8 @@ public final class Tab {
     resolvedAuth = fresh;
     authCell.write(fresh);
     engine.identityChanged(this, fresh);
+    // The guards below are those of the page to come, so nothing else would stop this page's handlers.
+    discardLeftPage();
     Verdict verdict = checkGuards(guards, fresh);
     if (verdict.kind == Verdict.Kind.REDIRECT) {
       navigate(verdict.target, "replace");

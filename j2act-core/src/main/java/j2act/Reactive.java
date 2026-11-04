@@ -283,7 +283,10 @@ public final class Reactive {
         return;
       }
       watcher[0] = tab.rt.runWithOwner(null, () -> tab.rt.createSlotOwner(null));
-      tab.rt.runWithOwner(watcher[0], () -> start.apply(tab.rt)).whenComplete((value, failure) -> {
+      tab.rt.runWithOwner(watcher[0], () -> start.apply(tab.rt)).whenComplete((value, thrown) -> {
+        // A stage built on the engine's future wraps what it fails with.
+        Throwable failure = thrown instanceof java.util.concurrent.CompletionException && thrown.getCause() != null
+          ? thrown.getCause() : thrown;
         if (failure instanceof j2act.internal.signals.Errors.TimeoutError) {
           result.completeExceptionally(new java.util.concurrent.TimeoutException(
             what + "(...) was not satisfied within " + timeout));
