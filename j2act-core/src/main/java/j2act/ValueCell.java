@@ -366,7 +366,11 @@ class ValueCell extends Cell {
   /** A snapshot's value, before anyone read this cell. */
   final void restoreValue(Object restoredValue) {
     if (restore != null) {
-      restore.accept(restoredValue);
+      // A store first asked for in a view is restored while that view runs, and this may write what it likes.
+      rt.runWithOwner(null, () -> rt.untrack(() -> {
+        restore.accept(restoredValue);
+        return null;
+      }));
       tab.flush();
     } else {
       initialize(restoredValue);
