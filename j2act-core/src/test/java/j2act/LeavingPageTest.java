@@ -368,6 +368,29 @@ class LeavingPageTest {
   }
 
   @Test
+  void aLinkTheUserChangedTheirMindAboutNeverReachesTheAddressBarAndThePageReadsWhatIsThere() {
+    try (Harness h = new Harness(ROUTES, LONG_HOLD)) {
+      h.load("/shell/item/1", Exchange.empty());
+      h.connect();
+      String add = Harness.clickOn(h.html, "add");
+      int start = h.conn.size();
+      // The same page with another parameter, still loading, and then somewhere else.
+      go(h, "/shell/item/away");
+      go(h, "/alone/slow/x");
+      assertEquals(0, h.conn.since(start, m -> "url".equals(m.get("type"))).size(), "the address bar keeps the page on screen");
+
+      h.click(add);
+      assertEquals("1", seenInHandler, "the page reads the URL in the address bar, not one the user left behind");
+
+      slow.complete("landed");
+      h.conn.await(start, m -> "url".equals(m.get("type")));
+      java.util.List<Map<String, String>> urls = h.conn.since(start, m -> "url".equals(m.get("type")));
+      assertEquals(1, urls.size(), "only where the user ended up: " + urls);
+      assertEquals("/alone/slow/x", urls.get(0).get("url"));
+    }
+  }
+
+  @Test
   void aPageBeingLeftNoLongerSaysWhereTheUserGoes() {
     try (Harness h = new Harness(ROUTES, NO_HOLD)) {
       h.load("/alone/item/1", Exchange.empty());
