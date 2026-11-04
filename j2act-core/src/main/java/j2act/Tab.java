@@ -871,19 +871,30 @@ public final class Tab {
       sendUnsent();
       sendHead();
     }
-    if (heldUrl != null) {
-      send(heldUrl);
-      heldUrl = null;
-      addressBar = heldRoute;
-    }
+    sendHeldUrl();
     if (stillLoading && engine.pendingMinMillis > 0) {
       hold = Hold.SHOWING_LOADING;
       engine.later(this, engine.pendingMinMillis, () -> {
         if (hold == Hold.SHOWING_LOADING && holdSeq == seq) {
           hold = Hold.NONE;
           sendUnsent();
+          sendHeldUrl();
         }
       });
+    }
+  }
+
+  /**
+   * The URL goes once there is something for it to name: the page it left has been replaced, what reads the route has
+   * taken the change, and its patches have gone. As a browser keeps the old URL until a response starts, so a reload
+   * before that comes back to the page on screen.
+   */
+  private void sendHeldUrl() {
+    if (heldUrl != null && connection != null && unsent.isEmpty() && leftPage() == null
+      && ((RouteInfo) rt.committed(routeCell.node)).url().equals(heldRoute.url())) {
+      send(heldUrl);
+      heldUrl = null;
+      addressBar = heldRoute;
     }
   }
 
@@ -1252,6 +1263,7 @@ public final class Tab {
     if (!unsent.isEmpty()) {
       return; // What follows comes after these patches, which wait for room.
     }
+    sendHeldUrl();
     sendHead();
     clients.sendOutbox();
     fireSettled();
