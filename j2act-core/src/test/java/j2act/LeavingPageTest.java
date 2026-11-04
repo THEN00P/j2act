@@ -384,6 +384,34 @@ class LeavingPageTest {
   }
 
   @Test
+  void aPageBeingLeftStopsWorkingOnceTheUserIsNoLongerWhoItRanFor() {
+    java.util.concurrent.atomic.AtomicReference<AuthCtx> user =
+      new java.util.concurrent.atomic.AtomicReference<>(AuthCtx.of("ada", Collections.emptySet()));
+    Middleware signedIn = auth -> auth.equals(AuthCtx.anonymous()) ? Verdict.forbidden() : Verdict.allow();
+    PageResolver routes = path -> path.startsWith("/guarded/")
+      ? PageMatch.of(Collections.singletonList(frame("item", Item::new)), Collections.singletonMap("id", "1"),
+        Collections.singletonList(signedIn))
+      : ROUTES.resolve(path);
+    try (Harness h = new Harness(routes, LONG_HOLD.andThen(b -> b.withIdentity(ex -> user.get())))) {
+      h.load("/guarded/item/1", Exchange.empty());
+      h.connect();
+      String add = Harness.clickOn(h.html, "add");
+      // What it goes to has no guard, so nothing else stands between the handler and a user who lost access.
+      go(h, "/alone/slow/x");
+      int clicked = h.conn.size();
+      h.click(add);
+      h.awaitPatch(clicked, p -> p.contains("count=1;"));
+      assertEquals(0, h.engine.stats().rejectedEvents.get(), "still signed in");
+
+      user.set(AuthCtx.anonymous());
+      int after = h.conn.size();
+      h.click(add);
+      assertEquals(1, h.engine.stats().rejectedEvents.get(), "a handler of the guarded page ran for a signed-out user");
+      assertNoPatchHas(h, after, "count=2;");
+    }
+  }
+
+  @Test
   void aTabEndingDuringTheHoldEndsThePageItStillShowed() {
     Harness h = new Harness(ROUTES, LONG_HOLD);
     try {

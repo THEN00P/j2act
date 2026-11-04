@@ -384,6 +384,28 @@ class SharedRuntimeTest {
     }
   }
 
+  static final class WaitsTooLong extends LiveComponent {
+    static volatile CompletableFuture<Object> waiting;
+
+    @Override protected View setup() {
+      return () -> T.page("t", T.button("wait").onClick(e -> {
+        waiting = until(() -> null, java.time.Duration.ofMillis(20));
+      }));
+    }
+  }
+
+  @Test
+  void untilThatRunsOutOfTimeFailsWithATimeoutException() throws Exception {
+    try (Harness h = new Harness(WaitsTooLong::new)) {
+      h.load();
+      h.connect();
+      h.click(Harness.clickOn(h.html, "wait"));
+      Throwable failure = org.junit.jupiter.api.Assertions.assertThrows(java.util.concurrent.ExecutionException.class,
+        () -> WaitsTooLong.waiting.get(5, java.util.concurrent.TimeUnit.SECONDS)).getCause();
+      org.junit.jupiter.api.Assertions.assertTrue(failure instanceof java.util.concurrent.TimeoutException, String.valueOf(failure));
+    }
+  }
+
   // ---- what is around code that runs again later
 
   static final class WaitsPage extends LiveComponent {
