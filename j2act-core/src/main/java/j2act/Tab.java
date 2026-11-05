@@ -1261,6 +1261,11 @@ public final class Tab {
       onRouteException(route);
     }
     settled();
+    // An error shown around the page being left replaced it, so nothing is left to wait for what replaces it.
+    LeftPage left = leftPage();
+    if (left != null && left.top().underError()) {
+      discardLeftPage();
+    }
     if (connection == null) {
       if (stream != null) {
         sendUnsent();

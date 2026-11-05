@@ -407,6 +407,16 @@ final class Scope {
     return false;
   }
 
+  /** An errored(...) at or above this scope shows its fallback, so this scope's output is gone from the page. */
+  boolean underError() {
+    for (Scope s = this; s != null; s = s.parent) {
+      if (tab.showingError.contains(s)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Everything loading in this component and below finished, and it was rendered. */
   boolean settledBelow() {
     if (dirty || disposed || effect != null && tab.rt.pending(effect)) {
