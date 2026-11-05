@@ -549,17 +549,6 @@ class RandomAppTest {
     int acks;
     final Map<String, String> ackResults = new HashMap<>();
     final List<String> calls = new ArrayList<>();
-    int endedEarly;
-    final java.util.Set<String> ended = new java.util.HashSet<>();
-
-    /** A page left before it ever showed ended, and a pass that carried it can still reach the page for a moment. */
-    void leavingWhatNeverShowed(World world) {
-      for (Component c : world.components.values()) {
-        if (c.tab == tab && !doc.contains(">ping" + c.id + "<")) {
-          ended.add("ping" + c.id);
-        }
-      }
-    }
     /** The callback a client action was given, by call. */
     final Map<String, String> callbacks = new HashMap<>();
     final List<String> problems = new ArrayList<>();
@@ -877,7 +866,6 @@ class RandomAppTest {
           h.engine.onMessage(tab.conn, Json.object("type", "preload", "url", hover));
         }
         log.append("tab").append(tabs.indexOf(tab)).append(" navigates to ").append(url).append('\n');
-        tab.leavingWhatNeverShowed(w);
         tab.wanted = url;
         h.engine.onMessage(tab.conn, Json.object("type", "navigate", "url", url, "mode", "push"));
       } else if (op < 42 && !w.pending.isEmpty()) {
@@ -1245,24 +1233,8 @@ class RandomAppTest {
       clickEverything(false);
     }
 
-    /** A child its page stopped placing, whose patch a hold keeps back: it goes when the hold ends (ADR 0011). */
-    private boolean childGoing(BrowserTab tab, String ping) {
-      Component shown = w.components.get(Integer.parseInt(ping.substring("ping".length())));
-      if (shown == null || !shown.kind.equals("child")) {
-        return false;
-      }
-      for (Component c : w.components.values()) {
-        if (c.tab == tab.tab && !c.toggled && tab.doc.contains("[page" + c.id + "=")) {
-          return true;
-        }
-      }
-      return false;
-    }
-
     /**
-     * What the page shows works. On the way, a page that had a load of its own under way when it was left ended at the
-     * navigation, as it would keep the next page waiting, so what it shows can be refused until that page comes. So can
-     * a page left before it ever showed.
+     * What the page shows works. On the way, only what replaced it being on its way excuses a refusal, as on any network.
      */
     void clickEverything(boolean onTheWay) {
       long rejected = h.engine.stats().rejectedEvents.get();
@@ -1280,12 +1252,8 @@ class RandomAppTest {
             continue;
           }
           // Its replacement can be on its way when a click is, as on any network: the answer comes after it.
-          boolean gone = !tab.doc.contains(">" + ping + "<") || tab.tab.waitingForRoom();
-          if (tab.endedEarly != tab.tab.pagesEndedEarly) {
-            tab.endedEarly = tab.tab.pagesEndedEarly;
-            tab.ended.addAll(pings);
-          }
-          if (!onTheWay || !(gone || tab.ended.contains(ping) || childGoing(tab, ping))) {
+          boolean gone = !tab.doc.contains(">" + ping + "<");
+          if (!onTheWay || !gone) {
             fail(ping + " on tab" + tabs.indexOf(tab) + " does not work\n" + log + "\nits page: " + tab.doc);
           }
         }

@@ -62,6 +62,23 @@ async function main() {
   check("morph keeps the same DOM node for A", await js(`${btn("A:")} === window.__a`));
   check("sibling B untouched", await js(`${btn("B:")} === window.__b && window.__b.textContent === 'B: 0'`));
 
+  // 1b. a real click, as a script's .click() is not: it also focuses the button, and Idiomorph must still update it
+  const mouseClick = async (expr) => {
+    const at = await js(`(() => { const e = ${expr}; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    await cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y });
+    await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button: "left", clickCount: 1 });
+    await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x, y: at.y, button: "left", clickCount: 1 });
+  };
+  await mouseClick(btn("B:"));
+  check("a real mouse click updates the button it focused", await until(`${btn("B:")}?.textContent === 'B: 1'`, 1500),
+    await js(`${btn("B:")}.textContent`));
+  check("that button has the focus", await js(`document.activeElement === ${btn("B:")}`));
+  await mouseClick(btn("B:"));
+  check("and a second one updates it again", await until(`${btn("B:")}?.textContent === 'B: 2'`, 1500),
+    await js(`${btn("B:")}.textContent`));
+  await js(`${btn("B:")}.blur(); true`);
+
   // 2. page re-render keeps held instance state and child state
   await js(`${btn("A:")}.click(); ${btn("Held instance")}.click(); true`);
   await until(`${btn("Held instance")}?.textContent === 'Held instance: 1' && ${btn("A:")}?.textContent === 'A: 2'`);
@@ -89,11 +106,11 @@ async function main() {
   await js(`window.__save = ${btn("Save")}; window.__save.click(); true`);
   const instant = await js(`window.__save.hasAttribute('data-pending') && window.__save.textContent.includes('Saving…')`);
   check("pending swaps in synchronously on click", instant);
-  await js(`window.__save.click(); true`); // second click while pending must be dropped
+  await js(`window.__save.click(); true`); // a second click while pending queues behind the first
   const saveBtn = `[...document.querySelectorAll('button')].find(b => /Sav/.test(b.textContent))`;
   const settled = await until(`!${saveBtn}.hasAttribute('data-pending') && ${saveBtn}.textContent.trim() === 'Save' && !document.body.textContent.includes('last saved: never')`, 4000);
   const savedOnce = await js(`document.body.textContent.match(/last saved: (\\S+)/)[1]`);
-  check("repeat click while pending was dropped (one save)", /\d\d:\d\d:\d\d/.test(savedOnce), savedOnce);
+  check("a repeat click while pending ran after the first", /\d\d:\d\d:\d\d/.test(savedOnce), savedOnce);
   check("pending reverts after the handler finishes", settled);
 
   // 6. scheduler pushes arrive
@@ -262,6 +279,8 @@ async function main() {
     await js(`${navLink(slow)}.click(); ${btn("A:")}.click(); true`);
     check(`a button on the page being left works and shows it, ${how}`, await until(`${btn("A:")}?.textContent === 'A: 2'`, 1500));
     check(`that page stays until the next is ready, ${how}`, await js(`location.pathname === '/' && !document.body.textContent.includes('Slow page')`));
+    await sleep(1300); // past pendingMs: there is still nothing to show, so a reload must come back here
+    check(`the address bar waits for the page, ${how}`, await js(`location.pathname === '/' && !document.body.textContent.includes('Slow page')`));
     await until(`${h1} === 'Slow page ready'`, 4000);
     check(`the slow page comes in the end, ${how}`, await js(`${h1} === 'Slow page ready' && location.pathname.startsWith('/slow')`));
 

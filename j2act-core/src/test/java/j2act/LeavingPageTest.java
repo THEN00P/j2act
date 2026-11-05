@@ -28,6 +28,8 @@ class LeavingPageTest {
   static final AtomicInteger cleanups = new AtomicInteger();
   static volatile String seenInHandler;
   static volatile CompletableFuture<String> slow;
+  static volatile CompletableFuture<String> awayGate;
+  static volatile String awayTo;
 
   static final class Shell extends Layout {
     @Override protected LayoutView setup() {
@@ -51,8 +53,8 @@ class LeavingPageTest {
         String id = pathParam("id");
         loads.incrementAndGet();
         if ("away".equals(id)) {
-          return slow.thenApply(value -> {
-            throw RouteException.redirect("/alone/quick/x");
+          return awayGate.thenApply(value -> {
+            throw RouteException.redirect(awayTo);
           });
         }
         return CompletableFuture.completedFuture("for" + id);
@@ -123,6 +125,8 @@ class LeavingPageTest {
     cleanups.set(0);
     seenInHandler = null;
     slow = new CompletableFuture<>();
+    awayGate = slow;
+    awayTo = "/alone/quick/x";
   }
 
   private static void go(Harness h, String url) {
@@ -315,21 +319,106 @@ class LeavingPageTest {
   }
 
   @Test
-  void aPageStillShownAfterTheHoldEndedKeepsWorking() {
+  void theAddressBarWaitsForThePageHoweverLongTheHold() throws Exception {
     try (Harness h = new Harness(ROUTES, NO_HOLD)) {
       h.load("/shell/item/1", Exchange.empty());
       h.connect();
       String add = Harness.clickOn(h.html, "add");
       int start = h.conn.size();
       go(h, "/shell/slow/x");
-      h.conn.await(start, m -> "url".equals(m.get("type")));
+      // The hold has no time at all, and there is still nothing to show for this URL.
+      Thread.sleep(100);
       settle(h);
+      assertEquals(0, h.conn.since(start, m -> "url".equals(m.get("type"))).size(), "a reload would go to a page nobody has seen");
 
       int clicked = h.conn.size();
       h.click(add);
       assertEquals(0, h.engine.stats().rejectedEvents.get(), "nothing replaced it yet");
       h.awaitPatch(clicked, p -> p.contains("count=1;"));
       assertEquals(1, loads.get());
+
+      int landing = h.conn.size();
+      slow.complete("landed");
+      h.conn.await(landing, m -> "url".equals(m.get("type")));
+      java.util.List<Map<String, String>> sent = h.conn.since(landing, m -> "patch".equals(m.get("type")) || "url".equals(m.get("type")));
+      assertTrue(sent.get(0).get("html").contains("slow landed;"), "the page first, then its URL: " + sent);
+      assertEquals("/shell/slow/x", sent.get(sent.size() - 1).get("url"));
+    }
+  }
+
+  @Test
+  void aPageWithALoadOfItsOwnUnderWayKeepsWorkingAndHoldsNothing() {
+    try (Harness h = new Harness(ROUTES, LONG_HOLD)) {
+      h.load("/shell/item/1", Exchange.empty());
+      h.connect();
+      String add = Harness.clickOn(h.html, "add");
+      // Its own load is under way when the user goes elsewhere, and it does not end.
+      go(h, "/shell/item/away");
+      int start = h.conn.size();
+      go(h, "/shell/quick/x");
+      h.awaitPatch(start, p -> p.contains("quick;"));
+      h.conn.await(start, m -> "url".equals(m.get("type")) && "/shell/quick/x".equals(m.get("url")));
+      Tab tab = h.engine.liveTab(h.token);
+      Harness.eventually(() -> !tab.rt.holding(), "nothing it was loading holds the page that replaced it");
+      assertFalse(slow.isDone());
+      h.click(add);
+      assertEquals(1, h.engine.stats().rejectedEvents.get(), "once replaced, it is gone");
+    }
+  }
+
+  @Test
+  void aButtonWorksOnAPageWithALoadOfItsOwnUnderWayWhileTheNextOneLoads() {
+    try (Harness h = new Harness(ROUTES, LONG_HOLD)) {
+      h.load("/shell/item/1", Exchange.empty());
+      h.connect();
+      String add = Harness.clickOn(h.html, "add");
+      go(h, "/shell/item/away");
+      go(h, "/alone/slow/x");
+      // Its view reads that load, so what the click changes shows once it lands, as on any page in a hold.
+      h.click(add);
+      assertEquals(0, h.engine.stats().rejectedEvents.get(), "the page on screen refused a click");
+    }
+  }
+
+  @Test
+  void aLinkTheUserChangedTheirMindAboutNeverReachesTheAddressBarAndThePageReadsWhatIsThere() {
+    try (Harness h = new Harness(ROUTES, LONG_HOLD)) {
+      h.load("/shell/item/1", Exchange.empty());
+      h.connect();
+      String add = Harness.clickOn(h.html, "add");
+      int start = h.conn.size();
+      // The same page with another parameter, still loading, and then somewhere else.
+      go(h, "/shell/item/away");
+      go(h, "/alone/slow/x");
+      assertEquals(0, h.conn.since(start, m -> "url".equals(m.get("type"))).size(), "the address bar keeps the page on screen");
+
+      h.click(add);
+      assertEquals("1", seenInHandler, "the page reads the URL in the address bar, not one the user left behind");
+
+      slow.complete("landed");
+      h.conn.await(start, m -> "url".equals(m.get("type")));
+      java.util.List<Map<String, String>> urls = h.conn.since(start, m -> "url".equals(m.get("type")));
+      assertEquals(1, urls.size(), "only where the user ended up: " + urls);
+      assertEquals("/alone/slow/x", urls.get(0).get("url"));
+    }
+  }
+
+  @Test
+  void aPageItsOwnLoadRedirectedIsMountedAnewEvenAfterItsLayoutWasLeftToo() {
+    awayGate = new CompletableFuture<>();
+    awayTo = "/shell/slow/x";
+    try (Harness h = new Harness(ROUTES, LONG_HOLD)) {
+      h.load("/shell/item/1", Exchange.empty());
+      h.connect();
+      go(h, "/shell/item/away");
+      // Its load redirects it to a sibling that is slow, and it stays on screen with that load never landing.
+      awayGate.complete("landed");
+      settle(h);
+      settle(h);
+      go(h, "/alone/slow/x");
+      assertEquals(1, setups.get());
+      go(h, "/shell/item/2");
+      assertEquals(2, setups.get(), "going back to it would find a load that never lands");
     }
   }
 

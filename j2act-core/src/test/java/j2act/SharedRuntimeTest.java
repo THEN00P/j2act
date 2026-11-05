@@ -126,6 +126,55 @@ class SharedRuntimeTest {
     }
   }
 
+  static final class GoesFromAFallback extends ComponentTag {
+    @Override protected View setup() {
+      return () -> T.button("goes").onClick(e -> { });
+    }
+  }
+
+  static final class InAFallback extends ComponentTag {
+    private final Signal<Integer> word;
+
+    InAFallback(Signal<Integer> word) {
+      this.word = word;
+    }
+
+    @Override protected View setup() {
+      return () -> T.div(T.span("inner:" + word.get() + ";"), word.get() == 0 ? new GoesFromAFallback() : null);
+    }
+  }
+
+  static final class RemovesFromAFallback extends LiveComponent {
+    static volatile Signal<Integer> shown;
+
+    @Override protected View setup() {
+      var word = createSignal(0);
+      shown = word;
+      var value = createMemo((AsyncSupplier<String>) () -> new CompletableFuture<String>());
+      return () -> T.page("t",
+        T.span("page:" + word.get() + ";"),
+        loading(() -> T.span("value:" + value.get() + ";"))
+          .withFallback(T.div(T.span("waiting:" + word.get() + ";"), new InAFallback(word))));
+    }
+  }
+
+  @Test
+  void whatAFallbackNoLongerHasGoesWithThePatchRemovingIt() {
+    try (Harness h = new Harness(RemovesFromAFallback::new)) {
+      h.load();
+      h.connect();
+      String goes = Harness.clickOn(h.html, "goes");
+      int next = h.conn.size();
+      RemovesFromAFallback.shown.set(1);
+      h.awaitPatch(next, p -> p.contains("inner:1;"));
+      CompletableFuture<Void> lane = new CompletableFuture<>();
+      h.engine.liveTab(h.token).post(() -> lane.complete(null));
+      lane.join();
+      h.click(goes);
+      assertEquals(1, h.engine.stats().rejectedEvents.get(), "the page no longer has that button");
+    }
+  }
+
   @Test
   void aComponentInAFallbackSendsItsOwnPatches() {
     HasAFallback.landing = new CompletableFuture<>();

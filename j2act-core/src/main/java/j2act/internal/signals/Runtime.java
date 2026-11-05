@@ -525,6 +525,11 @@ public final class Runtime {
     boundaries.setDetached(tabRoot, hidden);
   }
 
+  /** What is pending under this owner holds nothing, as under a hidden tab: a page a navigation is leaving. */
+  public void setLeftBehind(Owner owner, boolean behind) {
+    boundaries.setLeftBehind(owner, behind);
+  }
+
   /** What createRevealOrder sets up: boundaries created under this owner show in this order. */
   public Owner createRevealOwner(Supplier<String> order, Supplier<Boolean> collapsed) {
     return reveal.createRevealOwner(order, collapsed);

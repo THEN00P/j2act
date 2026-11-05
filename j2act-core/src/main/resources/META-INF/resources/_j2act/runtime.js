@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-05c72de4c84f150531cc8b2dbf0881d391dbf512373a2fb0565e47b31157a4e7 */
+* sources: sha256-aff68eaa608a76a0f5d5cb7439977834f1a9f05a7e8fef87dfb36d1cf8ccdb82 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -541,16 +541,17 @@
 		const timers = /* @__PURE__ */ new WeakMap();
 		const throttles = /* @__PURE__ */ new WeakMap();
 		/**
-		* Sends the event to the handler the render bound. A click or submit blocks its element until
-		* the ack, with pending UI on pendingOn, which for a submit is the submitter button.
+		* Sends the event to the handler the render bound. A click or submit has pending UI until its
+		* ack, on pendingOn, which for a submit is the submitter button. Clicks queue, as one socket and
+		* one lane keep them in order; a submit blocks its form, so a double submit dies here.
 		*/
 		function dispatch(el, type, value, extra, pendingOn) {
-			const blocking = type === "click" || type === "submit";
-			if (blocking && pending.has(el)) return;
+			const showsPending = type === "click" || type === "submit";
+			if (pending.blocks(el)) return;
 			const handlerId = el.getAttribute("data-j2-" + type);
 			if (!handlerId) return;
 			const id = String(++ackSeq);
-			if (blocking) pending.start(el, id, pendingOn || el);
+			if (showsPending) pending.start(el, id, pendingOn || el, type === "submit");
 			send({
 				type: "event",
 				id,
@@ -608,7 +609,7 @@
 		* Its result, or its error, then goes to the handler like an event's value.
 		*/
 		function boundAction(el, type, extra) {
-			if (pending.has(el)) return;
+			if (pending.blocks(el)) return;
 			const call = JSON.parse(el.getAttribute("data-j2-call-" + type));
 			let result;
 			try {
@@ -1703,6 +1704,7 @@
 		const callbacks = {
 			beforeAttributeUpdated: (name, el) => {
 				if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) return false;
+				if (name === "value" && el === document.activeElement) return false;
 				if ((name === "value" || name === "checked" || name === "selected") && el.hasAttribute("data-j2-controlled")) return el.getAttribute("data-j2-controlled").split(" ").indexOf(name) >= 0;
 				return true;
 			},
@@ -1711,17 +1713,16 @@
 					syncClient(oldNode, newNode);
 					return false;
 				}
+				if (oldNode === document.activeElement && oldNode.nodeType === 1 && newNode.nodeType === 1 && (oldNode.tagName === "TEXTAREA" || oldNode.hasAttribute("contenteditable"))) newNode.innerHTML = oldNode.innerHTML;
 				return true;
 			}
 		};
 		const config = {
 			morphStyle: "outerHTML",
-			ignoreActiveValue: true,
 			callbacks
 		};
 		const slotConfig = {
 			morphStyle: "innerHTML",
-			ignoreActiveValue: true,
 			callbacks
 		};
 		const headConfig = {
@@ -1866,33 +1867,40 @@
 	//#endregion
 	//#region src/main/ts/pending.ts
 	/**
-	* Pending UI (ADR 0013): instant on click or submit, reverted on the ack unless a morph already
-	* replaced it. The element is blocked meanwhile; swap is where withPending markup goes, which for
-	* a submit is the submitter button.
+	* Pending UI (ADR 0013): instant on click or submit, reverted on the last ack unless a morph
+	* already replaced it. A submit blocks its form meanwhile, and clicks queue; swap is where
+	* withPending markup goes, which for a submit is the submitter button.
 	*/
 	function createPending() {
 		const inFlight = /* @__PURE__ */ new Map();
 		const blocked = /* @__PURE__ */ new Set();
+		const counts = /* @__PURE__ */ new Map();
 		const saved = /* @__PURE__ */ new WeakMap();
 		return {
+			/** An event of this element is in flight, so its pending state is the browser's. */
 			has(el) {
+				return counts.has(el);
+			},
+			/** It takes nothing more until its event is answered. */
+			blocks(el) {
 				return blocked.has(el);
 			},
 			get size() {
 				return inFlight.size;
 			},
-			start(el, ack, swap) {
-				blocked.add(el);
+			start(el, ack, swap, blocking = false) {
+				if (blocking) blocked.add(el);
 				inFlight.set(ack, {
 					el,
 					swap
 				});
-				for (const target of [el, swap]) {
+				for (const target of /* @__PURE__ */ new Set([el, swap])) {
+					counts.set(target, (counts.get(target) ?? 0) + 1);
 					target.setAttribute("data-pending", "");
 					target.setAttribute("aria-busy", "true");
 				}
 				const tpl = swap.querySelector(":scope > template[data-j2-pending]");
-				if (tpl) {
+				if (tpl && !swap.querySelector(":scope > [data-j2-pending-live]")) {
 					saved.set(swap, swap.innerHTML);
 					swap.innerHTML = tpl.outerHTML + "<span data-j2-pending-live>" + tpl.innerHTML + "</span>";
 				}
@@ -1902,11 +1910,17 @@
 				inFlight.delete(ack);
 				if (!entry) return;
 				blocked.delete(entry.el);
-				for (const target of [entry.el, entry.swap]) {
-					target.removeAttribute("data-pending");
-					target.removeAttribute("aria-busy");
+				for (const target of /* @__PURE__ */ new Set([entry.el, entry.swap])) {
+					const left = (counts.get(target) ?? 1) - 1;
+					if (left > 0) counts.set(target, left);
+					else {
+						counts.delete(target);
+						target.removeAttribute("data-pending");
+						target.removeAttribute("aria-busy");
+					}
 				}
 				const swap = entry.swap;
+				if (counts.has(swap)) return;
 				const before = saved.get(swap);
 				saved.delete(swap);
 				if (before !== void 0 && swap.querySelector(":scope > [data-j2-pending-live]")) swap.innerHTML = before;
@@ -1915,6 +1929,7 @@
 			clear() {
 				inFlight.clear();
 				blocked.clear();
+				counts.clear();
 			}
 		};
 	}

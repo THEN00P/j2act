@@ -27,12 +27,13 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
   const throttles = new WeakMap<Element, { trailing: string | null }>(); // while its interval runs
 
   /**
-   * Sends the event to the handler the render bound. A click or submit blocks its element until
-   * the ack, with pending UI on pendingOn, which for a submit is the submitter button.
+   * Sends the event to the handler the render bound. A click or submit has pending UI until its
+   * ack, on pendingOn, which for a submit is the submitter button. Clicks queue, as one socket and
+   * one lane keep them in order; a submit blocks its form, so a double submit dies here.
    */
   function dispatch(el: Element, type: string, value: string | null, extra?: EventFields, pendingOn?: Element): void {
-    const blocking = type === "click" || type === "submit";
-    if (blocking && pending.has(el)) {
+    const showsPending = type === "click" || type === "submit";
+    if (pending.blocks(el)) {
       return;
     }
     const handlerId = el.getAttribute("data-j2-" + type);
@@ -40,8 +41,8 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
       return;
     }
     const id = String(++ackSeq);
-    if (blocking) {
-      pending.start(el, id, pendingOn || el);
+    if (showsPending) {
+      pending.start(el, id, pendingOn || el, type === "submit");
     }
     const message: ClientMessage = { type: "event", id: id, handler: handlerId, value: value == null ? "" : value, ...extra };
     send(message);
@@ -100,7 +101,7 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
    * Its result, or its error, then goes to the handler like an event's value.
    */
   function boundAction(el: Element, type: string, extra?: EventFields): void {
-    if (pending.has(el)) {
+    if (pending.blocks(el)) {
       return;
     }
     const call: BoundCall = JSON.parse(el.getAttribute("data-j2-call-" + type)!);

@@ -311,6 +311,130 @@ class AcknowledgedTest {
     }
   }
 
+  static final class ShowsAButton extends LiveComponent {
+    static volatile Signal<Integer> version;
+    static volatile Signal<Boolean> shown;
+    static final java.util.concurrent.atomic.AtomicInteger clicks = new java.util.concurrent.atomic.AtomicInteger();
+
+    @Override protected View setup() {
+      var v = createSignal(0);
+      var s = createSignal(true);
+      version = v;
+      shown = s;
+      return () -> T.page("t",
+        T.span(v.get() + ";" + "x".repeat(40_000)),
+        s.get() ? T.button("gone soon").onClick(e -> clicks.incrementAndGet()) : T.span("no button"));
+    }
+  }
+
+  @Test
+  void aButtonKeepsWorkingUntilThePatchRemovingItGoes() {
+    ShowsAButton.clicks.set(0);
+    try (Harness h = new Harness(ShowsAButton::new, b -> b.withMaxUnacknowledged(1000))) {
+      h.load();
+      h.connect();
+      h.engine.onMessage(h.conn, "{\"type\":\"seen\",\"n\":" + lastNumber(h.conn) + "}");
+      Tab tab = h.engine.liveTab(h.token);
+      Harness.eventually(() -> tab.unacknowledged() == 0, "everything so far is acknowledged");
+      String button = Harness.clickOn(h.html, "gone soon");
+
+      // This fills what the client may be behind by, so the next patch waits for room.
+      int from = h.conn.size();
+      ShowsAButton.version.set(1);
+      h.awaitPatch(from, p -> p.contains("1;"));
+      ShowsAButton.shown.set(false);
+      CompletableFuture<Void> lane = new CompletableFuture<>();
+      tab.post(() -> lane.complete(null));
+      lane.join();
+      assertEquals(0, h.conn.since(from, m -> "patch".equals(m.get("type")) && m.get("html").contains("no button")).size());
+
+      h.click(button);
+      assertEquals(1, ShowsAButton.clicks.get(), "the page still has that button");
+      assertEquals(0, h.engine.stats().rejectedEvents.get());
+
+      h.engine.onMessage(h.conn, "{\"type\":\"seen\",\"n\":" + lastNumber(h.conn) + "}");
+      h.awaitPatch(from, p -> p.contains("no button"));
+      CompletableFuture<Void> after = new CompletableFuture<>();
+      tab.post(() -> after.complete(null));
+      after.join();
+      h.click(button);
+      assertEquals(1, ShowsAButton.clicks.get(), "now it does not");
+      assertEquals(1, h.engine.stats().rejectedEvents.get());
+    }
+  }
+
+  static final class Grandchild extends ComponentTag {
+    @Override protected View setup() {
+      return () -> T.button("grandchild").onClick(e -> ShowsAButton.clicks.incrementAndGet());
+    }
+  }
+
+  static final class Child extends ComponentTag {
+    private final Signal<Boolean> shown;
+    private final Signal<String> label;
+
+    Child(Signal<Boolean> shown, Signal<String> label) {
+      this.shown = shown;
+      this.label = label;
+    }
+
+    @Override protected View setup() {
+      return () -> T.div(T.span("label:" + label.get() + ";"), shown.get() ? new Grandchild() : null);
+    }
+  }
+
+  static final class HasAGrandchild extends LiveComponent {
+    static volatile Signal<Integer> version;
+    static volatile Signal<Boolean> shown;
+    static volatile Signal<String> label;
+
+    @Override protected View setup() {
+      var v = createSignal(0);
+      var s = createSignal(true);
+      var l = createSignal("");
+      version = v;
+      shown = s;
+      label = l;
+      return () -> T.page("t",
+        T.span(v.get() + ";" + s.get() + ";" + "x".repeat(40_000)),
+        new Child(s, l));
+    }
+  }
+
+  private static void settled(Tab tab) {
+    CompletableFuture<Void> lane = new CompletableFuture<>();
+    tab.post(() -> lane.complete(null));
+    lane.join();
+  }
+
+  @Test
+  void aChildReturningToWhatItsParentsWaitingPatchCarriesLeavesTheButtonsThePageStillHas() {
+    ShowsAButton.clicks.set(0);
+    try (Harness h = new Harness(HasAGrandchild::new, b -> b.withMaxUnacknowledged(1000))) {
+      h.load();
+      h.connect();
+      h.engine.onMessage(h.conn, "{\"type\":\"seen\",\"n\":" + lastNumber(h.conn) + "}");
+      Tab tab = h.engine.liveTab(h.token);
+      Harness.eventually(() -> tab.unacknowledged() == 0, "everything so far is acknowledged");
+      String button = Harness.clickOn(h.html, "grandchild");
+
+      int from = h.conn.size();
+      HasAGrandchild.version.set(1);
+      h.awaitPatch(from, p -> p.contains("1;"));
+      // The parent's next pass carries the child without its grandchild, and its patch waits for room.
+      HasAGrandchild.shown.set(false);
+      settled(tab);
+      HasAGrandchild.label.set("x");
+      settled(tab);
+      HasAGrandchild.label.set("");
+      settled(tab);
+
+      h.click(button);
+      assertEquals(1, ShowsAButton.clicks.get(), "the page still has that button");
+      assertEquals(0, h.engine.stats().rejectedEvents.get());
+    }
+  }
+
   @Test
   void repliesToResultsAreNotKeptAndOnlyAnswerCallsThisTabMade() {
     try (Harness h = new Harness(Counter::new, b -> b.withRateLimit(auth -> RateLimit.unlimited()))) {

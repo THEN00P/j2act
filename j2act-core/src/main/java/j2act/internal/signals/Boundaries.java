@@ -60,6 +60,7 @@ final class Boundaries {
   private final Runtime rt;
   private final Set<Boundary> collecting = new LinkedHashSet<>();
   private final Map<Node, Boundary> byOutput = new java.util.IdentityHashMap<>();
+  private final Set<Owner> leftBehind = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
   Boundaries(Runtime rt) {
     this.rt = rt;
@@ -68,7 +69,7 @@ final class Boundaries {
     q.freshHook = (node, held) -> !truthy(held)
       ? ((node.statusFlags & STATUS_UNINITIALIZED) != 0 ? catchStatus(node, STATUS_PENDING, null) : armedOver(node))
       : Boolean.FALSE;
-    q.hiddenHook = r -> hiddenBy(r) != null || detachedOver(r);
+    q.hiddenHook = r -> hiddenBy(r) != null || detachedOver(r) || leftBehind(r);
     q.boundarySeamHook = this::boundarySeam;
     q.heldRunHook = this::heldRun;
   }
@@ -232,6 +233,33 @@ final class Boundaries {
       }
     }
     return null;
+  }
+
+  /**
+   * Not in Solid, whose router's old page goes with the transition (ADR 0033, F-3): what a navigation is leaving is on
+   * screen until what replaces it comes, and must not keep that from coming.
+   */
+  void setLeftBehind(Owner owner, boolean behind) {
+    if (behind) {
+      leftBehind.add(owner);
+    } else {
+      leftBehind.remove(owner);
+    }
+    if (s().transactionsOpen()) {
+      s().schedule();
+    }
+  }
+
+  private boolean leftBehind(Node r) {
+    if (leftBehind.isEmpty()) {
+      return false;
+    }
+    for (Owner o = r; o != null; o = o.parent) {
+      if (leftBehind.contains(o)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private boolean detachedOver(Node r) {
