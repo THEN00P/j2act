@@ -277,6 +277,34 @@ class StreamingTest {
     }
   }
 
+  static final class RecoversInItsFallback extends LiveComponent {
+    @Override protected View setup() {
+      var failing = createMemo(() -> load("failing"));
+      var recovery = createMemo(() -> load("recovery"));
+      return () -> T.page("t", T.div(
+        Reactive.errored(() -> T.span("failing:" + failing.get()))
+          .withFallback(err -> Reactive.loading(() -> T.span("recovery:" + recovery.get()))
+            .withFallback(T.span("recovering")))));
+    }
+  }
+
+  @Test
+  void aLoadInsideAnErrorFallbackKeepsTheResponseOpenForIt() {
+    LOADS.clear();
+    load("failing").completeExceptionally(new IllegalStateException("on purpose"));
+    try (Harness h = new Harness(RecoversInItsFallback::new)) {
+      ServeResult result = h.engine.serve("/", Exchange.empty());
+      assertTrue(result.streams(), "the fallback is on the page, and what is in it is on its way: " + result.html());
+      assertTrue(result.html().contains("recovering"), result.html());
+      Sink sink = new Sink();
+      result.streamTo(sink);
+      assertEquals(0, sink.ends.get());
+      load("recovery").complete("back");
+      Harness.eventually(() -> sink.ends.get() == 1, "the stream ends once it has landed");
+      assertTrue(sink.all().contains("recovery:back"), sink.all());
+    }
+  }
+
   static final class MissingInside extends LiveComponent {
     @Override protected View setup() {
       var value = createMemo(() -> load("missing"));

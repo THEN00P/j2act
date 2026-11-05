@@ -76,6 +76,18 @@ class RenderingTest {
   }
 
   @Test
+  void aTextareaRendersWithoutATabAsItDoesWithOne() {
+    assertEquals("<textarea>x&lt;y</textarea>", T.tag("textarea").attr("value", "x<y").render());
+    assertEquals("<textarea>draft</textarea>", T.tag("textarea").attr("default-value", "draft").render());
+    assertEquals("<textarea></textarea>", T.tag("textarea", "ignored").attr("value", null).render());
+    assertEquals("<textarea>bound</textarea>", T.tag("textarea", "ignored").attr("value", "bound").render());
+    assertEquals("<textarea>\n\nabc</textarea>", T.tag("textarea").attr("value", "\nabc").render());
+    assertEquals("<textarea>\n\nabc</textarea>\n", T.tag("textarea").attr("value", "\nabc").renderFormatted());
+    assertEquals("<pre>\n\nkept</pre>", T.tag("pre", "\nkept").render());
+    assertEquals("<listing>\n\nkept</listing>\n", T.tag("listing", "\nkept").renderFormatted());
+  }
+
+  @Test
   void injectsBootstrapIntoHead() {
     try (Harness h = new Harness(Plain::new)) {
       String html = h.load();
