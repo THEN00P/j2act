@@ -183,13 +183,13 @@ export function createFields() {
         return; // The input event ending it brings a new answer.
       }
       const unseen = state.sent.length > 0;
+      el.defaultValue = answer; // What a form reset gives; if the user has not touched it, this is its value too.
       if (hasNoCaret(el)) {
         if (!unseen && mine === base && mine !== answer) {
           el.value = answer;
         }
         return;
       }
-      el.defaultValue = answer; // What a form reset gives; if the user has not touched it, this is its value too.
       const change = merge(base, answer, mine);
       if (el.value !== mine) {
         el.value = applyEdit(mine, change);

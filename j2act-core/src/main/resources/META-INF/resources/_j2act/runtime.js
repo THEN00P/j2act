@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-901faa87037cdd4b11e23d82ae039e8c8a494bd66150bb48459a715aa1030763 */
+* sources: sha256-dbe8bb338c639a1cdc37c80eb0ac20804295febd97bd8003311e1816b211e083 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -632,11 +632,11 @@
 				state.answer = answer;
 				if (composing === el) return;
 				const unseen = state.sent.length > 0;
+				el.defaultValue = answer;
 				if (hasNoCaret(el)) {
 					if (!unseen && mine === base && mine !== answer) el.value = answer;
 					return;
 				}
-				el.defaultValue = answer;
 				const change = merge(base, answer, mine);
 				if (el.value !== mine) el.value = applyEdit(mine, change);
 				else if (change) edit(el, change);
@@ -721,13 +721,15 @@
 			if (!handlerId) return;
 			const id = String(++ackSeq);
 			if (showsPending) pending.start(el, id, pendingOn || el, type === "submit");
-			if ((type === "input" || type === "change") && isTextField(el)) {
-				fields.sent(el, Number(id), value == null ? "" : value);
-				if ((el.getAttribute("data-j2-controlled") ?? "").split(" ").indexOf("value") >= 0) extra = {
-					...extra,
-					echo: true
-				};
-				if (undone.delete(el)) extra = {
+			if (isTextField(el)) {
+				if (value === el.value && (el.getAttribute("data-j2-controlled") ?? "").split(" ").indexOf("value") >= 0) {
+					fields.sent(el, Number(id), value);
+					extra = {
+						...extra,
+						echo: true
+					};
+				}
+				if ((type === "input" || type === "change") && undone.delete(el)) extra = {
 					...extra,
 					undo: true
 				};
@@ -752,11 +754,29 @@
 				dispatch(el, type, read());
 				return;
 			}
-			clearTimeout(timers.get(el));
-			timers.set(el, setTimeout(() => {
+			clearTimeout(timers.get(el)?.timer);
+			timers.set(el, {
+				type,
+				timer: setTimeout(() => {
+					timers.delete(el);
+					dispatch(el, type, read());
+				}, ms)
+			});
+		}
+		/** What still waits on a debounce or a throttle goes now, so the server hears it before what comes after it. */
+		function sendWaiting(el) {
+			const waiting = timers.get(el);
+			if (waiting) {
+				clearTimeout(waiting.timer);
 				timers.delete(el);
-				dispatch(el, type, read());
-			}, ms));
+				dispatch(el, waiting.type, waiting.type === "click" ? null : valueOf(el));
+			}
+			const running = throttles.get(el);
+			if (running?.trailing) {
+				const next = running.trailing;
+				running.trailing = null;
+				dispatch(el, next, valueOf(el));
+			}
 		}
 		/**
 		* The leading event at once, then at most one per interval: input and change send the latest
@@ -841,19 +861,24 @@
 			if (type === "input") {
 				const inputType = e.inputType;
 				if (inputType === "historyUndo" || inputType === "historyRedo") undone.add(el);
+				else undone.delete(el);
 			}
 			if (el.type === "file") dispatch(el, type, "", uploads.picked(el));
 			else schedule(el, type);
 		});
 		for (const [listen, type] of [["focusin", "focus"], ["focusout", "blur"]]) doc.addEventListener(listen, (e) => {
 			const el = bound(e.target, type);
-			if (el) dispatch(el, type, valueOf(el));
+			if (el) {
+				sendWaiting(el);
+				dispatch(el, type, valueOf(el));
+			}
 		});
 		doc.addEventListener("keydown", (e) => {
 			const el = bound(e.target, "keydown");
 			if (!el) return;
 			const filter = el.getAttribute("data-j2-keys");
 			if (filter && filter.split(" ").indexOf(e.key) < 0) return;
+			sendWaiting(el);
 			const key = {
 				key: e.key,
 				ctrlKey: e.ctrlKey,

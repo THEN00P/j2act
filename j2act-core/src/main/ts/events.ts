@@ -26,7 +26,7 @@ export interface EventsOptions {
 export function listenForEvents(doc: Document, { send, pending, clients, uploads, fields }: EventsOptions): void {
   let ackSeq = 0;
   const undone = new WeakSet<Element>();                            // its last change was undo or redo
-  const timers = new WeakMap<Element, Timer>();                     // element -> debounce timer
+  const timers = new WeakMap<Element, { timer: Timer; type: string }>(); // element -> debounce timer
   const throttles = new WeakMap<Element, { trailing: string | null }>(); // while its interval runs
 
   /**
@@ -47,12 +47,13 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
     if (showsPending) {
       pending.start(el, id, pendingOn || el, type === "submit");
     }
-    if ((type === "input" || type === "change") && isTextField(el)) {
-      fields.sent(el, Number(id), value == null ? "" : value);
-      if ((el.getAttribute("data-j2-controlled") ?? "").split(" ").indexOf("value") >= 0) {
+    if (isTextField(el)) {
+      // Whatever event carries what the field holds, the server has now seen it. A bound action's carries its result.
+      if (value === el.value && (el.getAttribute("data-j2-controlled") ?? "").split(" ").indexOf("value") >= 0) {
+        fields.sent(el, Number(id), value);
         extra = { ...extra, echo: true };
       }
-      if (undone.delete(el)) {
+      if ((type === "input" || type === "change") && undone.delete(el)) {
         extra = { ...extra, undo: true };
       }
     }
@@ -72,11 +73,30 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
       dispatch(el, type, read());
       return;
     }
-    clearTimeout(timers.get(el));
-    timers.set(el, setTimeout(() => {
+    clearTimeout(timers.get(el)?.timer);
+    timers.set(el, {
+      type: type,
+      timer: setTimeout(() => {
+        timers.delete(el);
+        dispatch(el, type, read());
+      }, ms)
+    });
+  }
+
+  /** What still waits on a debounce or a throttle goes now, so the server hears it before what comes after it. */
+  function sendWaiting(el: Element): void {
+    const waiting = timers.get(el);
+    if (waiting) {
+      clearTimeout(waiting.timer);
       timers.delete(el);
-      dispatch(el, type, read());
-    }, ms));
+      dispatch(el, waiting.type, waiting.type === "click" ? null : valueOf(el));
+    }
+    const running = throttles.get(el);
+    if (running?.trailing) {
+      const next = running.trailing;
+      running.trailing = null;
+      dispatch(el, next, valueOf(el));
+    }
   }
 
   /**
@@ -177,6 +197,8 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
         const inputType = (e as InputEvent).inputType;
         if (inputType === "historyUndo" || inputType === "historyRedo") {
           undone.add(el);
+        } else {
+          undone.delete(el);
         }
       }
       if ((el as HTMLInputElement).type === "file") {
@@ -192,6 +214,7 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
     doc.addEventListener(listen, (e) => {
       const el = bound(e.target, type);
       if (el) {
+        sendWaiting(el);
         dispatch(el, type, valueOf(el));
       }
     });
@@ -207,6 +230,7 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
     if (filter && filter.split(" ").indexOf(e.key) < 0) {
       return;
     }
+    sendWaiting(el);
     const key = { key: e.key, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey };
     if (el.hasAttribute("data-j2-call-keydown")) {
       boundAction(el, "keydown", key);

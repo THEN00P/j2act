@@ -33,6 +33,8 @@ The server's change goes in unless it touches what the user changed since. If it
 | `hi :smile:` | `hi 😄` | `hi :smi-le:` | Stays: the user is in that text |
 | `12a` | `12` | `12a` | `12` |
 
+Any event that carries what the field holds counts as the server seeing it: a blur or a key as much as an input, so a server that tidies a field on blur gets its answer in. An input still waiting on a debounce goes before a blur or a key, or the server would answer them without it. Only a field the server controls is remembered, since only its answers come back to be merged.
+
 Each side's change is one span, from the first difference to the last. A simulation found a real diff kept no more than that.
 
 What the client merged goes back to the server as input when the server has not got it, or the two stay apart. Without this they disagreed at the end of over half the simulated runs. It settles: once the server has seen everything, base and field are the same, and the server's answer goes in whole.
