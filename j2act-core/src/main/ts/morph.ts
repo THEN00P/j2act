@@ -1,5 +1,6 @@
 import { Idiomorph } from "idiomorph";
 import type { Config } from "idiomorph";
+import { isTextField, type Fields } from "./fields.ts";
 import type { Pending } from "./pending.ts";
 
 export type Morpher = ReturnType<typeof createMorpher>;
@@ -9,13 +10,20 @@ export type Morpher = ReturnType<typeof createMorpher>;
  * pending state of a blocked element, form state the render did not set (ADR 0013), a client
  * element's node and children (ADR 0022), and what the runtime added to the head.
  */
-export function createMorpher(pending: Pending, syncClient: (el: Element, fresh: Element) => void) {
+export function createMorpher(pending: Pending, syncClient: (el: Element, fresh: Element) => void, fields: Fields) {
+  /** The last event the server had handled, from the patch being applied. */
+  let handled = 0;
+
   const callbacks: Config["callbacks"] = {
     beforeAttributeUpdated: (name, el) => {
       if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) {
         return false;
       }
-      // What is being typed is the user's, whatever this render says.
+      // A text field's value is merged in beforeNodeMorphed (ADR 0034).
+      if (name === "value" && isTextField(el)) {
+        return false;
+      }
+      // Left alone while it has focus, having no text to merge.
       if (name === "value" && el === document.activeElement) {
         return false;
       }
@@ -32,11 +40,18 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
         syncClient(oldNode, newNode as Element);
         return false;
       }
-      // Being typed in, its contents are the user's. Idiomorph's ignoreActiveValue would do this for any focused
-      // element, and a click focuses its button, so a button's label would stop updating.
-      if (oldNode === document.activeElement && oldNode.nodeType === 1 && newNode.nodeType === 1
-        && (oldNode.tagName === "TEXTAREA" || oldNode.hasAttribute("contenteditable"))) {
-        (newNode as Element).innerHTML = oldNode.innerHTML;
+      if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.tagName === (newNode as Element).tagName) {
+        const fresh = newNode as HTMLInputElement;
+        // The server's value for a text field it controls goes in by merging (ADR 0034).
+        if (isTextField(oldNode) && (fresh.getAttribute("data-j2-controlled") ?? "").split(" ").indexOf("value") >= 0) {
+          fields.reconcile(oldNode, fresh.value, handled);
+          return true;
+        }
+        // Being typed in, its contents are the user's. Idiomorph's ignoreActiveValue would do this for any focused
+        // element, and a click focuses its button, so a button's label would stop updating.
+        if (oldNode === document.activeElement && oldNode.hasAttribute("contenteditable")) {
+          fresh.innerHTML = oldNode.innerHTML;
+        }
       }
       return true;
     }
@@ -65,7 +80,10 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
      * Morphs the component at anchor; false when it is not in the document. The tab root may
      * be a new component after a navigation, with a new anchor, so it replaces head and body.
      */
-    patch(anchor: string, html: string, isRoot: boolean): boolean {
+    patch(anchor: string, html: string, isRoot: boolean, eventsHandled?: number): boolean {
+      if (eventsHandled !== undefined) {
+        handled = eventsHandled;
+      }
       if (isRoot) {
         const doc = new DOMParser().parseFromString(html, "text/html");
         document.documentElement.setAttribute("data-j2-scope", anchor);

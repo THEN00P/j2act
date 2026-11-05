@@ -304,6 +304,68 @@ async function main() {
     check(`it stays where the user went, ${how}`, await js(`${h1} === 'About' && location.pathname === '/about'`));
   }
 
+  // 14c. fields the server edits while they are typed in (ADR 0034), with real keys
+  await cdp("Page.navigate", { url: URL });
+  await until("document.readyState === 'complete' && typeof j2act !== 'undefined'");
+  await sleep(400);
+  const field = (id) => `document.getElementById('${id}')`;
+  const typeKeys = async (text, gap = 25) => {
+    for (const ch of text) {
+      await cdp("Input.insertText", { text: ch });
+      await sleep(gap);
+    }
+  };
+  const pressEnter = async () => {
+    await cdp("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await cdp("Input.dispatchKeyEvent", { type: "char", key: "Enter", text: "\r", windowsVirtualKeyCode: 13 });
+    await cdp("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+  };
+  const pressUndo = async () => {
+    await cdp("Input.dispatchKeyEvent", { type: "keyDown", key: "z", code: "KeyZ", windowsVirtualKeyCode: 90, modifiers: 2, commands: ["undo"] });
+    await cdp("Input.dispatchKeyEvent", { type: "keyUp", key: "z", code: "KeyZ", windowsVirtualKeyCode: 90, modifiers: 2 });
+  };
+  const emoji = "\u{1F604}";
+
+  await mouseClick(field("rewrite-note"));
+  await typeKeys("hi :smile:");
+  await typeKeys(" and keep typing");
+  check("the server's rewrite goes in while the user is still typing, and no letter is lost",
+    await until(`${field("rewrite-note")}.value === 'hi ${emoji} and keep typing'`, 8000), await js(`${field("rewrite-note")}.value`));
+  check("the caret stays at the end of what was typed",
+    await js(`${field("rewrite-note")}.selectionStart === ${field("rewrite-note")}.value.length`));
+  check("the field keeps the focus", await js(`document.activeElement === ${field("rewrite-note")}`));
+
+  await sleep(600);
+  await js(`${field("rewrite-note")}.select(); true`);
+  await cdp("Input.insertText", { text: ":smile:" });
+  check("a rewrite with nothing typed since goes in whole", await until(`${field("rewrite-note")}.value === '${emoji}'`, 3000),
+    await js(`${field("rewrite-note")}.value`));
+  await sleep(500);
+  await pressUndo();
+  check("undo brings back what the server replaced", await until(`${field("rewrite-note")}.value === ':smile:'`, 1500),
+    await js(`${field("rewrite-note")}.value`));
+  await sleep(700);
+  check("and the handler, told it was an undo, leaves it undone", await js(`${field("rewrite-note")}.value === ':smile:'`),
+    await js(`${field("rewrite-note")}.value`));
+
+  await mouseClick(field("rewrite-digits"));
+  await typeKeys("12a3");
+  check("a rejected letter goes, though the server's view of the field did not change for it",
+    await until(`${field("rewrite-digits")}.value === '123'`, 2000), await js(`${field("rewrite-digits")}.value`));
+
+  await mouseClick(field("rewrite-line"));
+  await typeKeys("one");
+  await sleep(150);
+  await pressEnter();
+  check("Enter sends", await until(`${field("rewrite-sent")}.textContent === 'sent: one'`, 2000), await js(`${field("rewrite-sent")}.textContent`));
+  check("and clears the focused field", await until(`${field("rewrite-line")}.value === ''`, 2000), await js(`${field("rewrite-line")}.value`));
+  await typeKeys("two");
+  await pressEnter();
+  await typeKeys("next", 5);
+  check("typing on straight after Enter keeps what comes next",
+    await until(`${field("rewrite-sent")}.textContent === 'sent: two' && ${field("rewrite-line")}.value === 'next'`, 3000),
+    await js(`${field("rewrite-sent")}.textContent + ' / ' + ${field("rewrite-line")}.value`));
+
   // 15. client module (ADR 0022): mounts from the HTML, calls back, keeps its DOM through morphs
   await cdp("Page.navigate", { url: URL });
   await until("document.readyState === 'complete' && typeof j2act !== 'undefined'");

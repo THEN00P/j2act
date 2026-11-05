@@ -1,4 +1,5 @@
 import type { Clients } from "./clients.ts";
+import { isTextField, type Fields } from "./fields.ts";
 import type { Pending } from "./pending.ts";
 import type { BoundCall, ClientMessage, EventFields, Send } from "./protocol.ts";
 import type { Uploads } from "./uploads.ts";
@@ -18,11 +19,13 @@ export interface EventsOptions {
   pending: Pending;
   clients: Clients;
   uploads: Uploads;
+  fields: Fields;
 }
 
 /** Listens on doc for every event a render can bind. */
-export function listenForEvents(doc: Document, { send, pending, clients, uploads }: EventsOptions): void {
+export function listenForEvents(doc: Document, { send, pending, clients, uploads, fields }: EventsOptions): void {
   let ackSeq = 0;
+  const undone = new WeakSet<Element>();                            // its last change was undo or redo
   const timers = new WeakMap<Element, Timer>();                     // element -> debounce timer
   const throttles = new WeakMap<Element, { trailing: string | null }>(); // while its interval runs
 
@@ -43,6 +46,15 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
     const id = String(++ackSeq);
     if (showsPending) {
       pending.start(el, id, pendingOn || el, type === "submit");
+    }
+    if ((type === "input" || type === "change") && isTextField(el)) {
+      fields.sent(el, Number(id), value == null ? "" : value);
+      if ((el.getAttribute("data-j2-controlled") ?? "").split(" ").indexOf("value") >= 0) {
+        extra = { ...extra, echo: true };
+      }
+      if (undone.delete(el)) {
+        extra = { ...extra, undo: true };
+      }
     }
     const message: ClientMessage = { type: "event", id: id, handler: handlerId, value: value == null ? "" : value, ...extra };
     send(message);
@@ -152,11 +164,20 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
     });
   }
 
+  fields.listen(doc);
+  // What the server's merge sends back goes like typing, debounced or throttled as the field asks.
+  fields.setResend((el) => schedule(el, "input"));
   for (const type of ["input", "change"]) {
     doc.addEventListener(type, (e) => {
       const el = bound(e.target, type);
-      if (!el) {
+      if (!el || fields.applying) {
         return;
+      }
+      if (type === "input") {
+        const inputType = (e as InputEvent).inputType;
+        if (inputType === "historyUndo" || inputType === "historyRedo") {
+          undone.add(el);
+        }
       }
       if ((el as HTMLInputElement).type === "file") {
         dispatch(el, type, "", uploads.picked(el as HTMLInputElement));

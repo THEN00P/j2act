@@ -145,7 +145,7 @@ final class Handlers {
         break;
       default:
         ((Handler<ValueEvent>) entry.handler).handle(new ValueEvent(value,
-          UploadFile.fromWire(message)));
+          UploadFile.fromWire(message), "true".equals(message.get("undo"))));
     }
   }
 

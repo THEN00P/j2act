@@ -35,7 +35,7 @@ export type BoundCall = { window: WebCall } | { window?: undefined; client: stri
 
 export type ServerMessage =
   | { type: "ready"; maxFrame: number }
-  | { type: "patch"; anchor: string; html: string; root?: true }
+  | { type: "patch"; anchor: string; html: string; root?: true; handled?: number }
   | { type: "head"; html: string }
   | { type: "url"; url: string; mode: NavMode }
   | { type: "load"; url: string }
@@ -69,6 +69,10 @@ export interface EventFields {
   fileSize?: number;
   fileType?: string;
   error?: string;
+  /** From a field the server controls: it answers even if its view does not change (ADR 0034). */
+  echo?: boolean;
+  /** The browser's undo or redo made this change, not typing (ADR 0034). */
+  undo?: boolean;
 }
 
 export type FileFields = Pick<EventFields, "fileId" | "fileName" | "fileSize" | "fileType">;

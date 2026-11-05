@@ -179,7 +179,9 @@ describe("Fields (ADR 0034)", () => {
     fields.reconcile(el, "A", 1);
     expect(el.value).toBe("a");
     el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
-    fields.reconcile(el, "A", 1);
+    // The input event ending it goes out, and brings a new answer.
+    fields.sent(el, 2, "a");
+    fields.reconcile(el, "A", 2);
     expect(el.value).toBe("A");
   });
 

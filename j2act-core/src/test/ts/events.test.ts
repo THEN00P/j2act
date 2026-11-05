@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createClients } from "../../main/ts/clients.ts";
 import { listenForEvents } from "../../main/ts/events.ts";
+import { createFields } from "../../main/ts/fields.ts";
 import { createPending, type Pending } from "../../main/ts/pending.ts";
 import type { ClientMessage } from "../../main/ts/protocol.ts";
 import { createUploads } from "../../main/ts/uploads.ts";
@@ -15,7 +16,7 @@ describe("Events", () => {
     pending = createPending();
     const uploads = createUploads(send, () => "tok");
     const clients = createClients({ send: send, connected: () => true, uploads: uploads, morphSlot: () => {} });
-    listenForEvents(document, { send: send, pending: pending, clients: clients, uploads: uploads });
+    listenForEvents(document, { send: send, pending: pending, clients: clients, uploads: uploads, fields: createFields() });
   });
 
   beforeEach(() => {

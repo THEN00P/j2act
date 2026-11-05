@@ -119,6 +119,11 @@ public final class Tab {
   /** What the page shows while a navigation's page loads: it works until that page replaces it. */
   private LeftPage leftPage;
   private int preloadSeq;
+  /** The last event handled, and the last one handled with nothing held, which is all a patch can claim (ADR 0034). */
+  private long lastEvent;
+  private long quietEvent;
+  /** Patches of fields sent during a hold, whose render may be from before the events since: they go again after it. */
+  private final java.util.Set<Scope> behindEvents = new java.util.LinkedHashSet<>();
   /** Whose handler is running. Lane-only. */
   private Scope dispatching;
 
@@ -1108,6 +1113,7 @@ public final class Tab {
   void forgetScope(Scope scope) {
     dirty.remove(scope);
     unsent.remove(scope);
+    behindEvents.remove(scope);
   }
 
   /** Whether a patch still to go, of this scope or what is around it, covers it. */
@@ -1180,7 +1186,8 @@ public final class Tab {
         for (Scope s = scope.parent; s != null; s = s.parent) {
           s.sent = null;
         }
-        send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope.parent == null ? true : null, "html", scope.html));
+        send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope.parent == null ? true : null,
+          "handled", handledFor(scope), "html", scope.html));
         engine.stats.patches.incrementAndGet();
         scope.pageHas(scope.html);
         behindThisPatch(scope, scope.html, scopes, i + 1);
@@ -1257,6 +1264,15 @@ public final class Tab {
     }
     if (unacknowledged.full()) {
       return; // What rendered waits for room, and goes when the client catches up.
+    }
+    if (!behindEvents.isEmpty() && !rt.holding()) {
+      for (Scope scope : behindEvents) {
+        if (!scope.disposed && scope.html != null) {
+          scope.sent = null;
+          unsent.add(scope);
+        }
+      }
+      behindEvents.clear();
     }
     if (hold == Hold.SHOWING_LOADING) {
       sendLeftPage();
@@ -1492,6 +1508,7 @@ public final class Tab {
 
   /** Runs a handler from the latest render. Unknown or stale ids are rejected (ADR 0013). */
   boolean dispatch(Map<String, String> message) {
+    noteEvent(message.get("id"));
     recheckIdentity();
     String handlerId = message.get("handler");
     Handlers.Entry entry = handlerId == null ? null : handlers.get(handlerId);
@@ -1503,6 +1520,11 @@ public final class Tab {
     dispatching = entry.scope;
     try {
       Handlers.invoke(entry, message);
+      if ("true".equals(message.get("echo")) && entry.scope.html != null) {
+        // What the browser has is what it sent, which this render may not say, as when it rejects a letter (ADR 0034).
+        entry.scope.sent = null;
+        unsent.add(entry.scope);
+      }
       return true;
     } catch (RouteException e) {
       onRouteException(e);
@@ -1514,6 +1536,29 @@ public final class Tab {
     } finally {
       dispatching = null;
     }
+  }
+
+  private void noteEvent(String id) {
+    if (id != null) {
+      try {
+        lastEvent = Math.max(lastEvent, Long.parseLong(id));
+      } catch (NumberFormatException e) {
+        // Only the client's own numbers count, and a crafted frame claims nothing with this.
+      }
+    }
+  }
+
+  /**
+   * The last event this patch can say it saw. During a hold a render can read a value from before the last event, and
+   * the client would take that for the server's answer and rewind what the user typed (ADR 0034).
+   */
+  private long handledFor(Scope scope) {
+    if (!rt.holding()) {
+      quietEvent = lastEvent;
+    } else if (quietEvent < lastEvent && scope.html.contains("data-j2-controlled=\"")) {
+      behindEvents.add(scope);
+    }
+    return quietEvent;
   }
 
   /** The route a handler reads: that of the page it is on, which may be one being left. Elsewhere, the tab's. */

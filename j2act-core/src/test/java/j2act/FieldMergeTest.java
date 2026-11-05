@@ -31,7 +31,7 @@ class FieldMergeTest {
       return () -> T.page("t",
         T.span("more:" + more.get() + ";" + slow.get() + ";"),
         T.button("hold").onClick(e -> held.set(held.get() + 1)),
-        T.input().withId("f").withValue(text.get()).onInput(e -> {
+        T.input().withId("f").attr("value", text.get()).onInput(e -> {
           undo = e.isUndo();
           text.set(e.value().replaceAll("[^0-9]", ""));
         }));
