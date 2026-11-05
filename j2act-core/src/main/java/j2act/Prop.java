@@ -4,8 +4,8 @@ import java.util.function.Supplier;
 
 /**
  * Tracked component input (ADR 0020). A with* builder calls set(); reads are tracked
- * like State. On a fresh component object the prop starts from its default unless
- * the builder set it, so c() is a fresh description (ADR 0019).
+ * like a signal. On a description the prop starts from its default unless the builder set it,
+ * and the slot's kept instance takes its value (ADR 0031).
  */
 public final class Prop<T> extends Primitive implements Supplier<T> {
 
@@ -23,7 +23,7 @@ public final class Prop<T> extends Primitive implements Supplier<T> {
     if (cell == null) {
       return hasPending ? pending : fallback;
     }
-    return (T) ((ValueCell) cell).read();
+    return (T) ((Node) cell).read();
   }
 
   public void set(T value) {
@@ -31,8 +31,13 @@ public final class Prop<T> extends Primitive implements Supplier<T> {
       pending = value;
       hasPending = true;
     } else {
-      ((ValueCell) cell).write(value);
+      ((Node) cell).write(value);
     }
+  }
+
+  /** Lane-only. Takes the value of the same Prop on a newer description of this component. */
+  void adopt(Prop<?> description) {
+    ((Node) requireCell()).writeNow(description.described());
   }
 
   private T described() {
@@ -40,17 +45,17 @@ public final class Prop<T> extends Primitive implements Supplier<T> {
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    return new ValueCell(tab, address, described());
+    return new Node(tab, address, described());
   }
 
   @Override boolean accepts(Cell cell) {
-    return cell instanceof ValueCell;
+    return cell instanceof Node;
   }
 
   @Override void attach(Cell cell, boolean created) {
     this.cell = cell;
     if (!created) {
-      ((ValueCell) cell).setOnLane(described());
+      ((Node) cell).writeNow(described());
     }
   }
 }

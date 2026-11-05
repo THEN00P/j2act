@@ -1,15 +1,17 @@
 package com.example.counter.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 
+import j2act.View;
 import j2act.Client;
 import j2act.ComponentTag;
 import j2act.DomContent;
 import j2act.Mount;
-import j2act.State;
+import j2act.Signal;
 import j2act.Upload;
 import j2act.html.tags.ButtonTag;
 import j2act.html.tags.DivTag;
@@ -20,6 +22,8 @@ import j2act.html.tags.DivTag;
  * client's own DOM.
  */
 public final class Countdown extends ComponentTag {
+  private Signal<Integer> ticks;
+
 
   /** A bean prop: the host's JSON binding (Jackson or JSON-B) writes it, the basic one would refuse. */
   public static final class Labels {
@@ -44,30 +48,29 @@ public final class Countdown extends ComponentTag {
     void export(Upload into);
   }
 
-  private final Timer timer = client(Timer.class);
-  private final State<Integer> ticks = state(5);
-  private final State<String> status = state("running");
-  private final Upload log = upload()
-    .withAccept(".txt")
-    .withMaxFileSize("1KB");
-
   /** Handed to note(): it keeps re-rendering on its own State inside the client's DOM. */
   static final class NoteBadge extends ComponentTag {
-    private final State<Integer> clicks = state(0);
 
-    @Override protected ButtonTag render() {
-      return button("notes " + clicks.get())
+  @Override protected View setup() {
+    var clicks = createSignal(0);
+    return () -> button("notes " + clicks.get())
         .withClass("note-badge")
         .onClick(e -> clicks.set(clicks.get() + 1));
-    }
+  }
   }
 
   public static Countdown countdown() {
     return new Countdown();
   }
 
-  @Override protected DivTag render() {
-    return div(
+  @Override protected View setup() {
+    var timer = createClient(Timer.class);
+    ticks = createSignal(5);
+    var status = createSignal("running");
+    var log = createUpload()
+    .withAccept(".txt")
+    .withMaxFileSize("1KB");
+    return () -> div(
       div()
         .withId("timer")
         .withClient(timer.mount(5, new Labels(), ticks::set, () -> status.set("done"), span("server saw " + ticks.get() + " left"))),

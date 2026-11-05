@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static j2act.router.Routes.*;
 import static j2act.html.TagCreator.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,46 +28,45 @@ class PreloadTest {
   static volatile CountDownLatch release = new CountDownLatch(0);
 
   public static final class Shell extends Layout {
-    @Override public HtmlTag render(DomContent content) {
-      return html(head(title("app")), body(nav(a("Item 7").withHref("/items/7").withPreload(Preload.INTENT)), content));
-    }
+
+  @Override protected LayoutView setup() {
+    return content -> html(head(title("app")), body(nav(a("Item 7").withHref("/items/7").withPreload(Preload.INTENT)), content));
+  }
   }
 
   public static final class Home extends LiveComponent {
-    @Override public HtmlTag render() {
-      return html(head(title("Home")), body(h1("Home")));
-    }
+
+  @Override protected View setup() {
+    return () -> html(head(title("Home")), body(h1("Home")));
+  }
   }
 
   public static final class ItemPage extends LiveComponent {
-    private final Query<String> item = query(() -> {
+
+  @Override protected View setup() {
+    createEffect(() -> 1, once -> {
+      effects.incrementAndGet();
+      return null;
+    });
+    var item = createMemo(() -> async(() -> {
       loads.incrementAndGet();
       String id = pathParam("id");
       release.await(5, TimeUnit.SECONDS);
       return "item " + id;
-    });
-
-    ItemPage() {
-      effect(() -> {
-        effects.incrementAndGet();
-        return null;
-      });
-    }
-
-    @Override public HtmlTag render() {
-      return html(head(title("Item")), body(h1(item.isPending() ? "loading" : item.get())));
-    }
+    }));
+    return () -> html(head(title("Item")), body(loading(() -> h1(item.get())).withFallback(h1("loading"))));
+  }
   }
 
   public static final class Secret extends LiveComponent {
-    private final Query<String> secret = query(() -> {
+
+  @Override protected View setup() {
+    var secret = createMemo(() -> async(() -> {
       secretLoads.incrementAndGet();
       return "secret";
-    });
-
-    @Override public HtmlTag render() {
-      return html(head(title("Secret")), body(h1(String.valueOf(secret.get()))));
-    }
+    }));
+    return () -> html(head(title("Secret")), body(h1(String.valueOf(secret.get()))));
+  }
   }
 
   static Harness harness(Duration hold) {

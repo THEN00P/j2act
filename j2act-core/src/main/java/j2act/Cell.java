@@ -23,11 +23,30 @@ abstract class Cell {
     this.address = address;
   }
 
-  /** Current value without tracking, used for commit validation. */
+  /** Current value without tracking. */
   abstract Object peek();
+
+  /** The newest value there is, for an update composing on it. */
+  Object peekLatest() {
+    return peek();
+  }
+
+  /** What a run in this pass read of this cell, which its result is validated against. */
+  Object peekFor(Pass pass) {
+    return peek();
+  }
+
+  /** A change to this value has not committed yet, for isPending (ADR 0031). */
+  boolean pendingChange() {
+    return false;
+  }
 
   /** Records a read of {@code seen}: a graph edge on the lane, a read-set entry inside a query run. */
   final void onRead(Object seen) {
+    boolean[] probe = Tracking.probe();
+    if (probe != null && pendingChange()) {
+      probe[0] = true;
+    }
     if (tab.lane.isCurrent()) {
       Observer observer = Tracking.observer();
       if (observer != null && !disposed) {
@@ -36,18 +55,14 @@ abstract class Cell {
       }
       return;
     }
-    QueryRun run = Tracking.run();
+    LoadRun run = Tracking.run();
     if (run != null && run.tab == tab) {
       run.record(this, seen);
       return;
     }
-    // A browser store's cell read from a tab's lane or query run: tracked there through a mirror (ADR 0030).
-    Tab reader = run != null ? run.tab : Tab.current();
-    if (tab.hubFor != null && reader != null && reader != tab) {
-      reader.mirror(this, seen).onRead(seen);
-      return;
+    if (!Tracking.untracked()) {
+      tab.warnForeignRead(address);
     }
-    tab.warnForeignRead(address);
   }
 
   /** Lane-only. Removes a reader; a cell nobody reads any more may let go of what it observes. */

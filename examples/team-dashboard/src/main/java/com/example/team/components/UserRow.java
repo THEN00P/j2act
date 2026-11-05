@@ -1,5 +1,6 @@
 package com.example.team.components;
 
+import static j2act.Reactive.*;
 import static j2act.Preload.INTENT;
 import static j2act.html.TagCreator.*;
 import static j2act.ui.Ui.*;
@@ -7,6 +8,7 @@ import static j2act.ui.Ui.*;
 import jakarta.inject.Inject;
 
 import com.example.team.db.Users;
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.DomContent;
 import j2act.Prop;
@@ -20,11 +22,12 @@ import j2act.html.tags.TrTag;
  * Delete branch is a plain ternary over AuthCtx, re-checked per event.
  */
 public final class UserRow extends ComponentTag {
+  private State<Boolean> confirming;
+
 
   @Inject private Users users;
 
   private final Prop<Users.User> user = prop();
-  private final State<Boolean> confirming = state(false);
 
   public static UserRow userRow() {
     return new UserRow();
@@ -35,8 +38,9 @@ public final class UserRow extends ComponentTag {
     return this;
   }
 
-  @Override protected TrTag render() {
-    return tr(
+  @Override protected View setup() {
+    confirming = createSignal(false);
+    return () -> tr(
       td(
         a(user.get().getName())
           .withHref("/admin/users/" + user.get().getId())

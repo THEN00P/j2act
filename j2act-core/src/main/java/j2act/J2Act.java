@@ -73,9 +73,7 @@ public final class J2Act implements AutoCloseable {
   final Clock clock;
   final long reconnectGraceMillis;
   final long idleTimeoutMillis;
-  final long ssrAwaitMillis;
-  final long queryStaleMillis;
-  final long queryGcMillis;
+  final long streamDeadlineMillis;
   final long pendingMillis;
   final long pendingMinMillis;
   final long downloadTtlMillis;
@@ -289,6 +287,7 @@ public final class J2Act implements AutoCloseable {
         cookie = null; // logged out, or another user: a browser of its own
       }
       tab.browser = joined;
+      tab.joinedBrowser();
       if (minted) {
         tab.browserCookie = cookie;
         tab.mintedBrowserCookie = tab.pendingBrowserCookie = browserCookieHeader(cookie);
@@ -555,9 +554,7 @@ public final class J2Act implements AutoCloseable {
     this.clock = b.clock;
     this.reconnectGraceMillis = b.reconnectGrace.toMillis();
     this.idleTimeoutMillis = b.idleTimeout.toMillis();
-    this.ssrAwaitMillis = b.ssrAwaitBudget.toMillis();
-    this.queryStaleMillis = b.queryStaleTime.toMillis();
-    this.queryGcMillis = b.queryGcTime.toMillis();
+    this.streamDeadlineMillis = b.streamDeadline.toMillis();
     this.pendingMillis = b.pendingTime.toMillis();
     this.pendingMinMillis = b.pendingMinTime.toMillis();
     this.downloadTtlMillis = b.downloadTtl.toMillis();
@@ -639,6 +636,8 @@ public final class J2Act implements AutoCloseable {
   /** Re-renders every tab with the current code (HotSwap in dev mode). */
   void hotSwapped() {
     codeEpoch++;
+    // Line numbers moved with the swap, and retained keys look calls up by line (ADR 0031).
+    j2act.internal.names.RetainedNames.forget();
     for (Tab tab : tabs.values()) {
       tab.post(tab::hotSwapped);
     }
@@ -711,7 +710,6 @@ public final class J2Act implements AutoCloseable {
         }
         return SsrPass.of(tab);
       }));
-      long deadline = clock.millis() + ssrAwaitMillis;
       while (true) {
         RouteException route = tab.pendingRoute;
         if (route != null) {
@@ -727,20 +725,26 @@ public final class J2Act implements AutoCloseable {
           }));
           continue;
         }
-        long left = deadline - clock.millis();
-        if (pass.settleCount < 0 || left <= 0) {
-          break;
+        if (pass.waitingOnRead) {
+          tab.awaitSettleAfter(pass.settleCount, 60_000L);
+          if (tab.disposed) {
+            throw new IllegalStateException("the tab ended while its page waited for a load");
+          }
+          pass = await(tab.call(() -> SsrPass.of(tab)));
+          continue;
         }
-        tab.awaitSettleAfter(pass.settleCount, left);
-        pass = await(tab.call(() -> SsrPass.of(tab)));
+        break;
       }
+      String shell = pass.html;
+      PageStream stream = await(tab.call(() -> tab.openStream(shell)));
+      String html = stream == null ? shell : shell.substring(0, shell.length() - "</body></html>".length());
       String cookie = tab.pendingBrowserCookie;
       if (cookie != null) {
         // The page used browser state while rendering: its response sets the cookie (ADR 0030).
         tab.pendingBrowserCookie = null;
-        return new ServeResult(status, pass.html, null, java.util.Collections.singletonList(cookie));
+        return new ServeResult(status, html, null, java.util.Collections.singletonList(cookie)).withStream(stream);
       }
-      return new ServeResult(status, pass.html);
+      return new ServeResult(status, html).withStream(stream);
     } catch (Exception e) {
       log(System.Logger.Level.ERROR, "render failed for " + url, e);
       discard(tab, false);
@@ -1070,7 +1074,7 @@ public final class J2Act implements AutoCloseable {
 
   /**
    * Saves the snapshot of every tab with a changed retained value, without discarding it
-   * (ADR 0026), so a crash loses at most one interval. onPersisting runs first in each.
+   * (ADR 0026), so a crash loses at most one interval.
    */
   private void checkpoint() {
     for (Browser browser : browsers.values()) {
@@ -1286,24 +1290,22 @@ public final class J2Act implements AutoCloseable {
     };
   }
 
-  /** One full render plus whether queries are still running (-1 when none are). */
+  /** One full render, or a read outside any loading(...) it stopped on, which the page waits for. */
   private static final class SsrPass {
     final String html;
     final long settleCount;
+    /** The render stopped on a read outside any loading(...): the page waits for it, with no budget (ADR 0031). */
+    final boolean waitingOnRead;
 
-    private SsrPass(String html, long settleCount) {
+    private SsrPass(String html, long settleCount, boolean waitingOnRead) {
       this.html = html;
       this.settleCount = settleCount;
+      this.waitingOnRead = waitingOnRead;
     }
 
     static SsrPass of(Tab tab) {
       String html = tab.renderFull();
-      if (html == null) {
-        return new SsrPass(null, 0);
-      }
-      // withDefer() queries finish over the socket; SSR waits only for the rest (ADR 0016).
-      boolean waiting = tab.inFlight.stream().anyMatch(q -> !q.deferred);
-      return new SsrPass(html, waiting ? tab.settleCount() : -1L);
+      return new SsrPass(html, tab.settleCount(), html == null && tab.waitingOnRead());
     }
   }
 
@@ -1327,10 +1329,8 @@ public final class J2Act implements AutoCloseable {
     private String contextPath = "";
     private Clock clock = Clock.systemUTC();
     private Duration reconnectGrace = Duration.ofMinutes(3);
+    private Duration streamDeadline = Duration.ofSeconds(10);
     private Duration idleTimeout = Duration.ofHours(12);
-    private Duration ssrAwaitBudget = Duration.ofSeconds(3);
-    private Duration queryStaleTime = Duration.ofSeconds(30);
-    private Duration queryGcTime = Duration.ofMinutes(5);
     private Duration sweepInterval = Duration.ofSeconds(10);
     private Duration pendingTime = Duration.ofSeconds(1);
     private Duration pendingMinTime = Duration.ofMillis(500);
@@ -1430,18 +1430,15 @@ public final class J2Act implements AutoCloseable {
       return this;
     }
 
-    public Builder withSsrAwaitBudget(Duration budget) {
-      this.ssrAwaitBudget = budget;
-      return this;
-    }
-
-    public Builder withQueryStaleTime(Duration staleTime) {
-      this.queryStaleTime = staleTime;
-      return this;
-    }
-
-    public Builder withQueryGcTime(Duration gcTime) {
-      this.queryGcTime = gcTime;
+    /**
+     * How long a served page's response stays open for its loading(...) boundaries (ADR 0031), 10
+     * seconds by default. Its script runs when the response ends, so one load that hangs would keep
+     * the page from becoming interactive. This does not decide what waits or what shows a fallback,
+     * and it discards nothing: past it the response closes with the fallbacks in place, the socket
+     * connects, and each boundary arrives over it when its data lands.
+     */
+    public Builder withStreamDeadline(Duration deadline) {
+      this.streamDeadline = deadline;
       return this;
     }
 

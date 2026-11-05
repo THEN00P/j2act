@@ -1,5 +1,6 @@
 package com.example.counter.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import java.util.ArrayList;
@@ -7,23 +8,23 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.html.tags.DivTag;
 import j2act.html.tags.LiTag;
 import j2act.Prop;
-import j2act.State;
+import j2act.Signal;
 
 /** Stateful rows keyed on the row itself (ADR 0019): the open row stays open through a reorder. */
 public final class NameRows extends ComponentTag {
-
-  private final State<List<String>> names = state(Arrays.asList("Ada", "Grace", "Barbara", "Ken"));
 
   public static NameRows nameRows() {
     return new NameRows();
   }
 
-  @Override protected DivTag render() {
-    return div(
+  @Override protected View setup() {
+    var names = createSignal(Arrays.asList("Ada", "Grace", "Barbara", "Ken"));
+    return () -> div(
       button("Reverse")
         .onClick(e -> {
           List<String> reversed = new ArrayList<>(names.get());
@@ -41,7 +42,6 @@ public final class NameRows extends ComponentTag {
   public static final class Row extends ComponentTag {
 
     private final Prop<String> name = prop();
-    private final State<Boolean> open = state(false);
 
     public static Row row() {
       return new Row();
@@ -52,14 +52,15 @@ public final class NameRows extends ComponentTag {
       return this;
     }
 
-    @Override protected LiTag render() {
-      return li(
+  @Override protected View setup() {
+    var open = createSignal(false);
+    return () -> li(
         button(open.get() ? "▾ " + name.get() : "▸ " + name.get())
           .onClick(e -> open.set(!open.get())),
         open.get()
           ? span(" expanded, State lives on the " + name.get() + " row")
           : null
       );
-    }
+  }
   }
 }

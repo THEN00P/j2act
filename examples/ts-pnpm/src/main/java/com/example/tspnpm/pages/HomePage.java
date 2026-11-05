@@ -1,17 +1,19 @@
 package com.example.tspnpm.pages;
 
+import static j2act.Reactive.*;
 import static com.example.tspnpm.components.NoteEditor.noteEditor;
 import static com.example.tspnpm.components.SalesChart.salesChart;
 import static j2act.html.TagCreator.*;
 
+import j2act.View;
 import j2act.LiveComponent;
 import j2act.html.tags.HtmlTag;
 
 /** Two TypeScript client modules with npm packages, CSS imports and CSS modules. */
 public class HomePage extends LiveComponent {
 
-  @Override public HtmlTag render() {
-    return html(
+  @Override protected View setup() {
+    return () -> html(
       head(
         title("j2act · TypeScript with pnpm")
       ),

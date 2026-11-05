@@ -1,22 +1,23 @@
 package com.example.jakarta.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
+import j2act.View;
 import j2act.ComponentTag;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.DivTag;
 
 /** Form submit with an uncontrolled field and pending on the submit button (ADR 0013). */
 public final class GreetingForm extends ComponentTag {
 
-  private final State<String> greeting = state("nobody greeted yet");
-
   public static GreetingForm greetingForm() {
     return new GreetingForm();
   }
 
-  @Override protected DivTag render() {
-    return div(
+  @Override protected View setup() {
+    var greeting = createSignal("nobody greeted yet");
+    return () -> div(
       form(
         label(
           text("Name "),

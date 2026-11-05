@@ -1,6 +1,8 @@
 package com.example.counter.components;
 
-import j2act.State;
+import static j2act.Reactive.*;
+
+import j2act.Signal;
 import j2act.Store;
 import j2act.TabScoped;
 
@@ -11,7 +13,7 @@ import j2act.TabScoped;
 @TabScoped
 public class Signature extends Store {
 
-  private final State<String> signer = retainedState("");
+  private final Signal<String> signer = createRetained("");
 
   public String signer() {
     return signer.get();

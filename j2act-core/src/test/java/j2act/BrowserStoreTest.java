@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -25,15 +26,15 @@ class BrowserStoreTest {
 
   @BrowserScoped
   public static class Player extends Store {
-    final State<String> track = state("none");
-    final State<Integer> volume = retainedState(5);
-    final Computed<String> label = computed(() -> {
+    final Signal<String> track = createSignal("none");
+    final Signal<Integer> volume = createRetained(5);
+    final Memo<String> label = createMemo(() -> {
       computations.incrementAndGet();
       return track.get().toUpperCase();
     });
 
     public Player() {
-      effect(() -> {
+      createEffect(() -> 1, once -> {
         effectRuns.incrementAndGet();
         return null;
       });
@@ -42,15 +43,15 @@ class BrowserStoreTest {
 
   @TabScoped
   public static class Sidebar extends Store {
-    final State<Boolean> open = state(false);
+    final Signal<Boolean> open = createSignal(false);
   }
 
   @BrowserScoped
   public static class Reaching extends Store {
-    final State<String> seen = state("-");
+    final Signal<String> seen = createSignal("-");
 
     public Reaching() {
-      effect(() -> {
+      createEffect(() -> 1, once -> {
         try {
           StoreScope.get(TabScoped.class, Sidebar.class, Sidebar::new, null);
           seen.set("reached a tab store");
@@ -64,31 +65,35 @@ class BrowserStoreTest {
 
   /** Reads the player while rendering, so the page response sets the cookie. */
   static final class PlayerPage extends LiveComponent {
-    @Override public Tag<?> render() {
-      Player player = browser(Player.class);
+
+  @Override protected View setup() {
+    return () -> {
+      Player player = useBrowserStore(Player.class);
       return T.page("p", T.div(
         T.span("track=" + player.track.get() + ";label=" + player.label.get() + ";volume=" + player.volume.get() + ";"),
         T.input().withId("track").onChange(e -> player.track.set(e.value())),
         T.input().withId("volume").onChange(e -> player.volume.set(Integer.parseInt(e.value()))),
-        T.button("pause all").onClick(e -> browser().requestPause())));
-    }
+        T.button("pause all").onClick(e -> useBrowser().requestPause())));
+    };
+  }
   }
 
   /** Never reads the player while rendering; a click is its first use. */
   static final class LazyPage extends LiveComponent {
-    private final State<String> shown = state("-");
 
-    @Override public Tag<?> render() {
-      return T.page("l", T.div(
+  @Override protected View setup() {
+    var shown = createSignal("-");
+    return () -> T.page("l", T.div(
         T.span("shown=" + shown.get() + ";"),
-        T.button("use").onClick(e -> shown.set(browser(Player.class).track.get()))));
-    }
+        T.button("use").onClick(e -> shown.set(useBrowserStore(Player.class).track.get()))));
+  }
   }
 
   static final class ReachingPage extends LiveComponent {
-    @Override public Tag<?> render() {
-      return T.page("r", T.div(T.span("seen=" + browser(Reaching.class).seen.get() + ";")));
-    }
+
+  @Override protected View setup() {
+    return () -> T.page("r", T.div(T.span("seen=" + useBrowserStore(Reaching.class).seen.get() + ";")));
+  }
   }
 
   /** One browser tab: its page load, socket and events. */
@@ -330,24 +335,33 @@ class BrowserStoreTest {
   }
 
   static final AtomicInteger cleanups = new AtomicInteger();
+  static final AtomicInteger cleanedStarts = new AtomicInteger();
 
   @BrowserScoped
   public static class Cleaned extends Store {
     public Cleaned() {
-      effect(() -> cleanups::incrementAndGet);
+      createEffect(() -> 1, once -> {
+        cleanedStarts.incrementAndGet();
+        return cleanups::incrementAndGet;
+      });
     }
   }
 
   @Test
   void closingWithoutSavingStillEndsBrowserStores() {
     cleanups.set(0);
+    cleanedStarts.set(0);
     Harness h = new Harness(() -> new LiveComponent() {
-      @Override public Tag<?> render() {
-        browser(Cleaned.class);
+
+  @Override protected View setup() {
+    return () -> {
+        useBrowserStore(Cleaned.class);
         return T.page("c", T.div(T.span("c")));
-      }
+    };
+  }
     });
-    new Page(h.engine, "/", Exchange.empty());
+    new Page(h.engine, "/", Exchange.empty()).connect();
+    Harness.eventually(() -> cleanedStarts.get() == 1, "a browser store's effects start with its first socket");
     h.close();
     Harness.eventually(() -> cleanups.get() == 1, "the browser store's effect cleanup on close");
   }
@@ -355,13 +369,16 @@ class BrowserStoreTest {
   static final java.util.concurrent.atomic.AtomicReference<String> signedIn = new java.util.concurrent.atomic.AtomicReference<>();
 
   static final class TrackPage extends LiveComponent {
-    @Override public Tag<?> render() {
-      Player player = browser(Player.class);
+
+  @Override protected View setup() {
+    return () -> {
+      Player player = useBrowserStore(Player.class);
       return T.page("t", T.div(
         T.span("track=" + player.track.get() + ";"),
         T.input().withId("track").onChange(e -> player.track.set(e.value())),
         T.button("noop").onClick(e -> { })));
-    }
+    };
+  }
   }
 
   @Test
@@ -473,17 +490,17 @@ class BrowserStoreTest {
   }
 
   static final class OnceBrowser extends LiveComponent {
-    private final State<Boolean> used = state(false);
 
-    @Override public Tag<?> render() {
-      return T.page("o", T.div(
+  @Override protected View setup() {
+    var used = createSignal(false);
+    return () -> T.page("o", T.div(
         T.span("used=" + used.get() + ";"),
         T.button("use").onClick(e -> {
-          browser(Player.class).track.get();
+          useBrowserStore(Player.class).track.get();
           used.set(true);
         }),
         T.button("noop").onClick(e -> { })));
-    }
+  }
   }
 
   @Test
@@ -531,10 +548,13 @@ class BrowserStoreTest {
   }
 
   static final class RedirectingPage extends LiveComponent {
-    @Override public Tag<?> render() {
-      browser(Player.class).track.get();
+
+  @Override protected View setup() {
+    return () -> {
+      useBrowserStore(Player.class).track.get();
       throw RouteException.redirect("/elsewhere");
-    }
+    };
+  }
   }
 
   @Test
@@ -568,11 +588,12 @@ class BrowserStoreTest {
   void onCloseATabsCleanupStillReachesItsBrowserStore() {
     seenOnClose = null;
     Harness h = new Harness(() -> new LiveComponent() {
-      @Override public Tag<?> render() {
-        Player player = browser(Player.class);
-        effect(() -> () -> seenOnClose = player.track.get());
-        return T.page("c", T.div(T.span("c")));
-      }
+
+  @Override protected View setup() {
+    Player player = useBrowserStore(Player.class);
+    createEffect(() -> 1, once -> () -> seenOnClose = player.track.get());
+    return () -> T.page("c", T.div(T.span("c")));
+  }
     });
     new Page(h.engine, "/", Exchange.empty()).connect();
     h.close();
@@ -584,6 +605,152 @@ class BrowserStoreTest {
       Thread.sleep(millis);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+    }
+  }
+
+  @BrowserScoped
+  public static class Selection extends Store {
+    final Signal<String> id = createSignal("a");
+  }
+
+  static final class HoldsPerTab extends LiveComponent {
+    static final java.util.List<java.util.concurrent.CompletableFuture<String>> LOADS =
+      new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    @Override protected View setup() {
+      Selection selection = useBrowserStore(Selection.class);
+      AsyncSupplier<String> body = () -> {
+        String id = selection.id.get();
+        if ("a".equals(id)) {
+          return java.util.concurrent.CompletableFuture.completedFuture("A");
+        }
+        java.util.concurrent.CompletableFuture<String> load = new java.util.concurrent.CompletableFuture<>();
+        LOADS.add(load);
+        return load.thenApply(String::toUpperCase);
+      };
+      var loaded = createMemo(body);
+      return () -> T.page("h", T.div(
+        T.span("id:" + selection.id.get() + ";loaded:" + loaded.get() + ";"),
+        T.button("select").onClick(e -> selection.id.set("b"))));
+    }
+  }
+
+  /** ADR 0031: each tab holds what its own load has not reached, so no tab ever shows B's id over A's data. */
+  @Test
+  void eachTabOfABrowserHoldsAWriteUntilItsOwnLoadLands() {
+    HoldsPerTab.LOADS.clear();
+    try (Harness h = harness(HoldsPerTab::new)) {
+      Page first = new Page(h.engine, "/", Exchange.empty());
+      String cookie = cookieValue(first.result.setCookies());
+      first.connect();
+      Page second = new Page(h.engine, "/", withCookie(cookie)).connect();
+      int fromFirst = first.conn.size();
+      int fromSecond = second.conn.size();
+      first.click("select");
+      Harness.eventually(() -> HoldsPerTab.LOADS.size() == 2, "each tab loads for itself");
+      assertTrue(first.conn.since(fromFirst, m -> "patch".equals(m.get("type"))).isEmpty(), "the first tab holds");
+      assertTrue(second.conn.since(fromSecond, m -> "patch".equals(m.get("type"))).isEmpty(), "the second tab holds");
+
+      HoldsPerTab.LOADS.get(0).complete("b");
+      Harness.eventually(() -> !first.conn.since(fromFirst, m -> "patch".equals(m.get("type"))).isEmpty()
+        || !second.conn.since(fromSecond, m -> "patch".equals(m.get("type"))).isEmpty(), "one tab moves on");
+      HoldsPerTab.LOADS.get(1).complete("b");
+      first.awaitPatch(fromFirst, "id:b;loaded:B;");
+      second.awaitPatch(fromSecond, "id:b;loaded:B;");
+      for (Page page : List.of(first, second)) {
+        for (Map<String, String> patch : page.conn.since(0, m -> "patch".equals(m.get("type")))) {
+          assertTrue(!patch.get("html").contains("id:b;loaded:A"), patch.get("html"));
+        }
+      }
+    }
+  }
+
+  @BrowserScoped
+  public static class Remote extends Store {
+    static final AtomicInteger ATTEMPTS = new AtomicInteger();
+    static volatile java.util.concurrent.CompletableFuture<String> landing;
+    private static final AsyncSupplier<String> LOAD = () -> {
+      ATTEMPTS.incrementAndGet();
+      return landing;
+    };
+    final Memo<String> value = createMemo(LOAD);
+  }
+
+  static final class ReadsRemote extends LiveComponent {
+    @Override protected View setup() {
+      Remote remote = useBrowserStore(Remote.class);
+      return () -> T.page("r", T.div(T.span("value:" + remote.value.get() + ";")));
+    }
+  }
+
+  /** The load lands on the browser's lane, and the response waiting on the tab's has to hear of it. */
+  @Test
+  void aPageWaitingOnABrowserLoadIsReleasedWhenItLands() {
+    Remote.ATTEMPTS.set(0);
+    Remote.landing = new java.util.concurrent.CompletableFuture<>();
+    // The default grace: a tab that waits for its first load has not connected yet.
+    try (Harness h = new Harness(ReadsRemote::new)) {
+      java.util.concurrent.atomic.AtomicReference<ServeResult> served = new java.util.concurrent.atomic.AtomicReference<>();
+      Thread request = new Thread(() -> served.set(h.engine.serve("/", Exchange.empty())));
+      request.setDaemon(true);
+      request.start();
+      Harness.eventually(() -> Remote.ATTEMPTS.get() > 0, "the load runs");
+      try {
+        Thread.sleep(200); // so the response is waiting when it lands
+      } catch (InterruptedException e) {
+        throw new IllegalStateException(e);
+      }
+      Remote.landing.complete("there");
+      Harness.eventually(() -> served.get() != null, "the response goes out");
+      assertTrue(served.get().html().contains("value:there;"), served.get().html());
+    }
+  }
+
+  static final class RetriesRemote extends LiveComponent {
+    @Override protected View setup() {
+      Remote remote = useBrowserStore(Remote.class);
+      return () -> T.page("r", T.div(
+        errored(() -> T.span("value:" + remote.value.get() + ";"))
+          .withFallback((e, reset) -> T.button("again").onClick(click -> reset.run()))));
+    }
+  }
+
+  @Test
+  void aResetAtABoundaryLoadsABrowserMemoAgain() {
+    Remote.ATTEMPTS.set(0);
+    Remote.landing = java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("fails on purpose"));
+    try (Harness h = harness(RetriesRemote::new)) {
+      Page page = new Page(h.engine, "/", Exchange.empty()).connect();
+      assertTrue(page.html.contains("again"), page.html);
+      assertEquals(1, Remote.ATTEMPTS.get());
+      int from = page.conn.size();
+      Remote.landing = java.util.concurrent.CompletableFuture.completedFuture("there");
+      page.click("again");
+      Harness.eventually(() -> Remote.ATTEMPTS.get() == 2, "the source loads again");
+      page.awaitPatch(from, "value:there;");
+    }
+  }
+
+  static final class ShowsRemoteFailure extends LiveComponent {
+    @Override protected View setup() {
+      Remote remote = useBrowserStore(Remote.class);
+      remote.value.withStaleOnError();
+      return () -> T.page("r", T.div(
+        T.span("value:" + remote.value.get() + ";failed:" + failed(remote.value) + ";"),
+        T.button("again").onClick(e -> refresh(remote.value))));
+    }
+  }
+
+  @Test
+  void failedFollowsABrowserMemoFromATab() {
+    Remote.landing = java.util.concurrent.CompletableFuture.completedFuture("one");
+    try (Harness h = harness(ShowsRemoteFailure::new)) {
+      Page page = new Page(h.engine, "/", Exchange.empty()).connect();
+      assertTrue(page.html.contains("value:one;failed:false;"), page.html);
+      int from = page.conn.size();
+      Remote.landing = java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("fails on purpose"));
+      page.click("again");
+      page.awaitPatch(from, "value:one;failed:true;");
     }
   }
 }

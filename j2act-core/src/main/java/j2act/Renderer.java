@@ -19,16 +19,122 @@ final class Renderer {
   StringBuilder out = new StringBuilder(1024);
   /** The CSP nonce for the bootstrap tags, set only when rendering the served page. */
   String nonce;
-  /** Queries created under each open loading and error boundary, nearest on top (ADR 0007). */
-  private final Deque<List<QueryCell>> loadingOwners = new ArrayDeque<>();
-  private final Deque<List<QueryCell>> errorOwners = new ArrayDeque<>();
 
   Renderer(Tab tab, long epoch) {
     this.tab = tab;
     this.epoch = epoch;
   }
 
+  /** Renders a scope; a read that stops it unwinds up to a boundary, with what is mounted kept (ADR 0031). */
   void renderScope(Scope scope) {
+    try {
+      if (scope.instance instanceof Boundary) {
+        renderBoundary(scope);
+      } else {
+        renderComponent(scope);
+      }
+    } catch (NotReady | LoadFailed e) {
+      unwind(scope);
+      throw e;
+    }
+  }
+
+  /** The render stopped: what it placed stays mounted beside what it had not reached, and handlers stay valid. */
+  private void unwind(Scope scope) {
+    scope.rendering = false;
+    tab.handlers.abort(scope);
+    Map<String, Scope> merged = new java.util.LinkedHashMap<>(scope.previousChildren);
+    merged.putAll(scope.children);
+    scope.children = merged;
+    scope.previousChildren = new java.util.LinkedHashMap<>();
+  }
+
+  /** Where the HTML parser moves a div out of its parent, which would part a boundary from what it wraps. */
+  private static final java.util.Set<String> NO_DIV_INSIDE = new java.util.HashSet<>(java.util.Arrays.asList(
+    "table", "thead", "tbody", "tfoot", "tr", "colgroup", "select", "optgroup", "p"));
+
+  /** The element being rendered, outside any component's root. */
+  private String enclosing;
+
+  private void renderBoundary(Scope scope) {
+    if (enclosing != null && NO_DIV_INSIDE.contains(enclosing)) {
+      throw new IllegalStateException(scope.instance.getClass().getSimpleName().toLowerCase() + "(...) cannot stand"
+        + " directly inside <" + enclosing + ">, whose parsing would move it out of there: put the boundary around the"
+        + " whole <" + enclosing + "> (ADR 0031)");
+    }
+    if (scope.renderedEpoch == epoch) {
+      throw new IllegalStateException("one boundary was rendered twice in the same pass");
+    }
+    scope.renderedEpoch = epoch;
+    tab.dirty.remove(scope);
+    scope.dirty = false;
+    scope.unsubscribeAll();
+    tab.handlers.begin(scope);
+    scope.previousChildren = scope.children;
+    scope.children = new java.util.LinkedHashMap<>();
+    out.append("<div");
+    attribute("data-j2-scope", scope.anchor);
+    attribute("data-j2-boundary", "");
+    attribute("style", "display:contents");
+    out.append('>');
+    int inner = out.length();
+    Boundary<?> boundary = (Boundary<?>) scope.instance;
+    Observer previous = Tracking.swap(scope);
+    Scope previousScope = Tracking.swapScope(scope);
+    scope.rendering = true;
+    try {
+      try {
+        renderChildren(scope, "/0", latest(boundary).children(), false);
+        tab.showingFallback.remove(scope);
+        tab.showingError.remove(scope);
+      } catch (NotReady e) {
+        if (!(boundary instanceof Loading)) {
+          throw e;
+        }
+        out.setLength(inner);
+        keepMounted(scope);
+        scope.waitFor(e.cell);
+        tab.showingFallback.add(scope);
+        DomContent fallback = ((Loading) boundary).fallback;
+        if (fallback != null) {
+          renderNode(scope, "/fallback", fallback, false);
+        }
+      } catch (LoadFailed e) {
+        if (!(boundary instanceof Errored)) {
+          throw e;
+        }
+        out.setLength(inner);
+        keepMounted(scope);
+        scope.waitFor(e.cell);
+        tab.showingError.add(scope);
+        Node failed = e.cell;
+        java.util.function.BiFunction<Throwable, Runnable, ? extends DomContent> fallback = ((Errored) boundary).fallback;
+        if (fallback != null) {
+          renderNode(scope, "/fallback", fallback.apply(e.getCause(), () -> tab.post(failed::retry)), false);
+        }
+      }
+    } finally {
+      scope.rendering = false;
+      Tracking.swap(previous);
+      Tracking.swapScope(previousScope);
+    }
+    out.append("</div>");
+    finish(scope);
+  }
+
+  private static Boundary<?> latest(Boundary<?> boundary) {
+    return boundary instanceof Loading ? ((Loading) boundary).latest : ((Errored) boundary).latest;
+  }
+
+  /** The children stopped partway and their output is gone: what they placed so far stays mounted, hidden. */
+  private static void keepMounted(Scope scope) {
+    Map<String, Scope> merged = new java.util.LinkedHashMap<>(scope.previousChildren);
+    merged.putAll(scope.children);
+    scope.children = merged;
+    scope.previousChildren = new java.util.LinkedHashMap<>();
+  }
+
+  private void renderComponent(Scope scope) {
     if (scope.renderedEpoch == epoch) {
       throw new IllegalStateException("one component object was rendered twice in the same pass: "
         + scope.instance.getClass().getName());
@@ -41,81 +147,31 @@ final class Renderer {
     scope.previousChildren = scope.children;
     scope.children = new java.util.LinkedHashMap<>();
 
-    boolean loadingBoundary = Boundaries.isLoading(scope.instance.getClass());
-    boolean errorBoundary = Boundaries.isError(scope.instance.getClass());
-    if (loadingBoundary) {
-      loadingOwners.push(new ArrayList<>());
-    }
-    if (errorBoundary) {
-      errorOwners.push(new ArrayList<>());
-    }
-    int start = out.length();
-
     Tag<?> root;
     Observer previous = Tracking.swap(scope);
+    Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
+      scope.refreshView();
       if (scope.shapeChanged(scope.instance.getClass())) {
-        // Only a held object (a page, a layout, a field of its parent) reaches here: a fresh one
-        // started over when it was bound, and dev mode mounts changed pages and layouts again.
+        // Only a page or a layout reaches here: any other starts over when its next description
+        // binds, and dev mode mounts changed pages and layouts again.
         tab.engine.log(System.Logger.Level.WARNING, "j2act dev: " + scope.instance.getClass().getName()
-          + " has new fields, but its object is held by its parent, so they stay unset until the page reloads", null);
+          + " has new fields, which stay unset until the page reloads", null);
         scope.shape = Scope.shapeOf(scope.instance.getClass());
       }
-      try {
-        root = scope.instance.runRender();
-      } catch (Scope.ShapeChanged e) {
-        // Before anything of this render was emitted: start over and render once more.
-        scope.startOver(e.getMessage());
-        root = scope.instance.runRender();
-      }
+      root = scope.renderView();
     } finally {
       scope.rendering = false;
       Tracking.swap(previous);
-    }
-    scope.activatePending();
-    for (Cell cell : scope.cells) {
-      if (cell instanceof QueryCell) {
-        if (!loadingOwners.isEmpty()) {
-          loadingOwners.peek().add((QueryCell) cell);
-        }
-        if (!errorOwners.isEmpty()) {
-          errorOwners.peek().add((QueryCell) cell);
-        }
-      }
+      Tracking.swapScope(previousScope);
     }
     emit(scope, root);
+    finish(scope);
+  }
 
-    List<QueryCell> loadingOwned = loadingBoundary ? loadingOwners.pop() : null;
-    List<QueryCell> errorOwned = errorBoundary ? errorOwners.pop() : null;
-    Tag<?> replacement = null;
-    List<QueryCell> watched = null;
-    if (loadingOwned != null && loadingOwned.stream().anyMatch(QueryCell::initiallyPending)) {
-      replacement = withTracking(scope, () -> scope.instance.loading());
-      watched = loadingOwned;
-    }
-    if (replacement == null && errorOwned != null) {
-      List<QueryCell> failed = new ArrayList<>();
-      for (QueryCell query : errorOwned) {
-        if (query.initiallyFailed()) {
-          failed.add(query);
-        }
-      }
-      if (!failed.isEmpty()) {
-        PageError error = new PageError(failed, failed.get(0).failure());
-        replacement = withTracking(scope, () -> scope.instance.error(error));
-        watched = errorOwned;
-      }
-    }
-    if (replacement != null) {
-      // The subtree stays mounted so its queries keep running; only its markup is swapped.
-      out.setLength(start);
-      emit(scope, replacement);
-      for (QueryCell query : watched) {
-        query.observers.add(scope);
-        scope.dependsOn(query);
-      }
-    }
+  /** The scope rendered: handlers no element uses go, and so do children it did not place again. */
+  private void finish(Scope scope) {
     tab.handlers.end(scope);
     scope.codeEpoch = tab.engine.codeEpoch;
 
@@ -140,15 +196,6 @@ final class Renderer {
       }
     } else {
       renderTag(scope, "", root, scope.anchor);
-    }
-  }
-
-  private static Tag<?> withTracking(Scope scope, java.util.function.Supplier<Tag<?>> body) {
-    Observer previous = Tracking.swap(scope);
-    try {
-      return body.get();
-    } finally {
-      Tracking.swap(previous);
     }
   }
 
@@ -278,7 +325,13 @@ final class Renderer {
       renderNode(scope, path + "/pending", tag.pending, false);
       out.append("</template>");
     }
-    renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(tag.name));
+    String outer = enclosing;
+    enclosing = tag.name;
+    try {
+      renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(tag.name));
+    } finally {
+      enclosing = outer;
+    }
     out.append("</").append(tag.name).append('>');
   }
 
@@ -314,13 +367,17 @@ final class Renderer {
     }
   }
 
-  /** Finds or creates the child's scope: by reference for held objects, by slot for fresh ones. */
+  /** Finds or creates the child's scope: a route's frame is its own, anything else matches by slot (ADR 0031). */
   private void place(Scope parent, String path, ComponentTag component) {
     Scope child;
     String local = path + "@" + component.getClass().getName();
     if (component.scope != null) {
       child = component.scope;
-      if (child.parent == parent && child.localPath == null) {
+      if (child.parent != parent) {
+        throw new IllegalStateException("one " + component.getClass().getName() + " was rendered in two places;"
+          + " call its factory for each (ADR 0031)");
+      }
+      if (child.localPath == null) {
         // An adopted preloaded page (ADR 0011): its slot is where it renders now.
         child.localPath = local;
       }

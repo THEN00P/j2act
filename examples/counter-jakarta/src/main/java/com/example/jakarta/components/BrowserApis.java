@@ -1,10 +1,12 @@
 package com.example.jakarta.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
+import j2act.View;
 import j2act.BrowserException;
 import j2act.ComponentTag;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.DivTag;
 
 /**
@@ -14,18 +16,17 @@ import j2act.html.tags.DivTag;
  */
 public final class BrowserApis extends ComponentTag {
 
-  private final State<String> stored = state("nothing");
-  private final State<String> title = state("unknown");
-  private final State<String> place = state("unknown");
-  private final State<String> copied = state("not yet");
-  private final State<String> failure = state("none");
-
   public static BrowserApis browserApis() {
     return new BrowserApis();
   }
 
-  @Override protected DivTag render() {
-    return div(
+  @Override protected View setup() {
+    var stored = createSignal("nothing");
+    var title = createSignal("unknown");
+    var place = createSignal("unknown");
+    var copied = createSignal("not yet");
+    var failure = createSignal("none");
+    return () -> div(
       button("Store and read back")
         .withId("api-store")
         .onClick(e -> {

@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -30,13 +31,13 @@ class ViteTest {
   }
 
   static final class Page extends LiveComponent {
-    private final Chart chart = client(Chart.class);
 
-    @Override public Tag<?> render() {
-      return T.tag("html",
+  @Override protected View setup() {
+    var chart = createClient(Chart.class);
+    return () -> T.tag("html",
         T.tag("head", T.tag("title", "t"), Vite.vite("src/main/frontend/app.css")),
         T.tag("body", T.div().withId("chart").withClient(chart.mount("sales"))));
-    }
+  }
   }
 
   private static String served(Harness h, String url) {

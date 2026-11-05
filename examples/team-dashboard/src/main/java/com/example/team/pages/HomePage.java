@@ -1,17 +1,19 @@
 package com.example.team.pages;
 
+import static j2act.Reactive.*;
 import static com.example.team.components.ActivityFeed.activityFeed;
 import static com.example.team.components.Counter.counter;
 import static j2act.html.TagCreator.*;
 
+import j2act.View;
 import j2act.LiveComponent;
 import j2act.html.tags.HtmlTag;
 
 /** Public landing page. No guard, no identity seam needed. */
 public class HomePage extends LiveComponent {
 
-  @Override public HtmlTag render() {
-    return html(
+  @Override protected View setup() {
+    return () -> html(
       head(
         title("Team dashboard"),
         meta()

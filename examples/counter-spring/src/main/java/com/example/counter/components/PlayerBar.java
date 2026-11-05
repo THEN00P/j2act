@@ -1,9 +1,11 @@
 package com.example.counter.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import jakarta.inject.Inject;
 
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.html.tags.DivTag;
 
@@ -16,8 +18,8 @@ public final class PlayerBar extends ComponentTag {
     return new PlayerBar();
   }
 
-  @Override protected DivTag render() {
-    return div(
+  @Override protected View setup() {
+    return () -> div(
       label(
         text("Track "),
         input()

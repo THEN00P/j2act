@@ -1,23 +1,28 @@
 package j2act;
 
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 /**
- * Backs effect(). Runs on the lane after the render that mounted it, re-runs when a
- * State it read changes, and runs its cleanup before each re-run and on unmount.
+ * Backs createEffect() (ADR 0031). Its first run waits for the tab's socket. It watches on the
+ * lane and acts when the watched value changed, running its cleanup first; its cleanup also runs
+ * on unmount.
  */
 final class EffectCell extends Cell implements Observer {
 
-  Supplier<Runnable> body;
+  Supplier<?> track;
+  BiFunction<Object, Object, Runnable> apply;
   private Runnable cleanup;
   private boolean queued;
+  private boolean ran;
+  private Object last;
   private final Set<Cell> deps = new HashSet<>();
 
-  EffectCell(Tab tab, String address, Supplier<Runnable> body) {
+  EffectCell(Tab tab, String address) {
     super(tab, address);
-    this.body = body;
   }
 
   @Override Object peek() {
@@ -42,11 +47,37 @@ final class EffectCell extends Cell implements Observer {
       return;
     }
     queued = false;
-    runCleanup();
+    Scope previousScope = Tracking.swapScope(owner);
+    try {
+      runTwoHalves();
+    } finally {
+      Tracking.swapScope(previousScope);
+    }
+  }
+
+  private void runTwoHalves() {
     unsubscribe();
+    Object value;
     Observer previous = Tracking.swap(this);
     try {
-      cleanup = body.get();
+      value = track.get();
+    } catch (Throwable t) {
+      tab.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, t);
+      return;
+    } finally {
+      Tracking.swap(previous);
+    }
+    if (ran && Objects.equals(last, value)) {
+      return;
+    }
+    Object before = last;
+    boolean first = !ran;
+    last = value;
+    ran = true;
+    runCleanup();
+    previous = Tracking.swap(null);
+    try {
+      cleanup = apply.apply(value, first ? null : before);
     } catch (Throwable t) {
       tab.engine.log(System.Logger.Level.WARNING, "effect failed at " + address, t);
     } finally {

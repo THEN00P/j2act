@@ -10,7 +10,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 
 /**
- * The file flavor of Mutation (ADR 0006). mutate(file) with the UploadFile from a file
+ * A Transfer that receives a file (ADR 0006). mutate(file) with the UploadFile from a file
  * input's change event: the browser sends the bytes in resumable chunks, restrictions are
  * enforced on the server, and the file lands under withTarget with withNaming's name.
  * Pending until stored; progress() tracks the bytes received.
@@ -25,7 +25,7 @@ import java.util.function.Consumer;
  * input().withType("file").withAccept("image/*").onChange(e -> avatar.mutate(e.file()));
  * }</pre>
  */
-public final class Upload extends Mutation<UploadFile, UploadRef> {
+public final class Upload extends Transfer<UploadFile, UploadRef> {
 
   /** Unless withMaxFileSize says otherwise. */
   public static final long DEFAULT_MAX_FILE_SIZE = 10L * 1024 * 1024;
@@ -76,22 +76,12 @@ public final class Upload extends Mutation<UploadFile, UploadRef> {
 
   /** Percent of the file's bytes the server has, 0 to 100. */
   public int progress() {
-    return cell == null ? 0 : ((MutationCell) cell).read().progress;
-  }
-
-  @Override public Upload withKey(Object... parts) {
-    super.withKey(parts);
-    return this;
+    return cell == null ? 0 : ((TransferCell) cell).read().progress;
   }
 
   /** Not supported: the browser resumes failed chunks itself, so a retry is another mutate(). */
   @Override public Upload withRetry(int retries, Duration backoff) {
     throw new UnsupportedOperationException("an upload resumes its chunks itself; call mutate() again to retry");
-  }
-
-  @Override public Upload withInvalidates(Object... keyPrefix) {
-    super.withInvalidates(keyPrefix);
-    return this;
   }
 
   @Override public Upload onSuccess(Consumer<? super UploadRef> callback) {

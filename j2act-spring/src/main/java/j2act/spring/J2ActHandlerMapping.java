@@ -141,7 +141,51 @@ public class J2ActHandlerMapping extends AbstractHandlerMapping {
       }
       res.setStatus(result.status());
       res.setContentType("text/html;charset=UTF-8");
-      res.getOutputStream().write(result.html().getBytes(StandardCharsets.UTF_8));
+      writePage(result, req, res);
     };
+  }
+
+  /**
+   * Writes a served page (ADR 0031). When its loading(...) boundaries are still loading the
+   * response stays open: asynchronously, so no thread waits, or holding the request thread where a
+   * filter in front of this one is not async-capable.
+   */
+  private static void writePage(ServeResult result, jakarta.servlet.http.HttpServletRequest request,
+    jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+    jakarta.servlet.ServletOutputStream out = response.getOutputStream();
+    if (!result.streams()) {
+      out.write(result.html().getBytes(StandardCharsets.UTF_8));
+      return;
+    }
+    // nginx buffers responses by default, which would hold the boundaries back.
+    response.setHeader("X-Accel-Buffering", "no");
+    out.write(result.html().getBytes(StandardCharsets.UTF_8));
+    out.flush();
+    boolean async = request.isAsyncSupported();
+    jakarta.servlet.AsyncContext context = async ? request.startAsync() : null;
+    if (async) {
+      context.setTimeout(0);
+    }
+    java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+    result.streamTo(new ServeResult.ChunkSink() {
+      @Override public void write(String chunk) throws java.io.IOException {
+        out.write(chunk.getBytes(StandardCharsets.UTF_8));
+        out.flush();
+      }
+
+      @Override public void end() {
+        if (async) {
+          context.complete();
+        }
+        done.countDown();
+      }
+    });
+    if (!async) {
+      try {
+        done.await();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+    }
   }
 }

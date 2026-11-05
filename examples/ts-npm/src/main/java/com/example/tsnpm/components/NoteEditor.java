@@ -1,16 +1,18 @@
 package com.example.tsnpm.components;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
+import j2act.View;
 import j2act.Client;
 import j2act.ComponentTag;
 import j2act.DomContent;
 import j2act.Mount;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.DivTag;
 
 /**
@@ -20,6 +22,10 @@ import j2act.html.tags.DivTag;
  */
 public final class NoteEditor extends ComponentTag {
 
+  private Editor editor;
+  private Signal<String> text;
+
+
   /** A rich-text editor that reports its plain text. */
   interface Editor extends Client {
     Mount<DivTag> mount(String initial, Consumer<String> onText, DomContent problems);
@@ -28,15 +34,14 @@ public final class NoteEditor extends ComponentTag {
   private static final String INITIAL = "Hello from j2act";
   private static final int LIMIT = 40;
 
-  private final Editor editor = client(Editor.class);
-  private final State<String> text = state(INITIAL);
-
   public static NoteEditor noteEditor() {
     return new NoteEditor();
   }
 
-  @Override protected DivTag render() {
-    return div(
+  @Override protected View setup() {
+    editor = createClient(Editor.class);
+    text = createSignal(INITIAL);
+    return () -> div(
       div()
         .withId("editor")
         .withClient(editor.mount(INITIAL, text::set, problems(text.get()))),

@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -16,10 +17,10 @@ class EventsTest {
   static final List<String> log = new CopyOnWriteArrayList<>();
 
   static final class Form extends LiveComponent {
-    private final State<String> lastKey = state("none");
 
-    @Override public Tag<?> render() {
-      return T.page("t",
+  @Override protected View setup() {
+    var lastKey = createSignal("none");
+    return () -> T.page("t",
         T.span("last key " + lastKey.get()),
         T.tag("form",
           T.input().withId("name").attr("name", "name")
@@ -34,7 +35,7 @@ class EventsTest {
           .withId("f")
           .onSubmit(e -> log.add("submit name=" + e.value("name") + " tags=" + e.values("tags")
             + " odd=" + e.value("odd") + " missing=[" + e.value("missing") + "]")));
-    }
+  }
   }
 
   @Test

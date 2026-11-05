@@ -93,6 +93,12 @@ final class Harness implements AutoCloseable {
     return this;
   }
 
+  /** The socket drops; the tab stays for its grace window. */
+  Harness disconnect() {
+    engine.onClose(conn);
+    return this;
+  }
+
   /** Sends an event with extra fields (key, ctrlKey, ... for keys) and waits for its ack. */
   List<Map<String, String>> fire(String handlerId, String value, Object... extra) {
     Object[] fields = new Object[8 + extra.length];

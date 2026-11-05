@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static j2act.RetainedStateTest.harness;
 import static j2act.RetainedStateTest.remount;
 import static j2act.RetainedStateTest.type;
@@ -22,7 +23,7 @@ import j2act.RetainedStateTest.CountingStorage;
 import j2act.RetainedStateTest.Form;
 import j2act.internal.json.Json;
 
-/** ADR 0026: j2act.pause() and resume(), automatic pauses, onPersisting and onRestored. */
+/** ADR 0026: j2act.pause() and resume(), and automatic pauses. */
 class RetainedPauseTest {
 
   /** Sends the pause runtime.js sends and waits for the server's answer. */
@@ -139,14 +140,14 @@ class RetainedPauseTest {
   }
 
   static final class Exporting extends LiveComponent {
-    private final State<String> note = retainedState("");
-    private final Download<String> csv = download((String like, OutputStream out) -> out.write(1));
 
-    @Override public Tag<?> render() {
-      return T.page("export", T.div(
+  @Override protected View setup() {
+    var note = createRetained("note", "");
+    var csv = createDownload((String like, OutputStream out) -> out.write(1));
+    return () -> T.page("export", T.div(
         T.input().withId("note").onChange(e -> note.set(e.value())),
         T.button("export").onClick(e -> csv.mutate("x"))));
-    }
+  }
   }
 
   @Test
@@ -194,89 +195,15 @@ class RetainedPauseTest {
   }
 
   /** Keeps what is typed in plain State and copies it into the retained field when a snapshot is taken. */
-  static final class Hooks extends LiveComponent {
-    static final AtomicInteger restoredRuns = new AtomicInteger();
-    static volatile String restoredValue;
-
-    private final State<String> typed = state("");
-    private final State<String> saved = retainedState("");
-
-    {
-      onPersisting(() -> saved.set(typed.get()));
-      onRestored(() -> {
-        restoredRuns.incrementAndGet();
-        restoredValue = saved.get();
-      });
-    }
-
-    @Override public Tag<?> render() {
-      return T.page("hooks", T.div(
-        T.span("saved=" + saved.get() + ";"),
-        T.input().withId("typed").onChange(e -> typed.set(e.value()))));
-    }
-  }
-
-  @Test
-  void onPersistingCopiesIntoRetainedFieldsAndOnRestoredRunsOnceAfterARestoreOnly() {
-    CountingStorage storage = new CountingStorage();
-    Hooks.restoredRuns.set(0);
-    try (Harness h = harness(Hooks::new, storage)) {
-      h.load();
-      h.connect();
-      assertEquals(0, Hooks.restoredRuns.get(), "a fresh page restored nothing");
-      type(h, "typed", "Ada");
-      String old = h.token;
-      pause(h, false);
-
-      String html = h.load("/", remount(old));
-      assertTrue(html.contains("saved=Ada;"), html);
-      Harness.eventually(() -> Hooks.restoredRuns.get() == 1, "onRestored after the restore");
-      assertEquals("Ada", Hooks.restoredValue, "the restored value is in place");
-
-      h.connect();
-      type(h, "typed", "Grace");
-      assertEquals(1, Hooks.restoredRuns.get(), "once");
-    }
-  }
-
-  @Test
-  void aFailingOnPersistingIsLoggedAndTheRestIsStillSaved() {
-    CountingStorage storage = new CountingStorage();
-    try (Harness h = harness(Failing::new, storage)) {
-      h.load();
-      h.connect();
-      type(h, "name", "Ada");
-      String old = h.token;
-      pause(h, false);
-      assertTrue(h.load("/", remount(old)).contains("name=Ada;"));
-    }
-  }
-
-  static final class Failing extends LiveComponent {
-    private final State<String> name = retainedState("");
-
-    {
-      onPersisting(() -> {
-        throw new IllegalStateException("broken hook");
-      });
-    }
-
-    @Override public Tag<?> render() {
-      return T.page("failing", T.div(
-        T.span("name=" + name.get() + ";"),
-        T.input().withId("name").onChange(e -> name.set(e.value()))));
-    }
-  }
-
   static final class Asking extends LiveComponent {
     static volatile Integer asked;
-    private final State<String> name = retainedState("");
 
-    @Override public Tag<?> render() {
-      return T.page("asking", T.div(
+  @Override protected View setup() {
+    var name = createRetained("name", "");
+    return () -> T.page("asking", T.div(
         T.input().withId("name").onChange(e -> name.set(e.value())),
-        T.button("ask").onClick(e -> asked = application().requestPause())));
-    }
+        T.button("ask").onClick(e -> asked = useApplication().requestPause())));
+  }
   }
 
   @Test
@@ -290,7 +217,7 @@ class RetainedPauseTest {
       int from = h.conn.size();
       h.click(Harness.clickOn(h.html, "ask"));
       h.conn.await(from, m -> "pauseRequested".equals(m.get("type")));
-      assertEquals(1, Asking.asked, "application().requestPause() asked the one connected page");
+      assertEquals(1, Asking.asked, "useApplication().requestPause() asked the one connected page");
       assertEquals(1, h.engine.tabCount(), "asking does not pause: the page does, after its onPausing handlers");
       assertEquals(0, storage.saves.get());
       assertEquals("paused", pause(h, false).get("type"));
@@ -300,14 +227,16 @@ class RetainedPauseTest {
   static final class TabPausing extends LiveComponent {
     static volatile Boolean asked;
     static volatile TabPausing mounted;
-    private final State<String> name = retainedState("");
 
-    @Override public Tag<?> render() {
+  @Override protected View setup() {
+    var name = createRetained("name", "");
+    return () -> {
       mounted = this;
       return T.page("tab", T.div(
         T.input().withId("name").onChange(e -> name.set(e.value())),
-        T.button("pause tab").onClick(e -> tab().requestPause().thenAccept(a -> asked = a))));
-    }
+        T.button("pause tab").onClick(e -> useTab().requestPause().thenAccept(a -> asked = a))));
+    };
+  }
   }
 
   @Test
@@ -328,19 +257,17 @@ class RetainedPauseTest {
       int from = h.conn.size();
       h.click(Harness.clickOn(h.html, "pause tab"));
       h.conn.await(from, m -> "pauseRequested".equals(m.get("type")));
-      Harness.eventually(() -> Boolean.TRUE.equals(TabPausing.asked), "tab().requestPause() completes with true");
+      Harness.eventually(() -> Boolean.TRUE.equals(TabPausing.asked), "useTab().requestPause() completes with true");
       assertFalse(other.since(0, m -> "pauseRequested".equals(m.get("type"))).stream().findAny().isPresent(), "only this tab");
 
       assertEquals("paused", pause(h, false).get("type"));
       Harness.eventually(() -> h.engine.tabCount() == 1, "that tab is freed, the other goes on");
-      assertThrows(IllegalStateException.class, first::tab, "a component whose tab is gone is unmounted, as for navigate()");
     }
   }
 
   @Test
   void applicationNeedsAMountedComponentOrATab() {
-    Asking unmounted = new Asking();
-    assertThrows(IllegalStateException.class, unmounted::application);
+    assertThrows(IllegalStateException.class, Reactive::useApplication);
   }
 
   @Test

@@ -23,10 +23,13 @@ final class Scope implements Observer {
    * keys use slotPath() instead of the address.
    */
   String localPath;
-  /** A Retained State of this component came back from a snapshot; onRestored callbacks run (ADR 0026). */
-  boolean restored;
   final String anchor;
   ComponentTag instance;
+  /** What setup() returned, called on every render (ADR 0031). */
+  View view;
+  /** Where the next primitive of a running setup() goes: re-running it after a class swap finds its cells again. */
+  private int setupIndex;
+  private static final ThreadLocal<Scope> SETTING_UP = new ThreadLocal<>();
   /** The store this scope holds instead of a component. */
   Store store;
   final List<Cell> cells = new ArrayList<>();
@@ -66,7 +69,7 @@ final class Scope implements Observer {
   }
 
   /**
-   * A primitive-order violation (ADR 0019). After a class swap in dev mode it is the new code's
+   * What setup() creates changed. After a class swap in dev mode it is the new code's
    * shape rather than a bug, and the component starts over with fresh state, as React Fast Refresh
    * does when a component's hooks change.
    */
@@ -112,7 +115,7 @@ final class Scope implements Observer {
       bindPrimitive(primitives.get(i), i);
     }
     settledCount = cells.size();
-    activatePending();
+    tab.snapshot.settleUnnamed(this);
   }
 
   IllegalStateException orderViolation(String message) {
@@ -165,11 +168,98 @@ final class Scope implements Observer {
     cells.clear();
     settledCount = -1;
     shape = null;
+    view = null;
     bindFields(instance);
+  }
+
+  /** The scope whose setup() is running on this thread, or null. */
+  static Scope settingUp() {
+    return SETTING_UP.get();
+  }
+
+  /** Returns the scope to restore once something that owns its own primitives was made. */
+  static Scope swapSettingUp(Scope next) {
+    Scope previous = SETTING_UP.get();
+    if (next == null) {
+      SETTING_UP.remove();
+    } else {
+      SETTING_UP.set(next);
+    }
+    return previous;
+  }
+
+  /** A primitive of the running setup() or a helper it called: bound to its cell by creation order. */
+  void own(Primitive primitive) {
+    bindPrimitive(primitive, setupIndex++);
+  }
+
+  /**
+   * Calls setup() with nothing tracked. Run again after a class swap, it finds the cells it made
+   * by creation order, so state survives and the view is the new code's; a primitive that no
+   * longer lines up is ShapeChanged.
+   */
+  private void runSetup() {
+    setupIndex = instance.primitives.size();
+    Scope previousSetup = SETTING_UP.get();
+    Scope previousScope = Tracking.swapScope(this);
+    Observer previous = Tracking.swap(null);
+    SETTING_UP.set(this);
+    try {
+      view = instance.setup();
+    } finally {
+      if (previousSetup == null) {
+        SETTING_UP.remove();
+      } else {
+        SETTING_UP.set(previousSetup);
+      }
+      Tracking.swap(previous);
+      Tracking.swapScope(previousScope);
+    }
+    if (view == null) {
+      throw new IllegalStateException(instance.getClass().getName() + ".setup() must return its view");
+    }
+    if (settledCount >= 0 && setupIndex != cells.size()) {
+      throw orderViolation(ownerClass().getName() + " creates " + setupIndex + " primitives now but "
+        + cells.size() + " before");
+    }
+    settledCount = cells.size();
+    settled();
+    tab.snapshot.settleUnnamed(this);
+  }
+
+  /** Before a render: after a class swap the view must be the new code's. */
+  void refreshView() {
+    if (view == null) {
+      runSetup();
+    } else if (swapped()) {
+      try {
+        runSetup();
+      } catch (ShapeChanged e) {
+        startOver(e.getMessage());
+      }
+    }
+  }
+
+  /** Runs the view, its reads subscribing this scope. */
+  Tag<?> renderView() {
+    Tag<?> root = view instanceof LayoutView
+      ? ((LayoutView) view).render(((Layout) instance).content)
+      : view.render();
+    if (root == null) {
+      throw new IllegalStateException(instance.getClass().getName() + "'s view must return one root element");
+    }
+    return root;
   }
 
   /** Attaches a component object to this slot and binds its field primitives by creation order. */
   void bind(ComponentTag component) {
+    if (view != null && instance != component && !(swapped() && shapeChanged(component.getClass()))) {
+      if (instance instanceof Boundary) {
+        ((Boundary<?>) instance).adopt((Boundary<?>) component);
+      }
+      instance.adoptProps(component);
+      return;
+    }
     if (instance != null && instance != component && instance.scope == this) {
       instance.scope = null;
     }
@@ -192,16 +282,12 @@ final class Scope implements Observer {
     for (int i = 0; i < primitives.size(); i++) {
       bindPrimitive(primitives.get(i), i);
     }
-    // Field queries are fully configured by now: hydrate them before the first render reads them.
-    activatePending();
-  }
-
-  /** Lane-only. Activates queries created since the last call, once their withKey/withDefer chain ran. */
-  void activatePending() {
-    for (Cell cell : cells) {
-      if (cell instanceof QueryCell && ((QueryCell) cell).needsActivation) {
-        ((QueryCell) cell).needsActivation = false;
-        ((QueryCell) cell).activate();
+    if (view == null && settledCount < 0) {
+      try {
+        runSetup();
+      } catch (NotReady | LoadFailed e) {
+        // It read a value not loaded yet. The render that follows runs setup again, where a
+        // boundary can catch this; what it created so far is found again by creation order.
       }
     }
   }
@@ -210,22 +296,24 @@ final class Scope implements Observer {
     if (index < cells.size()) {
       Cell cell = cells.get(index);
       if (!primitive.accepts(cell)) {
-        throw orderViolation(ownerClass().getName() + " primitive #" + index
-          + " changed kind between renders; primitives must be created in the same order every time (ADR 0019)");
+        throw orderViolation(ownerClass().getName() + " primitive #" + index + " changed kind");
       }
       primitive.attach(cell, false);
       return;
     }
     if (settledCount >= 0) {
-      throw orderViolation(ownerClass().getName() + " created primitive #" + index
-        + " that earlier renders did not; primitives must not be created conditionally (ADR 0019)");
+      throw orderViolation(ownerClass().getName() + " created primitive #" + index + ", which it did not before");
     }
     Cell cell = primitive.createCell(tab, address + "#" + index);
     cell.owner = this;
     cells.add(cell);
     tab.cells.put(cell.address, cell);
-    if (primitive instanceof State && ((State<?>) primitive).retained) {
-      tab.snapshot.retain(this, (State<?>) primitive, (ValueCell) cell, index);
+    if (primitive instanceof RetainedSignal) {
+      Signal<?> signal = (Signal<?>) primitive;
+      tab.snapshot.retain(this, primitive, signal.retainedName, signal.stackName, signal.initial(), (Node) cell);
+    } else if (primitive instanceof RetainedValue) {
+      RetainedValue<?> value = (RetainedValue<?>) primitive;
+      tab.snapshot.retain(this, primitive, value.name, value.stackName, cell.peek(), (Node) cell);
     }
     primitive.attach(cell, true);
   }
@@ -245,7 +333,7 @@ final class Scope implements Observer {
   }
 
   /** The route cell pathParam()/queryParam() read here: a preloaded subtree's own, else the tab's. */
-  ValueCell routeCell() {
+  Node routeCell() {
     for (Scope s = this; s != null; s = s.parent) {
       if (s.routeOverride != null) {
         return s.routeOverride;
@@ -256,6 +344,44 @@ final class Scope implements Observer {
 
   @Override public void dependsOn(Cell cell) {
     deps.add(cell);
+  }
+
+  /** A boundary at or above this scope shows its fallback, so this scope's output is not on screen. */
+  boolean hidden() {
+    for (Scope s = this; s != null; s = s.parent) {
+      if (tab.showingFallback.contains(s) || tab.showingError.contains(s)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Everything loading in this component and below finished, and it was rendered. */
+  boolean settledBelow() {
+    if (dirty || disposed) {
+      return false;
+    }
+    for (Cell cell : cells) {
+      if (cell instanceof Node && ((Node) cell).loading()) {
+        return false;
+      }
+    }
+    for (Scope child : children.values()) {
+      if (!child.settledBelow()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** A render stopped partway: this scope renders again when the value it stopped on lands. */
+  void waitFor(Cell cell) {
+    if (cell == null || cell.disposed) {
+      return;
+    }
+    Cell local = tab.local(cell);
+    local.observers.add(this);
+    dependsOn(local);
   }
 
   void unsubscribeAll() {
@@ -281,7 +407,11 @@ final class Scope implements Observer {
     unsubscribeAll();
     tab.handlers.remove(this);
     tab.heads.forget(this);
-    for (Cell cell : cells) {
+    tab.showingFallback.remove(this);
+    tab.showingError.remove(this);
+    // Children first, above; then this owner's, last created first, as Solid runs its cleanups.
+    for (int i = cells.size() - 1; i >= 0; i--) {
+      Cell cell = cells.get(i);
       cell.dispose();
       tab.cells.remove(cell.address);
     }

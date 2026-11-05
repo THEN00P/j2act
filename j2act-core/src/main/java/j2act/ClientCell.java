@@ -25,7 +25,7 @@ final class ClientCell extends Cell {
   Object call(Method method, Object[] args) {
     if (owner != null && owner.rendering) {
       throw new IllegalStateException(type.getSimpleName() + "." + method.getName()
-        + "() is a client action; call it from a handler or effect, or bind it with onClick, not in render() (ADR 0022)");
+        + "() is a client action; call it from a handler or effect, or bind it with onClick, not in a view (ADR 0022)");
     }
     if (tab.lane.isCurrent()) {
       return tab.clients.call(this, method, args);

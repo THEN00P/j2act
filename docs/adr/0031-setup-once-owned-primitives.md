@@ -64,7 +64,7 @@ var search = createDebounced(filter, ofMillis(300));
 var people = createMemo(() -> async(() -> directory.search(search.get())));
 ```
 
-Signal, Memo and Prop implement `Supplier<T>`, so a helper takes and returns Suppliers and needs no accessor type of its own; a signal and a lambda both pass. The ambient reads (pathParam, queryParam, auth, tab(), browser(), navigate) become static functions too, so helpers can use them.
+Signal, Memo and Prop implement `Supplier<T>`, so a helper takes and returns Suppliers and needs no accessor type of its own; a signal and a lambda both pass. The ambient reads (pathParam, queryParam, auth, navigate, window, useTab, useBrowser, useApplication) become static functions too, so helpers can use them.
 
 Stores keep fields. A store's API is its methods, and they need fields to reach its signals. The framework builds stores itself, inside its Spring Scope and CDI context, so it marks the store as owner around the container's factory call and the store's field initializers attach to it. Helpers work in stores the same way.
 
@@ -82,6 +82,8 @@ Primitives that create something owned take Solid's `create` prefix, for Ryan Ca
 | `query(loader)`, `Query<T>` | `createMemo(() -> future)`, an async memo (see Async below) |
 | `mutation(body)`, `Mutation<V, R>` | `action(body)` (see Actions below) |
 | `upload`, `download` | `createUpload`, `createDownload` |
+| `queryState`, `client` | `createQueryState`, `createClient` |
+| `tab()`, `browser()`, `application()` | `useTab()`, `useBrowser()`, `useApplication()` |
 | `tab(X.class)`, `browser(X.class)` | `useTabStore(X.class)`, `useBrowserStore(X.class)` |
 
 The glossary words "Retained State", "tab state" and "browser state" keep naming the concept; the type is Signal. User helpers follow the prefix by convention; nothing enforces it.
@@ -174,7 +176,7 @@ After a debugger swaps a component's class (ADR 0025), each slot's next descript
 
 ## Before code
 
-These spikes must pass before implementation commits to this:
+These spikes had to pass before implementation committed to this, and did; each stayed as a test:
 
 - Owner tracking through setup(), and through store construction behind Spring's and CDI's proxies.
 - The name table and stack lookup, including a helper used twice, under javac and ECJ.
@@ -332,7 +334,7 @@ return () -> div(
 isPending(() -> users.get().size() + posts.get().size())
 ```
 
-`refresh(x)` replaces refetch() and is quiet: it does not make isPending true, so a background refresh does not flicker. `affects(x)` before it makes it visible, as in Solid 2.
+`refresh(x)` replaces refetch() and is quiet: it does not make isPending true, so a background refresh does not flicker. `affects(x)` before it makes it visible, as in Solid 2. Quiet is not torn: what follows x reloads with it and everything changes in one update. It returns a CompletableFuture for the next quiescent state, as Solid's promise does: everything that followed x has landed too, in the update that shows it. Inside an action it finishes with what lands, since the commit waits for the action: `refresh(x).get()`. Every refresh in one lane task is one load. `until(fn)` finishes when fn first gives a value that is not null or false, seeing the truth and never a guess, for a write confirmed by a socket or another tab; `resolve(fn)` takes the first value there is.
 
 A failed load goes where a pending one does: reading it stops rendering up to the nearest errored(...), whose fallback gets the error and a reset that runs the failed loads again and renders the contents once more:
 
@@ -391,6 +393,60 @@ Retrying is not an option on the action: repeating a whole body would apply its 
 
 Solid has no worker thread, so this needs specifying: while a body runs off the lane, the lane keeps handling events. Optimistic writes are posted to the lane at once, held writes are applied on the lane at commit, and reads inside the body see the current values plus the call's own held writes. A Harness test with two overlapping actions settles it before code.
 
+### One node, three places
+
+The core is Solid 2's: one node type (`Node`), which a signal, a memo, an async memo, a derived signal, a retained value and an optimistic value are configurations of. A first version kept a cell class per primitive, each with its own logic for reading ahead of a hold; review kept finding a bug per pair of them. A node has three places, each meaning one thing always, and what is running decides which one a read sees (`Pass`):
+
+| Who reads | Sees |
+|---|---|
+| A view, an effect, a handler | the truth, plus the guesses that have shown |
+| What computes the truth | the truth alone |
+| A transition's work | that transition's future, the truth for what it does not hold |
+| A lane's work | the truth, plus all of the lane's guesses and what it derived from them |
+| `latest(x)` | the newest there is |
+
+```
+                    write that reloads something on screen
+ truth   A ───────────────────────────────────────────────► B     (commit: one update)
+ future        └─ B, and all that follows it, computed from B ─┘
+ lane       action: guess G ─► shows at once ─► gone in the same update as the commit
+```
+
+A write that reaches something async on screen opens a transition. Everything below it joins, through memos and other loads: sync nodes compute their future when read, loads start on the future, and when a load lands what follows it computes again. Commit publishes all of it at once and tells only what is outside. Failures are state: a read rethrows them, and nothing throws out of a notification or a commit. A refresh is the same thing marked quiet.
+
+A load keeps following what its last run read until the next run lands, because its reads off the lane only become graph edges at landing and a write or a guess has to be able to find it meanwhile. A run validates what it read against the place it read it from.
+
+### Lanes
+
+An optimistic write opens a lane under its action's transition, one per run, with Solid 2's rules. In code:
+
+```java
+var todos = createOptimistic(() -> async(() -> service.list()));
+var summary = createMemo(() -> async(() -> service.summarize(todos.get())));  // derives from the guess
+var add = action((String title) -> {
+  todos.update(list -> plus(list, title));    // summary reloads in the lane, on the guessed list
+  service.add(title);                         // the guess waits for that reload, not for this
+  refresh(todos);
+  return title;
+});
+```
+
+- A lane is a new base: it sees the screen plus its guesses, and breaks out of its transition's hold, so a guess shows while the writes around it wait.
+- If what derives from a guess hits a load, the lane holds itself until that landed, so a guess never shows beside an old derived value. A guess already shown stays while a newer one of the same lane waits. A blocked lane holds its transition too.
+- Reading a guess is what puts a computation in its lane, including a first read while the guess is out. A memo reading the guesses of two lanes links them: they reveal as one, and each lands with its own action. Two runs guessing one value land together, since their results touch the same value. So do lanes linked through a load (see the table below).
+- A lane ends when its transition lands, in the same update, so a guess becomes the truth without a flicker. A failed action takes only its own guesses; lanes linked to it derive again without them, and its guess goes when that shows.
+- A guess does not make isPending true.
+- A write reaching something a lane derives joins that lane's transition if it reloads something on screen, so a lane's derived value never changes under it. A write that reloads nothing goes through at once, and what the lane derives from it recomputes.
+- An optimistic value in a browser store is refused: its action runs in one tab, and a guess would have to show in every tab of the browser.
+
+### Browser stores hold per tab
+
+A tab keeps its own copy of a browser store's value it read (`MirrorCell`, a node on the tab's lane). A change on the browser's lane reaches it as a write there, so what it reloads holds the update in that tab like any write. Each tab of a browser is consistent on its own; two tabs can differ for as long as their own loads take.
+
+### How this is checked
+
+`ConsistencyTest` drives random graphs of signals, memos, loads and optimistic values with random writes, refreshes and actions, and lands loads in random order. Every derived value is a pure function of what it reads, so every update a browser gets must have each value following from the values on the same page; at the end every action future has finished, no transition is open and every guess has gone. `LaneTest` states the rules above one by one.
+
 ### The first HTML: boundaries decide what waits
 
 Where a loading(...) stands decides what the first HTML waits for, with no flag of its own. A read outside any loading(...) is waited for and is in the first HTML; a read inside one streams: the fallback goes out with the page, the response stays open, and the boundary's HTML follows down it when ready, with a small inline script that swaps it in, as Marko, React 18 and Solid's renderToStream do.
@@ -439,3 +495,25 @@ Because the page's script waits for the end of the response, one load that hangs
 - The view re-runs as a whole instead of per expression, until compile-time regions.
 - Retained signals, stores as container beans and the processor's name table have no Solid counterpart.
 - Signal is one object with get() and set(), not a getter and setter pair.
+
+## Compared with Solid 2's source
+
+Solid 2 has had far longer in the oven, so its behavior is the default answer. Checked against `@solidjs/signals` 2.0.0-rc.20. Each difference is a runtime constraint, somewhere ours is worse, or somewhere ours is better. "Worse" means worse: a known gap to close, not a design choice.
+
+| Where | Solid 2 | Here | Verdict |
+|---|---|---|---|
+| Reads | One thread, so a read happens in the pass that runs it | Loads read on executor threads, so a run records its reads and validates them when it lands | Constraint |
+| View | Updates per expression | The view re-runs and the page is morphed | Constraint, until compile-time regions |
+| Tabs | One graph per page | A browser store's value is copied per tab, each holding on its own; an optimistic value in a browser store is refused | Constraint |
+| Action body | Generator; code after a bare `await` runs outside the transaction until the next `yield`, and its docs warn about it | A thread that stays in its transaction throughout | Better, thanks to threads |
+| Guess outside an action | Void: reverts at once | Refused with an error | Better for finding the mistake; revisit if a legitimate use appears |
+| Reverting one action's guess | Single lane slot per node, with bookkeeping to restore what another action guessed (#4336) | Each run's guesses fold in order, so a run removes only its own | Simpler, but far less tested |
+| Lanes linked through a load | Land separately | Land together, so a fast action can wait on a slow one | **Worse.** Landing separately needs the load re-run under the remaining guess while the display holds. Lanes linked through plain memos already land separately |
+| Entering a lane | Only by reading a guess, and a pass that no longer reaches it leaves (#3698) | Also walks what is below when the guess is made, so a branch that stopped reading it still loads in the lane | **Worse:** an extra server call and a needless block |
+| Recompute order | Height-ordered heap, each computation runs once | Pull with out-of-date marks: never mixed inputs, but a body in a diamond can run twice | **Worse**, in cost only |
+| `until` | A flip inside an action's transaction reveals with it; sees a lane's value once a guess is confirmed (#3943) | Neither yet | **Worse** |
+| `isPending` and `latest` | Verdict lanes: their readers break out of the hold; `isPending` inside `latest` asks about the proposal | Views always re-render, so the common case matches; the nested case is not modeled | **Worse**, narrow |
+| Diagnostics | Coded diagnostics across the runtime | A few messages and the processor's checks | **Worse** |
+| Not built | `Reveal`, `createStore`, `createProjection`, `createOptimisticStore` | Stream order is whatever lands first; values are whole | Missing |
+
+The largest thing not yet taken from Solid is its test suite, whose scenarios encode years of edge cases. Porting its lane and transition scenarios to Harness tests would find what `ConsistencyTest`'s random graphs do not.

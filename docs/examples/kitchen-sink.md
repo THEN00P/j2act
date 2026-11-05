@@ -12,13 +12,15 @@ public final class Counter extends ComponentTag {
 
   public Counter withLabel(String l) { label.set(l); return this; }
 
-  @Override protected DivTag render() {
-    State<Integer> count = state(0); // bound to this tree slot (ADR 0019)
+  @Override protected View setup() {
+    var count = createSignal(0);
+    return () -> { // bound to this tree slot (ADR 0019)
     return div(
       UI.button(label.get() + " " + count.get() + " times").withVariant(PRIMARY)
         .onClick(e -> count.set(count.get() + 1)),
       count.get() > 5 ? p("warming up…") : null
     );
+    };
   }
 }
 
@@ -26,80 +28,77 @@ public final class Counter extends ComponentTag {
 div(counter().withLabel("A"), counter().withLabel("B"))
 ```
 
-## User table page (filter, query, head, boundaries)
+## User table page (filter, async memo, head, boundaries)
 
 ```java
 public class UsersPage extends LiveComponent {
   @Inject private Users repo; // host bean via the members-injector seam; no em()
 
-  @Override public HtmlTag render() {
-    State<String> filter = state("");
-    Query<List<User>> users = query(() -> repo.search("%" + filter.get() + "%")); // keyless, ADR 0020
-
-    return html(
+  @Override protected View setup() {
+    var filter = createSignal("");
+    var users = createMemo(() -> async(() -> repo.search("%" + filter.get() + "%")));
+    return () -> html(
       head(
         title("Users" + (filter.get().isEmpty() ? "" : " — " + filter.get())),
         meta().withName("description").withContent("Team member directory")),
       body(div(
-        input().withPlaceholder("Filter by name").withValue(filter.get())
+        input().withPlaceholder("Filter by name").withValue(latest(filter))
           .withDebounce(ofMillis(250))          // client-side, ADR 0013
           .onInput(e -> filter.set(e.value())),
-        table(
-          thead(tr(th("Name"), th("Email"), th(""))),
-          tbody(each(users.get(), u -> userRow().withUser(u).withKey(u.getId())))))));
-  }
-
-  @Override public HtmlTag loading() {
-    return html(head(title("Users…")), body(div("Loading…").withClass("skeleton")));
-  }
-
-  @Override public HtmlTag error(PageError e) {
-    return html(head(title("Users — error")),
-      body(div(p("Failed: " + e.message()), button("Retry").onClick(ev -> e.retry()))));
+        errored(
+          loading(() -> table(
+            thead(tr(th("Name"), th("Email"), th(""))),
+            tbody(each(users.get(), u -> userRow().withUser(u).withKey(u.getId())))
+          )).withFallback(div("Loading…").withClass("skeleton"))
+        ).withFallback((err, reset) -> div(
+          p("Failed: " + err.getMessage()),
+          button("Retry").onClick(e -> reset.run()))))));
   }
 }
 ```
 
-## Row (auth ternary, enforced, no require())
+## Avatar upload (upload, naming, DB commit)
 
 ```java
-// withKey rides on the row, so a stream works the same as each()
-tbody(users.get().stream().map(u -> userRow().withUser(u).withKey(u.getId())).collect(toList()))
-
-// userRow factory takes children only; user arrives via with*
-tr(
-  td(u.getName()),
-  td(u.getEmail()),
-  td(auth.hasRole("superadmin")
-    ? UI.button("Delete").withVariant(DESTRUCTIVE)
-        .withPending(spinner())                 // swaps in instantly, reverts on ack
-        .onClick(e -> repo.delete(u.getId()))
-    : null)
-)
-```
-
-## Avatar upload (mutation, naming, DB commit)
-
-```java
-Mutation<UploadRef> up = upload()
+var up = createUpload()
   .withTarget("/var/app/uploads/avatars")
   .withNaming((orig, ctx) -> ctx.username() + "_" + ctx.timestamp() + "_" + orig)
   .withAccept("image/*").withMaxFileSize("10MB").withMaxFiles(1)
-  .withInvalidates("user:" + userId)
   .onSuccess(ref -> repo.updateAvatar(userId, ref.path()));
 
 div(
   input().withType("file").onChange(e -> up.mutate(e.file())),
-  up.status().get() == UPLOADING ? progress().withValue(up.progress().get()) : null,
-  up.error().get() == null ? null : p(up.error().get()))
+  up.isPending() ? progress().withValue(up.progress()) : null,
+  up.isError() ? p(up.error().getMessage()) : null)
 ```
 
-## Shared query (opt-in key, any number of parts, ADR 0020)
+## An action with an optimistic update (ADR 0031)
 
 ```java
-query(() -> repo.search(filter.get(), page.get()))
-  .withKey("users", filter.get(), page.get());   // shared + dedup across components
-mutation(...).withInvalidates("users");          // prefix: hits every "users" entry
+var todos = createOptimistic(() -> async(() -> repo.list()));
+var saving = createOptimistic(false);
+
+var add = action((String text) -> {
+  saving.set(true);                                             // undone when the action ends
+  todos.update(list -> append(list, Todo.draft(text)));         // shows immediately
+  var saved = retry(() -> repo.add(text), 3, ofSeconds(1));     // only this call repeats
+  refresh(todos);                                               // the draft goes when the real list arrived
+  return saved;
+});
+```
+
+## Data several components show (ADR 0031)
+
+```java
+@TabScoped
+public class Cart extends Store {
+  @Inject CartService service;
+  final Memo<CartView> contents = createMemo(() -> async(() -> service.load()));
+}
+
+// any component
+var cart = useTabStore(Cart.class);
+return () -> span(cart.contents.get().itemCount() + " items");
 ```
 
 ## Tracked props (ADR 0020)
@@ -124,7 +123,7 @@ form(
 ## Download (upload's twin, ADR 0012)
 
 ```java
-Mutation<String> export = download((String like, OutputStream out) -> repo.writeCsv(like, out))
+var export = createDownload((String like, OutputStream out) -> repo.writeCsv(like, out))
   .withFileName("users.csv").withContentType("text/csv");
 
 UI.button("Export CSV").withPending(spinner()).onClick(e -> export.mutate(filter.get()))
@@ -134,16 +133,17 @@ UI.button("Export CSV").withPending(spinner()).onClick(e -> export.mutate(filter
 ## notFound and redirect (ADR 0015)
 
 ```java
-Query<User> user = query(() -> repo
+// Read outside every loading(...), so the page waits for it and this is a real 404.
+var user = createMemo(() -> async(() -> repo
   .find(Long.parseLong(pathParam("id")))
-  .orElseThrow(() -> notFound())); // 404 on full serve, soft nav over WS
+  .orElseThrow(() -> notFound())));
 ```
 
 ## Push from outside the session (ADR 0014)
 
 ```java
 // bus is the app's own scheduler/JMS/Debezium listener; subscribe returns the unsubscribe
-effect(() -> bus.subscribe(entry -> entries.update(list -> prepend(entry, list))));
+onSettled(() -> bus.subscribe(entry -> entries.update(list -> prepend(entry, list))));
 ```
 
 ## Soft navigation and preload (ADR 0011)

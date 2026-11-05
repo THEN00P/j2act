@@ -34,6 +34,8 @@ final class Node {
     /** A local variable or parameter, with its initializer as the only child. */
     VAR,
     RETURN,
+    /** target = value: the target and the value as its two children. */
+    ASSIGN,
     /** A local or anonymous class body: its members as MEMBER children. */
     CLASS,
     /** A method, constructor, field initializer or initializer block. */

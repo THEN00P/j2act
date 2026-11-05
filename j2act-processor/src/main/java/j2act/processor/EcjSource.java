@@ -79,6 +79,17 @@ final class EcjSource implements Source {
     return member instanceof ExecutableElement ? method(declaration) : field(declaration);
   }
 
+  @Override public int line(Node call, TypeElement type) {
+    begin(unit(type));
+    int line = 1;
+    for (int i = 0; i < call.end && i < source.length; i++) {
+      if (source[i] == '\n') {
+        line++;
+      }
+    }
+    return line;
+  }
+
   @Override public List<Node> initializers(TypeElement type) {
     Object unit = unit(type);
     List<Node> out = new ArrayList<>();
@@ -375,6 +386,16 @@ final class EcjSource implements Source {
         node.add(convert(get(ast, "right")));
         return node;
       }
+      case "Assignment": {
+        if (!ast.getClass().getSimpleName().equals("Assignment")) {
+          // += and x++ inherit from Assignment; javac has them apart, and no check reads them.
+          return generic(ast);
+        }
+        Node node = positioned(Node.Kind.ASSIGN, ast);
+        node.add(convert(get(ast, "lhs")));
+        node.add(convert(get(ast, "expression")));
+        return node;
+      }
       case "ReturnStatement": {
         Node node = positioned(Node.Kind.RETURN, ast);
         node.body = node.add(convert(get(ast, "expression")));
@@ -476,6 +497,7 @@ final class EcjSource implements Source {
           case "NullLiteral":
           case "BinaryExpression":
           case "ReturnStatement":
+          case "Assignment":
           case "TypeDeclaration":
           case "ReferenceExpression":
           case "AbstractMethodDeclaration":

@@ -1,5 +1,6 @@
 package j2act;
 
+import static j2act.Reactive.*;
 import static j2act.RetainedStateTest.evict;
 import static j2act.RetainedStateTest.remount;
 import static j2act.RetainedStateTest.type;
@@ -17,14 +18,14 @@ import org.junit.jupiter.api.Test;
 
 import j2act.RetainedStateTest.CountingStorage;
 
-/** ADR 0030: @TabScoped stores, one instance per tab, reached with tab(Type.class) without a container. */
+/** ADR 0030: @TabScoped stores, one instance per tab, reached with useTabStore(Type.class) without a container. */
 class StoreTest {
 
   @TabScoped
   public static class Prefs extends Store {
     static final AtomicInteger made = new AtomicInteger();
-    final State<String> theme = state("light");
-    final State<Integer> size = state(12);
+    final Signal<String> theme = createSignal("light");
+    final Signal<Integer> size = createSignal(12);
 
     public Prefs() {
       made.incrementAndGet();
@@ -46,25 +47,30 @@ class StoreTest {
   static final AtomicInteger themeRenders = new AtomicInteger();
 
   static final class ThemeView extends ComponentTag {
-    @Override protected Tag<?> render() {
+
+  @Override protected View setup() {
+    return () -> {
       themeRenders.incrementAndGet();
-      return T.span("theme " + tab(Prefs.class).theme());
-    }
+      return T.span("theme " + useTabStore(Prefs.class).theme());
+    };
+  }
   }
 
   static final class SizeView extends ComponentTag {
-    @Override protected Tag<?> render() {
-      return T.span("size " + tab(Prefs.class).size());
-    }
+
+  @Override protected View setup() {
+    return () -> T.span("size " + useTabStore(Prefs.class).size());
+  }
   }
 
   static final class PrefsPage extends LiveComponent {
-    @Override public Tag<?> render() {
-      return T.page("t", T.div(
+
+  @Override protected View setup() {
+    return () -> T.page("t", T.div(
         new ThemeView(),
         new SizeView(),
-        T.button("bigger").onClick(e -> tab(Prefs.class).bigger())));
-    }
+        T.button("bigger").onClick(e -> useTabStore(Prefs.class).bigger())));
+  }
   }
 
   @Test
@@ -91,14 +97,16 @@ class StoreTest {
 
   @TabScoped
   public static class Filters extends Store {
-    final State<String> branch = retainedState("all");
-    final State<List<String>> tags = retainedState(Collections.emptyList());
-    final State<String> plain = state("none");
+    final Signal<String> branch = createRetained("all");
+    final Signal<List<String>> tags = createRetained(Collections.emptyList());
+    final Signal<String> plain = createSignal("none");
   }
 
   static final class Branch extends LiveComponent {
-    @Override public Tag<?> render() {
-      Filters filters = tab(Filters.class);
+
+  @Override protected View setup() {
+    return () -> {
+      Filters filters = useTabStore(Filters.class);
       return T.page("branch", T.div(
         T.span("branch=" + filters.branch.get() + ";"),
         T.span("tags=" + filters.tags.get() + ";"),
@@ -106,14 +114,16 @@ class StoreTest {
         T.input().withId("branch").onChange(e -> filters.branch.set(e.value())),
         T.input().withId("tag").onChange(e -> filters.tags.set(Collections.singletonList(e.value()))),
         T.input().withId("plain").onChange(e -> filters.plain.set(e.value()))));
-    }
+    };
+  }
   }
 
   /** A page that never uses the store. */
   static final class Home extends LiveComponent {
-    @Override public Tag<?> render() {
-      return T.page("home", T.div(T.span("home")));
-    }
+
+  @Override protected View setup() {
+    return () -> T.page("home", T.div(T.span("home")));
+  }
   }
 
   static Harness harness(CountingStorage storage) {
@@ -174,11 +184,11 @@ class StoreTest {
   @TabScoped
   public static class Feed extends Store {
     final String source;
-    final State<String> latest = state("-");
+    final Signal<String> latest = createSignal("-");
 
     Feed(String source) {
       this.source = source;
-      effect(() -> {
+      createEffect(() -> 1, once -> {
         effectRuns.incrementAndGet();
         return cleanups::incrementAndGet;
       });
@@ -186,18 +196,22 @@ class StoreTest {
   }
 
   static final class FeedPage extends LiveComponent {
-    private final Query<String> loaded = query(() -> tab(Feed.class).source + " via loader");
-    private final Mutation<String, String> save = mutation((String v) -> tab(Feed.class).source + ":" + v)
-      .onSuccess(r -> tab(Feed.class).latest.set(r));
 
-    @Override public Tag<?> render() {
-      Feed feed = tab(Feed.class);
+  @Override protected View setup() {
+    var loaded = createMemo(() -> async(() -> useTabStore(Feed.class).source + " via loader"));
+    var save = action((String v) -> {
+      String result = useTabStore(Feed.class).source + ":" + v;
+      useTabStore(Feed.class).latest.set(result);
+    });
+    return () -> {
+      Feed feed = useTabStore(Feed.class);
       return T.page("f", T.div(
         T.span("source=" + feed.source + ";"),
         T.span("latest=" + feed.latest.get() + ";"),
         T.span("loaded=" + loaded.get() + ";"),
-        T.button("save").onClick(e -> save.mutate("x"))));
-    }
+        T.button("save").onClick(e -> save.run("x"))));
+    };
+  }
   }
 
   @Test
@@ -227,10 +241,13 @@ class StoreTest {
     cleanups.set(0);
     AtomicInteger destroyed = new AtomicInteger();
     try (Harness h = new Harness(() -> new LiveComponent() {
-      @Override public Tag<?> render() {
+
+  @Override protected View setup() {
+    return () -> {
         StoreScope.get(TabScoped.class, "feed", () -> new Feed("bean"), feed -> destroyed.incrementAndGet());
         return T.page("d", T.div(T.button("destroy").onClick(e -> StoreScope.destroy(TabScoped.class, "feed"))));
-      }
+    };
+  }
     })) {
       h.load();
       h.connect();
@@ -240,28 +257,6 @@ class StoreTest {
   }
 
   static volatile Boolean scopeActiveWhilePersisting;
-
-  @Test
-  void onPersistingDuringAnEvictionCanStillReachScopedStores() {
-    scopeActiveWhilePersisting = null;
-    CountingStorage storage = new CountingStorage();
-    try (Harness h = new Harness(() -> new LiveComponent() {
-      private final State<String> note = retainedState("kept");
-
-      {
-        onPersisting(() -> scopeActiveWhilePersisting = StoreScope.isActive(TabScoped.class));
-      }
-
-      @Override public Tag<?> render() {
-        return T.page("p", T.div(T.span("note=" + note.get() + ";")));
-      }
-    }, b -> b.withReconnectGrace(Duration.ofMillis(100)).withRetainedStateStorage(storage))) {
-      h.load();
-      h.connect();
-      evict(h, storage);
-      assertEquals(Boolean.TRUE, scopeActiveWhilePersisting, "the evicted tab is bound while it persists");
-    }
-  }
 
   @Test
   void aLifecycleCallbackCanSetValuesBeforeTheTabTakesTheStore() {
@@ -298,7 +293,7 @@ class StoreTest {
 
   @TabScoped
   public static class Draft extends Store {
-    final State<String> text = retainedState("");
+    final Signal<String> text = createRetained("");
   }
 
   public static class LetterDraft extends Draft {
@@ -311,14 +306,17 @@ class StoreTest {
   void storesInheritingTheirScopeFromOneBaseKeepApart() {
     CountingStorage storage = new CountingStorage();
     try (Harness h = new Harness(() -> new LiveComponent() {
-      @Override public Tag<?> render() {
-        LetterDraft letter = tab(LetterDraft.class);
-        MemoDraft memo = tab(MemoDraft.class);
+
+  @Override protected View setup() {
+    return () -> {
+        LetterDraft letter = useTabStore(LetterDraft.class);
+        MemoDraft memo = useTabStore(MemoDraft.class);
         return T.page("d", T.div(
           T.span("letter=" + letter.text.get() + ";memo=" + memo.text.get() + ";"),
           T.input().withId("letter").onChange(e -> letter.text.set(e.value())),
           T.input().withId("memo").onChange(e -> memo.text.set(e.value()))));
-      }
+    };
+  }
     }, b -> b.withReconnectGrace(Duration.ofMillis(100)).withRetainedStateStorage(storage))) {
       h.load();
       h.connect();
@@ -338,7 +336,7 @@ class StoreTest {
   @TabScoped
   public static class Late extends Store {
     void later() {
-      state("too late");
+      createSignal("too late");
     }
   }
 
@@ -346,19 +344,22 @@ class StoreTest {
   void onlyAnnotatedStoresAreLookedUpAndPrimitivesBelongInFields() {
     AtomicInteger failures = new AtomicInteger();
     try (Harness h = new Harness(() -> new LiveComponent() {
-      @Override public Tag<?> render() {
+
+  @Override protected View setup() {
+    return () -> {
         try {
-          tab(NotAStore.class);
+          useTabStore(NotAStore.class);
         } catch (IllegalArgumentException e) {
           failures.incrementAndGet();
         }
         try {
-          tab(Late.class).later();
+          useTabStore(Late.class).later();
         } catch (IllegalStateException e) {
           failures.incrementAndGet();
         }
         return T.page("x", T.div(T.span("x")));
-      }
+    };
+  }
     })) {
       h.load();
       assertTrue(failures.get() >= 2, "both were refused");

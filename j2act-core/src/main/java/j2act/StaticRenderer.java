@@ -46,7 +46,7 @@ final class StaticRenderer {
     } else if (node instanceof Tag) {
       tag((Tag<?>) node, depth);
     } else if (node instanceof ComponentTag) {
-      node(((ComponentTag) node).render(), depth, parentTag);
+      node(Reactive.staticView((ComponentTag) node), depth, parentTag);
     } else {
       throw new IllegalArgumentException("unknown node " + node.getClass().getName());
     }

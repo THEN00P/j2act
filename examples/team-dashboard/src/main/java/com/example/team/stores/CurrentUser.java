@@ -1,5 +1,6 @@
 package com.example.team.stores;
 
+import static j2act.Reactive.*;
 import j2act.State;
 import j2act.Store;
 import j2act.TabScoped;
@@ -8,8 +9,8 @@ import j2act.TabScoped;
 @TabScoped
 public class CurrentUser extends Store {
 
-  private final State<Long> userId = state(-1L);
-  private final State<String> username = state("guest");
+  private final State<Long> userId = createSignal(-1L);
+  private final State<String> username = createSignal("guest");
 
   public long userId() {
     return userId.get();

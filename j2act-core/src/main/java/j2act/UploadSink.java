@@ -10,7 +10,7 @@ import java.time.Instant;
 
 /**
  * One upload in flight: a temp file the chunks append to, in order. Chunks arrive on
- * request threads, one at a time; the outcome commits to the Mutation on the lane.
+ * request threads, one at a time; the outcome commits to the Upload on the lane.
  */
 final class UploadSink {
 
@@ -19,7 +19,7 @@ final class UploadSink {
 
   final String token;
   final Tab tab;
-  private final MutationCell cell;
+  private final TransferCell cell;
   private final Upload run;
   private final UploadFile file;
   private final long seq;
@@ -29,7 +29,7 @@ final class UploadSink {
   private boolean closed;
   volatile long lastChunkAt;
 
-  UploadSink(String token, Tab tab, MutationCell cell, Upload run, UploadFile file, long seq, Path temp) {
+  UploadSink(String token, Tab tab, TransferCell cell, Upload run, UploadFile file, long seq, Path temp) {
     this.token = token;
     this.tab = tab;
     this.cell = cell;

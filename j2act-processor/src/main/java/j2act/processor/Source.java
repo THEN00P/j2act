@@ -24,6 +24,9 @@ interface Source {
   /** Reports at an element where javac does: a method or variable at its name, a type at its keyword. */
   void report(Diagnostic.Kind kind, String message, Element at);
 
+  /** The source line of a call, as its class file's line numbers give it. */
+  int line(Node call, TypeElement type);
+
   /** The .java file declaring this type, when the compiler knows it as a file on disk; else null. */
   java.nio.file.Path sourceFile(TypeElement type);
 

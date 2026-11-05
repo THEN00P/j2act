@@ -1,5 +1,6 @@
 package j2act.jakarta;
 
+import static j2act.Reactive.*;
 import static j2act.router.Routes.page;
 import static j2act.router.Routes.routes;
 import static j2act.html.TagCreator.*;
@@ -36,11 +37,12 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import j2act.View;
 import j2act.ComponentTag;
 import j2act.J2Act;
 import j2act.LiveComponent;
 import j2act.PageResolver;
-import j2act.State;
+import j2act.Signal;
 import j2act.html.tags.ButtonTag;
 import j2act.html.tags.HtmlTag;
 
@@ -48,16 +50,18 @@ import j2act.html.tags.HtmlTag;
 class TomcatMountTest {
 
   public static final class Counter extends ComponentTag {
-    @Override protected ButtonTag render() {
-      State<Integer> count = state(0);
-      return button("Count " + count.get()).onClick(e -> count.set(count.get() + 1));
-    }
+
+  @Override protected View setup() {
+    var count = createSignal(0);
+    return () -> button("Count " + count.get()).onClick(e -> count.set(count.get() + 1));
+  }
   }
 
   public static final class Home extends LiveComponent {
-    @Override public HtmlTag render() {
-      return html(head(title("Tomcat")), body(new Counter(), new Counter()));
-    }
+
+  @Override protected View setup() {
+    return () -> html(head(title("Tomcat")), body(new Counter(), new Counter()));
+  }
   }
 
   public static final class App extends J2ActListener {

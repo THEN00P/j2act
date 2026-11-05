@@ -1,18 +1,20 @@
 package com.example.counter.pages;
 
+import static j2act.Reactive.*;
 import static com.example.counter.components.Attachment.attachment;
 import static com.example.counter.components.Publisher.publisher;
 import static com.example.counter.components.Volume.volume;
 import static j2act.html.TagCreator.*;
 
+import j2act.View;
 import j2act.LiveComponent;
 import j2act.html.tags.HtmlTag;
 
 /** A second page to navigate to; its title wins over the layout's in the merged head (ADR 0007). */
 public class AboutPage extends LiveComponent {
 
-  @Override public HtmlTag render() {
-    return html(
+  @Override protected View setup() {
+    return () -> html(
       head(
         title("About · j2act"),
         meta().withName("description").withContent("About this demo")

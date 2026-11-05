@@ -1,6 +1,6 @@
 package j2act;
 
-/** A query loader. Runs on the executor; State read inside it becomes a dependency (ADR 0020). */
+/** Blocking work for async(...) or retry(...): runs on the executor, and may throw. */
 @FunctionalInterface
 public interface Loader<T> {
 

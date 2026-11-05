@@ -1,5 +1,6 @@
 package clients;
 
+import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
 import java.time.Instant;
@@ -10,6 +11,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+import j2act.View;
 import j2act.Client;
 import j2act.ComponentTag;
 import j2act.DomContent;
@@ -91,7 +93,7 @@ public class Webcam extends ComponentTag {
     CompletionStage<Void> beep(long millis);
   }
 
-  @Override protected Tag<?> render() {
-    return div();
+  @Override protected View setup() {
+    return () -> div();
   }
 }

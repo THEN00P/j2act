@@ -2,6 +2,13 @@ package j2act;
 
 final class Html {
 
+  /** A value for inside a double-quoted attribute. */
+  static String attributeValue(String value) {
+    StringBuilder b = new StringBuilder();
+    escape(value, b);
+    return b.toString();
+  }
+
   private Html() {
   }
 

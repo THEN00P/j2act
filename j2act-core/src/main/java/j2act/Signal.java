@@ -5,24 +5,32 @@ import java.util.function.UnaryOperator;
 
 /**
  * Server-side reactive value owned by a component or a store (ADR 0030). get() inside
- * render() subscribes the component; set() from any thread is queued onto the tab's lane
+ * a view subscribes the component; set() from any thread is queued onto the tab's lane
  * (ADR 0014).
  */
-public final class State<T> extends Primitive implements Supplier<T> {
+public class Signal<T> extends Primitive implements Supplier<T> {
 
   private final T initial;
-  /** Retained State (ADR 0026): its value goes into the tab's snapshot. */
-  final boolean retained;
+  /** For createSignal(fn): what it follows until a write, and again when that changes. */
+  private final Supplier<T> source;
   /** The explicit snapshot name, or null to use the field's name. */
   final String retainedName;
+  /** The variable names the processor recorded for this call, or null without them (ADR 0031). */
+  String stackName;
 
-  State(T initial) {
+  Signal(T initial) {
     this(initial, false, null);
   }
 
-  State(T initial, boolean retained, String retainedName) {
+  Signal(Supplier<T> source, boolean derived) {
+    this.initial = null;
+    this.source = source;
+    this.retainedName = null;
+  }
+
+  Signal(T initial, boolean retained, String retainedName) {
     this.initial = initial;
-    this.retained = retained;
+    this.source = null;
     this.retainedName = retainedName;
   }
 
@@ -30,20 +38,20 @@ public final class State<T> extends Primitive implements Supplier<T> {
   @SuppressWarnings("unchecked")
   public T get() {
     Cell bound = cellOrNull();
-    return bound == null ? initial : (T) ((ValueCell) bound).read();
+    return bound == null ? initial : (T) ((Node) bound).read();
   }
 
   public void set(T value) {
-    ((ValueCell) requireCell()).write(value);
+    ((Node) requireCell()).write(value);
   }
 
   /** Read-modify-write that runs on the lane, safe from foreign threads. */
   public void update(UnaryOperator<T> fn) {
-    ((ValueCell) requireCell()).update(fn);
+    ((Node) requireCell()).update(fn);
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    return new ValueCell(tab, address, initial);
+    return source != null ? Node.derived(tab, address, source) : new Node(tab, address, initial);
   }
 
   T initial() {
@@ -51,7 +59,7 @@ public final class State<T> extends Primitive implements Supplier<T> {
   }
 
   @Override boolean accepts(Cell cell) {
-    return cell instanceof ValueCell;
+    return cell instanceof Node;
   }
 
   @Override void attach(Cell cell, boolean created) {

@@ -12,6 +12,7 @@ import javax.lang.model.element.TypeElement;
 import javax.tools.Diagnostic;
 
 import com.sun.source.tree.AnnotatedTypeTree;
+import com.sun.source.tree.AssignmentTree;
 import com.sun.source.tree.ArrayTypeTree;
 import com.sun.source.tree.BinaryTree;
 import com.sun.source.tree.ClassTree;
@@ -127,6 +128,12 @@ final class JavacSource implements Source {
 
   @Override public void report(Diagnostic.Kind kind, String message, Element at) {
     messager.printMessage(kind, message, at);
+  }
+
+  @Override public int line(Node call, TypeElement type) {
+    CompilationUnitTree unit = unit(type);
+    long end = trees.getSourcePositions().getEndPosition(unit, (Tree) call.origin);
+    return (int) unit.getLineMap().getLineNumber(end);
   }
 
   @Override public java.nio.file.Path sourceFile(TypeElement type) {
@@ -303,6 +310,13 @@ final class JavacSource implements Source {
             node.add(convert(initializer));
           }
         }
+        return node;
+      }
+      case ASSIGNMENT: {
+        AssignmentTree assignment = (AssignmentTree) tree;
+        Node node = new Node(Node.Kind.ASSIGN, tree);
+        node.add(convert(assignment.getVariable()));
+        node.add(convert(assignment.getExpression()));
         return node;
       }
       case MEMBER_REFERENCE: {

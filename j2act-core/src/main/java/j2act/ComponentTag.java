@@ -2,35 +2,42 @@ package j2act;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Supplier;
 
 /**
- * A reusable component: render() returns one root element. Reactive primitives may
- * be field initializers or locals in render(); either way they bind to this
- * component's tree slot by creation order (ADR 0019). A held instance keeps its
- * identity by reference; a factory call builds a fresh description each render.
+ * A reusable component (ADR 0031). A slot keeps one instance for as long as it renders: setup()
+ * runs once, creates what the component needs through {@link Reactive} and returns its view. A
+ * factory call in a parent's view is only a description, whose Props the kept instance takes.
+ *
+ * <pre>{@code
+ * public final class Counter extends ComponentTag {
+ *   private final Prop<String> label = prop("");
+ *
+ *   public static Counter counter() { return new Counter(); }
+ *   public Counter withLabel(String l) { label.set(l); return this; }
+ *
+ *   @Override protected View setup() {
+ *     var count = createSignal(0);
+ *     return () -> button(label.get() + ": " + count.get())
+ *       .onClick(e -> count.set(count.get() + 1));
+ *   }
+ * }
+ * }</pre>
  */
 public abstract class ComponentTag implements DomContent {
 
-  /** Primitives created before the component was first placed (field initializers). */
+  /** The Props its field initializers created. */
   final List<Primitive> primitives = new ArrayList<>();
   Scope scope;
   Object key;
-  private int renderIndex;
 
-  protected abstract Tag<?> render();
+  /** Runs once per slot, after injection: creates what this component needs and returns its view. */
+  protected abstract View setup();
 
-  /**
-   * Override to make this component a loading boundary (ADR 0007): shown instead of
-   * render() while a query created in its subtree has no data yet. Nearest boundary wins.
-   */
-  protected Tag<?> loading() {
-    return null;
-  }
-
-  /** Override to make this component an error boundary: shown when a query in its subtree failed with no data. */
-  protected Tag<?> error(PageError error) {
-    return null;
+  /** On a re-render: takes the Props of this render's description, which is then dropped. */
+  final void adoptProps(ComponentTag description) {
+    for (int i = 0; i < primitives.size() && i < description.primitives.size(); i++) {
+      ((Prop<?>) primitives.get(i)).adopt((Prop<?>) description.primitives.get(i));
+    }
   }
 
   /** Slot identity among repeated siblings; never rendered (ADR 0019). */
@@ -39,260 +46,17 @@ public abstract class ComponentTag implements DomContent {
     return this;
   }
 
-  protected final <T> State<T> state(T initial) {
-    return register(new State<>(initial));
-  }
-
-  /**
-   * A State whose value outlives the in-memory tab for this page load (ADR 0026): it
-   * comes back after the grace window, a pause, a restart or a redeploy, while a reload
-   * still starts empty. Keyed by this component's slot and the field holding it, so declare
-   * it as a field; give a repeated component a withKey. Replace values through set(), since
-   * changing a retained list in place does not count as a change.
-   */
-  protected final <T> State<T> retainedState(T initial) {
-    return register(new State<>(initial, true, null));
-  }
-
-  /** A Retained State with an explicit name instead of its field's name; never required. */
-  protected final <T> State<T> retainedState(String name, T initial) {
-    if (name == null || name.isEmpty()) {
-      throw new IllegalArgumentException("a retained state name must not be empty");
-    }
-    return register(new State<>(initial, true, name));
-  }
-
-  /**
-   * Runs on the tab's lane right before its snapshot is taken, on eviction, a pause or a
-   * checkpoint (where it runs at every interval, to see whether anything changed), so
-   * the component can copy values into its retained fields (ADR 0026), as .NET's
-   * RegisterOnPersisting does. Like every primitive, call it in a field initializer or render().
-   */
-  protected final void onPersisting(Runnable callback) {
-    register(new PersistHook(callback));
-  }
-
-  /**
-   * Runs once after this component's first render when its Retained State came back from a
-   * snapshot (ADR 0026), as .NET's RegisterOnRestoring does. It does not run when nothing of
-   * this component was restored, such as on a fresh page load.
-   */
-  protected final void onRestored(Runnable callback) {
-    java.util.Objects.requireNonNull(callback, "callback");
-    register(new Effect(() -> {
-      if (scope != null && scope.restored) {
-        Observer previous = Tracking.swap(null);
-        try {
-          callback.run();
-        } finally {
-          Tracking.swap(previous);
-        }
-      }
-      return null;
-    }));
-  }
-
-  /**
-   * A value kept in the page's query string under name (ADR 0030): it survives a reload and can
-   * be shared, which suits filters and tabs within a page. initial's type picks the parsing
-   * (String, Integer, Long, Double, Boolean or an enum), and initial itself leaves the parameter
-   * out. Writes replace the URL after the current event.
-   */
-  protected final <T> QueryState<T> queryState(String name, T initial) {
-    return register(QueryState.of(name, initial));
-  }
-
-  /** A query state of any type, read with parse and written with format; parse may return null for the initial value. */
-  protected final <T> QueryState<T> queryState(String name, T initial, java.util.function.Function<String, T> parse,
-      java.util.function.Function<? super T, String> format) {
-    return register(new QueryState<>(name, initial, parse, format));
-  }
-
+  /** A tracked input, written by a with* builder: the only field a parent's description hands over. */
   protected final <T> Prop<T> prop() {
-    return register(new Prop<>(null));
+    return addProp(new Prop<>(null));
   }
 
   protected final <T> Prop<T> prop(T fallback) {
-    return register(new Prop<>(fallback));
+    return addProp(new Prop<>(fallback));
   }
 
-  protected final <T> Query<T> query(Loader<T> loader) {
-    return register(new Query<>(loader));
-  }
-
-  /** A pure derived value, recomputed when what it read changes (CONTEXT: Computed). */
-  protected final <T> Computed<T> computed(java.util.function.Supplier<T> body) {
-    return register(new Computed<>(body));
-  }
-
-  /** An async write: status, data, error and variables are tracked (ADR 0006). */
-  protected final <V, R> Mutation<V, R> mutation(Mutation.Body<V, R> body) {
-    return register(new Mutation<>(body));
-  }
-
-  /**
-   * A Mutation whose body streams a file to the browser (ADR 0012), e.g.
-   * download((String like, OutputStream out) -> csv.write(like, out)).withFileName("users.csv").
-   */
-  protected final <V> Download<V> download(Download.Writer<V> writer) {
-    return register(new Download<>(writer));
-  }
-
-  /** A Mutation that receives a file in resumable chunks, with server-enforced restrictions (ADR 0006). */
-  protected final Upload upload() {
-    return register(new Upload());
-  }
-
-  /**
-   * A handle to a client module (ADR 0022): mount(...) gives props to withClient, and every
-   * other method is an action that runs in the browser.
-   *
-   * <pre>{@code
-   * private final Camera camera = client(Camera.class);
-   * video().withClient(camera.mount(deviceId.get(), size -> status.set("live " + size.width)))
-   * button("Snap").onClick(camera::snapshot, photo::set)
-   * }</pre>
-   */
-  protected final <C extends Client> C client(Class<C> type) {
-    return type.cast(register(new ClientHandle(type)).proxy);
-  }
-
-  /**
-   * The browser's window, mirrored from WebIDL and run remotely (ADR 0022). Getters of
-   * interfaces only build a path; every other call returns a CompletionStage. Called from
-   * a handler or effect, it runs after the update's patch; bound with onClick(() -> ...),
-   * it runs inside the click, so gesture-gated APIs work.
-   *
-   * <pre>{@code
-   * window().localStorage().setItem("sidebar", "collapsed");
-   * button("Share").onClick(() -> window().navigator().share(new ShareData().title(t).url(u)))
-   * }</pre>
-   */
-  protected final j2act.web.Window window() {
-    return new j2act.web.Window(WebPath.root(this));
-  }
-
-  /** Refetches every keyed query whose key starts with these parts, in this tab (ADR 0020). */
-  protected final void invalidate(Object... keyPrefix) {
-    Tab tab = scope != null ? scope.tab : Tab.current();
-    if (tab == null) {
-      throw new IllegalStateException("invalidate() needs a mounted component");
-    }
-    tab.invalidate(java.util.Arrays.asList(keyPrefix));
-  }
-
-  /** Runs after mount and whenever a State it read changes; returns its cleanup or null. */
-  protected final void effect(Supplier<Runnable> body) {
-    register(new Effect(body));
-  }
-
-  /**
-   * The browser tab this component renders in (ADR 0030): its id, and requestPause() to ask
-   * the page to pause (ADR 0026). Throws once the component is unmounted, like navigate().
-   */
-  protected final Tab tab() {
-    return mountedTab("tab()");
-  }
-
-  /**
-   * This tab's instance of a @TabScoped store (ADR 0030). With Spring or CDI, inject it
-   * instead; this returns the container's instance either way. Without a container, the first
-   * call in a tab makes it, with the factory registered by withStore or its no-argument
-   * constructor.
-   */
-  protected final <S extends Store> S tab(Class<S> store) {
-    Tab tab = mountedTab("tab(" + store.getSimpleName() + ".class)");
-    return tab.engine.store(tab, store);
-  }
-
-  /**
-   * Every tab of this browser (ADR 0030): its id, and requestPause() to ask all its tabs to
-   * pause. Its first use joins the tab to its browser, which sets the j2-browser cookie when the
-   * browser has none yet.
-   */
-  protected final Browser browser() {
-    Tab tab = mountedTab("browser()");
-    return tab.engine.browserOf(tab);
-  }
-
-  /**
-   * This browser's instance of a @BrowserScoped store (ADR 0030), shared live by all its tabs.
-   * With Spring or CDI, inject it instead; this returns the container's instance either way.
-   */
-  protected final <S extends Store> S browser(Class<S> store) {
-    Tab tab = mountedTab("browser(" + store.getSimpleName() + ".class)");
-    return tab.engine.browserStore(tab, store);
-  }
-
-  /**
-   * The deployment this component runs in (ADR 0027): what spans every page, such as asking
-   * them all to pause. What the component owns is on this class; what its page shares is too,
-   * since a component can be a page.
-   */
-  protected final Application application() {
-    return mountedTab("application()").engine.application;
-  }
-
-  /** Path parameter of the current route, e.g. "id" for /users/{id}. Tracked: a change re-renders or refetches. */
-  protected final String pathParam(String name) {
-    return route().params.get(name);
-  }
-
-  /** Query parameter of the current URL, or null. Tracked like pathParam. */
-  protected final String queryParam(String name) {
-    return route().queryParams.get(name);
-  }
-
-  /** The tab's identity (ADR 0004). Tracked: render branches re-run when it changes. */
-  protected final AuthCtx auth() {
-    return mountedTab("auth()").readAuth();
-  }
-
-  /** Soft-navigates to an app path after the current event, like a link click (ADR 0011). */
-  protected final void navigate(String path) {
-    Tab tab = mountedTab("navigate()");
-    tab.post(() -> tab.navigate(path, "push"));
-  }
-
-  private RouteInfo route() {
-    return (RouteInfo) (scope != null ? scope.routeCell() : mountedTab("pathParam()").routeCell).read();
-  }
-
-  private Tab mountedTab(String what) {
-    Tab tab = scope != null ? scope.tab : Tab.current();
-    if (tab == null) {
-      throw new IllegalStateException(what + " needs a mounted component");
-    }
-    return tab;
-  }
-
-  private <P extends Primitive> P register(P primitive) {
-    if (scope == null) {
-      primitives.add(primitive);
-      return primitive;
-    }
-    if (!scope.rendering) {
-      throw new IllegalStateException("primitives are created in field initializers or render(), not in handlers");
-    }
-    scope.bindPrimitive(primitive, renderIndex++);
-    return primitive;
-  }
-
-  /** Called by the renderer with this component's scope installed as observer. */
-  final Tag<?> runRender() {
-    renderIndex = primitives.size();
-    Tag<?> root = render();
-    if (scope.settledCount < 0) {
-      scope.settledCount = scope.cells.size();
-      scope.settled();
-    } else if (renderIndex != scope.settledCount) {
-      throw scope.orderViolation(getClass().getName()
-        + " created " + renderIndex + " primitives this render but " + scope.settledCount
-        + " before; primitives must not be created conditionally (ADR 0019)");
-    }
-    if (root == null) {
-      throw new IllegalStateException(getClass().getName() + ".render() must return one root element");
-    }
-    return root;
+  private <T> Prop<T> addProp(Prop<T> prop) {
+    primitives.add(prop);
+    return prop;
   }
 }

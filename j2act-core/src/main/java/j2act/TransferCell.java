@@ -6,26 +6,26 @@ import java.util.concurrent.RejectedExecutionException;
 import j2act.internal.json.Json;
 
 /**
- * Backs Mutation. Runs go to the executor; outcomes commit on the lane. The latest run
+ * Backs Transfer. Runs go to the executor; outcomes commit on the lane. The latest run
  * owns the visible state; callbacks and invalidations fire for every successful run.
  */
-final class MutationCell extends Cell {
+final class TransferCell extends Cell {
 
   static final class Snapshot {
-    static final Snapshot IDLE = new Snapshot(MutationStatus.IDLE, null, null, null);
+    static final Snapshot IDLE = new Snapshot(TransferStatus.IDLE, null, null, null);
 
-    final MutationStatus status;
+    final TransferStatus status;
     final Object data;
     final Throwable error;
     final Object variables;
     /** Upload progress in percent; 100 once done. */
     final int progress;
 
-    Snapshot(MutationStatus status, Object data, Throwable error, Object variables) {
-      this(status, data, error, variables, status == MutationStatus.SUCCESS ? 100 : 0);
+    Snapshot(TransferStatus status, Object data, Throwable error, Object variables) {
+      this(status, data, error, variables, status == TransferStatus.SUCCESS ? 100 : 0);
     }
 
-    Snapshot(MutationStatus status, Object data, Throwable error, Object variables, int progress) {
+    Snapshot(TransferStatus status, Object data, Throwable error, Object variables, int progress) {
       this.status = status;
       this.data = data;
       this.error = error;
@@ -34,11 +34,11 @@ final class MutationCell extends Cell {
     }
   }
 
-  Mutation<?, ?> config;
+  Transfer<?, ?> config;
   private volatile Snapshot snapshot = Snapshot.IDLE;
   private long seq;
 
-  MutationCell(Tab tab, String address, Mutation<?, ?> config) {
+  TransferCell(Tab tab, String address, Transfer<?, ?> config) {
     super(tab, address);
     this.config = config;
   }
@@ -79,17 +79,12 @@ final class MutationCell extends Cell {
       return;
     }
     long mySeq = ++seq;
-    Mutation<?, ?> run = config;
-    set(new Snapshot(MutationStatus.PENDING, null, null, variables));
-    Runnable execution = () -> attempt(run, variables, mySeq, 0);
-    if (run.key != null) {
-      tab.enqueueMutation(run.key, execution);
-    } else {
-      execution.run();
-    }
+    Transfer<?, ?> run = config;
+    set(new Snapshot(TransferStatus.PENDING, null, null, variables));
+    attempt(run, variables, mySeq, 0);
   }
 
-  private void attempt(Mutation<?, ?> run, Object variables, long mySeq, int attempt) {
+  private void attempt(Transfer<?, ?> run, Object variables, long mySeq, int attempt) {
     if (run instanceof Download) {
       offer((Download<?>) run, variables, mySeq);
       return;
@@ -181,34 +176,28 @@ final class MutationCell extends Cell {
   /** Lane-only. Progress of the latest run, while it is still pending. */
   void progress(long runSeq, int percent) {
     Snapshot s = snapshot;
-    if (runSeq == seq && s.status == MutationStatus.PENDING && !disposed) {
-      set(new Snapshot(MutationStatus.PENDING, null, null, s.variables, percent));
+    if (runSeq == seq && s.status == TransferStatus.PENDING && !disposed) {
+      set(new Snapshot(TransferStatus.PENDING, null, null, s.variables, percent));
     }
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})
-  private static Object invoke(Mutation run, Object variables) throws Exception {
+  private static Object invoke(Transfer run, Object variables) throws Exception {
     return run.body.run(variables);
   }
 
   /** Lane-only. */
   @SuppressWarnings({"unchecked", "rawtypes"})
-  void finish(Mutation<?, ?> run, Object variables, long mySeq, Object result, Throwable error) {
-    if (run.key != null) {
-      tab.mutationDone(run.key);
-    }
+  void finish(Transfer<?, ?> run, Object variables, long mySeq, Object result, Throwable error) {
     if (disposed) {
       return;
     }
     if (mySeq == seq) {
       set(error == null
-        ? new Snapshot(MutationStatus.SUCCESS, result, null, variables)
-        : new Snapshot(MutationStatus.ERROR, null, error, variables));
+        ? new Snapshot(TransferStatus.SUCCESS, result, null, variables)
+        : new Snapshot(TransferStatus.ERROR, null, error, variables));
     }
     if (error == null) {
-      for (List<Object> prefix : run.invalidates) {
-        tab.invalidate(prefix);
-      }
       if (run.onSuccess != null) {
         ((java.util.function.Consumer) run.onSuccess).accept(result);
       }

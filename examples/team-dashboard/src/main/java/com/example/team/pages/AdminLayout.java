@@ -1,8 +1,10 @@
 package com.example.team.pages;
 
+import static j2act.Reactive.*;
 import static j2act.Preload.INTENT;
 import static j2act.html.TagCreator.*;
 
+import j2act.LayoutView;
 import j2act.DomContent;
 import j2act.Layout;
 import j2act.html.tags.HtmlTag;
@@ -14,8 +16,8 @@ import j2act.html.tags.HtmlTag;
  */
 public class AdminLayout extends Layout {
 
-  @Override public HtmlTag render(DomContent content) {
-    return html(
+  @Override protected LayoutView setup() {
+    return content -> html(
       head(
         title("Admin"),
         link()
