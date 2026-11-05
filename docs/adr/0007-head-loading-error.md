@@ -1,5 +1,7 @@
 # Page head and loading/error boundaries
 
+Partly superseded by ADR 0031: loading() and error() are no longer methods a component overrides but the wrapper components loading(...) and errored(...), and a pending or failed value goes to the nearest one above where it is read. The head rules below still hold.
+
 Every real page needs title/meta and async states, Next.js-minimal style. render() returns the document 1:1 with HTML — html(head(title(...), meta()...), body(...)) for pages, bare content for island fragments; authors never write document(), the transport prepends the doctype on full-page serves. The framework splits head/body by position into independent tracking scopes (title reads don't re-run body): child-wins for title, key-merge for meta, append-dedupe for link/script with Idiomorph head-merge on the client. loading() shows while owned queries are initially pending, error(PageError) renders message() plus retry() on initial failure, nearest-defined page wins like nested layouts. Background refetches keep stale UI with inline query.error() ternaries — no skeleton flash. Owned means created in the boundary's subtree, tracked implicitly.
 
 Implementation note: heads merge on every render of a route frame (title and meta child-wins, link and script de-duplicated by href/src) and a changed merged head ships as its own head message. Head and body are not yet separate tracking scopes, so a title read re-renders its frame's body too.

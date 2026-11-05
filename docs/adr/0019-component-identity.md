@@ -1,5 +1,7 @@
 # Component identity: held objects, tree slots, row keys
 
+Superseded by ADR 0031: held objects and primitives created in render() are gone, and a slot keeps one instance whose setup() runs once. The slot, row key and missing-key rules below still hold.
+
 Every framework ties state to an instance. They differ in how a re-running render finds last render's instance: Solid and Vaadin never re-run, React, Vue and Compose match by tree position (Compose via a compiler plugin we rule out, ADR 0002), and LiveView demands explicit ids. We use Java object identity where the user has it, tree position where they don't, and an explicit row key where position is not enough.
 
 A held object is its own identity. A component instance stored in a field or variable and rendered again (c rather than c()) is recognised by reference: same object, same State, and its with* props stay as last set, because the user holds that object. Rendering one object in two places at once is a dev-mode error, like appending one DOM node twice.
