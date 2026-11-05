@@ -199,6 +199,13 @@ describe("Fields (ADR 0034)", () => {
     delete (document as unknown as { execCommand?: unknown }).execCommand;
   });
 
+  it("gives a form reset the server's value in a field with no caret too", () => {
+    const el = field('<input type="number" data-j2-input="h" value="1">');
+    fields.reconcile(el, "2", 0);
+    expect(el.value).toBe("2");
+    expect(el.defaultValue).toBe("2");
+  });
+
   it("gives a field with no caret the server's value only once the server has seen everything", () => {
     const el = field('<input type="number" data-j2-input="h" value="1">');
     el.value = "12";
