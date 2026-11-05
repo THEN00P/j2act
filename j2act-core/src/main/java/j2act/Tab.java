@@ -602,6 +602,7 @@ public final class Tab {
       showMessage("Forbidden", 403);
     }
     flush();
+    root.revokeRemoved();
   }
 
   private static Verdict checkGuards(List<Middleware> guards, AuthCtx auth) {

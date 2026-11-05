@@ -520,6 +520,21 @@ final class Scope {
     }
   }
 
+  /** The user changed, so what the last render stopped using goes now, though the patch saying so may have to wait. */
+  void revokeRemoved() {
+    for (Scope old : removing) {
+      old.dispose();
+    }
+    removing.clear();
+    tab.handlers.drop(this);
+    for (Scope child : new ArrayList<>(children.values())) {
+      child.revokeRemoved();
+    }
+    if (fallbackScope != null) {
+      fallbackScope.revokeRemoved();
+    }
+  }
+
   /**
    * Whether the page has a place for this: what is around it shows it. If not, as when it is around a fallback or has
    * not shown itself, a patch would find nothing, and what is around it brings this along when it shows it.
