@@ -3,6 +3,7 @@ import { createConnection } from "./connection.ts";
 import { listenForEvents } from "./events.ts";
 import { createMorpher } from "./morph.ts";
 import { createNavigation } from "./navigation.ts";
+import { createFields } from "./fields.ts";
 import { createPending } from "./pending.ts";
 import { createRepair } from "./repair.ts";
 import type { ClientMessage, ServerMessage } from "./protocol.ts";
@@ -46,7 +47,8 @@ function start(): void {
   });
   const pending = createPending();
   const uploads = createUploads(send, () => connection.token);
-  const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
+  const fields = createFields();
+  const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh), fields);
   const repair = createRepair((message) => connection.sendIfReady(message));
   const clients = createClients({ send: send, connected: () => connection.ready, uploads: uploads, morphSlot: (live, html) => morpher.slot(live, html) });
   const navigation = createNavigation(send, base, meta(document, "j2-preload") === "intent");
@@ -70,7 +72,7 @@ function start(): void {
       }
     },
     patch: (m) => {
-      if (!morpher.patch(m.anchor, m.html, m.root === true) && !clients.anchorGone(m.anchor)) {
+      if (!morpher.patch(m.anchor, m.html, m.root === true, m.handled) && !clients.anchorGone(m.anchor)) {
         // Its place is not on the page, so the page has drifted from the server (ADR 0032).
         repair.ask();
       }
@@ -78,6 +80,7 @@ function start(): void {
         repair.arrived();
       }
       clients.scan();
+      fields.flush();
     },
     head: (m) => morpher.head(m.html),
     url: (m) => navigation.landed(m.url, m.mode),
@@ -170,6 +173,7 @@ function start(): void {
         document.documentElement.setAttribute("data-j2-scope", doc.documentElement.getAttribute("data-j2-scope")!);
         document.title = doc.title;
         pending.clear();
+        fields.forget();
         applied = 0;
         clients.forgetResults();
         repair.arrived();
@@ -232,7 +236,7 @@ function start(): void {
   });
 
   navigation.listen(document);
-  listenForEvents(document, { send: send, pending: pending, clients: clients, uploads: uploads });
+  listenForEvents(document, { send: send, pending: pending, clients: clients, uploads: uploads, fields: fields });
   retained.listen(document);
   window.j2act = retained.api();
 

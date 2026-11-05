@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { createFields } from "../../main/ts/fields.ts";
 import { createMorpher } from "../../main/ts/morph.ts";
 import { createPending } from "../../main/ts/pending.ts";
 
 describe("morph and focus (ADR 0013)", () => {
-  const morpher = () => createMorpher(createPending(), () => {});
+  const morpher = () => createMorpher(createPending(), () => {}, createFields());
 
   function page(html: string): HTMLElement {
     document.body.innerHTML = '<div data-j2-scope="s1">' + html + "</div>";
@@ -44,29 +45,49 @@ describe("morph and focus (ADR 0013)", () => {
   });
 
   it("leaves what is being typed in a focused input, and updates the rest of it", () => {
-    const root = page('<input class="a" value="server">');
+    const root = page('<input class="a" value="server" data-j2-controlled="value">');
     const input = root.querySelector("input")!;
     input.focus();
     input.value = "typed";
-    morpher().patch("s1", patched('<input class="b" value="other">'), false);
+    morpher().patch("s1", patched('<input class="b" value="other" data-j2-controlled="value">'), false);
     expect(input.value).toBe("typed");
     expect(input.className).toBe("b");
   });
 
   it("does update an input that is not focused", () => {
-    const root = page('<input value="server">');
-    morpher().patch("s1", patched('<input value="other">'), false);
+    const root = page('<input value="server" data-j2-controlled="value">');
+    morpher().patch("s1", patched('<input value="other" data-j2-controlled="value">'), false);
     expect(root.querySelector("input")!.value).toBe("other");
   });
 
   it("leaves what is being typed in a focused text area", () => {
-    const root = page('<textarea class="a">server</textarea>');
+    const root = page('<textarea class="a" data-j2-controlled="value">server</textarea>');
     const area = root.querySelector("textarea")!;
     area.focus();
     area.value = "typed";
-    morpher().patch("s1", patched('<textarea class="b">other</textarea>'), false);
+    morpher().patch("s1", patched('<textarea class="b" data-j2-controlled="value">other</textarea>'), false);
     expect(area.value).toBe("typed");
     expect(area.className).toBe("b");
+  });
+
+  it("clears a focused field the server cleared, once it has seen everything typed", () => {
+    const root = page('<input value="" data-j2-controlled="value">');
+    const input = root.querySelector("input")!;
+    input.focus();
+    input.value = "hello";
+    const fields = createFields();
+    fields.sent(input, 4, "hello");
+    createMorpher(createPending(), () => {}, fields)
+      .patch("s1", patched('<input value="" data-j2-controlled="value">'), false, 4);
+    expect(input.value).toBe("");
+  });
+
+  it("leaves a field the render did not set, as it is the user's (ADR 0013)", () => {
+    const root = page('<input value="" data-j2-controlled="">');
+    const input = root.querySelector("input")!;
+    input.value = "typed";
+    morpher().patch("s1", patched('<input class="b" data-j2-controlled="">'), false, 9);
+    expect(input.value).toBe("typed");
   });
 
   it("leaves the contents of a focused editable element", () => {

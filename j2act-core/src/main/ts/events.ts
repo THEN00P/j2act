@@ -1,4 +1,5 @@
 import type { Clients } from "./clients.ts";
+import { isTextField, type Fields } from "./fields.ts";
 import type { Pending } from "./pending.ts";
 import type { BoundCall, ClientMessage, EventFields, Send } from "./protocol.ts";
 import type { Uploads } from "./uploads.ts";
@@ -18,12 +19,14 @@ export interface EventsOptions {
   pending: Pending;
   clients: Clients;
   uploads: Uploads;
+  fields: Fields;
 }
 
 /** Listens on doc for every event a render can bind. */
-export function listenForEvents(doc: Document, { send, pending, clients, uploads }: EventsOptions): void {
+export function listenForEvents(doc: Document, { send, pending, clients, uploads, fields }: EventsOptions): void {
   let ackSeq = 0;
-  const timers = new WeakMap<Element, Timer>();                     // element -> debounce timer
+  const undone = new WeakSet<Element>();                            // its last change was undo or redo
+  const timers = new WeakMap<Element, { timer: Timer; type: string }>(); // element -> debounce timer
   const throttles = new WeakMap<Element, { trailing: string | null }>(); // while its interval runs
 
   /**
@@ -44,6 +47,16 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
     if (showsPending) {
       pending.start(el, id, pendingOn || el, type === "submit");
     }
+    if (isTextField(el)) {
+      // Whatever event carries what the field holds, the server has now seen it. A bound action's carries its result.
+      if (value === el.value && (el.getAttribute("data-j2-controlled") ?? "").split(" ").indexOf("value") >= 0) {
+        fields.sent(el, Number(id), value);
+        extra = { ...extra, echo: true };
+      }
+      if ((type === "input" || type === "change") && undone.delete(el)) {
+        extra = { ...extra, undo: true };
+      }
+    }
     const message: ClientMessage = { type: "event", id: id, handler: handlerId, value: value == null ? "" : value, ...extra };
     send(message);
   }
@@ -60,11 +73,30 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
       dispatch(el, type, read());
       return;
     }
-    clearTimeout(timers.get(el));
-    timers.set(el, setTimeout(() => {
+    clearTimeout(timers.get(el)?.timer);
+    timers.set(el, {
+      type: type,
+      timer: setTimeout(() => {
+        timers.delete(el);
+        dispatch(el, type, read());
+      }, ms)
+    });
+  }
+
+  /** What still waits on a debounce or a throttle goes now, so the server hears it before what comes after it. */
+  function sendWaiting(el: Element): void {
+    const waiting = timers.get(el);
+    if (waiting) {
+      clearTimeout(waiting.timer);
       timers.delete(el);
-      dispatch(el, type, read());
-    }, ms));
+      dispatch(el, waiting.type, waiting.type === "click" ? null : valueOf(el));
+    }
+    const running = throttles.get(el);
+    if (running?.trailing) {
+      const next = running.trailing;
+      running.trailing = null;
+      dispatch(el, next, valueOf(el));
+    }
   }
 
   /**
@@ -152,11 +184,22 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
     });
   }
 
+  fields.listen(doc);
+  // What the server's merge sends back goes like typing, debounced or throttled as the field asks.
+  fields.setResend((el) => schedule(el, "input"));
   for (const type of ["input", "change"]) {
     doc.addEventListener(type, (e) => {
       const el = bound(e.target, type);
-      if (!el) {
+      if (!el || fields.applying) {
         return;
+      }
+      if (type === "input") {
+        const inputType = (e as InputEvent).inputType;
+        if (inputType === "historyUndo" || inputType === "historyRedo") {
+          undone.add(el);
+        } else {
+          undone.delete(el);
+        }
       }
       if ((el as HTMLInputElement).type === "file") {
         dispatch(el, type, "", uploads.picked(el as HTMLInputElement));
@@ -171,6 +214,7 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
     doc.addEventListener(listen, (e) => {
       const el = bound(e.target, type);
       if (el) {
+        sendWaiting(el);
         dispatch(el, type, valueOf(el));
       }
     });
@@ -186,6 +230,7 @@ export function listenForEvents(doc: Document, { send, pending, clients, uploads
     if (filter && filter.split(" ").indexOf(e.key) < 0) {
       return;
     }
+    sendWaiting(el);
     const key = { key: e.key, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey };
     if (el.hasAttribute("data-j2-call-keydown")) {
       boundAction(el, "keydown", key);

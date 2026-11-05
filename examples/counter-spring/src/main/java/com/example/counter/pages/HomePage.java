@@ -1,6 +1,7 @@
 package com.example.counter.pages;
 
 import static j2act.Reactive.*;
+import static com.example.counter.components.RewriteBox.rewriteBox;
 import static com.example.counter.components.BrowserApis.browserApis;
 import static com.example.counter.components.ClockFeed.clockFeed;
 import static com.example.counter.components.NoteEditor.noteEditor;
@@ -88,6 +89,10 @@ public class HomePage extends LiveComponent {
           h2("Spikes: Chart.js with a server legend, Quill with live server errors"),
           salesChart(),
           noteEditor()
+        ),
+        section(
+          h2("Fields the server edits"),
+          rewriteBox()
         ),
         section(
           h2("Pending UI"),

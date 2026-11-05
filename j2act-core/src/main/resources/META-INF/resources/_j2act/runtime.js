@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-aff68eaa608a76a0f5d5cb7439977834f1a9f05a7e8fef87dfb36d1cf8ccdb82 */
+* sources: sha256-dbe8bb338c639a1cdc37c80eb0ac20804295febd97bd8003311e1816b211e083 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -488,6 +488,174 @@
 		};
 	}
 	//#endregion
+	//#region src/main/ts/fields.ts
+	/** The one changed span between two strings, from the first difference to the last. */
+	function span(base, next) {
+		let from = 0;
+		while (from < base.length && from < next.length && base[from] === next[from]) from++;
+		let tail = 0;
+		while (tail < base.length - from && tail < next.length - from && base[base.length - 1 - tail] === next[next.length - 1 - tail]) tail++;
+		return {
+			from,
+			to: base.length - tail,
+			text: next.slice(from, next.length - tail)
+		};
+	}
+	/**
+	* What to do to mine to bring in the server's change (ADR 0034): base is what the server had seen,
+	* server its answer. Null when it changed nothing, or when it touches what the user changed since,
+	* who wins for now. Touching is fine only where one side replaced text and the other added beside it.
+	*/
+	function merge(base, server, mine) {
+		const theirs = span(base, server);
+		if (theirs.from === theirs.to && theirs.text === "") return null;
+		const ours = span(base, mine);
+		if (ours.from === ours.to && ours.text === "") return theirs;
+		if (server === mine) return null;
+		const oursAdds = ours.from === ours.to;
+		const theirsAdds = theirs.from === theirs.to;
+		if (theirs.to < ours.from || theirs.to === ours.from && oursAdds && !theirsAdds) return theirs;
+		if (ours.to < theirs.from || ours.to === theirs.from && oursAdds && !theirsAdds) {
+			const shift = ours.text.length - (ours.to - ours.from);
+			return {
+				from: theirs.from + shift,
+				to: theirs.to + shift,
+				text: theirs.text
+			};
+		}
+		return null;
+	}
+	function applyEdit(value, edit) {
+		return edit ? value.slice(0, edit.from) + edit.text + value.slice(edit.to) : value;
+	}
+	/** Where a caret goes when this edit is made around it. */
+	function moved(caret, edit) {
+		if (caret <= edit.from) return caret;
+		if (caret >= edit.to) return caret + edit.text.length - (edit.to - edit.from);
+		return edit.from + edit.text.length;
+	}
+	var WITH_CARET = /* @__PURE__ */ new Set([
+		"text",
+		"search",
+		"url",
+		"tel",
+		"password"
+	]);
+	/** A field whose value is text the user edits, so a server's change to it has to be merged. */
+	function isTextField(el) {
+		if (el.tagName === "TEXTAREA") return true;
+		return el.tagName === "INPUT" && (WITH_CARET.has(el.type) || hasNoCaret(el));
+	}
+	/** Text with no selection API, so there is no caret to keep and no span to make an edit in. */
+	function hasNoCaret(el) {
+		const type = el.type;
+		return type === "email" || type === "number";
+	}
+	/**
+	* Text fields the server controls (ADR 0034): what was sent for each, and the server's answers
+	* merged into what the field holds now.
+	*/
+	function createFields() {
+		let states = /* @__PURE__ */ new WeakMap();
+		let resend = () => {};
+		let owed = [];
+		let composing = null;
+		let applying = false;
+		function stateOf(el) {
+			let state = states.get(el);
+			if (!state) {
+				state = {
+					sent: [],
+					answeredFor: -1,
+					answer: null
+				};
+				states.set(el, state);
+			}
+			return state;
+		}
+		/** Makes the edit as typing would, so it is a step in the browser's undo history. */
+		function edit(el, change) {
+			const value = el.value;
+			if (document.activeElement === el && !hasNoCaret(el) && typeof document.execCommand === "function") {
+				const start = el.selectionStart ?? value.length;
+				const end = el.selectionEnd ?? value.length;
+				const direction = el.selectionDirection ?? void 0;
+				el.setSelectionRange(change.from, change.to);
+				applying = true;
+				let done = false;
+				try {
+					done = document.execCommand(change.text === "" ? "delete" : "insertText", false, change.text);
+				} catch {} finally {
+					applying = false;
+				}
+				if (!done || el.value !== applyEdit(value, change)) el.value = applyEdit(value, change);
+				el.setSelectionRange(moved(start, change), moved(end, change), direction);
+				return;
+			}
+			const start = el.selectionStart;
+			const end = el.selectionEnd;
+			el.value = applyEdit(value, change);
+			if (document.activeElement === el && start !== null && end !== null) el.setSelectionRange(moved(start, change), moved(end, change));
+		}
+		return {
+			/** True while this code is making an edit, whose input event is not the user's. */
+			get applying() {
+				return applying;
+			},
+			setResend(fn) {
+				resend = fn;
+			},
+			listen(doc) {
+				doc.addEventListener("compositionstart", (e) => {
+					composing = e.target;
+				});
+				doc.addEventListener("compositionend", () => {
+					composing = null;
+				});
+			},
+			/** An event carrying this value went out. */
+			sent(el, id, value) {
+				stateOf(el).sent.push({
+					id,
+					value
+				});
+			},
+			/** The server rendered answer for this field, having handled events up to handled. */
+			reconcile(el, answer, handled) {
+				const state = stateOf(el);
+				const mine = el.value;
+				let seen = null;
+				while (state.sent.length && state.sent[0].id <= handled) seen = state.sent.shift();
+				const seenId = seen ? seen.id : state.answeredFor;
+				const base = state.answer !== null && state.answeredFor === seenId ? state.answer : seen ? seen.value : state.answer ?? el.defaultValue;
+				state.answeredFor = seenId;
+				state.answer = answer;
+				if (composing === el) return;
+				const unseen = state.sent.length > 0;
+				el.defaultValue = answer;
+				if (hasNoCaret(el)) {
+					if (!unseen && mine === base && mine !== answer) el.value = answer;
+					return;
+				}
+				const change = merge(base, answer, mine);
+				if (el.value !== mine) el.value = applyEdit(mine, change);
+				else if (change) edit(el, change);
+				if (el.value !== answer && (change !== null || !unseen) && el.hasAttribute("data-j2-input")) owed.push(el);
+			},
+			/** Sends what the last patch left the server without. After the morph, as sending reads the field. */
+			flush() {
+				const fields = owed;
+				owed = [];
+				for (const el of fields) resend(el);
+			},
+			/** A new server-side tab: what went to the old one means nothing to it. */
+			forget() {
+				states = /* @__PURE__ */ new WeakMap();
+				owed = [];
+			}
+		};
+	}
+	//#endregion
 	//#region src/main/ts/web.ts
 	/**
 	* Follows the path (get a property or call a method at each step), then gets, sets, calls or
@@ -536,8 +704,9 @@
 	//#endregion
 	//#region src/main/ts/events.ts
 	/** Listens on doc for every event a render can bind. */
-	function listenForEvents(doc, { send, pending, clients, uploads }) {
+	function listenForEvents(doc, { send, pending, clients, uploads, fields }) {
 		let ackSeq = 0;
+		const undone = /* @__PURE__ */ new WeakSet();
 		const timers = /* @__PURE__ */ new WeakMap();
 		const throttles = /* @__PURE__ */ new WeakMap();
 		/**
@@ -552,6 +721,19 @@
 			if (!handlerId) return;
 			const id = String(++ackSeq);
 			if (showsPending) pending.start(el, id, pendingOn || el, type === "submit");
+			if (isTextField(el)) {
+				if (value === el.value && (el.getAttribute("data-j2-controlled") ?? "").split(" ").indexOf("value") >= 0) {
+					fields.sent(el, Number(id), value);
+					extra = {
+						...extra,
+						echo: true
+					};
+				}
+				if ((type === "input" || type === "change") && undone.delete(el)) extra = {
+					...extra,
+					undo: true
+				};
+			}
 			send({
 				type: "event",
 				id,
@@ -572,11 +754,29 @@
 				dispatch(el, type, read());
 				return;
 			}
-			clearTimeout(timers.get(el));
-			timers.set(el, setTimeout(() => {
+			clearTimeout(timers.get(el)?.timer);
+			timers.set(el, {
+				type,
+				timer: setTimeout(() => {
+					timers.delete(el);
+					dispatch(el, type, read());
+				}, ms)
+			});
+		}
+		/** What still waits on a debounce or a throttle goes now, so the server hears it before what comes after it. */
+		function sendWaiting(el) {
+			const waiting = timers.get(el);
+			if (waiting) {
+				clearTimeout(waiting.timer);
 				timers.delete(el);
-				dispatch(el, type, read());
-			}, ms));
+				dispatch(el, waiting.type, waiting.type === "click" ? null : valueOf(el));
+			}
+			const running = throttles.get(el);
+			if (running?.trailing) {
+				const next = running.trailing;
+				running.trailing = null;
+				dispatch(el, next, valueOf(el));
+			}
 		}
 		/**
 		* The leading event at once, then at most one per interval: input and change send the latest
@@ -653,21 +853,32 @@
 			if (el.hasAttribute("data-j2-call-" + type)) boundAction(el, type, extra);
 			else dispatch(el, type, "", extra);
 		});
+		fields.listen(doc);
+		fields.setResend((el) => schedule(el, "input"));
 		for (const type of ["input", "change"]) doc.addEventListener(type, (e) => {
 			const el = bound(e.target, type);
-			if (!el) return;
+			if (!el || fields.applying) return;
+			if (type === "input") {
+				const inputType = e.inputType;
+				if (inputType === "historyUndo" || inputType === "historyRedo") undone.add(el);
+				else undone.delete(el);
+			}
 			if (el.type === "file") dispatch(el, type, "", uploads.picked(el));
 			else schedule(el, type);
 		});
 		for (const [listen, type] of [["focusin", "focus"], ["focusout", "blur"]]) doc.addEventListener(listen, (e) => {
 			const el = bound(e.target, type);
-			if (el) dispatch(el, type, valueOf(el));
+			if (el) {
+				sendWaiting(el);
+				dispatch(el, type, valueOf(el));
+			}
 		});
 		doc.addEventListener("keydown", (e) => {
 			const el = bound(e.target, "keydown");
 			if (!el) return;
 			const filter = el.getAttribute("data-j2-keys");
 			if (filter && filter.split(" ").indexOf(e.key) < 0) return;
+			sendWaiting(el);
 			const key = {
 				key: e.key,
 				ctrlKey: e.ctrlKey,
@@ -1700,10 +1911,13 @@
 	* pending state of a blocked element, form state the render did not set (ADR 0013), a client
 	* element's node and children (ADR 0022), and what the runtime added to the head.
 	*/
-	function createMorpher(pending, syncClient) {
+	function createMorpher(pending, syncClient, fields) {
+		/** The last event the server had handled, from the patch being applied. */
+		let handled = 0;
 		const callbacks = {
 			beforeAttributeUpdated: (name, el) => {
 				if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) return false;
+				if (name === "value" && isTextField(el)) return false;
 				if (name === "value" && el === document.activeElement) return false;
 				if ((name === "value" || name === "checked" || name === "selected") && el.hasAttribute("data-j2-controlled")) return el.getAttribute("data-j2-controlled").split(" ").indexOf(name) >= 0;
 				return true;
@@ -1713,7 +1927,14 @@
 					syncClient(oldNode, newNode);
 					return false;
 				}
-				if (oldNode === document.activeElement && oldNode.nodeType === 1 && newNode.nodeType === 1 && (oldNode.tagName === "TEXTAREA" || oldNode.hasAttribute("contenteditable"))) newNode.innerHTML = oldNode.innerHTML;
+				if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.tagName === newNode.tagName) {
+					const fresh = newNode;
+					if (isTextField(oldNode) && (fresh.getAttribute("data-j2-controlled") ?? "").split(" ").indexOf("value") >= 0) {
+						fields.reconcile(oldNode, fresh.value, handled);
+						return true;
+					}
+					if (oldNode === document.activeElement && oldNode.hasAttribute("contenteditable")) fresh.innerHTML = oldNode.innerHTML;
+				}
 				return true;
 			}
 		};
@@ -1742,7 +1963,8 @@
 			* Morphs the component at anchor; false when it is not in the document. The tab root may
 			* be a new component after a navigation, with a new anchor, so it replaces head and body.
 			*/
-			patch(anchor, html, isRoot) {
+			patch(anchor, html, isRoot, eventsHandled) {
+				if (eventsHandled !== void 0) handled = eventsHandled;
 				if (isRoot) {
 					const doc = new DOMParser().parseFromString(html, "text/html");
 					document.documentElement.setAttribute("data-j2-scope", anchor);
@@ -2306,7 +2528,8 @@
 		});
 		const pending = createPending();
 		const uploads = createUploads(send, () => connection.token);
-		const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
+		const fields = createFields();
+		const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh), fields);
 		const repair = createRepair((message) => connection.sendIfReady(message));
 		const clients = createClients({
 			send,
@@ -2335,9 +2558,10 @@
 				});
 			},
 			patch: (m) => {
-				if (!morpher.patch(m.anchor, m.html, m.root === true) && !clients.anchorGone(m.anchor)) repair.ask();
+				if (!morpher.patch(m.anchor, m.html, m.root === true, m.handled) && !clients.anchorGone(m.anchor)) repair.ask();
 				if (m.root === true) repair.arrived();
 				clients.scan();
+				fields.flush();
 			},
 			head: (m) => morpher.head(m.html),
 			url: (m) => navigation.landed(m.url, m.mode),
@@ -2417,6 +2641,7 @@
 				document.documentElement.setAttribute("data-j2-scope", doc.documentElement.getAttribute("data-j2-scope"));
 				document.title = doc.title;
 				pending.clear();
+				fields.forget();
 				applied = 0;
 				clients.forgetResults();
 				repair.arrived();
@@ -2467,7 +2692,8 @@
 			send,
 			pending,
 			clients,
-			uploads
+			uploads,
+			fields
 		});
 		retained.listen(document);
 		window.j2act = retained.api();

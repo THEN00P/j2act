@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createClients } from "../../main/ts/clients.ts";
 import { listenForEvents } from "../../main/ts/events.ts";
+import { createFields } from "../../main/ts/fields.ts";
 import { createPending, type Pending } from "../../main/ts/pending.ts";
 import type { ClientMessage } from "../../main/ts/protocol.ts";
 import { createUploads } from "../../main/ts/uploads.ts";
@@ -8,6 +9,7 @@ import { createUploads } from "../../main/ts/uploads.ts";
 describe("Events", () => {
   let sent: ClientMessage[];
   let pending: Pending;
+  const fields = createFields();
 
   beforeAll(() => {
     // Listeners stay on the document for the whole file; each test reads what it sent.
@@ -15,7 +17,7 @@ describe("Events", () => {
     pending = createPending();
     const uploads = createUploads(send, () => "tok");
     const clients = createClients({ send: send, connected: () => true, uploads: uploads, morphSlot: () => {} });
-    listenForEvents(document, { send: send, pending: pending, clients: clients, uploads: uploads });
+    listenForEvents(document, { send: send, pending: pending, clients: clients, uploads: uploads, fields: fields });
   });
 
   beforeEach(() => {
@@ -101,6 +103,88 @@ describe("Events", () => {
     span.click();
     await vi.advanceTimersByTimeAsync(100);
     expect(sent).toHaveLength(1);
+  });
+
+  function blur(el: Element): void {
+    el.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+  }
+
+  function press(el: Element, key: string): void {
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: key, bubbles: true }));
+  }
+
+  function undo(el: HTMLInputElement, value: string): void {
+    el.value = value;
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "historyUndo" }));
+  }
+
+  const carried = (m: ClientMessage) => (m as { id: string }).id;
+
+  it("takes the server's answer to the value a blur carried (ADR 0034)", () => {
+    const el = input('<input data-j2-blur="h" data-j2-controlled="value" value="">');
+    el.value = "  name  ";
+    blur(el);
+    expect(sent).toMatchObject([{ handler: "h", value: "  name  ", echo: true }]);
+    fields.reconcile(el, "name", Number(carried(sent[0])));
+    expect(el.value).toBe("name");
+  });
+
+  it("takes the server's answer to the value a key carried", () => {
+    const el = input('<input data-j2-keydown="h" data-j2-keys="Enter" data-j2-controlled="value" value="">');
+    el.value = "sent";
+    press(el, "Enter");
+    expect(sent).toMatchObject([{ handler: "h", value: "sent", echo: true }]);
+    fields.reconcile(el, "", Number(carried(sent[0])));
+    expect(el.value).toBe("");
+  });
+
+  it("sends an input still waiting before a blur or a key that comes after it", () => {
+    vi.useFakeTimers();
+    const el = input('<input data-j2-input="i" data-j2-blur="b" data-j2-keydown="k" data-j2-debounce="300">');
+    type(el, "abc");
+    press(el, "Enter");
+    type(el, "abcd");
+    blur(el);
+    expect(sent).toMatchObject([
+      { handler: "i", value: "abc" }, { handler: "k", value: "abc" },
+      { handler: "i", value: "abcd" }, { handler: "b", value: "abcd" }
+    ]);
+    vi.advanceTimersByTime(1000);
+    expect(sent.length).toBe(4);
+  });
+
+  it("sends a throttled input still waiting before a blur that comes after it", () => {
+    vi.useFakeTimers();
+    const el = input('<input data-j2-input="i" data-j2-blur="b" data-j2-throttle="300">');
+    type(el, "a");
+    type(el, "ab");
+    blur(el);
+    expect(sent).toMatchObject([{ handler: "i", value: "a" }, { handler: "i", value: "ab" }, { handler: "b", value: "ab" }]);
+    vi.advanceTimersByTime(1000);
+    expect(sent.length).toBe(3);
+  });
+
+  it("remembers nothing for a field the server does not control", () => {
+    const remembered = vi.spyOn(fields, "sent");
+    const el = input('<input data-j2-input="h">');
+    type(el, "a");
+    expect(sent).toMatchObject([{ handler: "h", value: "a" }]);
+    expect(sent[0]).not.toHaveProperty("echo");
+    expect(remembered).not.toHaveBeenCalled();
+    remembered.mockRestore();
+  });
+
+  it("marks an event as an undo only when the undo is the latest change", () => {
+    vi.useFakeTimers();
+    const el = input('<input data-j2-input="h" data-j2-debounce="300">');
+    undo(el, "a");
+    type(el, "ab");
+    vi.advanceTimersByTime(300);
+    expect(sent).toEqual([{ type: "event", id: carried(sent[0]), handler: "h", value: "ab" }]);
+    type(el, "abc");
+    undo(el, "ab");
+    vi.advanceTimersByTime(300);
+    expect(sent[1]).toMatchObject({ value: "ab", undo: true });
   });
 
   it("sends only the keys the server asked for, with modifiers", () => {
