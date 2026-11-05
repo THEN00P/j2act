@@ -62,6 +62,25 @@ async function main() {
   check("morph keeps the same DOM node for A", await js(`${btn("A:")} === window.__a`));
   check("sibling B untouched", await js(`${btn("B:")} === window.__b && window.__b.textContent === 'B: 0'`));
 
+  // 1b. a real click, as a script's .click() is not: it also focuses the button, and Idiomorph must still update it
+  const mouseClick = async (expr) => {
+    const at = await js(`(() => { const e = ${expr}; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    await cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y });
+    await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button: "left", clickCount: 1 });
+    await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x, y: at.y, button: "left", clickCount: 1 });
+  };
+  const before = await js(`${btn("A:")}.textContent`);
+  await mouseClick(btn("A:"));
+  const after = "A: " + (parseInt(before.slice(3), 10) + 1);
+  check("a real mouse click updates the button it focused", await until(`${btn("A:")}?.textContent === '${after}'`, 1500),
+    await js(`${btn("A:")}.textContent`));
+  check("that button has the focus", await js(`document.activeElement === ${btn("A:")}`));
+  await mouseClick(btn("A:"));
+  check("and a second one updates it again", await until(`${btn("A:")}?.textContent === 'A: ${parseInt(before.slice(3), 10) + 2}'`, 1500),
+    await js(`${btn("A:")}.textContent`));
+  await js(`${btn("A:")}.blur(); true`);
+
   // 2. page re-render keeps held instance state and child state
   await js(`${btn("A:")}.click(); ${btn("Held instance")}.click(); true`);
   await until(`${btn("Held instance")}?.textContent === 'Held instance: 1' && ${btn("A:")}?.textContent === 'A: 2'`);
