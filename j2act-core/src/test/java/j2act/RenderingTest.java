@@ -42,7 +42,15 @@ class RenderingTest {
         T.input().withId("bound").attr("value", "x"),
         T.input().withId("unticked").attr("checked", null),
         T.tag("textarea").withId("empty"),
-        T.tag("textarea", "hi").withId("filled")));
+        T.tag("textarea", "hi").withId("start"),
+        T.tag("textarea").withId("drafted").attr("default-value", "draft"),
+        T.tag("textarea").withId("bound-area").attr("value", "x<y"),
+        T.tag("textarea").withId("cleared").attr("value", ""),
+        T.tag("textarea").withId("gone").attr("value", null),
+        T.tag("textarea", "ignored").withId("wins").attr("value", "bound"),
+        T.tag("textarea").withId("newline").attr("value", "\nabc"),
+        T.tag("textarea", "\nchild").withId("newline-child"),
+        T.tag("pre", "\nkept").withId("newline-pre")));
   }
   }
 
@@ -54,8 +62,29 @@ class RenderingTest {
       assertTrue(html.contains("<input data-j2-controlled=\"value\" id=\"bound\" value=\"x\">"), html);
       assertTrue(html.contains("<input data-j2-controlled=\"checked\" id=\"unticked\">"), html);
       assertTrue(html.contains("<textarea data-j2-controlled id=\"empty\"></textarea>"), html);
-      assertTrue(html.contains("<textarea data-j2-controlled=\"value\" id=\"filled\">hi</textarea>"), html);
+      assertTrue(html.contains("<textarea data-j2-controlled id=\"start\">hi</textarea>"), html);
+      assertTrue(html.contains("<textarea data-j2-controlled id=\"drafted\">draft</textarea>"), html);
+      assertTrue(html.contains("<textarea data-j2-controlled=\"value\" id=\"bound-area\">x&lt;y</textarea>"), html);
+      assertTrue(html.contains("<textarea data-j2-controlled=\"value\" id=\"cleared\"></textarea>"), html);
+      assertTrue(html.contains("<textarea data-j2-controlled=\"value\" id=\"gone\"></textarea>"), html);
+      assertTrue(html.contains("<textarea data-j2-controlled=\"value\" id=\"wins\">bound</textarea>"), html);
+      // A parser drops a newline right after these opening tags, so what starts with one needs a second.
+      assertTrue(html.contains("id=\"newline\">\n\nabc</textarea>"), html);
+      assertTrue(html.contains("id=\"newline-child\">\n\nchild</textarea>"), html);
+      assertTrue(html.contains("id=\"newline-pre\">\n\nkept</pre>"), html);
     }
+  }
+
+  @Test
+  void aTextareaRendersWithoutATabAsItDoesWithOne() {
+    assertEquals("<textarea>x&lt;y</textarea>", T.tag("textarea").attr("value", "x<y").render());
+    assertEquals("<textarea>draft</textarea>", T.tag("textarea").attr("default-value", "draft").render());
+    assertEquals("<textarea></textarea>", T.tag("textarea", "ignored").attr("value", null).render());
+    assertEquals("<textarea>bound</textarea>", T.tag("textarea", "ignored").attr("value", "bound").render());
+    assertEquals("<textarea>\n\nabc</textarea>", T.tag("textarea").attr("value", "\nabc").render());
+    assertEquals("<textarea>\n\nabc</textarea>\n", T.tag("textarea").attr("value", "\nabc").renderFormatted());
+    assertEquals("<pre>\n\nkept</pre>", T.tag("pre", "\nkept").render());
+    assertEquals("<listing>\n\nkept</listing>\n", T.tag("listing", "\nkept").renderFormatted());
   }
 
   @Test

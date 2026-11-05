@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-dbe8bb338c639a1cdc37c80eb0ac20804295febd97bd8003311e1816b211e083 */
+* sources: sha256-ed24d12a6c7b136be6ddec8d2a450dde3b02a631945268f388afd783d9ff1e8b */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -119,20 +119,19 @@
 		function sendResults() {
 			if (!connected()) return;
 			const now = Date.now();
-			for (const [id, result] of unseenResults) {
+			const due = [...unseenResults].filter(([, result]) => now - result.sentAt >= RESULT_RETRY_MS).sort(([, a], [, b]) => a.sentAt - b.sentAt);
+			for (const [id, result] of due) {
 				if (resultAllowance === 0) break;
-				if (now - result.sentAt >= RESULT_RETRY_MS) {
-					const size = JSON.stringify(result.message).length;
-					if (size > maxFrame) result.message = {
-						type: "callResult",
-						id,
-						ok: false,
-						error: "RangeError: the result is " + size + " characters, over the socket's limit of " + maxFrame
-					};
-					result.sentAt = now;
-					resultAllowance--;
-					send(result.message);
-				}
+				const size = JSON.stringify(result.message).length;
+				if (size > maxFrame) result.message = {
+					type: "callResult",
+					id,
+					ok: false,
+					error: "RangeError: the result is " + size + " characters, over the socket's limit of " + maxFrame
+				};
+				result.sentAt = now;
+				resultAllowance--;
+				send(result.message);
 			}
 			if (unseenResults.size > 0 && resultTimer === null) resultTimer = setTimeout(() => {
 				resultTimer = null;

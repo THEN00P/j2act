@@ -31,6 +31,22 @@
         "sandbox": { "valueless": true, "_why": "an empty sandbox attribute is valid and applies every restriction" }
       }
     },
+    "textarea": {
+      "attributes": {
+        "value": {
+          "add": true,
+          "description": "The text this field holds, which the server keeps deciding (ADR 0013, ADR 0034). Rendered as the element's text, as Solid 2 does: a textarea has no value attribute. Null clears it.",
+          "mdn": "https://developer.mozilla.org/docs/Web/API/HTMLTextAreaElement/value",
+          "_why": "Solid 2's textarea.value: binding a textarea reads like binding an input"
+        },
+        "default-value": {
+          "add": true,
+          "description": "The text this field starts with, which is the user's from then on. Rendered as the element's text, the same as textarea(text).",
+          "mdn": "https://developer.mozilla.org/docs/Web/API/HTMLTextAreaElement/defaultValue",
+          "_why": "Solid 2's textarea.defaultValue; the hyphen makes the builder withDefaultValue"
+        }
+      }
+    },
     "form": {
       "attributes": {
         "rel": {

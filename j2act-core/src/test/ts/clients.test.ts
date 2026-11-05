@@ -56,6 +56,24 @@ describe("Clients", () => {
       }
     });
 
+    it("gets to every result in turn, though the first keep coming due again", () => {
+      vi.useFakeTimers();
+      try {
+        up = false;
+        for (let i = 0; i < 80; i++) {
+          clients.reply(String(i), true, i);
+        }
+        up = true;
+        clients.resendResults();
+        // No acknowledgement comes, as on a half-broken connection, so the first are due again every 2 seconds.
+        vi.advanceTimersByTime(10000);
+        const ids = new Set(sent.map((m) => (m as { id: string }).id));
+        expect(ids.size).toBe(80);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("sends a result the server gave no answer to again while the socket stays up", () => {
       vi.useFakeTimers();
       try {

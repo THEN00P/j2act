@@ -74,6 +74,7 @@ public final class J2Act implements AutoCloseable {
   final long reconnectGraceMillis;
   final long idleTimeoutMillis;
   final long streamDeadlineMillis;
+  private final long shellDeadlineMillis;
   final long pendingMillis;
   final long pendingMinMillis;
   final long downloadTtlMillis;
@@ -563,6 +564,7 @@ public final class J2Act implements AutoCloseable {
     this.reconnectGraceMillis = b.reconnectGrace.toMillis();
     this.idleTimeoutMillis = b.idleTimeout.toMillis();
     this.streamDeadlineMillis = b.streamDeadline.toMillis();
+    this.shellDeadlineMillis = b.shellDeadline.toMillis();
     this.pendingMillis = b.pendingTime.toMillis();
     this.pendingMinMillis = b.pendingMinTime.toMillis();
     this.downloadTtlMillis = b.downloadTtl.toMillis();
@@ -710,6 +712,7 @@ public final class J2Act implements AutoCloseable {
           cookie == null ? java.util.Collections.emptyList() : java.util.Collections.singletonList(cookie));
       }
       int status = resolution.status;
+      long shellDeadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(shellDeadlineMillis);
       // Render and the in-flight check run in one lane task, so a commit can never land
       // between them and leave us shipping HTML rendered before it (ADR 0016).
       SsrPass pass = await(tab.call(() -> {
@@ -736,7 +739,15 @@ public final class J2Act implements AutoCloseable {
           continue;
         }
         if (pass.waitingOnRead) {
-          tab.awaitSettleAfter(pass.settleCount, 60_000L);
+          long left = TimeUnit.NANOSECONDS.toMillis(shellDeadline - System.nanoTime());
+          if (left <= 0) {
+            log(System.Logger.Level.ERROR, "a load outside any loading(...) took over " + shellDeadlineMillis
+              + " ms, so " + url + " gives up", null);
+            discard(tab, false);
+            return new ServeResult(504, "<!DOCTYPE html><html><head><title>Timed out</title></head>"
+              + "<body><h1>This page took too long</h1></body></html>");
+          }
+          tab.awaitSettleAfter(pass.settleCount, left);
           if (tab.disposed) {
             throw new IllegalStateException("the tab ended while its page waited for a load");
           }
@@ -1402,6 +1413,7 @@ public final class J2Act implements AutoCloseable {
     private Clock clock = Clock.systemUTC();
     private Duration reconnectGrace = Duration.ofMinutes(3);
     private Duration streamDeadline = Duration.ofSeconds(10);
+    private Duration shellDeadline = Duration.ofSeconds(60);
     private Duration idleTimeout = Duration.ofHours(12);
     private Duration sweepInterval = Duration.ofSeconds(10);
     private Duration pendingTime = Duration.ofSeconds(1);
@@ -1513,6 +1525,15 @@ public final class J2Act implements AutoCloseable {
      */
     public Builder withStreamDeadline(Duration deadline) {
       this.streamDeadline = deadline;
+      return this;
+    }
+
+    /**
+     * How long a served page waits for a read outside any loading(...) before it answers 504, 60 seconds by
+     * default (ADR 0031). Nothing can be sent until such a read lands, and a request thread waits meanwhile.
+     */
+    public Builder withShellDeadline(Duration deadline) {
+      this.shellDeadline = deadline;
       return this;
     }
 

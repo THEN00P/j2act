@@ -407,6 +407,26 @@ final class Scope {
     return false;
   }
 
+  /** A boundary above this scope shows a fallback instead of what holds it. What is inside that fallback is on the page. */
+  boolean replacedByFallback() {
+    for (Scope child = this, s = parent; s != null; child = s, s = s.parent) {
+      if ((tab.showingFallback.contains(s) || tab.showingError.contains(s)) && s.fallbackScope != child) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** An errored(...) at or above this scope shows its fallback, so this scope's output is gone from the page. */
+  boolean underError() {
+    for (Scope s = this; s != null; s = s.parent) {
+      if (tab.showingError.contains(s)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Everything loading in this component and below finished, and it was rendered. */
   boolean settledBelow() {
     if (dirty || disposed || effect != null && tab.rt.pending(effect)) {
@@ -517,6 +537,21 @@ final class Scope {
     }
     if (fallbackScope != null && fallbackScope.html != null && what.contains(fallbackScope.html)) {
       fallbackScope.pageHas(fallbackScope.html);
+    }
+  }
+
+  /** The user changed, so what the last render stopped using goes now, though the patch saying so may have to wait. */
+  void revokeRemoved() {
+    for (Scope old : removing) {
+      old.dispose();
+    }
+    removing.clear();
+    tab.handlers.drop(this);
+    for (Scope child : new ArrayList<>(children.values())) {
+      child.revokeRemoved();
+    }
+    if (fallbackScope != null) {
+      fallbackScope.revokeRemoved();
     }
   }
 

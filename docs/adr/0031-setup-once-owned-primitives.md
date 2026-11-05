@@ -319,7 +319,7 @@ return () -> main(
 );
 ```
 
-A read outside any loading(...) stops the page, which waits for it as ADR 0016's SSR await does. Only the first load stops rendering: on a refresh get() returns the old value while the new one loads, so nothing flashes back to the fallback. A memo that reads a value not loaded yet is not ready either, and reading it stops rendering the same way. An effect whose watched half reads one waits until it is loaded, as Solid holds its effects. Outside a view, in a handler say, get() on a value not loaded yet throws an error that says so. The signal extends Error, not Exception, so an ordinary `catch (Exception e)` in a view does not swallow it; the processor warns about catch-alls around reads in views.
+A read outside any loading(...) stops the page, which waits for it as ADR 0016's SSR await does. A load that fails there, with no errored(...) around it, ends the wait and the response is a 500. One that never answers gives up at withShellDeadline, 60 seconds by default, with a 504, so a stuck load cannot hold a request thread for good. Only the first load stops rendering: on a refresh get() returns the old value while the new one loads, so nothing flashes back to the fallback. A memo that reads a value not loaded yet is not ready either, and reading it stops rendering the same way. An effect whose watched half reads one waits until it is loaded, as Solid holds its effects. Outside a view, in a handler say, get() on a value not loaded yet throws an error that says so. The signal extends Error, not Exception, so an ordinary `catch (Exception e)` in a view does not swallow it; the processor warns about catch-alls around reads in views.
 
 ### Status reads
 
@@ -338,7 +338,7 @@ isPending(() -> users.get().size() + posts.get().size())
 
 `refresh(x)` replaces refetch() and is quiet: it does not make isPending true, so a background refresh does not flicker. `affects(x)` before it makes it visible, as in Solid 2. Quiet is not torn: what follows x reloads with it and everything changes in one update. It returns a CompletableFuture for the next quiescent state, as Solid's promise does: everything that followed x has landed too, in the update that shows it. Inside an action it finishes with what lands, since the commit waits for the action: `refresh(x).get()`. Every refresh in one lane task is one load. `until(fn)` finishes when fn first gives a value that is not null or false, seeing the truth and never a guess, for a write confirmed by a socket or another tab; `resolve(fn)` takes the first value there is.
 
-A failed load goes where a pending one does: reading it stops rendering up to the nearest errored(...), whose fallback gets the error and a reset that runs the failed loads again and renders the contents once more:
+A failed load goes where a pending one does, on a page a link goes to as much as on one already showing: an errored(...) anywhere above it shows its fallback, in the page or in a layout, and the address moves to the page that failed. With none, a link stays where it was and the server logs the failure, so an app says what a failure looks like by placing errored(...). Reading it stops rendering up to the nearest errored(...), whose fallback gets the error and a reset that runs the failed loads again and renders the contents once more:
 
 ```java
 errored(

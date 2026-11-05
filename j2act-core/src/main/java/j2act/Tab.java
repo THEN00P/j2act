@@ -602,6 +602,7 @@ public final class Tab {
       showMessage("Forbidden", 403);
     }
     flush();
+    root.revokeRemoved();
   }
 
   private static Verdict checkGuards(List<Middleware> guards, AuthCtx auth) {
@@ -973,6 +974,11 @@ public final class Tab {
     if (pendingRoute != null) {
       return null;
     }
+    if (root.effect != null && rt.failed(root.effect)) {
+      // A load failed with nothing to catch it, so what the page waits for will never come (ADR 0031).
+      Throwable failure = rt.errorOf(root.effect);
+      throw new IllegalStateException("a load failed outside any errored(...)", failure);
+    }
     if (root.effect != null && rt.pending(root.effect)) {
       waitingOnRead = true;
       return null;
@@ -1255,6 +1261,11 @@ public final class Tab {
       onRouteException(route);
     }
     settled();
+    // An error shown around the page being left replaced it, so nothing is left to wait for what replaces it.
+    LeftPage left = leftPage();
+    if (left != null && left.top().underError()) {
+      discardLeftPage();
+    }
     if (connection == null) {
       if (stream != null) {
         sendUnsent();
@@ -1317,7 +1328,7 @@ public final class Tab {
       root.sent = null;
       unsent.add(root);
     }
-    if (showingFallback.isEmpty() || !html.endsWith("</body></html>")) {
+    if (!streamHasMore() || !html.endsWith("</body></html>")) {
       applyVisibility();
       return null;
     }
@@ -1333,9 +1344,19 @@ public final class Tab {
   }
 
   private void endStreamIfDone() {
-    if (stream != null && showingFallback.isEmpty()) {
+    if (stream != null && !streamHasMore()) {
       endStream();
     }
+  }
+
+  /** A fallback on the page, whose content will follow. One an error replaced is not on it, and stays marked until retried. */
+  private boolean streamHasMore() {
+    for (Scope scope : showingFallback) {
+      if (!scope.replacedByFallback()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private void endStream() {

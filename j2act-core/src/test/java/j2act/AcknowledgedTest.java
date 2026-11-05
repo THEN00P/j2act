@@ -224,6 +224,54 @@ class AcknowledgedTest {
     }
   }
 
+  static final class SecretChild extends ComponentTag {
+    @Override protected View setup() {
+      return () -> T.button("child secret").onClick(e -> SignedInPage.ran.incrementAndGet());
+    }
+  }
+
+  static final class SignedInPage extends LiveComponent {
+    static final java.util.concurrent.atomic.AtomicInteger ran = new java.util.concurrent.atomic.AtomicInteger();
+
+    @Override protected View setup() {
+      var count = createSignal(0);
+      return () -> {
+        boolean signedIn = !Reactive.auth().isAnonymous();
+        return T.page("t", T.div(
+          T.span("count:" + count.get() + ";"),
+          T.button("add").onClick(e -> count.set(count.get() + 1)),
+          signedIn ? T.button("secret").onClick(e -> ran.incrementAndGet()) : T.span("signed out"),
+          signedIn ? new SecretChild() : T.span("nothing")));
+      };
+    }
+  }
+
+  @Test
+  void aHandlerGoesWhenItsUserDoesThoughThePatchSayingSoCannotLeave() {
+    SignedInPage.ran.set(0);
+    java.util.concurrent.atomic.AtomicReference<AuthCtx> user =
+      new java.util.concurrent.atomic.AtomicReference<>(AuthCtx.of("ada", java.util.Collections.emptySet()));
+    try (Harness h = new Harness(SignedInPage::new, b -> b
+      .withIdentity(ex -> user.get())
+      .withMaxUnacknowledged(1))) {
+      h.load();
+      h.connect();
+      String secret = Harness.clickOn(h.html, "secret");
+      String childSecret = Harness.clickOn(h.html, "child secret");
+      h.conn.deaf = true;
+      long patches = h.engine.stats.patches.get();
+      clickBlind(h, "add");
+      Harness.eventually(() -> h.engine.stats.patches.get() > patches, "this fills the buffer");
+
+      user.set(AuthCtx.anonymous());
+      long rejected = h.engine.stats().rejectedEvents.get();
+      h.send("type", "event", "id", "late", "handler", secret, "value", "");
+      h.send("type", "event", "id", "later", "handler", childSecret, "value", "");
+      Harness.eventually(() -> h.engine.stats().rejectedEvents.get() == rejected + 2, "both are refused");
+      assertEquals(0, SignedInPage.ran.get(), "a handler ran for a user who signed out");
+    }
+  }
+
   @Test
   void aCallAFullBufferHoldsBackStartsItsClockWhenItGoesOut() {
     TestClock clock = new TestClock();

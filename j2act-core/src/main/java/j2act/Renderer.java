@@ -221,12 +221,28 @@ final class Renderer {
         renderChildren(scope, "/0", reveal.latest.children(), false);
         return null;
       });
+      List<Object> slots = new java.util.ArrayList<>();
+      revealSlots(scope, slots);
+      tab.rt.revealRendered(scope.revealOwner, slots);
     } finally {
       scope.rendering = false;
       Tracking.swapScope(previousScope);
     }
     out.append("</div>");
     finish(scope);
+  }
+
+  /** What takes a place in this reveal's order, top to bottom: a boundary keeps what is under it to itself. */
+  private static void revealSlots(Scope scope, List<Object> slots) {
+    for (Scope child : scope.children.values()) {
+      if (child.instance instanceof Reveal) {
+        slots.add(child.revealOwner);
+      } else if (child.instance instanceof Loading) {
+        slots.add(child.boundaryOutput);
+      } else {
+        revealSlots(child, slots);
+      }
+    }
   }
 
   private void renderComponent(Scope scope) {
@@ -354,7 +370,9 @@ final class Renderer {
       attribute("data-j2-controlled", controlled);
     }
     for (Map.Entry<String, String> attr : tag.attributes.entrySet()) {
-      attribute(attr.getKey(), attr.getValue());
+      if (!Html.isTextareaText(tag, attr.getKey())) {
+        attribute(attr.getKey(), attr.getValue());
+      }
     }
     for (Map.Entry<String, Handler<?>> event : tag.events.entrySet()) {
       String id = tab.handlers.register(scope, path, event.getKey(), event.getValue());
@@ -418,10 +436,19 @@ final class Renderer {
     }
     String outer = enclosing;
     enclosing = tag.name;
+    int contentStart = out.length();
     try {
-      renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(tag.name));
+      String text = Html.textareaText(tag);
+      if (text != null) {
+        Html.escape(text, out);
+      } else {
+        renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(tag.name));
+      }
     } finally {
       enclosing = outer;
+    }
+    if (Html.dropsFirstNewline(tag.name) && out.length() > contentStart && out.charAt(contentStart) == '\n') {
+      out.insert(contentStart, '\n');
     }
     out.append("</").append(tag.name).append('>');
   }
