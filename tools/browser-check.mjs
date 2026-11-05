@@ -106,11 +106,11 @@ async function main() {
   await js(`window.__save = ${btn("Save")}; window.__save.click(); true`);
   const instant = await js(`window.__save.hasAttribute('data-pending') && window.__save.textContent.includes('Saving…')`);
   check("pending swaps in synchronously on click", instant);
-  await js(`window.__save.click(); true`); // second click while pending must be dropped
+  await js(`window.__save.click(); true`); // a second click while pending queues behind the first
   const saveBtn = `[...document.querySelectorAll('button')].find(b => /Sav/.test(b.textContent))`;
   const settled = await until(`!${saveBtn}.hasAttribute('data-pending') && ${saveBtn}.textContent.trim() === 'Save' && !document.body.textContent.includes('last saved: never')`, 4000);
   const savedOnce = await js(`document.body.textContent.match(/last saved: (\\S+)/)[1]`);
-  check("repeat click while pending was dropped (one save)", /\d\d:\d\d:\d\d/.test(savedOnce), savedOnce);
+  check("a repeat click while pending ran after the first", /\d\d:\d\d:\d\d/.test(savedOnce), savedOnce);
   check("pending reverts after the handler finishes", settled);
 
   // 6. scheduler pushes arrive

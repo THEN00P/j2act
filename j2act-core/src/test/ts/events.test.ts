@@ -37,15 +37,34 @@ describe("Events", () => {
     el.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
-  it("sends a click to its handler and blocks the element until the ack", () => {
+  it("sends every click to its handler, in order, however fast they come", () => {
     document.body.innerHTML = '<button data-j2-click="h1">Go</button>';
     const button = document.querySelector("button")!;
     button.click();
     button.click();
-    expect(sent).toEqual([{ type: "event", id: expect.any(String), handler: "h1", value: "" }]);
-    expect(button.getAttribute("aria-busy")).toBe("true");
-    pending.ack((sent[0] as { id: string }).id);
     button.click();
+    expect(sent).toEqual([
+      { type: "event", id: "1", handler: "h1", value: "" },
+      { type: "event", id: "2", handler: "h1", value: "" },
+      { type: "event", id: "3", handler: "h1", value: "" }
+    ]);
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    pending.ack("1");
+    pending.ack("2");
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    pending.ack("3");
+    expect(button.hasAttribute("aria-busy")).toBe(false);
+  });
+
+  it("blocks a form until the ack of its submit, so a double submit dies here", () => {
+    document.body.innerHTML = '<form data-j2-submit="h6"><input name="q" value="a"></form>';
+    const form = document.querySelector("form")!;
+    const submit = () => form.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+    submit();
+    submit();
+    expect(sent).toHaveLength(1);
+    pending.ack((sent[0] as { id: string }).id);
+    submit();
     expect(sent).toHaveLength(2);
   });
 
