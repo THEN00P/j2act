@@ -956,6 +956,9 @@ public final class J2Act implements AutoCloseable {
       });
     } else if ("bye".equals(type)) {
       byConnection.remove(connection);
+      // Out of tabs before the last save or delete is queued, or a checkpoint could save it again after that.
+      closing(tab);
+      tabs.remove(tab.id);
       tab.postBound(() -> {
         if (closedTabRetentionMillis > 0) {
           // A closed tab may be reopened, or its page come back with Back: keep its snapshot a while (ADR 0030).
