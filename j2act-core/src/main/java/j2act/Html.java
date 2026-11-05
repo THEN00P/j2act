@@ -43,11 +43,36 @@ final class Html {
         mark(tag, "selected", b);
         return b.toString();
       case "textarea":
-        boolean hasText = ((ContainerTag<?>) tag).children.stream().anyMatch(java.util.Objects::nonNull);
-        return hasText ? "value" : "";
+        // Only withValue binds it, as in Solid 2: its text is where it starts (ADR 0013).
+        mark(tag, "value", b);
+        return b.toString();
       default:
         return null;
     }
+  }
+
+  /** A textarea has no value attribute: withValue and withDefaultValue are its text, as Solid 2 renders them. */
+  static boolean isTextareaText(Tag<?> tag, String attribute) {
+    return "textarea".equals(tag.name) && ("value".equals(attribute) || "default-value".equals(attribute));
+  }
+
+  /** The text withValue or withDefaultValue gives a textarea, or null to render its children. withValue(null) clears it. */
+  static String textareaText(Tag<?> tag) {
+    if (!"textarea".equals(tag.name)) {
+      return null;
+    }
+    if (tag.attributes.containsKey("value")) {
+      return tag.attributes.get("value");
+    }
+    if (tag.removed.contains("value")) {
+      return "";
+    }
+    return tag.attributes.get("default-value");
+  }
+
+  /** An HTML parser drops a newline right after these opening tags, so content starting with one needs a second. */
+  static boolean dropsFirstNewline(String tagName) {
+    return "textarea".equals(tagName) || "pre".equals(tagName) || "listing".equals(tagName);
   }
 
   private static void mark(Tag<?> tag, String name, StringBuilder b) {

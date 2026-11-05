@@ -973,6 +973,11 @@ public final class Tab {
     if (pendingRoute != null) {
       return null;
     }
+    if (root.effect != null && rt.failed(root.effect)) {
+      // A load failed with nothing to catch it, so what the page waits for will never come (ADR 0031).
+      Throwable failure = rt.errorOf(root.effect);
+      throw new IllegalStateException("a load failed outside any errored(...)", failure);
+    }
     if (root.effect != null && rt.pending(root.effect)) {
       waitingOnRead = true;
       return null;
@@ -1317,7 +1322,7 @@ public final class Tab {
       root.sent = null;
       unsent.add(root);
     }
-    if (showingFallback.isEmpty() || !html.endsWith("</body></html>")) {
+    if (!streamHasMore() || !html.endsWith("</body></html>")) {
       applyVisibility();
       return null;
     }
@@ -1333,9 +1338,19 @@ public final class Tab {
   }
 
   private void endStreamIfDone() {
-    if (stream != null && showingFallback.isEmpty()) {
+    if (stream != null && !streamHasMore()) {
       endStream();
     }
+  }
+
+  /** A fallback on the page, whose content will follow. One an error replaced is not on it, and stays marked until retried. */
+  private boolean streamHasMore() {
+    for (Scope scope : showingFallback) {
+      if (scope.parent == null || !scope.parent.hidden()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private void endStream() {

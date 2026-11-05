@@ -156,21 +156,23 @@ export function createClients({ send, connected, uploads, morphSlot }: ClientsOp
       return; // "ready" sends them
     }
     const now = Date.now();
-    for (const [id, result] of unseenResults) {
+    // The longest waiting first: without an answer the first would come due again before the last got a turn.
+    const due = [...unseenResults]
+      .filter(([, result]) => now - result.sentAt >= RESULT_RETRY_MS)
+      .sort(([, a], [, b]) => a.sentAt - b.sentAt);
+    for (const [id, result] of due) {
       if (resultAllowance === 0) {
         break;
       }
-      if (now - result.sentAt >= RESULT_RETRY_MS) {
-        // The server closes a socket over a frame past its limit, so this one would come back with every socket.
-        const size = JSON.stringify(result.message).length;
-        if (size > maxFrame) {
-          result.message = { type: "callResult", id: id, ok: false,
-            error: "RangeError: the result is " + size + " characters, over the socket's limit of " + maxFrame };
-        }
-        result.sentAt = now;
-        resultAllowance--;
-        send(result.message);
+      // The server closes a socket over a frame past its limit, so this one would come back with every socket.
+      const size = JSON.stringify(result.message).length;
+      if (size > maxFrame) {
+        result.message = { type: "callResult", id: id, ok: false,
+          error: "RangeError: the result is " + size + " characters, over the socket's limit of " + maxFrame };
       }
+      result.sentAt = now;
+      resultAllowance--;
+      send(result.message);
     }
     if (unseenResults.size > 0 && resultTimer === null) {
       resultTimer = setTimeout(() => {

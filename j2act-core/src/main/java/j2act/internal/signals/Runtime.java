@@ -535,6 +535,11 @@ public final class Runtime {
     return reveal.createRevealOwner(order, collapsed);
   }
 
+  /** A reveal rendered: it goes by the order and options it has now, its slots given top to bottom (ADR 0033). */
+  public void revealRendered(Owner owner, java.util.List<Object> slots) {
+    reveal.rendered(owner, slots);
+  }
+
   public Object from(From.Subscribe<Object> subscribe) {
     return from.from(subscribe);
   }

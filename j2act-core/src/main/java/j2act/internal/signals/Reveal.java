@@ -59,6 +59,8 @@ final class Reveal {
     boolean evaluating;
     final Supplier<String> order;
     final Supplier<Boolean> collapse;
+    /** Its owner, by which the caller of createRevealOwner names it. */
+    Owner owner;
 
     Controller(Supplier<String> order, Supplier<Boolean> collapse) {
       this.order = order;
@@ -206,11 +208,31 @@ final class Reveal {
     Map<Object, Object> context = new HashMap<>(owner.ctx);
     context.put(Boundaries.REVEAL, controller);
     owner.ctx = context;
+    controller.owner = owner;
     if (parent != null) {
       parent.register(controller);
       rt.owners.cleanup(() -> parent.unregister(controller), owner);
     }
     return owner;
+  }
+
+  /**
+   * Not in Solid's file. Its order and collapsed are reactive and a computed evaluates when they change; a view's
+   * are fields of the description it rendered, so a render evaluates instead. Its slots stay in the order they
+   * registered, even when keyed siblings move; here the order is where they stand now (ADR 0033).
+   */
+  void rendered(Owner owner, List<Object> standing) {
+    Controller controller = (Controller) owner.ctx.get(Boundaries.REVEAL);
+    Map<Object, Integer> places = new HashMap<>();
+    for (int i = 0; i < standing.size(); i++) {
+      places.put(standing.get(i), i);
+    }
+    controller.slots.sort(java.util.Comparator.comparingInt(slot -> places.getOrDefault(
+      slot instanceof Controller ? ((Controller) slot).owner : ((Boundary) slot).output, Integer.MAX_VALUE)));
+    rt.core.untrack(() -> {
+      controller.evaluate();
+      return null;
+    });
   }
 
   <T> T createRevealOrder(Function<Void, T> fn, Supplier<String> order, Supplier<Boolean> collapsed) {
