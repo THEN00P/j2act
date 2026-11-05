@@ -10,6 +10,8 @@ Deferred until core is solid (avoid rewrite hell). Signals plus button callbacks
 
 ## Nice-to-haves
 
+- **Buttons that work while a page streams**: A page opened directly has no script until its response ends, so until its slowest `loading(...)` lands, or the 10 second stream deadline passes, its buttons do nothing and a click is lost. Reaching the page by a link is fine. Wanted, and it needs its own ADR, since it changes how the response and the socket hand over. Either run the script as soon as it loads, which the stream and the socket then both have to feed, or catch clicks early and replay them; running it early is the better result, since buttons then work straight away. Found on the bench's Async page.
+
 - **Browser cookie as page-session proof (ADR 0030)**: The `j2-browser` cookie exists and identifies the browser, but the DOM-exposed `j2-token` is still what proves a page's session. Making a socket, a remount and a snapshot restore also carry the cookie that matches its tab needs the old list walked first: the Spring and Jakarta handshakes, upload chunks, reconnect and remount, cookie lifetime and scope, Origin and CSRF checks, anonymous pages before their first use of browser state (which have no cookie yet), and islands inside a host app's own authentication.
 
 - **Transactional mutations**: `mutation(...).withTransaction()`, one implementation per adapter (Spring's `TransactionTemplate`, a small `@Transactional` bean in j2act-jakarta), if calling a store's write methods through its self-injected proxy (ADR 0030) proves annoying.
