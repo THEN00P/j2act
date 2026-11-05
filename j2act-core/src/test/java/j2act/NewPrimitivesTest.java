@@ -133,6 +133,69 @@ class NewPrimitivesTest {
     }
   }
 
+  static final class ChangingReveal extends LiveComponent {
+    static volatile CompletableFuture<String> first;
+    static volatile CompletableFuture<String> second;
+    static volatile j2act.Signal<String> order;
+    static volatile j2act.Signal<Boolean> flipped;
+
+    @Override protected View setup() {
+      AsyncSupplier<String> a = () -> first;
+      AsyncSupplier<String> b = () -> second;
+      var one = createMemo(a);
+      var two = createMemo(b);
+      var mode = createSignal("together");
+      var swap = createSignal(false);
+      order = mode;
+      flipped = swap;
+      return () -> {
+        DomContent x = loading(() -> T.span("one:" + one.get() + ";")).withFallback(T.span("wait one;")).withKey("one");
+        DomContent y = loading(() -> T.span("two:" + two.get() + ";")).withFallback(T.span("wait two;")).withKey("two");
+        return T.page("t", T.div(swap.get() ? reveal(y, x).withOrder(mode.get()) : reveal(x, y).withOrder(mode.get())));
+      };
+    }
+  }
+
+  private static void onLane(Harness h, Runnable write) {
+    h.engine.liveTab(h.token).post(write);
+  }
+
+  @Test
+  void aRevealGoesByTheOrderItHasNow() {
+    ChangingReveal.first = new CompletableFuture<>();
+    ChangingReveal.second = new CompletableFuture<>();
+    try (Harness h = new Harness(ChangingReveal::new)) {
+      h.load();
+      h.connect();
+      int from = h.conn.size();
+      ChangingReveal.second.complete("B");
+      assertTrue(h.conn.since(from, m -> "patch".equals(m.get("type")) && m.get("html").contains("two:B")).isEmpty(),
+        "together: it waits for the first");
+      onLane(h, () -> ChangingReveal.order.set("natural"));
+      h.awaitPatch(from, p -> p.contains("two:B;"));
+    }
+  }
+
+  @Test
+  void aRevealGoesByTheOrderItsBoundariesStandInNow() {
+    ChangingReveal.first = new CompletableFuture<>();
+    ChangingReveal.second = new CompletableFuture<>();
+    try (Harness h = new Harness(ChangingReveal::new)) {
+      h.load();
+      h.connect();
+      int from = h.conn.size();
+      onLane(h, () -> ChangingReveal.order.set("sequential"));
+      ChangingReveal.second.complete("B");
+      assertTrue(h.conn.since(from, m -> "patch".equals(m.get("type")) && m.get("html").contains("two:B")).isEmpty(),
+        "sequential: the second waits for the first");
+      onLane(h, () -> ChangingReveal.flipped.set(true));
+      h.awaitPatch(from, p -> p.contains("two:B;"));
+      assertTrue(h.conn.since(from, m -> "patch".equals(m.get("type")) && m.get("html").contains("one:A")).isEmpty());
+      ChangingReveal.first.complete("A");
+      h.awaitPatch(from, p -> p.contains("one:A;"));
+    }
+  }
+
   @Test
   void aSequentialRevealHoldsTheSecondUntilTheFirstShows() {
     RevealPage.first = new CompletableFuture<>();

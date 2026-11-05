@@ -20,6 +20,7 @@ public final class RewriteBox extends ComponentTag {
   @Override protected View setup() {
     var note = createSignal("");
     var digits = createSignal("");
+    var area = createSignal("");
     var line = createSignal("");
     var sent = createSignal("nothing");
     return () -> div(
@@ -39,6 +40,13 @@ public final class RewriteBox extends ComponentTag {
         .withPlaceholder("Digits only")
         .withValue(digits.get())
         .onInput(e -> digits.set(e.value().replaceAll("[^0-9]", ""))),
+      textarea()
+        .withId("rewrite-area")
+        .withRows("3")
+        .withValue(area.get())
+        .onInput(e -> area.set(e.value())),
+      p("area: [" + area.get() + "]").withId("rewrite-area-has"),
+      button("Clear the area").withId("rewrite-area-clear").onClick(e -> area.set("")),
       form(
         input()
           .withId("rewrite-line")

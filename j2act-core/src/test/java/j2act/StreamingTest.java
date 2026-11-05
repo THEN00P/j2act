@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
@@ -158,6 +159,121 @@ class StreamingTest {
     try (Harness h = new Harness(BoundaryInATable::new)) {
       ServeResult result = h.engine.serve("/", Exchange.empty());
       assertEquals(500, result.status(), "the parser would move it out of the table, parting it from what it wraps");
+    }
+  }
+
+  static final class FailsOutside extends LiveComponent {
+    @Override protected View setup() {
+      var value = createMemo(() -> load("outside"));
+      return () -> T.page("t", T.span("value:" + value.get()));
+    }
+  }
+
+  static final class FailingChild extends ComponentTag {
+    @Override protected View setup() {
+      var value = createMemo(() -> load("child"));
+      return () -> T.span("value:" + value.get());
+    }
+  }
+
+  static final class FailsInAChild extends LiveComponent {
+    @Override protected View setup() {
+      return () -> T.page("t", T.div(new FailingChild()));
+    }
+  }
+
+  private static ServeResult servedSoon(Harness h, Runnable meanwhile) throws Exception {
+    CompletableFuture<ServeResult> served = CompletableFuture.supplyAsync(() -> h.engine.serve("/", Exchange.empty()));
+    Thread.sleep(50);
+    meanwhile.run();
+    return served.get(5, TimeUnit.SECONDS);
+  }
+
+  @Test
+  void aLoadFailingOutsideEveryBoundaryIsAnErrorResponse() throws Exception {
+    LOADS.clear();
+    try (Harness h = new Harness(FailsOutside::new)) {
+      ServeResult result = servedSoon(h, () -> load("outside").completeExceptionally(new IllegalStateException("on purpose")));
+      assertEquals(500, result.status());
+    }
+  }
+
+  @Test
+  void aLoadFailingInAChildOutsideEveryBoundaryIsAnErrorResponse() throws Exception {
+    LOADS.clear();
+    try (Harness h = new Harness(FailsInAChild::new)) {
+      ServeResult result = servedSoon(h, () -> load("child").completeExceptionally(new IllegalStateException("on purpose")));
+      assertEquals(500, result.status());
+    }
+  }
+
+  @Test
+  void aLoadOutsideEveryBoundaryThatNeverAnswersGivesUpAtTheDeadline() throws Exception {
+    LOADS.clear();
+    try (Harness h = new Harness(FailsOutside::new, b -> b.withShellDeadline(Duration.ofMillis(200)))) {
+      ServeResult result = servedSoon(h, () -> { });
+      assertEquals(504, result.status());
+    }
+  }
+
+  @Test
+  void aLoadOutsideEveryBoundaryThatLandsBeforeTheDeadlineStillServes() throws Exception {
+    LOADS.clear();
+    try (Harness h = new Harness(FailsOutside::new, b -> b.withShellDeadline(Duration.ofSeconds(4)))) {
+      ServeResult result = servedSoon(h, () -> load("outside").complete("late"));
+      assertEquals(200, result.status());
+      assertTrue(result.html().contains("value:late"), result.html());
+    }
+  }
+
+  static final class FailsInside extends LiveComponent {
+    @Override protected View setup() {
+      var failing = createMemo(() -> load("failing"));
+      var landing = createMemo(() -> load("landing"));
+      return () -> T.page("t", T.div(
+        Reactive.errored(() -> Reactive.loading(() -> T.span("failing:" + failing.get())).withFallback(T.span("...")))
+          .withFallback(err -> T.span("error boundary")),
+        Reactive.loading(() -> T.span("landing:" + landing.get())).withFallback(T.span("..."))));
+    }
+  }
+
+  @Test
+  void aLoadFailingInsideABoundaryDoesNotHoldTheResponseOpen() {
+    LOADS.clear();
+    load("landing").complete("here");
+    try (Harness h = new Harness(FailsInside::new)) {
+      ServeResult result = h.engine.serve("/", Exchange.empty());
+      assertTrue(result.streams());
+      Sink sink = new Sink();
+      result.streamTo(sink);
+      load("failing").completeExceptionally(new IllegalStateException("on purpose"));
+      // Well before the stream deadline of 10 seconds, whose end this must not need.
+      long deadline = System.currentTimeMillis() + 3000;
+      while (sink.ends.get() == 0 && System.currentTimeMillis() < deadline) {
+        Thread.yield();
+      }
+      assertEquals(1, sink.ends.get(), "the stream ends once nothing is left to wait for: " + sink.all());
+      assertTrue(sink.all().contains("error boundary"), sink.all());
+    }
+  }
+
+  @Test
+  void aLoadFailingBeforeTheOtherBoundaryLandsEndsTheStreamWhenThatOneDoes() {
+    LOADS.clear();
+    try (Harness h = new Harness(FailsInside::new)) {
+      ServeResult result = h.engine.serve("/", Exchange.empty());
+      Sink sink = new Sink();
+      result.streamTo(sink);
+      load("failing").completeExceptionally(new IllegalStateException("on purpose"));
+      Harness.eventually(() -> sink.all().contains("error boundary"), "the boundary shows it");
+      assertEquals(0, sink.ends.get(), "the other boundary is still on its way");
+      load("landing").complete("here");
+      long deadline = System.currentTimeMillis() + 3000;
+      while (sink.ends.get() == 0 && System.currentTimeMillis() < deadline) {
+        Thread.yield();
+      }
+      assertEquals(1, sink.ends.get(), sink.all());
+      assertTrue(sink.all().contains("landing:here"), sink.all());
     }
   }
 

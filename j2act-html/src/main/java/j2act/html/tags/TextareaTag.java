@@ -359,4 +359,44 @@ public final class TextareaTag extends ContainerTag<TextareaTag> {
   public TextareaTag withCondWrap(boolean condition, String value) {
     return condition ? attr("wrap", value) : self();
   }
+
+  /**
+   * Sets the <code>value</code> attribute.
+   *
+   * <p>The text this field holds, which the server keeps deciding (ADR 0013, ADR 0034). Rendered as
+   * the element's text, as Solid 2 does: a textarea has no value attribute. Null clears it.
+   *
+   * @see <a href="https://developer.mozilla.org/docs/Web/API/HTMLTextAreaElement/value">MDN:
+   * value</a>
+   */
+  public TextareaTag withValue(String value) {
+    return attr("value", value);
+  }
+
+  /**
+   * Applies {@link #withValue(String)} only when {@code condition} is true.
+   */
+  public TextareaTag withCondValue(boolean condition, String value) {
+    return condition ? attr("value", value) : self();
+  }
+
+  /**
+   * Sets the <code>default-value</code> attribute.
+   *
+   * <p>The text this field starts with, which is the user's from then on. Rendered as the element's
+   * text, the same as textarea(text).
+   *
+   * @see <a href="https://developer.mozilla.org/docs/Web/API/HTMLTextAreaElement/defaultValue">MDN:
+   * default-value</a>
+   */
+  public TextareaTag withDefaultValue(String value) {
+    return attr("default-value", value);
+  }
+
+  /**
+   * Applies {@link #withDefaultValue(String)} only when {@code condition} is true.
+   */
+  public TextareaTag withCondDefaultValue(boolean condition, String value) {
+    return condition ? attr("default-value", value) : self();
+  }
 }

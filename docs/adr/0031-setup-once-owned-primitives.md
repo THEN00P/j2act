@@ -319,7 +319,7 @@ return () -> main(
 );
 ```
 
-A read outside any loading(...) stops the page, which waits for it as ADR 0016's SSR await does. Only the first load stops rendering: on a refresh get() returns the old value while the new one loads, so nothing flashes back to the fallback. A memo that reads a value not loaded yet is not ready either, and reading it stops rendering the same way. An effect whose watched half reads one waits until it is loaded, as Solid holds its effects. Outside a view, in a handler say, get() on a value not loaded yet throws an error that says so. The signal extends Error, not Exception, so an ordinary `catch (Exception e)` in a view does not swallow it; the processor warns about catch-alls around reads in views.
+A read outside any loading(...) stops the page, which waits for it as ADR 0016's SSR await does. A load that fails there, with no errored(...) around it, ends the wait and the response is a 500. One that never answers gives up at withShellDeadline, 60 seconds by default, with a 504, so a stuck load cannot hold a request thread for good. Only the first load stops rendering: on a refresh get() returns the old value while the new one loads, so nothing flashes back to the fallback. A memo that reads a value not loaded yet is not ready either, and reading it stops rendering the same way. An effect whose watched half reads one waits until it is loaded, as Solid holds its effects. Outside a view, in a handler say, get() on a value not loaded yet throws an error that says so. The signal extends Error, not Exception, so an ordinary `catch (Exception e)` in a view does not swallow it; the processor warns about catch-alls around reads in views.
 
 ### Status reads
 

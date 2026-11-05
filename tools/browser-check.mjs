@@ -353,6 +353,19 @@ async function main() {
   check("a rejected letter goes, though the server's view of the field did not change for it",
     await until(`${field("rewrite-digits")}.value === '123'`, 2000), await js(`${field("rewrite-digits")}.value`));
 
+  await mouseClick(field("rewrite-area"));
+  await typeKeys("abc");
+  await until(`${field("rewrite-area-has")}.textContent === 'area: [abc]'`, 2000);
+  await js(`${field("rewrite-area")}.setSelectionRange(0, 0); true`);
+  await cdp("Input.insertText", { text: "\n" });
+  await sleep(400);
+  check("a newline at the very start of a bound textarea stays, on both sides",
+    await js(`${field("rewrite-area")}.value === '\\nabc' && ${field("rewrite-area-has")}.textContent === 'area: [\\nabc]'`),
+    await js(`JSON.stringify(${field("rewrite-area")}.value) + ' / ' + JSON.stringify(${field("rewrite-area-has")}.textContent)`));
+  await mouseClick(field("rewrite-area-clear"));
+  check("the server can clear a bound textarea", await until(`${field("rewrite-area")}.value === ''`, 2000),
+    await js(`${field("rewrite-area")}.value`));
+
   await mouseClick(field("rewrite-line"));
   await typeKeys("one");
   await sleep(150);

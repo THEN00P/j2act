@@ -74,6 +74,7 @@ public final class J2Act implements AutoCloseable {
   final long reconnectGraceMillis;
   final long idleTimeoutMillis;
   final long streamDeadlineMillis;
+  private final long shellDeadlineMillis;
   final long pendingMillis;
   final long pendingMinMillis;
   final long downloadTtlMillis;
@@ -563,6 +564,7 @@ public final class J2Act implements AutoCloseable {
     this.reconnectGraceMillis = b.reconnectGrace.toMillis();
     this.idleTimeoutMillis = b.idleTimeout.toMillis();
     this.streamDeadlineMillis = b.streamDeadline.toMillis();
+    this.shellDeadlineMillis = b.shellDeadline.toMillis();
     this.pendingMillis = b.pendingTime.toMillis();
     this.pendingMinMillis = b.pendingMinTime.toMillis();
     this.downloadTtlMillis = b.downloadTtl.toMillis();
@@ -1402,6 +1404,7 @@ public final class J2Act implements AutoCloseable {
     private Clock clock = Clock.systemUTC();
     private Duration reconnectGrace = Duration.ofMinutes(3);
     private Duration streamDeadline = Duration.ofSeconds(10);
+    private Duration shellDeadline = Duration.ofSeconds(60);
     private Duration idleTimeout = Duration.ofHours(12);
     private Duration sweepInterval = Duration.ofSeconds(10);
     private Duration pendingTime = Duration.ofSeconds(1);
@@ -1513,6 +1516,15 @@ public final class J2Act implements AutoCloseable {
      */
     public Builder withStreamDeadline(Duration deadline) {
       this.streamDeadline = deadline;
+      return this;
+    }
+
+    /**
+     * How long a served page waits for a read outside any loading(...) before it answers 504, 60 seconds by
+     * default (ADR 0031). Nothing can be sent until such a read lands, and a request thread waits meanwhile.
+     */
+    public Builder withShellDeadline(Duration deadline) {
+      this.shellDeadline = deadline;
       return this;
     }
 
