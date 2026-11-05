@@ -15,6 +15,10 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
       if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) {
         return false;
       }
+      // What is being typed is the user's, whatever this render says.
+      if (name === "value" && el === document.activeElement) {
+        return false;
+      }
       // Form state the render did not set is the user's: keep it (ADR 0013).
       if ((name === "value" || name === "checked" || name === "selected") && el.hasAttribute("data-j2-controlled")) {
         return el.getAttribute("data-j2-controlled")!.split(" ").indexOf(name) >= 0;
@@ -28,11 +32,17 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
         syncClient(oldNode, newNode as Element);
         return false;
       }
+      // Being typed in, its contents are the user's. Idiomorph's ignoreActiveValue would do this for any focused
+      // element, and a click focuses its button, so a button's label would stop updating.
+      if (oldNode === document.activeElement && oldNode.nodeType === 1 && newNode.nodeType === 1
+        && (oldNode.tagName === "TEXTAREA" || oldNode.hasAttribute("contenteditable"))) {
+        (newNode as Element).innerHTML = oldNode.innerHTML;
+      }
       return true;
     }
   };
-  const config: Config = { morphStyle: "outerHTML", ignoreActiveValue: true, callbacks: callbacks };
-  const slotConfig: Config = { morphStyle: "innerHTML", ignoreActiveValue: true, callbacks: callbacks };
+  const config: Config = { morphStyle: "outerHTML", callbacks: callbacks };
+  const slotConfig: Config = { morphStyle: "innerHTML", callbacks: callbacks };
   // Head morphs leave alone what the runtime added there: client stylesheets.
   const headConfig: Config = {
     morphStyle: "innerHTML",

@@ -27,6 +27,15 @@ describe("morph and focus (ADR 0013)", () => {
     expect(document.activeElement).toBe(button);
   });
 
+  it("updates a focused button that is the whole component the patch is for", () => {
+    document.body.innerHTML = '<div><button data-j2-scope="s1">Count: 0</button></div>';
+    const button = document.querySelector("button")!;
+    button.focus();
+    morpher().patch("s1", '<button data-j2-scope="s1">Count: 1</button>', false);
+    expect(document.querySelector("button")!.textContent).toBe("Count: 1");
+    expect(document.activeElement).toBe(document.querySelector("button"));
+  });
+
   it("updates a focused link's text", () => {
     const root = page('<a href="#x">Open</a>');
     root.querySelector("a")!.focus();

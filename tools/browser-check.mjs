@@ -70,16 +70,14 @@ async function main() {
     await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button: "left", clickCount: 1 });
     await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x, y: at.y, button: "left", clickCount: 1 });
   };
-  const before = await js(`${btn("A:")}.textContent`);
-  await mouseClick(btn("A:"));
-  const after = "A: " + (parseInt(before.slice(3), 10) + 1);
-  check("a real mouse click updates the button it focused", await until(`${btn("A:")}?.textContent === '${after}'`, 1500),
-    await js(`${btn("A:")}.textContent`));
-  check("that button has the focus", await js(`document.activeElement === ${btn("A:")}`));
-  await mouseClick(btn("A:"));
-  check("and a second one updates it again", await until(`${btn("A:")}?.textContent === 'A: ${parseInt(before.slice(3), 10) + 2}'`, 1500),
-    await js(`${btn("A:")}.textContent`));
-  await js(`${btn("A:")}.blur(); true`);
+  await mouseClick(btn("B:"));
+  check("a real mouse click updates the button it focused", await until(`${btn("B:")}?.textContent === 'B: 1'`, 1500),
+    await js(`${btn("B:")}.textContent`));
+  check("that button has the focus", await js(`document.activeElement === ${btn("B:")}`));
+  await mouseClick(btn("B:"));
+  check("and a second one updates it again", await until(`${btn("B:")}?.textContent === 'B: 2'`, 1500),
+    await js(`${btn("B:")}.textContent`));
+  await js(`${btn("B:")}.blur(); true`);
 
   // 2. page re-render keeps held instance state and child state
   await js(`${btn("A:")}.click(); ${btn("Held instance")}.click(); true`);

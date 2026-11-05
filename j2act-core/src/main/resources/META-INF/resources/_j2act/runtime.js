@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-05c72de4c84f150531cc8b2dbf0881d391dbf512373a2fb0565e47b31157a4e7 */
+* sources: sha256-2e5bf94c33abef06ef52f0ecb8bf0f92efeea38fe476e04a48119f242d6155d6 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1703,6 +1703,7 @@
 		const callbacks = {
 			beforeAttributeUpdated: (name, el) => {
 				if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) return false;
+				if (name === "value" && el === document.activeElement) return false;
 				if ((name === "value" || name === "checked" || name === "selected") && el.hasAttribute("data-j2-controlled")) return el.getAttribute("data-j2-controlled").split(" ").indexOf(name) >= 0;
 				return true;
 			},
@@ -1711,17 +1712,16 @@
 					syncClient(oldNode, newNode);
 					return false;
 				}
+				if (oldNode === document.activeElement && oldNode.nodeType === 1 && newNode.nodeType === 1 && (oldNode.tagName === "TEXTAREA" || oldNode.hasAttribute("contenteditable"))) newNode.innerHTML = oldNode.innerHTML;
 				return true;
 			}
 		};
 		const config = {
 			morphStyle: "outerHTML",
-			ignoreActiveValue: true,
 			callbacks
 		};
 		const slotConfig = {
 			morphStyle: "innerHTML",
-			ignoreActiveValue: true,
 			callbacks
 		};
 		const headConfig = {
