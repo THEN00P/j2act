@@ -1,3 +1,4 @@
+import type { ClientMessage } from "./protocol.ts";
 import type { ClientCall, Send } from "./protocol.ts";
 import type { Uploads } from "./uploads.ts";
 import { errorText, named } from "./util.ts";
@@ -31,6 +32,8 @@ interface Client {
 
 export interface ClientsOptions {
   send: Send;
+  /** Whether a message sent now goes into a socket rather than a queue. */
+  connected: () => boolean;
   uploads: Uploads;
   /** Morphs a slot's live element to the slot's fresh markup. */
   morphSlot: (live: Element, html: string) => void;
@@ -38,9 +41,15 @@ export interface ClientsOptions {
 
 export type Clients = ReturnType<typeof createClients>;
 
-export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
+/** At most this many results a second, well under the server's default limit of 30 a second. */
+const RESULTS_PER_SECOND = 20;
+/** A result with no answer after this long goes again: the server's rate limit refuses without one. */
+const RESULT_RETRY_MS = 2000;
+
+export function createClients({ send, connected, uploads, morphSlot }: ClientsOptions) {
   const clients = new Map<string, Client>();       // client id ->
   const liveAnchors = new Set<string>();           // anchors of live components handed to actions
+  const goneAnchors = new Set<string>();           // those that left the document, for which patches can still come
   const lostSlots = new Set<string>();             // slot ids already reported as gone
   const serverAttrs = new WeakMap<Element, string[]>(); // the attributes the last render set
   const stylesheets = new Map<string, Promise<void>>(); // url -> its <link> having loaded
@@ -90,13 +99,19 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
 
   /**
    * A patch found no element for its anchor. If it was live content given to an action, the
-   * client dropped it, and the server stops patching it.
+   * client dropped it, and the server stops patching it. It says so again on each later patch: a
+   * resend can bring several, and the rate limit can refuse this message without an answer.
    */
-  function anchorGone(anchor: string): void {
+  function anchorGone(anchor: string): boolean {
     if (liveAnchors.delete(anchor)) {
+      goneAnchors.add(anchor);
       console.warn("j2act: live content " + anchor + " passed to a client action left the document (ADR 0022)");
-      send({ type: "liveGone", anchor: anchor });
     }
+    if (goneAnchors.has(anchor)) {
+      send({ type: "liveGone", anchor: anchor });
+      return true;
+    }
+    return false;
   }
 
   /** A call from Java, sent after the patch: queued until its client has mounted. */
@@ -122,18 +137,96 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
     return invoke(c, name, revive(JSON.stringify(args)) as unknown[]);
   }
 
+  /** Results the server has not acknowledged: a socket can die with one on its way (ADR 0032). */
+  const unseenResults = new Map<string, { message: ClientMessage; sentAt: number }>();
+  /** Which server-side tab this is, of those the page has had: call ids start over with each. */
+  let tabGeneration = 0;
+  let maxFrame = Number.POSITIVE_INFINITY;
+  let resultAllowance = RESULTS_PER_SECOND;
+  let resultTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function sendResult(id: string, result: ClientMessage): void {
+    unseenResults.set(id, { message: result, sentAt: 0 });
+    sendResults();
+  }
+
+  /** The oldest that are due, as many as this second allows; a timer sees to the rest while any has no answer. */
+  function sendResults(): void {
+    if (!connected()) {
+      return; // "ready" sends them
+    }
+    const now = Date.now();
+    for (const [id, result] of unseenResults) {
+      if (resultAllowance === 0) {
+        break;
+      }
+      if (now - result.sentAt >= RESULT_RETRY_MS) {
+        // The server closes a socket over a frame past its limit, so this one would come back with every socket.
+        const size = JSON.stringify(result.message).length;
+        if (size > maxFrame) {
+          result.message = { type: "callResult", id: id, ok: false,
+            error: "RangeError: the result is " + size + " characters, over the socket's limit of " + maxFrame };
+        }
+        result.sentAt = now;
+        resultAllowance--;
+        send(result.message);
+      }
+    }
+    if (unseenResults.size > 0 && resultTimer === null) {
+      resultTimer = setTimeout(() => {
+        resultTimer = null;
+        resultAllowance = RESULTS_PER_SECOND;
+        sendResults();
+      }, 1000);
+    }
+  }
+
+  /** The server has this result. */
+  function resultSeen(id: string): void {
+    unseenResults.delete(id);
+  }
+
+  /** The socket is back: what the old one may have lost is due again, and the server ignores what it settled. */
+  function resendResults(limit: number = maxFrame): void {
+    maxFrame = limit;
+    unseenResults.forEach((result) => {
+      result.sentAt = 0;
+    });
+    sendResults();
+  }
+
+  /** A new server-side tab: it never made those calls. */
+  function forgetResults(): void {
+    unseenResults.clear();
+    tabGeneration++;
+    // Calls still waiting for their module belong to the old tab too: unmounting would answer them.
+    clients.forEach((c) => {
+      c.waiting = [];
+    });
+  }
+
+  /** What a call running now answers with, later: if a new tab has come by then, its answer means nothing. */
+  function replier(id: string): (ok: boolean, value: unknown) => void {
+    const generation = tabGeneration;
+    return (ok, value) => {
+      if (generation === tabGeneration) {
+        reply(id, ok, value);
+      }
+    };
+  }
+
   /** Answers a call from Java, an action's or a window() call's. */
   function reply(id: string, ok: boolean, value: unknown): void {
     if (ok) {
       try {
-        send({ type: "callResult", id: id, ok: true, value: JSON.stringify(value === undefined ? null : value) });
+        sendResult(id, { type: "callResult", id: id, ok: true, value: JSON.stringify(value === undefined ? null : value) });
         return;
       } catch (e) {
         value = e;
       }
     }
     console.warn("j2act: client action failed", value);
-    send({ type: "callResult", id: id, ok: false, error: errorText(value) });
+    sendResult(id, { type: "callResult", id: id, ok: false, error: errorText(value) });
   }
 
   /** Server attributes follow the render; attributes the client added stay; slots morph where they live. */
@@ -343,7 +436,8 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
       reply(m.id, false, e);
       return;
     }
-    Promise.resolve(result).then((v) => reply(m.id, true, v), (e) => reply(m.id, false, e));
+    const answer = replier(m.id);
+    Promise.resolve(result).then((v) => answer(true, v), (e) => answer(false, e));
   }
 
   function callback(id: string): (...args: unknown[]) => void {
@@ -358,7 +452,7 @@ export function createClients({ send, uploads, morphSlot }: ClientsOptions) {
     send({ type: "clientError", client: c.id, error: what + ": " + errorText(e) });
   }
 
-  return { scan, revive, anchorGone, call, callNow, reply, sync, reimport };
+  return { scan, revive, anchorGone, call, callNow, reply, replier, resultSeen, resendResults, forgetResults, sync, reimport };
 }
 
 function attributeNames(el: Element): string[] {

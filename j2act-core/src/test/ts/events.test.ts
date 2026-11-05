@@ -14,7 +14,7 @@ describe("Events", () => {
     const send = (m: ClientMessage) => sent.push(m);
     pending = createPending();
     const uploads = createUploads(send, () => "tok");
-    const clients = createClients({ send: send, uploads: uploads, morphSlot: () => {} });
+    const clients = createClients({ send: send, connected: () => true, uploads: uploads, morphSlot: () => {} });
     listenForEvents(document, { send: send, pending: pending, clients: clients, uploads: uploads });
   });
 

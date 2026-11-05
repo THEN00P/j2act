@@ -88,6 +88,8 @@ public final class J2Act implements AutoCloseable {
   final Function<AuthCtx, RateLimit> rateLimit;
   private final int maxFrameSize;
   final int maxQueuedEvents;
+  final long maxUnacknowledged;
+  final int maxPendingClientCalls;
   final Preload defaultPreload;
   final long preloadHoldMillis;
   final JsonBinding json;
@@ -569,6 +571,8 @@ public final class J2Act implements AutoCloseable {
     this.rateLimit = b.rateLimit;
     this.maxFrameSize = b.maxFrameSize;
     this.maxQueuedEvents = b.maxQueuedEvents;
+    this.maxUnacknowledged = b.maxUnacknowledged;
+    this.maxPendingClientCalls = b.maxPendingClientCalls;
     this.defaultPreload = b.defaultPreload;
     this.preloadHoldMillis = b.preloadHold.toMillis();
     this.json = b.json;
@@ -877,13 +881,26 @@ public final class J2Act implements AutoCloseable {
     }
     String type = message.getOrDefault("type", "");
     if ("hello".equals(type)) {
-      hello(connection, message.get("tab"), message.get("token"));
+      hello(connection, message.get("tab"), message.get("token"), number(message.get("seen")));
       return;
     }
     Tab tab = byConnection.get(connection);
     if (tab == null) {
       connection.send(Json.object("type", "expired"));
       connection.close();
+      return;
+    }
+    if ("seen".equals(type)) {
+      long upTo = number(message.get("n"));
+      if (upTo != Long.MAX_VALUE) {
+        tab.post(() -> tab.acknowledged(upTo));
+      }
+      return;
+    }
+    if ("resync".equals(type)) {
+      if (admit(tab, connection)) {
+        tab.post(tab::resync);
+      }
       return;
     }
     boolean client = "callback".equals(type) || "callResult".equals(type) || "clientError".equals(type)
@@ -995,7 +1012,19 @@ public final class J2Act implements AutoCloseable {
     }
   }
 
-  private void hello(Connection connection, String sid, String token) {
+  /** A message number from the client; one that says nothing has nothing owed to it. */
+  private static long number(String text) {
+    if (text == null) {
+      return Long.MAX_VALUE;
+    }
+    try {
+      return Long.parseLong(text);
+    } catch (NumberFormatException e) {
+      return Long.MAX_VALUE;
+    }
+  }
+
+  private void hello(Connection connection, String sid, String token, long seen) {
     Tab tab = sid == null ? null : tabs.get(sid);
     if (tab == null || tab.disposed || token == null
       || !MessageDigest.isEqual(token.getBytes(StandardCharsets.UTF_8), tab.token.getBytes(StandardCharsets.UTF_8))) {
@@ -1005,7 +1034,7 @@ public final class J2Act implements AutoCloseable {
     }
     byConnection.put(connection, tab);
     tab.post(() -> {
-      tab.attach(connection);
+      tab.attach(connection, seen);
       offerBrowserCookie(tab);
     });
   }
@@ -1380,6 +1409,8 @@ public final class J2Act implements AutoCloseable {
     private Function<AuthCtx, RateLimit> rateLimit = auth -> RateLimit.perSecond(30).withBurst(60);
     private int maxFrameSize = 256 * 1024;
     private int maxQueuedEvents = 100;
+    private long maxUnacknowledged = 1024 * 1024;
+    private int maxPendingClientCalls = 256;
     private Preload defaultPreload = Preload.NONE;
     private Duration preloadHold = Duration.ofSeconds(10);
     private JsonBinding json = JsonBinding.basic();
@@ -1529,6 +1560,21 @@ public final class J2Act implements AutoCloseable {
     /** Events a tab may have waiting on its lane before new ones are dropped. Default 100. */
     public Builder withMaxQueuedEvents(int events) {
       this.maxQueuedEvents = events;
+      return this;
+    }
+
+    /**
+     * How much a tab keeps for a client that has not acknowledged it, in characters, before it stops
+     * producing patches and lets what changes stay dirty (ADR 0032). Default 1 MiB.
+     */
+    public Builder withMaxUnacknowledged(long chars) {
+      this.maxUnacknowledged = chars;
+      return this;
+    }
+
+    /** Client action and window() calls a tab may have unsettled; past it a call fails at once (ADR 0032). Default 256. */
+    public Builder withMaxPendingClientCalls(int calls) {
+      this.maxPendingClientCalls = calls;
       return this;
     }
 

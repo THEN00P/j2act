@@ -68,6 +68,9 @@ _Avoid_: Query, Deferred, Fetcher, Resource
 A write, action(body): each run() is one transaction on the executor, returning a CompletableFuture. Optimistic writes show at once, plain signal writes land together at its end with what it refreshed; on failure the optimistic ones are undone and what it wrote stands, as in Solid, so a write that must not outlive a failure goes after the call that can fail. Its future finishes when the body ends; to wait for a refresh, join refresh(x)'s future in the body. Runs are concurrent (ADR 0031, 0033).
 _Avoid_: Mutation, Command
 
+**Unacknowledged message**:
+A server message a tab has not heard the client applied. Each is numbered and kept, and a reconnect resends what the client has not seen, so a patch or call written into a dead socket still arrives. When they reach withMaxUnacknowledged, the tab stops rendering and what changes stays dirty (ADR 0032).
+
 **Optimistic value**:
 createOptimistic(...), a value, memo or load that takes writes from an action's body, which show at once and are undone when that action ends; if what derives from one hits a load, it waits for that so it never shows beside an old derived value. They do not make isPending true (ADR 0031).
 _Avoid_: Draft, Overlay

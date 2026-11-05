@@ -68,6 +68,12 @@ public final class Tab {
   private boolean shellSent;
   private boolean outOfSight;
   private long outOfSightAt;
+  private static final String URL_MESSAGE = "{\"type\":\"url\"";
+  private static final String HEAD_MESSAGE = "{\"type\":\"head\"";
+  private final Unacknowledged unacknowledged;
+  /** A URL and a head update at most, waiting for their number (ADR 0032). */
+  private final Map<String, String> waitingUpdates = new java.util.LinkedHashMap<>();
+  private boolean everConnected;
   /** The served page's render stopped outside any loading(...) on a value not loaded yet: it waits for it (ADR 0031). */
   private boolean waitingOnRead;
   /** Effects wait for this tab's first socket, or a browser's first tab with one (ADR 0031). */
@@ -181,6 +187,7 @@ public final class Tab {
     this.lane = host.lane;
     this.rt = host.rt;
     host.tabs.add(this);
+    this.unacknowledged = new Unacknowledged(engine.maxUnacknowledged);
     this.exchange = exchange;
     this.nonce = engine.cspNonce == null ? null : engine.cspNonce.apply(exchange);
     this.routeCell = new ValueCell(this, "route", new RouteInfo(url, new HashMap<>()));
@@ -1129,6 +1136,11 @@ public final class Tab {
     scopes.sort(java.util.Comparator.comparingInt(Tab::depth));
     for (int i = 0; i < scopes.size(); i++) {
       Scope scope = scopes.get(i);
+      if (connection != null && unacknowledged.full()) {
+        // The rest wait for room, or a client that had no chance to acknowledge would look stuck (ADR 0032).
+        unsent.addAll(scopes.subList(i, scopes.size()));
+        return;
+      }
       if (scope.disposed || scope.html == null) {
         continue;
       }
@@ -1230,6 +1242,9 @@ public final class Tab {
       }
       return;
     }
+    if (unacknowledged.full()) {
+      return; // What rendered waits for room, and goes when the client catches up.
+    }
     // What replaces the page on screen is ready, and that page has gone: it cannot wait for anything else.
     boolean replaced = leftPage != null && leftPage() == null;
     if (hold == Hold.SHOWING_LOADING) {
@@ -1250,6 +1265,9 @@ public final class Tab {
       return;
     }
     sendUnsent();
+    if (!unsent.isEmpty()) {
+      return; // What follows comes after these patches, which wait for room.
+    }
     sendHead();
     clients.sendOutbox();
     fireSettled();
@@ -1533,7 +1551,8 @@ public final class Tab {
 
   // ---- connection
 
-  void attach(Connection next) {
+  /** seen: the highest message number the page applied (ADR 0032). */
+  void attach(Connection next, long seen) {
     Connection previous = connection;
     if (previous != null && previous != next) {
       previous.close();
@@ -1543,15 +1562,24 @@ public final class Tab {
     lastActivity = engine.clock.millis();
     pageHidden = false;
     applyVisibility();
+    everConnected = true;
     // A socket takes over from a stream; with the script at the end of the page it comes after anyway.
     endStream();
+    // What the old socket swallowed, before anything new takes a number after it.
+    unacknowledged.acknowledge(seen);
+    for (String wire : unacknowledged.owed()) {
+      write(wire);
+    }
+    takeNumbersForWaitingUpdates();
+    clients.redelivered();
     goLive();
     if (connectedCell != null) {
       connectedCell.write(true);
     }
     // What starts with the socket has started by the time the page hears it is ready.
     host.endJob();
-    send(Json.object("type", "ready"));
+    // Says this socket is up, so it belongs to no sequence.
+    write(Json.object("type", "ready", "maxFrame", engine.maxFrameSize()));
   }
 
   void detach(Connection closed) {
@@ -1559,19 +1587,94 @@ public final class Tab {
       connection = null;
       disconnectedAt = engine.clock.millis();
       applyVisibility();
+      clients.undelivered();
       if (connectedCell != null) {
         connectedCell.write(false);
       }
     }
   }
 
+  /**
+   * Lane-only. Numbers a message and keeps it until the client acknowledges it, sending it now if there
+   * is a socket (ADR 0032). The first page response carries everything before the first hello. While
+   * the socket is down or the buffer full, a URL or head update waits in a slot of its kind, where a
+   * newer one replaces it, and takes its number when anything else is admitted, so that merges
+   * consecutive updates and never reorders one around another message.
+   */
   void send(String message) {
+    if (!everConnected) {
+      return;
+    }
+    if (connection == null || unacknowledged.full()) {
+      String kind = message.startsWith(URL_MESSAGE) ? "url" : message.startsWith(HEAD_MESSAGE) ? "head" : null;
+      if (kind != null) {
+        waitingUpdates.put(kind, message);
+        return;
+      }
+    }
+    takeNumbersForWaitingUpdates();
+    write(unacknowledged.add(message));
+    Connection current = connection;
+    if (current != null && unacknowledged.stuck()) {
+      // What it was sent stays here, and goes again if it comes back and acknowledges (ADR 0032).
+      engine.log(System.Logger.Level.WARNING, "tab " + id + " stopped acknowledging what it was sent; closing its socket", null);
+      engine.onClose(current);
+      current.close();
+    }
+  }
+
+  /** Lane-only. A message that is worth nothing if it is lost: it takes no number and nothing keeps it. */
+  void sendUnnumbered(String message) {
+    write(message);
+  }
+
+  private void takeNumbersForWaitingUpdates() {
+    if (waitingUpdates.isEmpty()) {
+      return;
+    }
+    List<String> updates = new ArrayList<>(waitingUpdates.values());
+    waitingUpdates.clear();
+    for (String update : updates) {
+      write(unacknowledged.add(update));
+    }
+  }
+
+  /** Lane-only. The client applied everything up to this number. */
+  void acknowledged(long upTo) {
+    unacknowledged.acknowledge(upTo);
+    if (connection != null && !unacknowledged.full()) {
+      takeNumbersForWaitingUpdates();
+    }
+  }
+
+  /** Lane-only. The client found a gap it cannot fill, so it gets the whole page to morph in (ADR 0032). */
+  void resync() {
+    // During a navigation to a new root, the page has the one it is leaving.
+    Scope page = rootOnPage != null && !rootOnPage.disposed ? rootOnPage : root;
+    if (page != null) {
+      // The same HTML goes out again: what the page has is what is in doubt.
+      page.sent = null;
+      markDirty(page);
+    }
+  }
+
+  /** The client is behind by as much as it may be, so what the server did has not all gone to it yet. */
+  boolean waitingForRoom() {
+    return unacknowledged.full();
+  }
+
+  /** Messages the client has not acknowledged. */
+  int unacknowledged() {
+    return unacknowledged.size();
+  }
+
+  private void write(String wire) {
     Connection c = connection;
     if (c == null) {
       return;
     }
     try {
-      c.send(message);
+      c.send(wire);
     } catch (Exception e) {
       engine.log(System.Logger.Level.DEBUG, "send failed", e);
     }

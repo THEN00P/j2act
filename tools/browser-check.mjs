@@ -409,6 +409,34 @@ async function main() {
       && document.getElementById('sales')?.dataset.total === '60'`, 8000)
     && await js(`window.__plainNavigation === true`));
 
+  // ADR 0032: a socket that looks alive and delivers nothing, then dies. A page's listener added at
+  // construction runs before the runtime's onmessage, so it can swallow what the server wrote.
+  await cdp("Page.addScriptToEvaluateOnNewDocument", { source: `
+    window.__sockets = [];
+    const Real = window.WebSocket;
+    window.WebSocket = function (url, protocols) {
+      const socket = new Real(url, protocols);
+      window.__sockets.push(socket);
+      socket.addEventListener("message", (e) => { if (window.__deaf) e.stopImmediatePropagation(); });
+      return socket;
+    };
+    Object.assign(window.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
+    window.WebSocket.prototype = Real.prototype;
+  ` });
+  await cdp("Page.navigate", { url: URL });
+  await until("document.readyState === 'complete' && typeof j2act !== 'undefined'");
+  await sleep(400);
+  const countA = () => js(`Number(${btn("A:")}.textContent.replace('A: ', ''))`);
+  const before = await countA();
+  await js(`window.__deaf = true; ${btn("A:")}.click(); true`);
+  await sleep(500);
+  check("a patch into a deaf socket does not reach the page", await countA() === before);
+  await js(`window.__deaf = false; window.__sockets.at(-1).close(); true`);
+  check("after the reconnect the server sends it again", await until(`${btn("A:")}.textContent === 'A: ${before + 1}'`, 8000),
+    `A: ${await countA()}`);
+  await js(`${btn("A:")}.click(); true`);
+  check("and the page carries on with the next number", await until(`${btn("A:")}.textContent === 'A: ${before + 2}'`, 3000));
+
   check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
   ws.close();
 }

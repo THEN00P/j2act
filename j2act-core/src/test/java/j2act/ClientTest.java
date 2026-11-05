@@ -69,6 +69,24 @@ class ClientTest {
   }
 
   @Test
+  void aCallRefusedAtTheLimitLeavesTheEarlierCallsCallbackWorking() {
+    try (Harness h = new Harness(Gauge::new, b -> b.withMaxPendingClientCalls(1))) {
+      h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(h.html, "reset"));
+      Map<String, String> first = h.conn.await(from, m -> "clientCall".equals(m.get("type")));
+      String firstFn = Harness.find(first.get("args"), "\\{\"\\$fn\":\"([^\"]+)\"\\}");
+      h.click(Harness.clickOn(h.html, "reset"));
+
+      int after = h.conn.size();
+      h.send("type", "callback", "handler", firstFn, "args", "[]");
+      h.awaitPatch(after, html -> html.contains("resets 1"));
+      assertEquals(0, h.engine.stats().rejectedEvents.get(), "the first call's callback still works");
+    }
+  }
+
+  @Test
   void rendersTheClientElementWithItsModulePropsAndSlots() throws Exception {
     try (Harness h = new Harness(Gauge::new)) {
       String html = h.load();

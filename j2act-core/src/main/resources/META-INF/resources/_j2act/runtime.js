@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-88e8c439d9d22cbefdf478728cec4f6f84bb73ee2b8ba89239a814b3906d054b */
+* sources: sha256-05c72de4c84f150531cc8b2dbf0881d391dbf512373a2fb0565e47b31157a4e7 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -26,9 +26,14 @@
 	}
 	//#endregion
 	//#region src/main/ts/clients.ts
-	function createClients({ send, uploads, morphSlot }) {
+	/** At most this many results a second, well under the server's default limit of 30 a second. */
+	var RESULTS_PER_SECOND = 20;
+	/** A result with no answer after this long goes again: the server's rate limit refuses without one. */
+	var RESULT_RETRY_MS = 2e3;
+	function createClients({ send, connected, uploads, morphSlot }) {
 		const clients = /* @__PURE__ */ new Map();
 		const liveAnchors = /* @__PURE__ */ new Set();
+		const goneAnchors = /* @__PURE__ */ new Set();
 		const lostSlots = /* @__PURE__ */ new Set();
 		const serverAttrs = /* @__PURE__ */ new WeakMap();
 		const stylesheets = /* @__PURE__ */ new Map();
@@ -65,16 +70,22 @@
 		}
 		/**
 		* A patch found no element for its anchor. If it was live content given to an action, the
-		* client dropped it, and the server stops patching it.
+		* client dropped it, and the server stops patching it. It says so again on each later patch: a
+		* resend can bring several, and the rate limit can refuse this message without an answer.
 		*/
 		function anchorGone(anchor) {
 			if (liveAnchors.delete(anchor)) {
+				goneAnchors.add(anchor);
 				console.warn("j2act: live content " + anchor + " passed to a client action left the document (ADR 0022)");
+			}
+			if (goneAnchors.has(anchor)) {
 				send({
 					type: "liveGone",
 					anchor
 				});
+				return true;
 			}
+			return false;
 		}
 		/** A call from Java, sent after the patch: queued until its client has mounted. */
 		function call(m) {
@@ -90,10 +101,76 @@
 			if (!c || !c.ready) throw c && c.failure ? c.failure.error : named("InvalidStateError", "the client has not mounted yet");
 			return invoke(c, name, revive(JSON.stringify(args)));
 		}
+		/** Results the server has not acknowledged: a socket can die with one on its way (ADR 0032). */
+		const unseenResults = /* @__PURE__ */ new Map();
+		/** Which server-side tab this is, of those the page has had: call ids start over with each. */
+		let tabGeneration = 0;
+		let maxFrame = Number.POSITIVE_INFINITY;
+		let resultAllowance = RESULTS_PER_SECOND;
+		let resultTimer = null;
+		function sendResult(id, result) {
+			unseenResults.set(id, {
+				message: result,
+				sentAt: 0
+			});
+			sendResults();
+		}
+		/** The oldest that are due, as many as this second allows; a timer sees to the rest while any has no answer. */
+		function sendResults() {
+			if (!connected()) return;
+			const now = Date.now();
+			for (const [id, result] of unseenResults) {
+				if (resultAllowance === 0) break;
+				if (now - result.sentAt >= RESULT_RETRY_MS) {
+					const size = JSON.stringify(result.message).length;
+					if (size > maxFrame) result.message = {
+						type: "callResult",
+						id,
+						ok: false,
+						error: "RangeError: the result is " + size + " characters, over the socket's limit of " + maxFrame
+					};
+					result.sentAt = now;
+					resultAllowance--;
+					send(result.message);
+				}
+			}
+			if (unseenResults.size > 0 && resultTimer === null) resultTimer = setTimeout(() => {
+				resultTimer = null;
+				resultAllowance = RESULTS_PER_SECOND;
+				sendResults();
+			}, 1e3);
+		}
+		/** The server has this result. */
+		function resultSeen(id) {
+			unseenResults.delete(id);
+		}
+		/** The socket is back: what the old one may have lost is due again, and the server ignores what it settled. */
+		function resendResults(limit = maxFrame) {
+			maxFrame = limit;
+			unseenResults.forEach((result) => {
+				result.sentAt = 0;
+			});
+			sendResults();
+		}
+		/** A new server-side tab: it never made those calls. */
+		function forgetResults() {
+			unseenResults.clear();
+			tabGeneration++;
+			clients.forEach((c) => {
+				c.waiting = [];
+			});
+		}
+		/** What a call running now answers with, later: if a new tab has come by then, its answer means nothing. */
+		function replier(id) {
+			const generation = tabGeneration;
+			return (ok, value) => {
+				if (generation === tabGeneration) reply(id, ok, value);
+			};
+		}
 		/** Answers a call from Java, an action's or a window() call's. */
 		function reply(id, ok, value) {
 			if (ok) try {
-				send({
+				sendResult(id, {
 					type: "callResult",
 					id,
 					ok: true,
@@ -104,7 +181,7 @@
 				value = e;
 			}
 			console.warn("j2act: client action failed", value);
-			send({
+			sendResult(id, {
 				type: "callResult",
 				id,
 				ok: false,
@@ -295,7 +372,8 @@
 				reply(m.id, false, e);
 				return;
 			}
-			Promise.resolve(result).then((v) => reply(m.id, true, v), (e) => reply(m.id, false, e));
+			const answer = replier(m.id);
+			Promise.resolve(result).then((v) => answer(true, v), (e) => answer(false, e));
 		}
 		function callback(id) {
 			return (...args) => {
@@ -322,6 +400,10 @@
 			call,
 			callNow,
 			reply,
+			replier,
+			resultSeen,
+			resendResults,
+			forgetResults,
 			sync,
 			reimport
 		};
@@ -335,7 +417,7 @@
 	* The page's socket (ADR 0010): says hello with the tab id and token, queues messages until
 	* the server answers ready, and reconnects with backoff unless the page is leaving or paused.
 	*/
-	function createConnection(url, tab, token, onMessage, reconnects) {
+	function createConnection(url, tab, token, onMessage, reconnects, seen) {
 		let ready = false;
 		let ws = null;
 		let queue = [];
@@ -347,7 +429,8 @@
 				socket.send(JSON.stringify({
 					type: "hello",
 					tab,
-					token
+					token,
+					seen: seen()
 				}));
 			};
 			socket.onmessage = (e) => {
@@ -1836,6 +1919,30 @@
 		};
 	}
 	//#endregion
+	//#region src/main/ts/repair.ts
+	var RETRY_MS$1 = 2e3;
+	/**
+	* Asks for the whole page when the page has drifted from the server (ADR 0032). The server's rate limit refuses a
+	* request without an answer, and what drifted was already acknowledged, so this asks until a whole page arrives.
+	*/
+	function createRepair(send) {
+		let timer = null;
+		return {
+			ask() {
+				if (timer === null) {
+					send({ type: "resync" });
+					timer = setInterval(() => send({ type: "resync" }), RETRY_MS$1);
+				}
+			},
+			arrived() {
+				if (timer !== null) {
+					clearInterval(timer);
+					timer = null;
+				}
+			}
+		};
+	}
+	//#endregion
 	//#region src/main/ts/reopen.ts
 	var KEY = "j2act:tabs";
 	/** URLs remembered per browser tab, oldest dropped first. */
@@ -2174,7 +2281,7 @@
 		let remounting = false;
 		const here = () => location.pathname + location.search;
 		const previous = takePrevious(here(), meta(document, "j2-token"), navigationType());
-		const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath, sid, meta(document, "j2-token"), onMessage, () => !leaving && !remounting && retained.phase !== "paused");
+		const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath, sid, meta(document, "j2-token"), onMessage, () => !leaving && !remounting && retained.phase !== "paused", () => applied);
 		const send = (message) => connection.send(message);
 		document.addEventListener("visibilitychange", () => {
 			if (connection.ready) send({
@@ -2185,8 +2292,10 @@
 		const pending = createPending();
 		const uploads = createUploads(send, () => connection.token);
 		const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
+		const repair = createRepair((message) => connection.sendIfReady(message));
 		const clients = createClients({
 			send,
+			connected: () => connection.ready,
 			uploads,
 			morphSlot: (live, html) => morpher.slot(live, html)
 		});
@@ -2200,8 +2309,10 @@
 			autoPauseAfter: Number(meta(document, "j2-autopause") || 0)
 		});
 		const handlers = {
-			ready: () => {
+			ready: (m) => {
 				connection.opened();
+				clients.resendResults(m.maxFrame);
+				acknowledgeSoon();
 				retained.connected();
 				if (document.hidden) send({
 					type: "visibility",
@@ -2209,7 +2320,8 @@
 				});
 			},
 			patch: (m) => {
-				if (!morpher.patch(m.anchor, m.html, m.root === true)) clients.anchorGone(m.anchor);
+				if (!morpher.patch(m.anchor, m.html, m.root === true) && !clients.anchorGone(m.anchor)) repair.ask();
+				if (m.root === true) repair.arrived();
 				clients.scan();
 			},
 			head: (m) => morpher.head(m.html),
@@ -2226,10 +2338,12 @@
 					clients.reply(m.id, false, e);
 					return;
 				}
-				result.then((v) => clients.reply(m.id, true, v), (e) => clients.reply(m.id, false, e));
+				const answer = clients.replier(m.id);
+				result.then((v) => answer(true, v), (e) => answer(false, e));
 			},
 			clientCall: (m) => clients.call(m),
 			ack: (m) => pending.ack(m.id),
+			callSeen: (m) => clients.resultSeen(m.id),
 			expired: () => {
 				if (retained.expired()) remount();
 			},
@@ -2239,8 +2353,36 @@
 			modules: (m) => clients.reimport(m.modules),
 			browserCookie: (m) => claimBrowserCookie(m.url)
 		};
+		/** The highest message number applied, which a resend starts after (ADR 0032). */
+		let applied = 0;
+		let acknowledging = false;
+		/** Acknowledgements are batched: one covers everything up to its number. */
+		function acknowledgeSoon() {
+			if (!acknowledging) {
+				acknowledging = true;
+				setTimeout(() => {
+					acknowledging = false;
+					connection.sendIfReady({
+						type: "seen",
+						n: applied
+					});
+				}, 100);
+			}
+		}
 		function onMessage(m) {
-			handlers[m.type]?.(m);
+			const n = m.n;
+			if (n !== void 0) {
+				if (n <= applied) return;
+				if (n > applied + 1) repair.ask();
+			}
+			try {
+				handlers[m.type]?.(m);
+			} finally {
+				if (n !== void 0) {
+					applied = n;
+					acknowledgeSoon();
+				}
+			}
 		}
 		/** Starts over on a new server-side tab; restoring names a closed page's token instead of this one's (ADR 0030). */
 		function remount(restoring) {
@@ -2260,6 +2402,9 @@
 				document.documentElement.setAttribute("data-j2-scope", doc.documentElement.getAttribute("data-j2-scope"));
 				document.title = doc.title;
 				pending.clear();
+				applied = 0;
+				clients.forgetResults();
+				repair.arrived();
 				morpher.body(doc.body);
 				clients.scan();
 				remounting = false;

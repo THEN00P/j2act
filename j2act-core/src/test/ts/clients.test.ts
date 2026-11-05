@@ -7,13 +7,108 @@ describe("Clients", () => {
   let sent: ClientMessage[];
   let morphed: [Element, string][];
   let clients: Clients;
+  let up: boolean;
 
   beforeEach(() => {
     sent = [];
+    up = true;
     morphed = [];
     const send = (m: ClientMessage) => sent.push(m);
-    clients = createClients({ send: send, uploads: createUploads(send, () => "tok"), morphSlot: (el, html) => morphed.push([el, html]) });
+    clients = createClients({ send: send, connected: () => up, uploads: createUploads(send, () => "tok"), morphSlot: (el, html) => morphed.push([el, html]) });
     document.body.innerHTML = "";
+  });
+
+  describe("results (ADR 0032)", () => {
+    it("sends a result again after a reconnect until the server has it", () => {
+      clients.reply("7", true, "value");
+      expect(sent).toHaveLength(1);
+      clients.resendResults();
+      expect(sent).toHaveLength(2);
+      expect(sent[1]).toEqual(sent[0]);
+      clients.resultSeen("7");
+      clients.resendResults();
+      expect(sent).toHaveLength(2);
+    });
+
+    it("keeps a result back while the socket is down, and sends it once when it is up", () => {
+      up = false;
+      clients.reply("7", true, "value");
+      expect(sent).toHaveLength(0);
+      up = true;
+      clients.resendResults();
+      expect(sent).toHaveLength(1);
+    });
+
+    it("sends results no faster than the server's limit allows", () => {
+      vi.useFakeTimers();
+      try {
+        up = false;
+        for (let i = 0; i < 80; i++) {
+          clients.reply(String(i), true, i);
+        }
+        up = true;
+        clients.resendResults();
+        expect(sent).toHaveLength(20);
+        vi.advanceTimersByTime(1000);
+        expect(sent).toHaveLength(40);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("sends a result the server gave no answer to again while the socket stays up", () => {
+      vi.useFakeTimers();
+      try {
+        clients.reply("7", true, "value");
+        expect(sent).toHaveLength(1);
+        vi.advanceTimersByTime(1000);
+        expect(sent).toHaveLength(1);
+        vi.advanceTimersByTime(1000);
+        expect(sent).toHaveLength(2);
+        clients.resultSeen("7");
+        vi.advanceTimersByTime(10000);
+        expect(sent).toHaveLength(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("fails a call whose result is past the socket's limit, which would close every socket it went on", () => {
+      up = false;
+      clients.reply("7", true, "x".repeat(1000));
+      up = true;
+      clients.resendResults(100);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ type: "callResult", id: "7", ok: false });
+      expect(JSON.stringify(sent[0])).toContain("RangeError");
+      expect(JSON.stringify(sent[0]).length).toBeLessThan(200);
+    });
+
+    it("drops the answer of a call from before a new server-side tab, whose ids start over", () => {
+      const answer = clients.replier("7");
+      clients.forgetResults();
+      answer(true, "from the old tab");
+      clients.resendResults();
+      expect(sent).toHaveLength(0);
+    });
+
+    it("does not answer a call still waiting for its module once a new server-side tab has come", () => {
+      document.body.innerHTML = '<div data-j2-client="c1" data-j2-module="data:text/javascript,await new Promise(() => {})" data-j2-export="x"></div>';
+      clients.scan();
+      clients.call({ type: "clientCall", id: "7", client: "c1", action: "read", args: "[]" });
+      clients.forgetResults();
+      document.body.innerHTML = "";
+      clients.scan();
+      clients.resendResults();
+      expect(sent).toHaveLength(0);
+    });
+
+    it("forgets results a new server-side tab never asked for", () => {
+      clients.reply("7", true, "value");
+      clients.forgetResults();
+      clients.resendResults();
+      expect(sent).toHaveLength(1);
+    });
   });
 
   describe("revive", () => {
@@ -38,13 +133,16 @@ describe("Clients", () => {
         fileType: "text/plain" }]);
     });
 
-    it("tracks live content, and reports it once it left the document", () => {
+    it("tracks live content, and reports it for as long as patches come for it", () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const root = clients.revive('{"$live":"<div data-j2-scope=\\"a7\\">x</div>"}') as Element;
       expect(root.getAttribute("data-j2-scope")).toBe("a7");
-      clients.anchorGone("a7");
-      clients.anchorGone("a7");
-      expect(sent).toEqual([{ type: "liveGone", anchor: "a7" }]);
+      // Each is no damage to the page, or it would be repaired: patches buffered in a drop can follow, and a report can be lost.
+      expect(clients.anchorGone("a7")).toBe(true);
+      expect(clients.anchorGone("a7")).toBe(true);
+      expect(sent).toEqual([{ type: "liveGone", anchor: "a7" }, { type: "liveGone", anchor: "a7" }]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(clients.anchorGone("a8")).toBe(false);
       warn.mockRestore();
     });
   });

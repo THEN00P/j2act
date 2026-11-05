@@ -45,7 +45,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Whole apps, driven at random: tabs of one browser open and close, navigate between pages that share a layout or
- * don't, and click what their page shows, while loads land or fail in random order and actions run. ConsistencyTest
+ * don't, and click what their page shows, while loads land or fail in random order and actions run. Sockets die with
+ * messages on their way, and the browser here applies, acknowledges and resends as the runtime does (ADR 0032). ConsistencyTest
  * asks whether one page's values agree; this asks what is true of the code around the engine:
  *
  * <ul>
@@ -533,9 +534,14 @@ class RandomAppTest {
 
   /** One tab as a browser has it: its document, built from what the server sent. */
   static final class BrowserTab {
-    final Harness.FakeConnection conn = new Harness.FakeConnection();
+    Harness.FakeConnection conn = new Harness.FakeConnection();
     final Tab tab;
     final String token;
+    final String id;
+    /** The highest message number applied. */
+    long applied;
+    /** Results the server has not acknowledged, by call. */
+    final Map<String, String> unseen = new HashMap<>();
     String doc;
     String wanted;
     int read;
@@ -562,6 +568,7 @@ class RandomAppTest {
     BrowserTab(J2Act engine, ServeResult served, String url) {
       doc = served.html();
       token = Harness.find(doc, "name=\"j2-token\" content=\"([^\"]+)\"");
+      id = Harness.find(doc, "name=\"j2-tab\" content=\"([^\"]+)\"");
       tab = engine.liveTab(token);
       wanted = url;
     }
@@ -582,7 +589,19 @@ class RandomAppTest {
       read += messages.size();
       for (Map<String, String> m : messages) {
         String type = m.get("type");
-        if ("patch".equals(type)) {
+        if (m.get("n") != null) {
+          long number = Long.parseLong(m.get("n"));
+          if (number <= applied) {
+            continue;
+          }
+          if (number > applied + 1) {
+            problems.add("message " + number + " came after " + applied);
+          }
+          applied = number;
+        }
+        if ("callSeen".equals(type)) {
+          unseen.remove(m.get("id"));
+        } else if ("patch".equals(type)) {
           String shown = m.get("html").replaceAll("<button[^>]*>[^<]*</button>", "");
           recent.add(m.get("anchor") + ": " + shown.substring(shown.indexOf('>') + 1));
           if (recent.size() > 8) {
@@ -601,7 +620,9 @@ class RandomAppTest {
         } else if ("ack".equals(type)) {
           ackResults.put(m.get("id"), m.get("ok"));
         } else if ("windowCall".equals(type) || "clientCall".equals(type)) {
-          calls.add(m.get("id"));
+          if (!calls.contains(m.get("id")) && !unseen.containsKey(m.get("id"))) {
+            calls.add(m.get("id"));
+          }
           Matcher callback = m.get("args") == null ? null : Pattern.compile("\\$fn\":\"([^\"]+)\"").matcher(m.get("args"));
           if (callback != null && callback.find()) {
             callbacks.put(m.get("id"), callback.group(1));
@@ -683,7 +704,9 @@ class RandomAppTest {
       Duration minimum = Duration.ofMillis(random.nextBoolean() ? 0 : 5);
       Logger.getLogger("").addHandler(handler);
       // Loads here block a thread until the test lands them, and lanes run on the same threads.
+      long cap = random.nextBoolean() ? 1024 * 1024 : 4096;
       h = new Harness(ROUTES, b -> b
+        .withMaxUnacknowledged(cap)
         .withExecutor(threads)
         .withRetainedStateStorage(storage)
         // Kept a while, a closed tab's save can come back with its page; without that, it must be gone.
@@ -764,6 +787,9 @@ class RandomAppTest {
       h.engine.onMessage(tab.conn, Json.object("type", "event", "id", id, "handler", m.group(1), "value", ""));
       tab.conn.await(0, x -> "ack".equals(x.get("type")) && id.equals(x.get("id")));
       tab.apply();
+      if (tab.conn.closed) {
+        return false;
+      }
       if ("true".equals(tab.ackResults.get(id))) {
         clicks.merge(label, 1, Integer::sum);
         return true;
@@ -781,10 +807,67 @@ class RandomAppTest {
       return found.isEmpty() ? null : found.get(random.nextInt(found.size()));
     }
 
+    /** The socket comes back: says what it applied, gets the rest, and sends what the server has not acknowledged. */
+    void reconnect(BrowserTab tab) {
+      log.append("tab").append(tabs.indexOf(tab)).append(" reconnects having applied ").append(tab.applied).append('\n');
+      h.engine.onClose(tab.conn);
+      Harness.FakeConnection next = new Harness.FakeConnection();
+      String hello = Json.object("type", "hello", "tab", tab.id, "token", tab.token);
+      h.engine.onMessage(next, hello.substring(0, hello.length() - 1) + ",\"seen\":" + tab.applied + "}");
+      next.await(0, m -> "ready".equals(m.get("type")));
+      tab.conn = next;
+      tab.read = 0;
+      tab.apply();
+      resend(tab);
+    }
+
+    void resend(BrowserTab tab) {
+      for (String result : new ArrayList<>(tab.unseen.values())) {
+        h.engine.onMessage(tab.conn, result);
+      }
+    }
+
+    void acknowledge(BrowserTab tab) {
+      if (!tab.conn.deaf && !tab.conn.closed) {
+        h.engine.onMessage(tab.conn, "{\"type\":\"seen\",\"n\":" + tab.applied + "}");
+      }
+    }
+
     void step() throws Exception {
       BrowserTab tab = tabs.get(random.nextInt(tabs.size()));
       String page = someMarker(tab, "page");
       int op = random.nextInt(100);
+      if (tab.conn.closed || tab.conn.deaf) {
+        // The network is gone, or the server closed it: the page can do nothing with this socket.
+        if (op < 50) {
+          reconnect(tab);
+        } else if (!w.pending.isEmpty()) {
+          Landing landing = w.pending.remove(random.nextInt(w.pending.size()));
+          log.append("a load lands: ").append(landing.value).append('\n');
+          landing.land();
+        }
+        settleLanes();
+        return;
+      }
+      if (op < 4) {
+        log.append("tab").append(tabs.indexOf(tab)).append("'s socket dies, what is on its way is lost\n");
+        tab.apply();
+        tab.conn.deaf = true;
+        settleLanes();
+        return;
+      }
+      if (op < 12) {
+        log.append("tab").append(tabs.indexOf(tab)).append(" acknowledges\n");
+        tab.apply();
+        acknowledge(tab);
+        settleLanes();
+        return;
+      }
+      if (op < 15) {
+        reconnect(tab);
+        settleLanes();
+        return;
+      }
       if (op < 18) {
         String url = URLS[random.nextInt(URLS.length)];
         if (random.nextInt(3) == 0) {
@@ -885,10 +968,15 @@ class RandomAppTest {
     void answer(BrowserTab tab, String id) {
       log.append("a call is answered\n");
       String callback = tab.callbacks.remove(id);
-      if (callback != null) {
+      boolean up = !tab.conn.deaf && !tab.conn.closed;
+      if (callback != null && up) {
         h.engine.onMessage(tab.conn, Json.object("type", "callback", "handler", callback, "args", "[]"));
       }
-      h.engine.onMessage(tab.conn, Json.object("type", "callResult", "id", id, "ok", true, "value", "\"title\""));
+      String result = Json.object("type", "callResult", "id", id, "ok", true, "value", "\"title\"");
+      tab.unseen.put(id, result);
+      if (up) {
+        h.engine.onMessage(tab.conn, result);
+      }
     }
 
     void close(BrowserTab tab) {
@@ -907,6 +995,11 @@ class RandomAppTest {
           tab.hidden = false;
           shownAgain(tab);
           h.engine.onMessage(tab.conn, Json.object("type", "visibility", "hidden", false));
+        }
+      }
+      for (BrowserTab tab : tabs) {
+        if (tab.conn.deaf || tab.conn.closed) {
+          reconnect(tab);
         }
       }
       for (Gate gate : gates) {
@@ -930,6 +1023,16 @@ class RandomAppTest {
         settleLanes();
         int messages = 0;
         boolean held = false;
+        for (BrowserTab tab : tabs) {
+          if (tab.conn.closed) {
+            reconnect(tab);
+          }
+          acknowledge(tab);
+          // The runtime retries what has no answer, as a rate limit refuses without one.
+          resend(tab);
+          held |= !tab.unseen.isEmpty();
+        }
+        settleLanes();
         for (BrowserTab tab : tabs) {
           messages += tab.conn.size();
           held |= tab.tab.rt.holding();
@@ -1164,6 +1267,9 @@ class RandomAppTest {
     void clickEverything(boolean onTheWay) {
       long rejected = h.engine.stats().rejectedEvents.get();
       for (BrowserTab tab : tabs) {
+        if (tab.conn.deaf) {
+          continue; // Nothing reaches the server from here until it reconnects.
+        }
         Matcher m = Pattern.compile(">(ping\\d+)<").matcher(tab.doc);
         List<String> pings = new ArrayList<>();
         while (m.find()) {
@@ -1174,7 +1280,7 @@ class RandomAppTest {
             continue;
           }
           // Its replacement can be on its way when a click is, as on any network: the answer comes after it.
-          boolean gone = !tab.doc.contains(">" + ping + "<");
+          boolean gone = !tab.doc.contains(">" + ping + "<") || tab.tab.waitingForRoom();
           if (tab.endedEarly != tab.tab.pagesEndedEarly) {
             tab.endedEarly = tab.tab.pagesEndedEarly;
             tab.ended.addAll(pings);
