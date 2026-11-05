@@ -1352,7 +1352,7 @@ public final class Tab {
   /** A fallback on the page, whose content will follow. One an error replaced is not on it, and stays marked until retried. */
   private boolean streamHasMore() {
     for (Scope scope : showingFallback) {
-      if (scope.parent == null || !scope.parent.hidden()) {
+      if (!scope.replacedByFallback()) {
         return true;
       }
     }

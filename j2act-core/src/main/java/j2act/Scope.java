@@ -407,6 +407,16 @@ final class Scope {
     return false;
   }
 
+  /** A boundary above this scope shows a fallback instead of what holds it. What is inside that fallback is on the page. */
+  boolean replacedByFallback() {
+    for (Scope child = this, s = parent; s != null; child = s, s = s.parent) {
+      if ((tab.showingFallback.contains(s) || tab.showingError.contains(s)) && s.fallbackScope != child) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** An errored(...) at or above this scope shows its fallback, so this scope's output is gone from the page. */
   boolean underError() {
     for (Scope s = this; s != null; s = s.parent) {

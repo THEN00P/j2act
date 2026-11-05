@@ -55,6 +55,9 @@ final class StaticRenderer {
   private void tag(Tag<?> tag, int depth) throws IOException {
     StringBuilder open = new StringBuilder("<").append(tag.name);
     for (Map.Entry<String, String> attr : tag.attributes.entrySet()) {
+      if (Html.isTextareaText(tag, attr.getKey())) {
+        continue;
+      }
       open.append(' ').append(attr.getKey());
       if (!attr.getValue().isEmpty()) {
         open.append("=\"");
@@ -67,12 +70,17 @@ final class StaticRenderer {
       line(depth, open);
       return;
     }
-    List<DomContent> children = ((ContainerTag<?>) tag).children;
+    String text = Html.textareaText(tag);
+    List<DomContent> children = text != null
+      ? java.util.Collections.singletonList(new Text(text)) : ((ContainerTag<?>) tag).children;
     if (!formatted || inline(tag, children)) {
       StringBuilder whole = new StringBuilder(open);
       StaticRenderer flat = new StaticRenderer(whole, false);
       for (DomContent child : children) {
         flat.node(child, 0, tag.name);
+      }
+      if (Html.dropsFirstNewline(tag.name) && whole.length() > open.length() && whole.charAt(open.length()) == '\n') {
+        whole.insert(open.length(), '\n');
       }
       whole.append("</").append(tag.name).append('>');
       line(depth, whole);
@@ -87,7 +95,7 @@ final class StaticRenderer {
 
   /** Text-only, empty and preformatted elements stay on one line when formatting. */
   private static boolean inline(Tag<?> tag, List<DomContent> children) {
-    if (Html.isRawText(tag.name) || "pre".equals(tag.name) || "textarea".equals(tag.name)) {
+    if (Html.isRawText(tag.name) || Html.dropsFirstNewline(tag.name)) {
       return true;
     }
     for (DomContent child : children) {
