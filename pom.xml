@@ -40,6 +40,7 @@
   <modules>
     <module>j2act-codegen</module>
     <module>j2act-core</module>
+    <module>j2act-signals-conformance</module>
     <module>j2act-html</module>
     <module>j2act-router</module>
     <module>j2act-processor</module>

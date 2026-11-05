@@ -1,0 +1,8 @@
+{
+  "name": "j2act-signals-conformance",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

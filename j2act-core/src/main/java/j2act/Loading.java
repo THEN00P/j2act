@@ -18,6 +18,7 @@ import java.util.function.Supplier;
 public final class Loading extends Boundary<Loading> {
 
   DomContent fallback;
+  Supplier<?> on;
 
   Loading(DomContent[] children) {
     super(children);
@@ -32,9 +33,20 @@ public final class Loading extends Boundary<Loading> {
     return this;
   }
 
+  /**
+   * Shows the fallback again when what this reads changes and something under it is loading, for content that
+   * has changed subject, such as a page's filter (ADR 0033): without it a loaded boundary keeps its content
+   * through a reload and holds the change. Solid's Loading on.
+   */
+  public Loading on(Supplier<?> dependencies) {
+    this.on = dependencies;
+    return this;
+  }
+
   @Override void adopt(Boundary<?> description) {
     Loading next = (Loading) description;
     fallback = next.fallback;
+    on = next.on;
     latest = next;
   }
 

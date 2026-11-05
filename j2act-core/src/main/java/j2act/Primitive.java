@@ -19,10 +19,16 @@ abstract class Primitive {
   /** Binds this handle to an existing or freshly created cell. Lane-only. */
   abstract void attach(Cell cell, boolean created);
 
+  /** A read found a handle not bound yet, such as a field declared after the memo reading it. */
+  static final ThreadLocal<Boolean> READ_UNBOUND = new ThreadLocal<>();
+
   /** This handle's cell, binding a store its tab is still making first; null while unbound. */
   final Cell cellOrNull() {
     if (cell == null && store != null) {
       store.bindIfPending();
+    }
+    if (cell == null) {
+      READ_UNBOUND.set(Boolean.TRUE);
     }
     return cell;
   }

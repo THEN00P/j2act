@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-3817f5ef490819b98a9529391bdaa5b40343ccf00124a614a2de76d55923a9e2 */
+* sources: sha256-88e8c439d9d22cbefdf478728cec4f6f84bb73ee2b8ba89239a814b3906d054b */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -2176,6 +2176,12 @@
 		const previous = takePrevious(here(), meta(document, "j2-token"), navigationType());
 		const connection = createConnection((location.protocol === "https:" ? "wss://" : "ws://") + location.host + wsPath, sid, meta(document, "j2-token"), onMessage, () => !leaving && !remounting && retained.phase !== "paused");
 		const send = (message) => connection.send(message);
+		document.addEventListener("visibilitychange", () => {
+			if (connection.ready) send({
+				type: "visibility",
+				hidden: document.hidden
+			});
+		});
 		const pending = createPending();
 		const uploads = createUploads(send, () => connection.token);
 		const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
@@ -2197,6 +2203,10 @@
 			ready: () => {
 				connection.opened();
 				retained.connected();
+				if (document.hidden) send({
+					type: "visibility",
+					hidden: true
+				});
 			},
 			patch: (m) => {
 				if (!morpher.patch(m.anchor, m.html, m.root === true)) clients.anchorGone(m.anchor);

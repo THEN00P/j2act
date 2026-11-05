@@ -213,12 +213,13 @@ class TransitionTest {
   }
 
   @Test
-  void anEditOfADerivedSignalStandsUntilItsSourceResultChanges() {
+  void anEditOfADerivedSignalStandsUntilItsSourceChanges() {
     try (Harness h = new Harness(DerivedKeepsEdit::new)) {
       String html = h.load();
       h.connect();
       assertTrue(h.click(Harness.clickOn(html, "edit")).get(0).get("html").contains("parity:10;"));
-      assertTrue(h.click(Harness.clickOn(html, "even")).isEmpty(), "0 % 2 and 2 % 2 are the same result");
+      // Solid's rule (core R31): a source change re-runs it, and this body ignores what was written.
+      assertTrue(h.click(Harness.clickOn(html, "even")).get(0).get("html").contains("parity:0;"));
       assertTrue(h.click(Harness.clickOn(html, "odd")).get(0).get("html").contains("parity:1;"));
     }
   }
@@ -228,14 +229,19 @@ class TransitionTest {
 
     @Override protected View setup() {
       var selected = createSignal("A");
-      var feed = createMemo(() -> async(() -> {
+      var feed = createMemo(() -> {
         String id = selected.get();
-        if (ATTEMPT.incrementAndGet() == 2) {
-          throw new IllegalStateException("blip");
-        }
-        return "feed " + id;
-      })).withStaleOnError();
-      var summary = createMemo(() -> async(() -> "summary of " + feed.get()));
+        return async(() -> {
+          if (ATTEMPT.incrementAndGet() == 2) {
+            throw new IllegalStateException("blip");
+          }
+          return "feed " + id;
+        });
+      }).withStaleOnError();
+      var summary = createMemo(() -> {
+        String over = feed.get();
+        return async(() -> "summary of " + over);
+      });
       return () -> T.page("t", T.div(
         T.span("selected:" + selected.get() + ";"),
         T.span("feed:" + feed.get() + ";"),
@@ -310,7 +316,7 @@ class TransitionTest {
   void writingInsideAMemoThrows() {
     try (Harness h = new Harness(WritesInAMemo::new)) {
       h.load();
-      assertTrue(WritesInAMemo.thrown.getMessage().contains("createMemo"), String.valueOf(WritesInAMemo.thrown));
+      assertTrue(WritesInAMemo.thrown.getMessage().contains("REACTIVE_WRITE_IN_OWNED_SCOPE"), String.valueOf(WritesInAMemo.thrown));
     }
   }
 

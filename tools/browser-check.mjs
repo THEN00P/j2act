@@ -249,6 +249,42 @@ async function main() {
   check("a preloaded page shows its data right after the click", took < 400, `${took} ms for an 800 ms query`);
   check("the page's Effect ran once it was opened", await until(`!document.getElementById('report-opened').textContent.includes('not yet')`));
 
+  // 14b. a page being left keeps working until what replaces it comes (ADR 0011)
+  const home = async () => {
+    await cdp("Page.navigate", { url: URL });
+    await until("document.readyState === 'complete' && typeof j2act !== 'undefined'");
+    await sleep(400);
+    await js(`${btn("A:")}.click(); true`);
+    await until(`${btn("A:")}?.textContent === 'A: 1'`);
+  };
+  for (const [slow, how] of [["Slow", "under the same layout"], ["Slow, no layout", "with no layout in common"]]) {
+    await home();
+    await js(`${navLink(slow)}.click(); ${btn("A:")}.click(); true`);
+    check(`a button on the page being left works and shows it, ${how}`, await until(`${btn("A:")}?.textContent === 'A: 2'`, 1500));
+    check(`that page stays until the next is ready, ${how}`, await js(`location.pathname === '/' && !document.body.textContent.includes('Slow page')`));
+    await until(`${h1} === 'Slow page ready'`, 4000);
+    check(`the slow page comes in the end, ${how}`, await js(`${h1} === 'Slow page ready' && location.pathname.startsWith('/slow')`));
+
+    await home();
+    await js(`window.__before = ${btn("A:")}; ${navLink(slow)}.click(); true`);
+    await sleep(150);
+    await js(`${navLink("Home")}.click(); true`);
+    await sleep(300);
+    await js(`${btn("A:")}.click(); true`);
+    check(`going back finds the page as it was, ${how}`, await until(`${btn("A:")}?.textContent === 'A: 2'`, 1000)
+      && await js(`${btn("A:")} === window.__before`));
+    await sleep(2500);
+    check(`what the user went back from never shows, ${how}`, await js(`location.pathname === '/' && !document.body.textContent.includes('Slow page')`));
+
+    await home();
+    await js(`${navLink(slow)}.click(); true`);
+    await sleep(150);
+    await js(`${navLink("About")}.click(); true`);
+    check(`another link does not wait for the first, ${how}`, await until(`${h1} === 'About'`, 1000));
+    await sleep(2500);
+    check(`it stays where the user went, ${how}`, await js(`${h1} === 'About' && location.pathname === '/about'`));
+  }
+
   // 15. client module (ADR 0022): mounts from the HTML, calls back, keeps its DOM through morphs
   await cdp("Page.navigate", { url: URL });
   await until("document.readyState === 'complete' && typeof j2act !== 'undefined'");

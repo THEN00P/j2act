@@ -48,12 +48,14 @@ class PreloadTest {
       effects.incrementAndGet();
       return null;
     });
-    var item = createMemo(() -> async(() -> {
-      loads.incrementAndGet();
+    var item = createMemo(() -> {
       String id = pathParam("id");
-      release.await(5, TimeUnit.SECONDS);
-      return "item " + id;
-    }));
+      return async(() -> {
+        loads.incrementAndGet();
+        release.await(5, TimeUnit.SECONDS);
+        return "item " + id;
+      });
+    });
     return () -> html(head(title("Item")), body(loading(() -> h1(item.get())).withFallback(h1("loading"))));
   }
   }

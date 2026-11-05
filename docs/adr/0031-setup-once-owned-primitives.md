@@ -1,5 +1,7 @@
 # Component lifecycle: setup once, owned primitives
 
+The component model here stands. Its engine does not: ADR 0033 replaced it with a port of Solid's, which changes a few things this ADR says, listed there under "What the swap changed for app code".
+
 ADR 0019 gave a component two identities. A held object, kept in a field and rendered again, was matched by reference: its props stayed as last set, its plain fields persisted, rendering it twice was an error, and dev mode needed its own path for it. A fresh object, built by a factory call in render(), was matched by its slot: its plain fields reset every render and its primitives rebound by creation order, React's rules of hooks. Pages, layouts and adopted preloads (ADR 0011) went through the first path, everything else through the second. Two sets of rules for one concept, and neither let anyone reuse stateful logic: state() and query() were protected methods, so a helper could not create them.
 
 This ADR replaces both with Solid's model, adapted to the j2html style. It follows Solid 2.0 for every reactive choice and lists where it differs.

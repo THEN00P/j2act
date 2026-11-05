@@ -29,6 +29,8 @@ public abstract class ComponentTag implements DomContent {
   final List<Primitive> primitives = new ArrayList<>();
   Scope scope;
   Object key;
+  /** Mounted by the router as one level of a route, so it has a route of its own (see FrameRouteCell). */
+  boolean routeFrame;
 
   /** Runs once per slot, after injection: creates what this component needs and returns its view. */
   protected abstract View setup();

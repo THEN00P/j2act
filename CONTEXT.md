@@ -13,7 +13,7 @@ The server side of one page load, reached with useTab(): created when the page's
 _Avoid_: Session, Circuit, Connection, Page load
 
 **Browser**:
-Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with useBrowser(). Its @BrowserScoped stores live on a hub with its own lane while any of its tabs lives, plus a grace window, and every tab that read a value re-renders when it changes, holding the change until that tab's own loads have landed. A logout or another user starts a new browser (ADR 0030).
+Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with useBrowser(). Its @BrowserScoped stores live on a hub while any of its tabs lives, plus a grace window. It has one lane and one reactive graph for all its tabs and stores (ADR 0033), so a change reaches every tab in one update, and tabs that can be seen hold together while it loads; a tab nobody can see holds nothing and catches up. A logout or another user starts a new browser (ADR 0030).
 _Avoid_: Session, Device, Visitor, User
 
 **Retained State**:
@@ -61,11 +61,11 @@ loading(...) or errored(...), a component wrapping what may stop rendering. Read
 _Avoid_: Suspense, Skeleton
 
 **Async memo**:
-A memo whose body returns a future, usually createMemo(() -> async(() -> service.load(id.get()))): get() gives the future's value. Reads, including those inside async(...), are its dependencies; the newest run wins, and it keeps its value while reloading. refresh(x) loads it again, isPending(fn) says a change has not committed yet. Caching is the app's own on its services (ADR 0031).
+A memo whose body returns a future: createMemo(() -> { var key = id.get(); return async(() -> service.load(key)); }). Reads go before async(...), where they are tracked (ADR 0033); one inside it reads the screen untracked, and the processor warns. get() gives the future's value. While there is none it stops rendering at the nearest loading(...); on a reload the old value stays and the newest run wins.
 _Avoid_: Query, Deferred, Fetcher, Resource
 
 **Action**:
-A write, action(body): each run() is one transaction on the executor, returning a CompletableFuture. Optimistic writes show at once, plain signal writes land together at its end with what it refreshed; on failure the optimistic ones are undone and the rest dropped. Runs are concurrent (ADR 0031).
+A write, action(body): each run() is one transaction on the executor, returning a CompletableFuture. Optimistic writes show at once, plain signal writes land together at its end with what it refreshed; on failure the optimistic ones are undone and what it wrote stands, as in Solid, so a write that must not outlive a failure goes after the call that can fail. Its future finishes when the body ends; to wait for a refresh, join refresh(x)'s future in the body. Runs are concurrent (ADR 0031, 0033).
 _Avoid_: Mutation, Command
 
 **Optimistic value**:

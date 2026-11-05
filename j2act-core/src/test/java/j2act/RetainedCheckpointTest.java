@@ -41,6 +41,48 @@ class RetainedCheckpointTest {
     }
   }
 
+  static final class KeepsDraft extends LiveComponent {
+    static volatile RetainedSignal<String> draft;
+
+    @Override protected View setup() {
+      var kept = createRetained("draft", "old");
+      draft = kept;
+      return () -> T.page("t", T.span("draft:" + kept.get() + ";"));
+    }
+  }
+
+  /** Random timing rarely gets this order: a checkpoint already queued when another thread writes. */
+  @Test
+  void aWriteFromAnotherThreadBehindACheckpointIsLeftForTheNext() throws Exception {
+    CountingStorage storage = new CountingStorage();
+    try (Harness h = harness(KeepsDraft::new, storage, b -> { })) {
+      h.load();
+      h.connect();
+      Tab tab = h.engine.liveTab(h.token);
+      CountDownLatch blocked = new CountDownLatch(1);
+      CountDownLatch release = new CountDownLatch(1);
+      tab.post(() -> {
+        blocked.countDown();
+        try {
+          release.await();
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+      });
+      blocked.await();
+      tab.post(() -> {
+        if (tab.snapshot.dirty) {
+          h.engine.snapshots.persist(tab);
+        }
+      });
+      KeepsDraft.draft.set("new");
+      release.countDown();
+      java.util.concurrent.CompletableFuture<Boolean> dirty = new java.util.concurrent.CompletableFuture<>();
+      tab.post(() -> dirty.complete(tab.snapshot.dirty));
+      assertTrue(dirty.get(5, TimeUnit.SECONDS), "the checkpoint cannot have had this write");
+    }
+  }
+
   @Test
   void aCheckpointSavesALiveTabThatAnotherServerRestoresAfterACrash() {
     CountingStorage storage = new CountingStorage();

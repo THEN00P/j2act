@@ -80,7 +80,7 @@ class LaneTest {
   }
 
   @Test
-  void aBlockedGuessHoldsItsActionOpen() throws Exception {
+  void aGuessWhoseActionEndsBeforeItsLoadLandsNeverShows() throws Exception {
     Blocked.LOADS.clear();
     Blocked.LOADS.put("base", CompletableFuture.completedFuture("for base"));
     Blocked.gate = CompletableFuture.completedFuture(null);
@@ -90,9 +90,12 @@ class LaneTest {
       h.click(Harness.clickOn(html, "save"));
       Harness.eventually(() -> Blocked.LOADS.containsKey("next"), "the load runs on the guess");
       Thread.sleep(50);
-      assertFalse(Blocked.result.isDone(), "the guess has not even shown yet");
+      // The body ended, as a Solid action's promise says; the screen is what waits.
+      assertTrue(Blocked.result.isDone(), "its body ended");
+      neverShown(h, 0, "draft:next");
       Blocked.LOADS.get("next").complete("for next");
-      Harness.eventually(() -> Blocked.result.isDone(), "the action ends once its guess could show");
+      Harness.eventually(() -> !h.engine.tab(h.sid).rt.holding(), "nothing stays held");
+      neverShown(h, 0, "draft:next");
     }
   }
 
@@ -726,7 +729,7 @@ class LaneTest {
       var loaded = createMemo(body);
       var save = action((String v) -> {
         note.set("saving");
-        refresh(loaded);
+        refresh(loaded).get();
         return v;
       });
       return () -> T.page("t", T.div(
@@ -735,7 +738,7 @@ class LaneTest {
     }
   }
 
-  /** Found by review: nothing reads it, but the action asked for it, so the action waits for it. */
+  /** Nothing reads it, so nothing holds for it: an action that needs it waits for refresh's future, as Solid's yields it. */
   @Test
   void anActionWaitsForALoadItRefreshesThatNothingReads() throws Exception {
     RefreshesUnread.landing = CompletableFuture.completedFuture("old");
@@ -748,9 +751,10 @@ class LaneTest {
       h.click(Harness.clickOn(html, "save"));
       h.awaitPatch(from, p -> p.contains("note:saving;"));
       Thread.sleep(50);
-      assertFalse(RefreshesUnread.result.isDone(), "its load has not landed");
+      // The body ended, and the guess stays until the transaction it held open has landed its refresh.
+      neverShown(h, from, "note:idle;");
       RefreshesUnread.landing.complete("new");
-      Harness.eventually(() -> RefreshesUnread.result.isDone(), "now it has");
+      h.awaitPatch(from, p -> p.contains("note:idle;"));
     }
   }
 

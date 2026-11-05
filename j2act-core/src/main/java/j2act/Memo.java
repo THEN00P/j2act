@@ -12,16 +12,31 @@ public final class Memo<T> extends Primitive implements Supplier<T> {
 
   private final Supplier<T> body;
   private final AsyncSupplier<T> asyncBody;
+  private final Reactive.From<T> source;
   private boolean staleOnError;
+  private boolean deferred;
 
   Memo(Supplier<T> body) {
     this.body = body;
     this.asyncBody = null;
+    this.source = null;
+  }
+
+  Memo(Reactive.From<T> source) {
+    this.body = null;
+    this.asyncBody = null;
+    this.source = source;
+  }
+
+  Memo<T> deferred() {
+    deferred = true;
+    return this;
   }
 
   Memo(AsyncSupplier<T> asyncBody) {
     this.body = null;
     this.asyncBody = asyncBody;
+    this.source = null;
   }
 
   @Override
@@ -29,12 +44,12 @@ public final class Memo<T> extends Primitive implements Supplier<T> {
   public T get() {
     Cell bound = cellOrNull();
     if (bound == null) {
-      if (asyncBody != null) {
+      if (body == null) {
         throw new IllegalStateException("an async memo has no value before its store is bound");
       }
       return body.get();
     }
-    return (T) ((Node) bound).read();
+    return (T) ((ValueCell) bound).read();
   }
 
   /**
@@ -45,28 +60,30 @@ public final class Memo<T> extends Primitive implements Supplier<T> {
   public Memo<T> withStaleOnError() {
     staleOnError = true;
     if (cell != null) {
-      ((Node) cell).staleOnError = true;
+      ((ValueCell) cell).staleOnError = true;
     }
     return this;
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    return asyncBody != null ? Node.async(tab, address, asyncBody) : Node.memo(tab, address, body);
+    if (source != null) {
+      return ValueCell.from(tab, address, source);
+    }
+    return asyncBody != null ? ValueCell.async(tab, address, asyncBody, staleOnError, deferred) : ValueCell.memo(tab, address, body);
   }
 
   @Override boolean accepts(Cell cell) {
-    return cell instanceof Node && ((Node) cell).isAsync() == (asyncBody != null);
+    return cell instanceof ValueCell && ((ValueCell) cell).isAsync() == (asyncBody != null || source != null);
   }
 
+  @SuppressWarnings("unchecked")
   @Override void attach(Cell cell, boolean created) {
     this.cell = cell;
-    Node node = (Node) cell;
+    ValueCell node = (ValueCell) cell;
     // A class swap's setup() brings the new code's lambda.
     node.body = body;
     node.asyncBody = asyncBody;
+    node.source = (Reactive.From<Object>) (Reactive.From<?>) source;
     node.staleOnError = staleOnError;
-    if (created && asyncBody != null) {
-      node.start(false);
-    }
   }
 }

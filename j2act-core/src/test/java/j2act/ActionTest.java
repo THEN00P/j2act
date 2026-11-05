@@ -136,7 +136,7 @@ class ActionTest {
   }
 
   @Test
-  void aFailedRunUndoesItsOptimisticWritesAndDropsItsHeldOnes() {
+  void aFailedRunUndoesItsOptimisticWritesWhileWhatItWroteStands() {
     todosService = new Todos();
     try (Harness h = new Harness(TodoPage::new)) {
       String html = h.load();
@@ -149,7 +149,7 @@ class ActionTest {
       todosService.save("bad").completeExceptionally(new IllegalStateException("db down"));
       String undone = h.awaitPatch(from, p -> p.contains("problem:could not save;")).get("html");
       assertTrue(undone.contains("todos:[];"), "the draft is gone: " + undone);
-      assertTrue(undone.contains("note:none;"), "the held write is dropped: " + undone);
+      assertTrue(undone.contains("note:saved bad;"), "what it wrote stands, as in Solid: " + undone);
     }
   }
 
@@ -259,10 +259,13 @@ class ActionTest {
 
     @Override protected View setup() {
       var draft = createOptimistic("base");
-      var shown = createMemo(() -> async(() -> {
-        LOADS.incrementAndGet();
-        return "seen " + draft.get();
-      }));
+      var shown = createMemo(() -> {
+        var seen = draft.get();
+        return async(() -> {
+          LOADS.incrementAndGet();
+          return "seen " + seen;
+        });
+      });
       var save = action((String v) -> {
         draft.set(v);
         release.await();
@@ -293,6 +296,7 @@ class ActionTest {
   static final class TwoAffect extends LiveComponent {
     static final CompletableFuture<Void> FIRST = new CompletableFuture<>();
     static final CompletableFuture<Void> SECOND = new CompletableFuture<>();
+    static final java.util.concurrent.CountDownLatch SECOND_AFFECTS = new java.util.concurrent.CountDownLatch(1);
     static final CompletableFuture<Void> FIRST_ENDED = new CompletableFuture<>();
 
     @Override protected View setup() {
@@ -303,6 +307,7 @@ class ActionTest {
       });
       var second = action((String v) -> {
         affects(value);
+        SECOND_AFFECTS.countDown();
         SECOND.get();
       });
       return () -> T.page("t", T.div(
@@ -321,6 +326,7 @@ class ActionTest {
       int from = h.conn.size();
       h.click(Harness.clickOn(html, "first"));
       h.click(Harness.clickOn(html, "second"));
+      assertTrue(TwoAffect.SECOND_AFFECTS.await(5, java.util.concurrent.TimeUnit.SECONDS));
       h.awaitPatch(from, p -> p.contains("pending=true;"));
 
       int mid = h.conn.size();

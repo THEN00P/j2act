@@ -60,10 +60,10 @@ final class TabSnapshot {
   private final Map<Scope, List<Unnamed>> unnamed = new java.util.IdentityHashMap<>();
 
   private static final class Unnamed {
-    final Node cell;
+    final ValueCell cell;
     final Object initial;
 
-    Unnamed(Node cell, Object initial) {
+    Unnamed(ValueCell cell, Object initial) {
       this.cell = cell;
       this.initial = initial;
     }
@@ -77,7 +77,7 @@ final class TabSnapshot {
    * Lane-only. Names a new retained value (ADR 0031): explicitly, by the field holding it, or by
    * the variables the processor recorded. With none of those it waits for the end of setup.
    */
-  void retain(Scope scope, Primitive primitive, String explicit, String stackName, Object initial, Node cell) {
+  void retain(Scope scope, Primitive primitive, String explicit, String stackName, Object initial, ValueCell cell) {
     java.lang.reflect.Field field = explicit != null ? null : Retained.fieldHolding(scope.owner(), primitive);
     String name = explicit != null ? explicit : field != null ? field.getName() : stackName;
     if (name == null) {
@@ -86,7 +86,7 @@ final class TabSnapshot {
     }
     String component = scope.ownerClass().getName();
     for (Cell other : scope.cells) {
-      if (other != cell && other instanceof Node && name.equals(((Node) other).retainedName)) {
+      if (other != cell && other instanceof ValueCell && name.equals(((ValueCell) other).retainedName)) {
         tab.engine.warnOnce("name " + component + "#" + name, component + " has two retained values named \""
           + name + "\", such as a call in a loop; the second one is not retained, so give each its own name (ADR 0031)");
         return;
@@ -139,7 +139,7 @@ final class TabSnapshot {
     }
   }
 
-  private void fill(Scope scope, Node cell, String name, java.lang.reflect.Type type) {
+  private void fill(Scope scope, ValueCell cell, String name, java.lang.reflect.Type type) {
     cell.retainedName = name;
     cell.retainedType = type;
     Map<String, String> entries = scope.store != null ? restoringStores : restoring;
@@ -170,19 +170,19 @@ final class TabSnapshot {
 
   /** Lane-only. This lane task's writes belong in the values about to be taken. */
   void persisting() {
-    tab.applyWrites();
+    tab.flush();
   }
 
   /** Lane-only. The retained values of mounted components, by key; null values are left out, as in .NET. */
   Map<String, String> values() {
     Map<String, String> entries = new LinkedHashMap<>();
     for (Cell c : tab.cells.values()) {
-      if (!(c instanceof Node) || ((Node) c).retainedName == null) {
+      if (!(c instanceof ValueCell) || ((ValueCell) c).retainedName == null) {
         continue;
       }
-      Node cell = (Node) c;
+      ValueCell cell = (ValueCell) c;
       Scope owner = cell.owner;
-      Object value = cell.peek();
+      Object value = cell.committed();
       if (value == null || cell.disposed || owner == null || owner.disposed || owner.preloading()) {
         continue;
       }

@@ -16,6 +16,7 @@ import com.example.counter.pages.HomePage;
 import com.example.counter.pages.ItemPage;
 import com.example.counter.pages.NotFoundPage;
 import com.example.counter.pages.ReportPage;
+import com.example.counter.pages.SlowPage;
 import j2act.PageResolver;
 import j2act.spring.J2ActCustomizer;
 
@@ -36,7 +37,9 @@ public class CounterApp {
         page("/about", AboutPage.class),
         page("/items/{id}", ItemPage.class),
         page("/report", ReportPage.class),
-        fallback(NotFoundPage.class))
+        page("/slow", SlowPage.class),
+        fallback(NotFoundPage.class)),
+      page("/slow-alone", SlowPage.class)
     );
   }
 

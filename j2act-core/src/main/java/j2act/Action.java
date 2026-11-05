@@ -1,19 +1,17 @@
 package j2act;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import j2act.internal.signals.Runtime;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.function.UnaryOperator;
+import java.util.function.Supplier;
 
 /**
- * A write (ADR 0031). Each run() is one transaction, its body on j2act's executor, so blocking
- * calls are fine: optimistic writes show at once and plain signal writes wait for the end, when
- * everything lands in one update, together with what the body refreshed. Runs are concurrent; on
- * failure the optimistic writes are undone and the held ones dropped. It holds no state: the
- * returned future says how a run ended, and pending UI comes from the data it touches.
+ * A write (ADR 0031, 0033). Each run() is one transaction, its body on j2act's executor, so blocking calls
+ * are fine: optimistic writes show at once and plain signal writes wait for the end, when everything lands
+ * in one update, together with what the body refreshed. Runs are concurrent. On failure its optimistic
+ * writes are undone; what it wrote stands, as in Solid, so a body that must not leave a half-done write
+ * orders it after the call that can fail. It holds no state: the returned future says how a run ended, and
+ * pending UI comes from the data it touches.
  *
  * <pre>{@code
  * var add = action((String text) -> {
@@ -52,21 +50,28 @@ public final class Action<V, R> {
 
   /** Runs this action from a handler, an effect, a load or another action; concurrent with other runs. */
   public CompletableFuture<R> run(V variables) {
-    if (Tracking.observer() != null) {
-      // Tracking what it writes would run it again for every write, for good.
-      throw new IllegalStateException("an action is a write, so it cannot run inside something reactive:"
-        + " call it from a handler or an effect's second half (ADR 0031)");
-    }
     Scope scope = Tracking.scope();
     Tab tab = scope != null ? scope.tab : Tab.ambient();
     if (tab == null) {
       throw new IllegalStateException("an action runs in a tab: call it from a handler, an effect or a load");
     }
+    if (tab.lane.isCurrent() && tab.rt.getObserver() != null) {
+      // Tracking what it writes would run it again for every write, for good.
+      throw new IllegalStateException("an action is a write, so it cannot run inside something reactive:"
+        + " call it from a handler or an effect's second half (ADR 0031)");
+    }
     CompletableFuture<R> result = new CompletableFuture<>();
     if (tab.lane.isCurrent()) {
       start(tab, scope, variables, result);
     } else {
-      tab.post(() -> start(tab, scope, variables, result));
+      tab.host.job(() -> Tracking.in(tab, scope, () -> {
+        if (tab.disposed) {
+          result.completeExceptionally(new IllegalStateException("tab " + tab.id + " has ended"));
+        } else {
+          start(tab, scope, variables, result);
+        }
+        return null;
+      }));
     }
     return result;
   }
@@ -76,141 +81,78 @@ public final class Action<V, R> {
     return run(null);
   }
 
-  /** Lane-only. Opens the transaction, so optimistic writes have it before the body makes one. */
+  /** Lane-only. Opens the transaction, so what the body does has it from its first read. */
+  @SuppressWarnings("unchecked")
   private void start(Tab tab, Scope scope, V variables, CompletableFuture<R> result) {
-    Transition transition = new Transition(tab);
-    transition.openAction();
-    tab.transitions.add(transition);
-    Call call = new Call(tab, transition);
-    LoadRun run = new LoadRun(tab, 0);
+    Runtime.ActionRun run = tab.rt.openAction((CompletableFuture<Object>) (CompletableFuture<?>) result);
+    Call call = new Call(tab, run);
     try {
       tab.engine.executor.execute(() -> {
         R value = null;
         Throwable failure = null;
         Call.CURRENT.set(call);
         Tab.RUNNING_FOR.set(tab);
-        Tracking.setRun(run);
+        Tab.LOADING.set(tab);
         Scope previous = Tracking.swapScope(scope);
         try {
           value = body.run(variables);
         } catch (Throwable t) {
           failure = t;
         } finally {
-          Tracking.clearRun();
           Tracking.swapScope(previous);
           Tab.RUNNING_FOR.remove();
+          Tab.LOADING.remove();
           Call.CURRENT.remove();
         }
         R ended = value;
         Throwable failed = failure;
-        tab.post(() -> call.end(ended, failed, result));
+        // Not tab.post: it ends even if the tab has, and what waits on its future runs as this tab's.
+        tab.host.job(() -> Tracking.in(tab, scope, () -> {
+          run.end(ended, failed);
+          return null;
+        }));
       });
     } catch (RejectedExecutionException e) {
-      call.end(null, e, result);
+      run.end(null, e);
     }
   }
 
-  /** One run of an action: what its body wrote, thread-confined until it ended. */
+  /** One run of an action, on its body's thread: every read and write it makes hops into its transaction. */
   static final class Call {
     private static final ThreadLocal<Call> CURRENT = new ThreadLocal<>();
 
     final Tab tab;
-    private Transition transition;
-    private final Map<Node, Object> writes = new LinkedHashMap<>();
-    private final List<Node> refreshes = new ArrayList<>();
-    private final List<CompletableFuture<Object>> refreshed = new ArrayList<>();
-    /** Lane-only: where this run's optimistic writes live, made on its first one. */
-    private OptimisticLane lane;
+    private final Runtime.ActionRun run;
 
-    Call(Tab tab, Transition transition) {
+    Call(Tab tab, Runtime.ActionRun run) {
       this.tab = tab;
-      this.transition = transition;
+      this.run = run;
     }
 
     static Call current() {
       return CURRENT.get();
     }
 
-    /** On the body's thread. Held until the run ends. */
-    void write(Node cell, Object next) {
-      writes.put(cell, next);
-    }
-
-    boolean wrote(Node cell) {
-      return writes.containsKey(cell);
-    }
-
-    /** On the body's thread. What it sees: its own held write, else the newest value. */
-    Object seen(Node cell) {
-      return writes.containsKey(cell) ? writes.get(cell) : cell.peekLatest();
-    }
-
-    /** On the body's thread. Part of the transaction: the run commits once the new value arrived. */
-    void refresh(Node cell, CompletableFuture<Object> landed) {
-      // Starts at once, on the lane, so the body can wait for what it asked for.
-      tab.post(() -> {
-        Transition held = transition();
-        cell.addWaiter(landed);
-        tab.refreshInto(cell, held);
-      });
-    }
-
-    /** On the body's thread. Shows on the lane at once, unless what follows it hits a load. */
-    void overlay(Node cell, UnaryOperator<Object> change) {
-      if (cell.tab != tab) {
-        throw new IllegalStateException("an optimistic value in a browser store is not supported: its action runs"
-          + " in one tab, and a guess would have to show in every tab of the browser (ADR 0031)");
-      }
-      tab.post(() -> {
-        if (lane == null) {
-          lane = new OptimisticLane(transition());
-          transition().addLane(lane);
+    /** Runs fn on the lane in this action's transaction. */
+    <T> T enter(Tab target, Supplier<T> fn) {
+      Object[] value = new Object[1];
+      Throwable[] failure = new Throwable[1];
+      target.host.hop(() -> {
+        try {
+          value[0] = target.host == tab.host ? run.enter(fn) : fn.get();
+        } catch (Throwable t) {
+          failure[0] = t;
         }
-        cell.overlay(lane, change);
-        lane.guessed(cell);
       });
-    }
-
-    /** Lane-only. affects(x) from the body: pending until this run's transaction ends, whatever others do. */
-    void affects(Node cell) {
-      cell.affectingRuns++;
-      tab.pendingChanged();
-      transition().onCommit(() -> {
-        cell.affectingRuns--;
-        tab.pendingChanged();
-      });
-    }
-
-    Transition transition() {
-      return transition = transition.current();
-    }
-
-    /** Lane-only. Takes the other run's transaction too: they touch the same value and land together. */
-    void entangle(Call other) {
-      Transition mine = transition();
-      Transition theirs = other.transition();
-      if (mine != theirs) {
-        mine.merge(theirs);
+      if (failure[0] instanceof RuntimeException) {
+        throw (RuntimeException) failure[0];
       }
-    }
-
-    <R> void end(R value, Throwable failure, CompletableFuture<R> result) {
-      Transition held = transition();
-      if (failure != null) {
-        if (lane != null) {
-          lane.fail();
-          lane = null;
-        }
-        held.closeAction();
-        result.completeExceptionally(failure);
-        return;
+      if (failure[0] instanceof Error) {
+        throw (Error) failure[0];
       }
-      held.onCommit(() -> result.complete(value));
-      if (!writes.isEmpty()) {
-        tab.apply(writes, held);
-        held = transition();
-      }
-      held.closeAction();
+      @SuppressWarnings("unchecked")
+      T result = (T) value[0];
+      return result;
     }
   }
 }

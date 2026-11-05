@@ -1,13 +1,10 @@
 package j2act;
 
-import java.util.ArrayDeque;
+import j2act.internal.signals.Owner;
+import j2act.internal.signals.Runtime;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -34,47 +31,49 @@ public final class Tab {
   final J2Act engine;
   final String id;
   final String token;
+  /** What this tab shares with the rest of its browser (ADR 0033). */
+  final ReactiveHost host;
   final Lane lane;
+  final Runtime rt;
   final Exchange exchange;
   /** The page-load request's CSP nonce, or null; only the served page carries it, never a patch. */
   private final String nonce;
 
   /** Concurrent: store cells may be created from query loader threads. */
   final Map<String, Cell> cells = new java.util.concurrent.ConcurrentHashMap<>();
+  /** Scopes to run again in this job's flush, though nothing they read changed: a new frame, a class swap. */
   final Set<Scope> dirty = new LinkedHashSet<>();
-  final Deque<EffectCell> pendingEffects = new ArrayDeque<>();
-  /** Effects of preloaded subtrees, waiting for the navigation that adopts them (ADR 0011). */
+  /** Scopes whose pass showed and whose patch has not gone yet: it waits for a socket, or a soft navigation's hold. */
+  private final Set<Scope> unsent = new LinkedHashSet<>();
+  /** Effects waiting for this tab's socket, or for the navigation that adopts a preloaded subtree (ADR 0011). */
   final List<EffectCell> parkedEffects = new ArrayList<>();
+  /** A notFound() or redirect() from inside a pass, where nothing may be written, for after the flush. */
+  private RouteException deferredRoute;
+  private int renderDepth;
+  /** The boundary above a page's root, for when nobody can see this tab. */
+  Owner rootOwner;
+  private boolean pageHidden;
+  private long renderEpoch;
   /** onSettled callbacks that have not fired yet (ADR 0031). */
   final List<LifecycleCell> pendingSettled = new ArrayList<>();
   /** The loading(...) boundaries showing their fallback: what a served page's stream waits for (ADR 0031). */
   final Set<Scope> showingFallback = new HashSet<>();
   /** The errored(...) boundaries showing their fallback, which hide what they wrap like a loading(...) does. */
   final Set<Scope> showingError = new HashSet<>();
+  /** until(...) and resolve(...) still waiting, which end with the tab. */
+  final Set<CompletableFuture<?>> waiters = java.util.concurrent.ConcurrentHashMap.newKeySet();
   /** The rest of the served page, while it streams. */
   private PageStream stream;
   /** The shell went out, so a load's notFound() can no longer change the response (ADR 0031). */
   private boolean shellSent;
-  /** This lane task's writes, applied together at its end (ADR 0031). */
-  private final Map<Node, Object> batch = new java.util.LinkedHashMap<>();
-  /** Writes held until the loads they started landed (ADR 0031). */
-  final List<Transition> transitions = new ArrayList<>();
-  /** until(...) and resolve(...) still waiting, which end with the tab. */
-  final java.util.Set<Until<?>> untils = new java.util.HashSet<>();
-  /** What this lane task already refreshed. */
-  private final java.util.Set<Node> refreshing = new java.util.HashSet<>();
-  /** Counts changes reaching the graph, so a mark from an earlier one is not mistaken for this one's. */
-  long changeEpoch;
-  /** isPending reads this, so its readers re-render when a transition starts or ends. */
-  final Node pendingCell = new Node(this, "tab:pending", 0L);
+  private boolean outOfSight;
+  private long outOfSightAt;
   /** The served page's render stopped outside any loading(...) on a value not loaded yet: it waits for it (ADR 0031). */
   private boolean waitingOnRead;
-  /** Renders of a live page that stopped the same way: what it shows stays until they can finish. */
-  private final Set<Scope> stoppedRenders = new HashSet<>();
   /** Effects wait for this tab's first socket, or a browser's first tab with one (ADR 0031). */
   private boolean live;
   /** Whether a socket is attached, for effects that watch it (ADR 0031). */
-  private Node connectedCell;
+  private ValueCell connectedCell;
   private PreloadedRoute preload;
   /** Event handlers of the elements on the page, by id (ADR 0013). */
   final Handlers handlers = new Handlers(this);
@@ -86,10 +85,12 @@ public final class Tab {
   final Clients clients = new Clients(this);
 
   /** Current URL; reads of pathParam/queryParam are tracked through it (ADR 0020). */
-  final Node routeCell;
+  final ValueCell routeCell;
   /** Resolved identity, lazily; reads of auth() are tracked through it. */
-  final Node authCell;
+  final ValueCell authCell;
+  private final ValueCell browserGeneration;
   private final Object authLock = new Object();
+  private volatile AuthCtx resolvedAuth;
 
   /** Mounted route frames, outer layout first, and the route node id of each. */
   private final List<ComponentTag> frames = new ArrayList<>();
@@ -106,14 +107,21 @@ public final class Tab {
   private Hold hold = Hold.NONE;
   private int holdSeq;
   private String heldUrl;
-  private Scope heldScope;
-  /** Scopes rendered but not sent during a hold; all re-render when it ends. */
-  private final Set<Scope> heldRenders = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+  /** What the page shows while a navigation's page loads: it works until that page replaces it. */
+  private LeftPage leftPage;
+  private boolean goingByItsOwnLoad;
+  private int preloadSeq;
+  /** Whose handler is running. Lane-only. */
+  private Scope dispatching;
+  /** How often a page on screen ended at the navigation, since it could not stay; see leaveFrames. */
+  volatile int pagesEndedEarly;
 
   /** A notFound()/redirect() raised before the socket attached, for the SSR loop to act on. */
   volatile RouteException pendingRoute;
 
   Scope root;
+  /** The root the browser has, which a navigation's new root is not until its patch goes. */
+  Scope rootOnPage;
   volatile Connection connection;
   volatile long lastActivity;
   volatile long disconnectedAt;
@@ -141,32 +149,6 @@ public final class Tab {
   volatile String mintedBrowserCookie;
   /** The token of this tab's latest cookie offer; a newer offer withdraws it, so an older one never lands last. */
   String browserCookieOffer;
-  /** Mirrors of browser cells this tab read, by source. */
-  private final Map<Node, MirrorCell> mirrors = new java.util.concurrent.ConcurrentHashMap<>();
-
-  /**
-   * What this tab follows for a cell it read. A mirror that stopped a render has lost that render's
-   * subscription and let go of the browser's cell, so it goes through the current one.
-   */
-  Cell local(Cell cell) {
-    Cell target = cell instanceof MirrorCell ? ((MirrorCell) cell).source : cell;
-    return target.tab == this ? target : mirror((Node) target);
-  }
-
-  /** This tab's copy of a browser cell, made and subscribed on first read. */
-  MirrorCell mirror(Node source) {
-    MirrorCell mirror = mirrors.get(source);
-    if (mirror == null) {
-      MirrorCell made = new MirrorCell(this, source);
-      mirror = mirrors.putIfAbsent(source, made);
-      if (mirror == null) {
-        mirror = made;
-        made.subscribe();
-      }
-    }
-    return mirror;
-  }
-
   /**
    * Lane-only. Leaves a browser joined under another identity (ADR 0030): whatever read its state
    * re-renders, and its next use joins the browser of the identity this tab has now.
@@ -182,28 +164,28 @@ public final class Tab {
     if (old == null) {
       return;
     }
-    List<MirrorCell> readers = new ArrayList<>(mirrors.values());
-    mirrors.clear();
     engine.leaveBrowser(this, old);
-    for (MirrorCell mirror : readers) {
-      mirror.notifyObservers();
-      mirror.dispose();
-    }
+    browserGeneration.update(n -> (Long) n + 1);
   }
 
-  void forgetMirror(MirrorCell mirror) {
-    mirrors.remove(mirror.source, mirror);
+  /** Read with browser state, so whoever read it re-renders when this tab leaves its browser. */
+  void readBrowserGeneration() {
+    browserGeneration.read();
   }
 
-  Tab(J2Act engine, String id, String token, Exchange exchange, String url) {
+  Tab(J2Act engine, ReactiveHost host, String id, String token, Exchange exchange, String url) {
     this.engine = engine;
     this.id = id;
     this.token = token;
-    this.lane = new Lane(engine.executor);
+    this.host = host;
+    this.lane = host.lane;
+    this.rt = host.rt;
+    host.tabs.add(this);
     this.exchange = exchange;
     this.nonce = engine.cspNonce == null ? null : engine.cspNonce.apply(exchange);
-    this.routeCell = new Node(this, "route", new RouteInfo(url, new HashMap<>()));
-    this.authCell = new Node(this, "auth", UNRESOLVED);
+    this.routeCell = new ValueCell(this, "route", new RouteInfo(url, new HashMap<>()));
+    this.authCell = new ValueCell(this, "auth", UNRESOLVED);
+    this.browserGeneration = new ValueCell(this, "tab:browser", 0L);
     cells.put(routeCell.address, routeCell);
     cells.put(authCell.address, authCell);
     long now = engine.clock.millis();
@@ -221,15 +203,25 @@ public final class Tab {
     return tab != null ? tab : RUNNING_FOR.get();
   }
 
-  /** The tab whose lane task or query run is executing on this thread, if any. */
+  /** Installs the tab what runs next belongs to, and returns the one to put back. */
+  static Tab swapCurrent(Tab next) {
+    Tab previous = CURRENT.get();
+    if (next == null) {
+      CURRENT.remove();
+    } else {
+      CURRENT.set(next);
+    }
+    return previous;
+  }
+
+  /** The tab whose lane task or load is executing on this thread, if any. */
   static Tab current() {
     Tab tab = CURRENT.get();
-    if (tab != null) {
-      return tab;
-    }
-    LoadRun run = Tracking.run();
-    return run == null ? null : run.tab;
+    return tab != null ? tab : LOADING.get();
   }
+
+  /** The tab an async(...) body on this thread loads for. */
+  static final ThreadLocal<Tab> LOADING = new ThreadLocal<>();
 
   // ---- lane tasks
 
@@ -243,6 +235,7 @@ public final class Tab {
       if (disposed) {
         return;
       }
+      Tab previous = CURRENT.get();
       CURRENT.set(this);
       try {
         try {
@@ -251,10 +244,7 @@ public final class Tab {
           } catch (RouteException e) {
             onRouteException(e);
           }
-          // Coalesce: queued writes (e.g. a burst from a foreign thread) share one flush (ADR 0014).
-          if (afterFlush != null || !lane.hasQueued()) {
-            flush();
-          }
+          host.endJob();
         } catch (Throwable t) {
           engine.stats.failedTasks.incrementAndGet();
           engine.log(System.Logger.Level.ERROR, "tab task failed", t);
@@ -263,7 +253,11 @@ public final class Tab {
           afterFlush.run();
         }
       } finally {
-        CURRENT.remove();
+        if (previous == null) {
+          CURRENT.remove();
+        } else {
+          CURRENT.set(previous);
+        }
       }
     };
   }
@@ -277,18 +271,22 @@ public final class Tab {
   <T> T inline(Callable<T> body) {
     Object[] result = new Object[1];
     Throwable[] failure = new Throwable[1];
-    lane.runInline(() -> {
+    host.hop(() -> {
       Tab previous = CURRENT.get();
-      Observer observer = Tracking.swap(null);
-      LoadRun run = Tracking.run();
-      Tracking.clearRun();
+      Tab loading = LOADING.get();
+      LOADING.remove();
       CURRENT.set(this);
       try {
         if (disposed) {
           throw new IllegalStateException("tab " + id + " has ended");
         }
-        result[0] = body.call();
-        flush();
+        result[0] = rt.untrack(() -> {
+          try {
+            return body.call();
+          } catch (Exception e) {
+            throw Tab.<RuntimeException>sneak(e);
+          }
+        });
       } catch (Throwable t) {
         failure[0] = t;
       } finally {
@@ -297,9 +295,8 @@ public final class Tab {
         } else {
           CURRENT.set(previous);
         }
-        Tracking.swap(observer);
-        if (run != null) {
-          Tracking.setRun(run);
+        if (loading != null) {
+          LOADING.set(loading);
         }
       }
     });
@@ -338,6 +335,11 @@ public final class Tab {
     });
   }
 
+  @SuppressWarnings("unchecked")
+  private static <E extends Throwable> RuntimeException sneak(Throwable t) throws E {
+    throw (E) t;
+  }
+
   void post(Runnable body) {
     lane.execute(task(body));
   }
@@ -352,7 +354,7 @@ public final class Tab {
       CURRENT.set(this);
       try {
         result.complete(body.call());
-        flush();
+        host.endJob();
       } catch (Throwable t) {
         result.completeExceptionally(t);
       } finally {
@@ -461,17 +463,14 @@ public final class Tab {
     Tab previous = MAKING_STORE.get();
     MAKING_STORE.set(this);
     Store previousStore = Store.swapConstructing(null);
-    Observer previousObserver = Tracking.swap(null);
     // A store outlives the component that first asked for it, so it owns what it creates.
     Scope previousSetup = Scope.swapSettingUp(null);
     T instance;
     try {
-      instance = create.get();
-      // What a container's @PostConstruct wrote is there before anyone reads the store.
-      applyWrites();
+      // What a container's @PostConstruct writes is there before anyone reads the store: nothing tracks this.
+      instance = rt.runWithOwner(null, () -> rt.untrack(create));
     } finally {
       Scope.swapSettingUp(previousSetup);
-      Tracking.swap(previousObserver);
       Store.swapConstructing(previousStore);
       if (previous == null) {
         MAKING_STORE.remove();
@@ -539,24 +538,31 @@ public final class Tab {
 
   /** The tab's identity, resolving it on first use. Safe from loader threads. */
   AuthCtx currentAuth() {
-    Object value = authCell.peek();
-    if (value != UNRESOLVED) {
+    Object value = resolvedAuth;
+    if (value != null) {
       return (AuthCtx) value;
     }
     synchronized (authLock) {
-      value = authCell.peek();
-      if (value == UNRESOLVED) {
-        value = engine.resolveIdentity(exchange);
-        authCell.initialize(value);
+      if (resolvedAuth == null) {
+        AuthCtx resolved = engine.resolveIdentity(exchange);
+        resolvedAuth = resolved;
+        if (lane.isCurrent()) {
+          authCell.initialize(resolved);
+        } else {
+          // From a loader's thread: the lane may be waiting for this lock, so it hears later.
+          post(() -> authCell.write(resolved));
+        }
       }
-      return (AuthCtx) value;
+      return resolvedAuth;
     }
   }
 
   /** Tracked read for auth(): a render or loader that reads it re-runs when identity changes. */
   AuthCtx readAuth() {
-    currentAuth();
-    return (AuthCtx) authCell.read();
+    AuthCtx resolved = currentAuth();
+    Object value = authCell.read();
+    // On a loader's thread, this read can get ahead of the write currentAuth() posted.
+    return value == UNRESOLVED ? resolved : (AuthCtx) value;
   }
 
   /**
@@ -565,15 +571,18 @@ public final class Tab {
    * handlers that no longer render, all before the event is looked up.
    */
   private void recheckIdentity() {
-    if (!engine.hasIdentity() || authCell.peek() == UNRESOLVED) {
+    if (!engine.hasIdentity() || resolvedAuth == null) {
       return;
     }
     AuthCtx fresh = engine.resolveIdentity(exchange);
-    if (fresh.equals(authCell.peek())) {
+    if (fresh.equals(resolvedAuth)) {
       return;
     }
-    authCell.setOnLane(fresh);
+    resolvedAuth = fresh;
+    authCell.write(fresh);
     engine.identityChanged(this, fresh);
+    // The guards below are those of the page to come, so nothing else would stop this page's handlers.
+    discardLeftPage();
     Verdict verdict = checkGuards(guards, fresh);
     if (verdict.kind == Verdict.Kind.REDIRECT) {
       navigate(verdict.target, "replace");
@@ -642,17 +651,21 @@ public final class Tab {
     while (common < frameIds.size() && common < next.size() && frameIds.get(common).equals(next.get(common).id)) {
       common++;
     }
-    for (int i = frames.size() - 1; i >= common; i--) {
-      frames.remove(i);
-      frameIds.remove(i);
+    LeftPage back = leftPageFor(common, next);
+    leaveFrames(common);
+    PreloadedRoute adopted = back != null ? null : takePreload(resolution, common);
+    if (back != null) {
+      discardPreload();
     }
-    PreloadedRoute adopted = takePreload(resolution, common);
     for (int i = common; i < next.size(); i++) {
       ComponentTag instance;
-      if (adopted != null) {
+      if (back != null) {
+        instance = back.frames.get(i - common);
+      } else if (adopted != null) {
         instance = adopted.instances.get(i - common);
       } else {
         instance = next.get(i).factory.get();
+        instance.routeFrame = true;
         if (i > 0) {
           instance.withKey(next.get(i).id);
         }
@@ -672,26 +685,162 @@ public final class Tab {
     }
     guards = new ArrayList<>(match.guards);
     RouteInfo nextRoute = new RouteInfo(resolution.url, match.params);
-    if (common == next.size() && common > 0) {
-      // The same page with new parameters: what it reloads holds the route, as any write (ADR 0031).
-      routeCell.writeNow(nextRoute);
-    } else {
-      routeCell.setOnLane(nextRoute);
-    }
+    // The same page with new parameters: what it reloads holds the route, as any write (ADR 0031).
+    routeCell.write(nextRoute);
     if (adopted != null) {
       adopt(adopted);
     }
-    if (common == 0) {
-      if (root != null) {
-        root.dispose();
+    LeftPage left = leftPage();
+    if (common == 0 && root != null && (left == null || left.top() != root)) {
+      root.dispose();
+    }
+    if (back != null) {
+      for (ComponentTag frame : back.frames) {
+        frame.scope.frameRoute.follow();
       }
-      root = new Scope(this, null, "frame:" + frameIds.get(0));
-      root.bind(frames.get(0));
+      leftPage = null;
+    }
+    // A write shows after a flush, and a new page's first run comes before one: it would load the last URL's data.
+    if (common < next.size() && !rt.flushing()) {
+      rt.flush();
+    }
+    if (common == 0) {
+      if (back != null) {
+        root = frames.get(0).scope;
+      } else {
+        if (rootOwner == null) {
+          rootOwner = rt.createTabRoot();
+        }
+        root = new Scope(this, null, "frame:" + frameIds.get(0), rootOwner);
+        root.bind(frames.get(0));
+      }
       markDirty(root);
-      heldScope = root;
     } else if (frames.get(common - 1).scope != null) {
       markDirty(frames.get(common - 1).scope);
-      heldScope = frames.get(common - 1).scope;
+    }
+  }
+
+  /** The frames a navigation is leaving, still on screen. As in Solid Router, they read the URL they show. */
+  private static final class LeftPage {
+    final int common;
+    final List<String> ids;
+    final List<ComponentTag> frames;
+    /** The URL it shows. */
+    final RouteInfo route;
+
+    LeftPage(int common, List<String> ids, List<ComponentTag> frames, RouteInfo route) {
+      this.common = common;
+      this.ids = ids;
+      this.frames = frames;
+      this.route = route;
+    }
+
+    Scope top() {
+      return frames.get(0).scope;
+    }
+
+    boolean holds(Scope scope) {
+      Scope top = top();
+      for (Scope s = scope; s != null; s = s.parent) {
+        if (s == top) {
+          return true;
+        }
+      }
+      return false;
+    }
+  }
+
+  /** The left page, unless what replaces it has come. */
+  private LeftPage leftPage() {
+    if (leftPage != null && leftPage.top() == null) {
+      leftPage = null;
+    }
+    return leftPage;
+  }
+
+  /** The left page if this navigation goes back to it: nothing replaced it, so it just carries on. */
+  private LeftPage leftPageFor(int common, List<PageMatch.Frame> next) {
+    LeftPage left = leftPage();
+    if (left == null || left.common != common || left.ids.size() != next.size() - common) {
+      return null;
+    }
+    for (int i = 0; i < left.ids.size(); i++) {
+      if (!left.ids.get(i).equals(next.get(common + i).id)) {
+        return null;
+      }
+    }
+    return left;
+  }
+
+  /**
+   * Lane-only. What the page shows stays until what replaces it comes: its parent's pass or the new root's patch ends
+   * it. Until then it reads its own URL, so it does not load for the one being navigated to. What no user ever saw goes
+   * now. So does a page with a load of its own under way in a hold: the next page could not show until it lands, and a
+   * load that ends in a redirect never does.
+   */
+  private void leaveFrames(int common) {
+    if (frames.size() <= common) {
+      return;
+    }
+    LeftPage left = leftPage();
+    // With a page already left under them, it is the rest of what the page shows, and they read the URL it shows.
+    int end = left == null ? frames.size() : left.common;
+    boolean onScreen = common < end && !goingByItsOwnLoad;
+    for (int i = common; onScreen && i < end; i++) {
+      Scope scope = frames.get(i).scope;
+      onScreen = scope != null && scope.onThePageAllTheWay() && !holdingForItself(scope, left);
+    }
+    if (!onScreen && common < end && frames.get(common).scope != null && frames.get(common).scope.onThePageAllTheWay()) {
+      pagesEndedEarly++;
+    }
+    if (onScreen) {
+      List<String> ids = new ArrayList<>(frameIds.subList(common, end));
+      List<ComponentTag> kept = new ArrayList<>(frames.subList(common, end));
+      FrameRouteCell top = kept.get(0).scope.frameRoute;
+      RouteInfo shows = left != null ? left.route : (RouteInfo) top.peek();
+      top.stop(shows);
+      if (left != null) {
+        ids.addAll(left.ids);
+        kept.addAll(left.frames);
+        for (int i = 0; i < end - common; i++) {
+          // What it placed last was never shown.
+          ((Layout) kept.get(i)).content = kept.get(i + 1);
+          markDirty(kept.get(i).scope);
+        }
+      }
+      leftPage = new LeftPage(common, ids, kept, shows);
+    }
+    for (int i = frames.size() - 1; i >= common; i--) {
+      ComponentTag leaving = frames.remove(i);
+      frameIds.remove(i);
+      if ((!onScreen || i >= end) && i > 0 && leaving.scope != null) {
+        leaving.scope.dispose();
+      }
+    }
+  }
+
+  /** Whether this frame, kept, would keep the next page from showing. A page left under it says nothing about it. */
+  private boolean holdingForItself(Scope scope, LeftPage left) {
+    if (!rt.holding()) {
+      return false;
+    }
+    if (left == null) {
+      return !scope.settledBelow();
+    }
+    java.util.Set<Scope> below = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    for (ComponentTag frame : frames) {
+      below.add(frame.scope);
+    }
+    below.add(left.top());
+    return scope.loadingBesides(below);
+  }
+
+  /** Lane-only. Nothing of it may go on, as when the identity it ran as is gone. */
+  private void discardLeftPage() {
+    LeftPage left = leftPage();
+    leftPage = null;
+    if (left != null) {
+      left.top().dispose();
     }
   }
 
@@ -717,20 +866,14 @@ public final class Tab {
     flush();
   }
 
-  /** New page data arrived, or pendingMs passed: re-render it fresh and send it with its URL. */
+  /** New page data arrived, or pendingMs passed: what rendered goes out, with its URL. */
   private void showHeldPage(int seq) {
     boolean stillLoading = awaitingData();
     hold = Hold.NONE;
-    if (heldScope != null && !heldScope.disposed) {
-      markDirty(heldScope);
+    if (connection != null) {
+      sendUnsent();
+      sendHead();
     }
-    for (Scope scope : heldRenders) {
-      if (!scope.disposed) {
-        markDirty(scope);
-      }
-    }
-    heldRenders.clear();
-    flush();
     if (heldUrl != null) {
       send(heldUrl);
       heldUrl = null;
@@ -740,34 +883,58 @@ public final class Tab {
       engine.later(this, engine.pendingMinMillis, () -> {
         if (hold == Hold.SHOWING_LOADING && holdSeq == seq) {
           hold = Hold.NONE;
-          if (heldScope != null && !heldScope.disposed) {
-            markDirty(heldScope);
-          }
+          sendUnsent();
         }
       });
     }
   }
 
-  /** A read outside any loading(...) the page waits for, or a transition it would tear. */
+  /**
+   * A read outside any loading(...) the page waits for, or a change it would tear. Asked of the whole browser's
+   * runtime, so another tab's load can keep a navigation back too, for no longer than pendingMs.
+   */
   private boolean awaitingData() {
-    stoppedRenders.removeIf(scope -> scope.disposed);
-    return !stoppedRenders.isEmpty() || !transitions.isEmpty();
+    return rt.holding();
   }
 
   /** Renders the fallback (or a plain message) in place, keeping the URL. */
   void showNotFound() {
     PageMatch fallback = engine.resolver.fallback();
-    String url = ((RouteInfo) routeCell.peek()).url();
+    String url = ((RouteInfo) rt.peek(routeCell.node)).url();
     applyRoute(new Resolution(url, fallback != null ? fallback : messageMatch("Not found"), 404));
   }
 
   private void showMessage(String title, int status) {
-    applyRoute(new Resolution(((RouteInfo) routeCell.peek()).url(), messageMatch(title), status));
+    applyRoute(new Resolution(((RouteInfo) rt.peek(routeCell.node)).url(), messageMatch(title), status));
   }
 
   private static PageMatch messageMatch(String title) {
     return PageMatch.fallback(java.util.Collections.singletonList(
       new PageMatch.Frame("builtin:" + title, () -> new MessagePage(title))));
+  }
+
+  /** Lane-only. A load's notFound() or redirect(). A page gone or being left no longer says where the user goes. */
+  void onLoadsRouteException(Scope scope, RouteException e) {
+    if (scope != null && scope.disposed) {
+      return;
+    }
+    if (onLeftPage(scope)) {
+      discardLeftPage();
+      pagesEndedEarly++;
+    } else {
+      // That load never lands, so the page it is on cannot stay until the next one comes.
+      goingByItsOwnLoad = true;
+      try {
+        onRouteException(e);
+      } finally {
+        goingByItsOwnLoad = false;
+      }
+    }
+  }
+
+  private boolean onLeftPage(Scope scope) {
+    LeftPage left = leftPage();
+    return left != null && scope != null && left.holds(scope);
   }
 
   /** Lane-only. A notFound()/redirect() from a render, loader or handler. */
@@ -788,23 +955,31 @@ public final class Tab {
 
   // ---- rendering
 
+  /** The served page: its root's HTML, or null when it stopped on a read outside any loading(...), and waits. */
   String renderFull() {
-    Renderer renderer = new Renderer(this, ++epoch);
-    renderer.nonce = nonce;
     waitingOnRead = false;
-    try {
-      renderer.renderScope(root);
-    } catch (RouteException e) {
-      onRouteException(e);
-      return null;
-    } catch (NotReady e) {
-      waitingOnRead = true;
-      root.waitFor(e.cell);
+    applyDirty();
+    host.endJob();
+    if (pendingRoute != null) {
       return null;
     }
-    runEffects();
+    if (root.effect != null && rt.pending(root.effect)) {
+      waitingOnRead = true;
+      return null;
+    }
+    if (root.renderFailure != null) {
+      Throwable t = root.renderFailure;
+      if (t instanceof RuntimeException) {
+        throw (RuntimeException) t;
+      }
+      throw (Error) t;
+    }
+    if (root.rendered == null) {
+      waitingOnRead = true;
+      return null;
+    }
     lastHead = mergedHead();
-    return "<!DOCTYPE html>" + renderer.out;
+    return "<!DOCTYPE html>" + root.rendered;
   }
 
   /**
@@ -841,7 +1016,8 @@ public final class Tab {
   }
 
   private void remountFrom(int index) {
-    String url = ((RouteInfo) routeCell.read()).url();
+    discardLeftPage();
+    String url = ((RouteInfo) rt.peek(routeCell.node)).url();
     Scope stale = frames.get(index).scope;
     if (index > 0 && stale != null) {
       stale.dispose();
@@ -858,46 +1034,233 @@ public final class Tab {
   }
 
   void markDirty(Scope scope) {
-    if (preload != null && scope.preloading()) {
-      // Re-rendered offscreen by flush(), never patched to the client.
-      preload.dirty = true;
-      return;
-    }
     if (!scope.disposed && !scope.dirty) {
       scope.dirty = true;
       dirty.add(scope);
     }
   }
 
-  /** Re-renders the topmost dirty scopes and sends one patch each. No-op until a socket is attached. */
-  void flush() {
-    applyWrites();
-    runEffects();
-    applyWrites();
-    if (preload != null && preload.dirty) {
-      renderPreload(preload);
+  void clearDirty(Scope scope) {
+    dirty.remove(scope);
+    scope.dirty = false;
+  }
+
+  boolean hasDirty() {
+    return !dirty.isEmpty();
+  }
+
+  /** Lane-only. Starts or re-runs what was marked: the topmost of them, since a pass renders what it places. */
+  void applyDirty() {
+    if (dirty.isEmpty()) {
+      return;
     }
+    List<Scope> scopes = new ArrayList<>(dirty);
+    for (Scope scope : scopes) {
+      if (scope.disposed) {
+        clearDirty(scope);
+      } else if (!hasDirtyAncestor(scope)) {
+        clearDirty(scope);
+        if (scope.effect == null) {
+          scope.startEffect();
+        } else {
+          rt.rerun(scope.effect);
+        }
+      }
+    }
+    dirty.removeIf(scope -> scope.disposed);
+  }
+
+  /** The epoch of the outermost pass running, so a component placed twice in one pass is found out. */
+  void enterRender() {
+    if (renderDepth++ == 0) {
+      renderEpoch++;
+    }
+  }
+
+  void exitRender() {
+    renderDepth--;
+  }
+
+  void nextRenderPass() {
+    renderEpoch++;
+  }
+
+  long renderEpoch() {
+    return renderEpoch;
+  }
+
+  /** The page's CSP nonce goes only into what is served, never a patch. */
+  String nonceFor(Scope scope) {
+    return shellSent ? null : nonce;
+  }
+
+  void deferRoute(Scope scope, RouteException e) {
+    if (deferredRoute == null && !onLeftPage(scope)) {
+      deferredRoute = e;
+    }
+  }
+
+  void forgetScope(Scope scope) {
+    dirty.remove(scope);
+    unsent.remove(scope);
+  }
+
+  /** The second half of a scope's render effect: its patch goes when this flush ends, if it can. */
+  void queuePatch(Scope scope) {
+    if (scope.preloading()) {
+      forget(scope);
+      return;
+    }
+    if (scope == root && !shellSent) {
+      // The served page takes this HTML itself.
+      scope.sent = scope.html;
+      return;
+    }
+    unsent.add(scope);
+  }
+
+  private void sendUnsent() {
+    if (connection == null && stream == null) {
+      return;
+    }
+    List<Scope> scopes = new ArrayList<>(unsent);
+    unsent.clear();
+    // Outermost first: a patch of what is around a scope would undo one of the scope itself.
+    scopes.sort(java.util.Comparator.comparingInt(Tab::depth));
+    for (int i = 0; i < scopes.size(); i++) {
+      Scope scope = scopes.get(i);
+      if (scope.disposed || scope.html == null) {
+        continue;
+      }
+      if (!scope.onThePage()) {
+        scope.sent = null;
+        continue;
+      }
+      if (connection == null) {
+        if (scope != root) {
+          stream.patch(scope.anchor, scope.html);
+        } else {
+          unsent.add(scope);
+        }
+      } else {
+        scope.sent = scope.html;
+        if (scope == root && rootOnPage != root) {
+          Scope replaced = rootOnPage;
+          rootOnPage = root;
+          // It stayed until now so that it kept working; its page is what this patch replaces.
+          if (replaced != null) {
+            replaced.dispose();
+          }
+        }
+        // What an ancestor last sent no longer describes the page below it.
+        for (Scope s = scope.parent; s != null; s = s.parent) {
+          s.sent = null;
+        }
+        send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope.parent == null ? true : null, "html", scope.html));
+        engine.stats.patches.incrementAndGet();
+        behindThisPatch(scope, scope.html, scopes, i + 1);
+      }
+    }
+  }
+
+  /**
+   * A render during a hold can carry a scope below it as it was before the hold, so what the page has of that scope
+   * is now older than the scope itself: it needs its own patch, or nothing would ever correct it.
+   */
+  private void behindThisPatch(Scope scope, String sent, List<Scope> scopes, int next) {
+    for (Scope child : scope.children.values()) {
+      if (child.disposed || child.html == null || child.detached || !sent.contains("data-j2-scope=\"" + child.anchor + "\"")) {
+        continue;
+      }
+      if (sent.contains(child.html)) {
+        behindThisPatch(child, child.html, scopes, next);
+      } else {
+        // Next, even if it already went: this patch replaced it.
+        scopes.subList(next, scopes.size()).remove(child);
+        scopes.add(next, child);
+      }
+    }
+  }
+
+  /** During a hold: the page on screen goes on working, and nothing of the page to come is in what it patches. */
+  private void sendLeftPage() {
+    LeftPage left = leftPage();
+    if (left == null) {
+      return;
+    }
+    List<Scope> others = new ArrayList<>();
+    for (Scope scope : unsent) {
+      if (!left.holds(scope)) {
+        others.add(scope);
+      }
+    }
+    unsent.removeAll(others);
+    sendUnsent();
+    unsent.addAll(others);
+  }
+
+  private static int depth(Scope scope) {
+    int depth = 0;
+    for (Scope s = scope.parent; s != null; s = s.parent) {
+      depth++;
+    }
+    return depth;
+  }
+
+  /** Lane-only. Re-renders what changed and sends it. Runs the whole browser's reactivity. */
+  void flush() {
+    host.endJob();
+  }
+
+  /** Lane-only. A flush ended: this tab's patches and what waits for them. */
+  void afterFlush() {
+    if (disposed) {
+      return;
+    }
+    RouteException route = deferredRoute;
+    deferredRoute = null;
+    if (route != null) {
+      onRouteException(route);
+    }
+    settled();
     if (connection == null) {
       if (stream != null) {
-        renderDirty(true);
+        sendUnsent();
         endStreamIfDone();
       }
       return;
     }
+    // What replaces the page on screen is ready, and that page has gone: it cannot wait for anything else.
+    boolean replaced = leftPage != null && leftPage() == null;
     if (hold == Hold.SHOWING_LOADING) {
-      return; // loading() stays up until its minimum time; the timer re-renders
+      if (replaced) {
+        sendUnsent();
+      } else {
+        sendLeftPage();
+      }
+      return; // loading() stays up until its minimum time; the timer sends what waited
     }
     if (hold == Hold.AWAITING_DATA) {
-      // Render so the new page's queries start, but keep the old page on screen.
-      renderDirty(false);
-      if (!awaitingData()) {
+      // It rendered, so the new page's loads started, but the old page stays on screen.
+      if (replaced || !awaitingData()) {
         showHeldPage(holdSeq);
+      } else {
+        sendLeftPage();
       }
       return;
     }
-    renderDirty(true);
+    sendUnsent();
+    sendHead();
     clients.sendOutbox();
     fireSettled();
+  }
+
+  private void sendHead() {
+    String head = mergedHead();
+    if (!head.equals(lastHead)) {
+      lastHead = head;
+      send(Json.object("type", "head", "html", head));
+    }
   }
 
   /**
@@ -906,7 +1269,14 @@ public final class Tab {
    */
   PageStream openStream(String html) {
     shellSent = true;
+    rootOnPage = root;
+    if (root.html != null && !html.equals("<!DOCTYPE html>" + root.html)) {
+      // A change came between rendering this response and sending it: the page gets what it missed as a patch.
+      root.sent = null;
+      unsent.add(root);
+    }
     if (showingFallback.isEmpty() || !html.endsWith("</body></html>")) {
+      applyVisibility();
       return null;
     }
     stream = new PageStream(this, nonce, "</body></html>");
@@ -932,6 +1302,7 @@ public final class Tab {
     if (ending != null) {
       ending.end();
     }
+    applyVisibility();
   }
 
   /** Lane-only. The response is gone, so nothing streams any more. */
@@ -942,166 +1313,6 @@ public final class Tab {
   /** Whether a load's notFound() can still change the response: no longer once the shell is out, with no socket. */
   boolean streamingShell() {
     return shellSent && connection == null && stream != null;
-  }
-
-  /** Lane-only. A write of this lane task, applied with the others at its end. */
-  void batch(Node cell, Object next) {
-    batch.put(cell, next);
-  }
-
-  /** Lane-only. What an update starts from: this task's last write, else the newest value. */
-  Object batched(Node cell) {
-    return batch.containsKey(cell) ? batch.get(cell) : cell.peekLatest();
-  }
-
-  /** Lane-only. Applies this task's writes: at once, or held if they reload something on screen. */
-  void applyWrites() {
-    if (batch.isEmpty()) {
-      return;
-    }
-    Map<Node, Object> writes = new java.util.LinkedHashMap<>(batch);
-    batch.clear();
-    apply(writes, null);
-  }
-
-  /** Lane-only. One write outside a batch: a parent's render passing a Prop, or a route. */
-  void applyWrite(Node cell, Object next) {
-    apply(java.util.Collections.singletonMap(cell, next), null);
-  }
-
-  /**
-   * Lane-only. Applies writes. Those that make an async value on screen reload are held in a
-   * transition until it landed, with everything sharing a load or a write entangled (ADR 0031).
-   */
-  void apply(Map<Node, Object> given, Transition into) {
-    Map<Node, Object> writes = new java.util.LinkedHashMap<>();
-    given.forEach((cell, next) -> {
-      if (cell.changedBy(next)) {
-        writes.put(cell, next);
-      }
-    });
-    if (writes.isEmpty()) {
-      return;
-    }
-    Set<Node> below = new java.util.LinkedHashSet<>();
-    for (Node cell : writes.keySet()) {
-      below.addAll(cell.nodesBelow());
-    }
-    boolean reloads = false;
-    Transition target = into;
-    for (Node node : below) {
-      reloads |= node.holdsWrites();
-      if (node.transition != null) {
-        target = merged(target, node.transition);
-      }
-    }
-    if (reloads) {
-      for (Node node : below) {
-        Transition lane = node.laneTransition();
-        if (lane != null) {
-          target = merged(target, lane);
-        }
-      }
-    }
-    for (Node cell : writes.keySet()) {
-      if (cell.transition != null) {
-        target = merged(target, cell.transition);
-      }
-    }
-    if (target == null && !reloads) {
-      writes.forEach(Node::setOnLane);
-      return;
-    }
-    if (target == null) {
-      target = new Transition(this);
-      transitions.add(target);
-    }
-    Transition transition = target.current();
-    writes.forEach(transition::hold);
-    transition.enrollBelow(below, false);
-    Transition current = transition.current();
-    pendingChanged();
-    for (Node load : new ArrayList<>(current.loads())) {
-      if (below.contains(load)) {
-        load.start(false);
-      }
-    }
-    current.current().commitIfDone();
-  }
-
-  private static Transition merged(Transition into, Transition other) {
-    Transition current = other.current();
-    if (into == null) {
-      return current;
-    }
-    into.current().merge(current);
-    return into.current();
-  }
-
-  /**
-   * Lane-only. Loads a value again, quietly: if it is on screen, what follows it reloads with it and
-   * everything changes in one update. Nothing on screen has nothing to hold.
-   */
-  void refresh(Node load) {
-    if (!refreshing.add(load)) {
-      return; // Every refresh in one lane task is one load, as in Solid.
-    }
-    if (refreshing.size() == 1) {
-      post(refreshing::clear);
-    }
-    if (load.transition != null) {
-      load.start(false);
-      return;
-    }
-    if (!load.holdsWrites()) {
-      load.start(false);
-      return;
-    }
-    Transition transition = new Transition(this);
-    transitions.add(transition);
-    refreshInto(load, transition);
-  }
-
-  /** Lane-only. A refresh outside an action: its future finishes when all that followed it has landed too. */
-  void refresh(Node load, java.util.concurrent.CompletableFuture<Object> landed) {
-    refresh(load);
-    if (load.transition == null) {
-      if (load.loading()) {
-        load.addWaiter(landed);
-      } else if (load.lastError() != null) {
-        // A body that threw at once has landed by now.
-        landed.completeExceptionally(load.lastError());
-      } else {
-        landed.complete(load.peek());
-      }
-      return;
-    }
-    load.transition.current().onCommit(() -> {
-      if (load.lastError() != null) {
-        landed.completeExceptionally(load.lastError());
-      } else {
-        landed.complete(load.peek());
-      }
-    });
-  }
-
-  /** Lane-only. A load joins a transition, with everything that follows it. */
-  void refreshInto(Node load, Transition into) {
-    Transition transition = into.current();
-    if (load.transition != null && load.transition.current() != transition) {
-      transition.merge(load.transition.current());
-    }
-    // Even with nothing on screen: the action asked for it, so its commit waits for it.
-    transition = transition.current();
-    transition.addLoad(load, true);
-    transition.enrollBelow(load.nodesBelow(), true);
-    // What follows it runs on its result, when it lands (Transition.reflow).
-    load.start(false);
-  }
-
-  /** Lane-only. isPending's readers re-render. */
-  void pendingChanged() {
-    pendingCell.setOnLane((Long) pendingCell.peek() + 1);
   }
 
   /** Lane-only. The update went out: onSettled callbacks whose subtree has finished loading run now. */
@@ -1117,23 +1328,51 @@ public final class Tab {
         hook.fire();
       }
     }
-    // What the callbacks wrote goes out with them.
-    applyWrites();
-    runEffects();
-    applyWrites();
-    renderDirty(true);
+    // What the callbacks wrote goes out with them: ReactiveHost runs another flush.
     clients.sendOutbox();
+  }
+
+  /** A tab nobody can see holds nothing: its page is hidden, or its socket is gone (ADR 0033). */
+  void setHidden(boolean hidden) {
+    pageHidden = hidden;
+    applyVisibility();
+  }
+
+  private void applyVisibility() {
+    if (hubFor == null && rootOwner != null) {
+      // With no socket, and no response still streaming, nobody is looking at what this tab shows.
+      boolean hidden = pageHidden || (connection == null && stream == null && shellSent);
+      rt.setTabHidden(rootOwner, hidden);
+      // A change could go through without this tab while it was out of sight: it reads what that left behind again.
+      if (live && outOfSight && !hidden && root != null && rt.clock() != outOfSightAt) {
+        markDirty(root);
+      }
+      if (hidden && !outOfSight) {
+        outOfSightAt = rt.clock();
+      }
+      outOfSight = hidden;
+    }
+  }
+
+  /** Whether effects may run: this tab has had a socket, or it is a browser's and one of its tabs has. */
+  boolean live() {
+    return live;
   }
 
   /** Lane-only. Effects may run now; a browser's start with its first tab that has a socket. */
   void goLive() {
+    if (!lane.isCurrent()) {
+      post(this::goLive);
+      return;
+    }
     live = true;
+    List<EffectCell> parked = new ArrayList<>(parkedEffects);
+    parkedEffects.clear();
+    for (EffectCell effect : parked) {
+      effect.schedule();
+    }
     if (browser != null && browser.hub != this) {
-      Tab hub = browser.hub;
-      hub.post(() -> {
-        hub.goLive();
-        hub.flush();
-      });
+      browser.hub.goLive();
     }
   }
 
@@ -1149,92 +1388,16 @@ public final class Tab {
     return (Boolean) connectedCell().read();
   }
 
-  private Node connectedCell() {
+  private ValueCell connectedCell() {
     if (connectedCell == null) {
-      connectedCell = new Node(this, "tab:connected", connection != null);
+      connectedCell = new ValueCell(this, "tab:connected", connection != null);
     }
     return connectedCell;
-  }
-
-  /** The nearest boundary of this kind above a scope whose own patch stopped on a read. */
-  private static Scope boundaryAbove(Scope scope, Class<?> kind) {
-    for (Scope s = scope.parent; s != null; s = s.parent) {
-      if (kind.isInstance(s.instance)) {
-        return s;
-      }
-    }
-    return null;
   }
 
   /** The last full render stopped on a read outside any loading(...), and the served page waits for it. */
   boolean waitingOnRead() {
     return waitingOnRead;
-  }
-
-  private void renderDirty(boolean sending) {
-    for (int pass = 0; pass < 8 && !dirty.isEmpty(); pass++) {
-      List<Scope> roots = new ArrayList<>();
-      for (Scope scope : dirty) {
-        if (!scope.disposed && !hasDirtyAncestor(scope)) {
-          roots.add(scope);
-        }
-      }
-      dirty.removeIf(scope -> scope.disposed);
-      long passEpoch = ++epoch;
-      for (Scope scope : roots) {
-        if (!scope.dirty || scope.disposed) {
-          continue;
-        }
-        Renderer renderer = new Renderer(this, passEpoch);
-        try {
-          renderer.renderScope(scope);
-        } catch (RouteException e) {
-          onRouteException(e);
-          return;
-        } catch (NotReady e) {
-          scope.waitFor(e.cell);
-          Scope boundary = boundaryAbove(scope, Loading.class);
-          if (boundary != null) {
-            markDirty(boundary);
-          } else {
-            // Nothing to fall back on: the page keeps what it shows until the value lands (ADR 0031).
-            stoppedRenders.add(scope);
-          }
-          continue;
-        } catch (LoadFailed e) {
-          scope.waitFor(e.cell);
-          Scope boundary = boundaryAbove(scope, Errored.class);
-          if (boundary != null) {
-            markDirty(boundary);
-          } else {
-            engine.log(System.Logger.Level.WARNING, "a load failed with no errored(...) around its read at "
-              + scope.address, e.getCause());
-          }
-          continue;
-        }
-        stoppedRenders.remove(scope);
-        if (!sending) {
-          heldRenders.add(scope);
-        } else if (connection == null && stream != null) {
-          if (scope != root) {
-            stream.patch(scope.anchor, renderer.out.toString());
-          }
-        } else {
-          send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope == root ? true : null,
-            "html", renderer.out.toString()));
-          engine.stats.patches.incrementAndGet();
-        }
-      }
-      runEffects();
-    }
-    if (!sending || connection == null) {
-      return;
-    }
-    String head = mergedHead();
-    if (!head.equals(lastHead)) {
-      lastHead = head;
-      send(Json.object("type", "head", "html", head));
-    }
   }
 
   /** A detached scope (an action's live argument) is its own root: its owner's render never includes it. */
@@ -1249,21 +1412,7 @@ public final class Tab {
 
   /** Lane-only. Renders a component given to a client action, with its own anchor (ADR 0022). */
   String renderDetached(Scope scope) {
-    Renderer renderer = new Renderer(this, ++epoch);
-    renderer.renderScope(scope);
-    runEffects();
-    return renderer.out.toString();
-  }
-
-  private void runEffects() {
-    if (!live) {
-      // No effect runs for a page that never connects (ADR 0031).
-      return;
-    }
-    int guard = 0;
-    while (!pendingEffects.isEmpty() && guard++ < 1000) {
-      pendingEffects.poll().run();
-    }
+    return scope.renderInParent();
   }
 
   String nextAnchor() {
@@ -1325,6 +1474,7 @@ public final class Tab {
       return false;
     }
     lastActivity = engine.clock.millis();
+    dispatching = entry.scope;
     try {
       Handlers.invoke(entry, message);
       return true;
@@ -1335,7 +1485,15 @@ public final class Tab {
       engine.log(System.Logger.Level.WARNING, "event handler failed in "
         + entry.scope.instance.getClass().getName(), t);
       return false;
+    } finally {
+      dispatching = null;
     }
+  }
+
+  /** The route a handler reads: that of the page it is on, which may be one being left. Elsewhere, the tab's. */
+  ValueCell handlersRoute() {
+    Scope scope = dispatching;
+    return scope != null && lane.isCurrent() ? scope.routeCell() : routeCell;
   }
 
   /** Lane-only. A soft navigation requested by the client: a link click or back/forward. */
@@ -1383,13 +1541,16 @@ public final class Tab {
     connection = next;
     disconnectedAt = 0;
     lastActivity = engine.clock.millis();
+    pageHidden = false;
+    applyVisibility();
     // A socket takes over from a stream; with the script at the end of the page it comes after anyway.
     endStream();
     goLive();
     if (connectedCell != null) {
-      connectedCell.setOnLane(true);
+      connectedCell.write(true);
     }
-    runEffects();
+    // What starts with the socket has started by the time the page hears it is ready.
+    host.endJob();
     send(Json.object("type", "ready"));
   }
 
@@ -1397,6 +1558,7 @@ public final class Tab {
     if (connection == closed) {
       connection = null;
       disconnectedAt = engine.clock.millis();
+      applyVisibility();
       if (connectedCell != null) {
         connectedCell.write(false);
       }
@@ -1433,19 +1595,22 @@ public final class Tab {
       return;
     }
     endStream();
-    for (Until<?> until : new ArrayList<>(untils)) {
-      until.cancel();
+    for (CompletableFuture<?> waiting : new ArrayList<>(waiters)) {
+      waiting.cancel(false);
     }
-    untils.clear();
+    waiters.clear();
     if (root != null) {
       root.dispose();
     }
-    disposeStores();
-    for (MirrorCell mirror : mirrors.values()) {
-      mirror.dispose();
+    if (rootOnPage != null) {
+      rootOnPage.dispose();
     }
-    mirrors.clear();
+    if (rootOwner != null) {
+      rootOwner.dispose();
+    }
+    disposeStores();
     disposed = true;
+    engine.leaveHost(this);
     if (browser != null) {
       engine.leaveBrowser(this, browser);
     }
@@ -1453,7 +1618,7 @@ public final class Tab {
     handlers.clear();
     cells.clear();
     dirty.clear();
-    pendingEffects.clear();
+    unsent.clear();
     heads.clear();
     discardPreload();
     parkedEffects.clear();
@@ -1484,11 +1649,11 @@ public final class Tab {
     final List<String> frameIds;
     final List<ComponentTag> instances;
     final Scope root;
-    final PreloadRouteCell route;
+    final FrameRouteCell route;
     boolean dirty;
 
     PreloadedRoute(String url, int common, Scope parent, List<String> frameIds, List<ComponentTag> instances,
-      Scope root, PreloadRouteCell route) {
+      Scope root, FrameRouteCell route) {
       this.url = url;
       this.common = common;
       this.parent = parent;
@@ -1525,10 +1690,14 @@ public final class Tab {
     if (common == 0 || common >= next.size() || frames.get(common - 1).scope == null) {
       return;
     }
+    if (leftPageFor(common, next) != null) {
+      return; // It is what the page still shows, so there is nothing to mount.
+    }
     List<ComponentTag> instances = new ArrayList<>();
     List<String> ids = new ArrayList<>();
     for (int i = common; i < next.size(); i++) {
       ComponentTag instance = next.get(i).factory.get();
+      instance.routeFrame = true;
       instance.withKey(next.get(i).id);
       instances.add(instance);
       ids.add(next.get(i).id);
@@ -1543,11 +1712,12 @@ public final class Tab {
       ((Layout) instances.get(instances.size() - 1)).content = null;
     }
     Scope parent = frames.get(common - 1).scope;
-    PreloadRouteCell route = new PreloadRouteCell(this, new RouteInfo(resolution.url, resolution.match.params));
-    Scope root = new Scope(this, parent, parent.address + "/preload:" + ids.get(0));
+    FrameRouteCell route = new FrameRouteCell(this, parent.routeCell(), new RouteInfo(resolution.url, resolution.match.params));
+    // An adopted page keeps this address, and may still be on the page when its route is preloaded again.
+    Scope root = new Scope(this, parent, parent.address + "/preload" + ++preloadSeq + ":" + ids.get(0));
     PreloadedRoute p = new PreloadedRoute(resolution.url, common, parent, ids, instances, root, route);
     root.preload = p;
-    root.routeOverride = route;
+    root.frameRoute = route;
     preload = p;
     root.bind(instances.get(0));
     renderPreload(p);
@@ -1558,20 +1728,23 @@ public final class Tab {
     });
   }
 
-  /** Lane-only. Renders the preloaded subtree so its queries start; the HTML, handlers and head are dropped. */
+  /** Lane-only. Renders the preloaded subtree so its loads start; the HTML, handlers and head are dropped. */
   private void renderPreload(PreloadedRoute p) {
     p.dirty = false;
-    Renderer renderer = new Renderer(this, ++epoch);
     try {
-      renderer.renderScope(p.root);
-    } catch (RouteException e) {
+      p.root.renderInParent();
+    } catch (j2act.internal.signals.Errors.NotReadyError | j2act.internal.signals.Errors.StatusError e) {
+      // What it is waiting for lands, offscreen.
+    }
+    RouteException route = deferredRoute;
+    deferredRoute = null;
+    if (route != null) {
       // notFound() or redirect() ahead of time: the click will run into it for real.
       forget(p.root);
       discardPreload();
       return;
     }
     forget(p.root);
-    runEffects();
   }
 
   private void forget(Scope scope) {
@@ -1612,11 +1785,7 @@ public final class Tab {
       if (effect.disposed) {
         continue;
       }
-      if (effect.owner != null && effect.owner.preloading()) {
-        parkedEffects.add(effect);
-      } else {
-        effect.unpark();
-      }
+      effect.schedule();
     }
   }
 

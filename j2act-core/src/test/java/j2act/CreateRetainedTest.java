@@ -135,6 +135,39 @@ class CreateRetainedTest {
     }
   }
 
+  @TabScoped
+  public static final class KeptInAStore extends Store {
+    final Signal<String> value = createSignal("");
+    final RetainedValue<String> kept = createRetained("kept", value::get, value::set);
+  }
+
+  /** It asks for the store in its view, so the store is made and restored while that view runs. */
+  static final class AsksForItInItsView extends LiveComponent {
+    @Override protected View setup() {
+      return () -> {
+        KeptInAStore store = Reactive.useTabStore(KeptInAStore.class);
+        return T.page("n", T.div(
+          T.span("value=" + store.value.get() + ";"),
+          T.input().withId("value").onChange(e -> store.value.set(e.value()))));
+      };
+    }
+  }
+
+  @Test
+  void aStoreFirstAskedForInAViewStillGetsItsValueBack() {
+    RetainedStateTest.CountingStorage storage = new RetainedStateTest.CountingStorage();
+    try (Harness h = harness(AsksForItInItsView::new, storage, b -> { })) {
+      h.load();
+      h.connect();
+      type(h, "value", "kept");
+      String old = h.token;
+      pause(h, false);
+
+      String html = h.load("/", remount(old));
+      assertTrue(html.contains("value=kept;"), "already in the first HTML: " + html);
+    }
+  }
+
   static final class SavesUnchanged extends LiveComponent {
     @Override protected View setup() {
       var value = createSignal("x");

@@ -38,6 +38,11 @@ function start(): void {
     sid, meta(document, "j2-token"), onMessage,
     () => !leaving && !remounting && retained.phase !== "paused");
   const send = (message: ClientMessage) => connection.send(message);
+  document.addEventListener("visibilitychange", () => {
+    if (connection.ready) {
+      send({ type: "visibility", hidden: document.hidden });
+    }
+  });
   const pending = createPending();
   const uploads = createUploads(send, () => connection.token);
   const morpher = createMorpher(pending, (el, fresh) => clients.sync(el, fresh));
@@ -56,6 +61,9 @@ function start(): void {
     ready: () => {
       connection.opened();
       retained.connected();
+      if (document.hidden) {
+        send({ type: "visibility", hidden: true });
+      }
     },
     patch: (m) => {
       if (!morpher.patch(m.anchor, m.html, m.root === true)) {

@@ -21,15 +21,10 @@ final class LifecycleCell extends Cell {
 
   /** Lane-only. Runs the settled callback; what it returns runs on unmount. */
   void fire() {
-    Scope previousScope = Tracking.swapScope(owner);
-    Observer previous = Tracking.swap(null);
     try {
-      cleanup = settled.get();
+      cleanup = Tracking.in(tab, owner, settled);
     } catch (Throwable t) {
       tab.engine.log(System.Logger.Level.WARNING, "onSettled failed at " + address, t);
-    } finally {
-      Tracking.swap(previous);
-      Tracking.swapScope(previousScope);
     }
   }
 
@@ -37,13 +32,13 @@ final class LifecycleCell extends Cell {
     Runnable c = cleanup;
     cleanup = null;
     if (c != null) {
-      Scope previousScope = Tracking.swapScope(owner);
       try {
-        c.run();
+        Tracking.in(tab, owner, () -> {
+          c.run();
+          return null;
+        });
       } catch (Throwable t) {
         tab.engine.log(System.Logger.Level.WARNING, "cleanup failed at " + address, t);
-      } finally {
-        Tracking.swapScope(previousScope);
       }
     }
     super.dispose();

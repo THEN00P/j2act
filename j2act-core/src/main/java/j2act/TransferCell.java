@@ -45,7 +45,7 @@ final class TransferCell extends Cell {
 
   Snapshot read() {
     Snapshot s = snapshot;
-    onRead(s);
+    onRead();
     return s;
   }
 

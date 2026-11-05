@@ -1,8 +1,8 @@
 package j2act;
 
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
+import j2act.internal.signals.Errors.NotReadyError;
+import j2act.internal.signals.Errors.StatusError;
+import j2act.internal.signals.Node;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,12 +28,14 @@ final class Renderer {
   /** Renders a scope; a read that stops it unwinds up to a boundary, with what is mounted kept (ADR 0031). */
   void renderScope(Scope scope) {
     try {
-      if (scope.instance instanceof Boundary) {
+      if (scope.instance instanceof Reveal) {
+        renderReveal(scope);
+      } else if (scope.instance instanceof Boundary) {
         renderBoundary(scope);
       } else {
         renderComponent(scope);
       }
-    } catch (NotReady | LoadFailed e) {
+    } catch (NotReadyError | StatusError e) {
       unwind(scope);
       throw e;
     }
@@ -54,7 +56,7 @@ final class Renderer {
     "table", "thead", "tbody", "tfoot", "tr", "colgroup", "select", "optgroup", "p"));
 
   /** The element being rendered, outside any component's root. */
-  private String enclosing;
+  String enclosing;
 
   private void renderBoundary(Scope scope) {
     if (enclosing != null && NO_DIV_INSIDE.contains(enclosing)) {
@@ -66,72 +68,165 @@ final class Renderer {
       throw new IllegalStateException("one boundary was rendered twice in the same pass");
     }
     scope.renderedEpoch = epoch;
-    tab.dirty.remove(scope);
-    scope.dirty = false;
-    scope.unsubscribeAll();
-    tab.handlers.begin(scope);
-    scope.previousChildren = scope.children;
-    scope.children = new java.util.LinkedHashMap<>();
+    tab.clearDirty(scope);
+    Boundary<?> boundary = (Boundary<?>) scope.instance;
+    String shown;
+    if (scope.boundaryOutput == null) {
+      // Each of these runs again on its own, in whatever job its flush falls in.
+      // A later description may add an on, or take it away, so one is there either way.
+      java.util.function.Supplier<?> on = !(boundary instanceof Loading) ? null : () -> {
+        java.util.function.Supplier<?> current = ((Loading) scope.instance).on;
+        return current == null ? null : Tracking.in(tab, scope, current);
+      };
+      scope.boundaryOutput = tab.rt.runWithOwner(scope.slot, () -> tab.rt.boundaryNode(boundary instanceof Loading,
+        previous -> Tracking.in(tab, scope, () -> renderContent(scope)),
+        () -> Tracking.in(tab, scope, () -> renderLoadingFallback(scope)),
+        (error, reset) -> Tracking.in(tab, scope, () -> renderErrorFallback(scope, error, reset)), on));
+    } else if (scope.contentNode != null) {
+      // A new description from the parent: what it wraps may be something else now.
+      tab.rt.recomputeNow(scope.contentNode);
+      scope.fallbackRedescribed = tab.rt.boundaryRedescribed(scope.boundaryOutput);
+    }
+    shown = (String) tab.rt.read(scope.boundaryOutput);
+    boolean showingFallback = tab.rt.showsFallback(scope.boundaryOutput);
+    (boundary instanceof Loading ? tab.showingFallback : tab.showingError).remove(scope);
+    if (showingFallback) {
+      (boundary instanceof Loading ? tab.showingFallback : tab.showingError).add(scope);
+    }
     out.append("<div");
     attribute("data-j2-scope", scope.anchor);
     attribute("data-j2-boundary", "");
     attribute("style", "display:contents");
     out.append('>');
-    int inner = out.length();
-    Boundary<?> boundary = (Boundary<?>) scope.instance;
-    Observer previous = Tracking.swap(scope);
+    if (shown != null) {
+      out.append(shown);
+    }
+    out.append("</div>");
+  }
+
+  /** A boundary's content, in the engine's own computation under the boundary, so what it places is caught there. */
+  private String renderContent(Scope scope) {
+    if (scope.contentNode == null && tab.rt.getOwner() instanceof Node) {
+      scope.contentNode = (Node) tab.rt.getOwner();
+    }
+    // It runs again on its own, so this can be a pass of its own, not the one that made it.
+    tab.enterRender();
+    Renderer inner = new Renderer(tab, tab.renderEpoch());
+    inner.enclosing = enclosing;
+    tab.handlers.begin(scope);
+    scope.previousChildren = scope.children;
+    scope.children = new java.util.LinkedHashMap<>();
     Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
-      try {
-        renderChildren(scope, "/0", latest(boundary).children(), false);
-        tab.showingFallback.remove(scope);
-        tab.showingError.remove(scope);
-      } catch (NotReady e) {
-        if (!(boundary instanceof Loading)) {
-          throw e;
-        }
-        out.setLength(inner);
-        keepMounted(scope);
-        scope.waitFor(e.cell);
-        tab.showingFallback.add(scope);
-        DomContent fallback = ((Loading) boundary).fallback;
-        if (fallback != null) {
-          renderNode(scope, "/fallback", fallback, false);
-        }
-      } catch (LoadFailed e) {
-        if (!(boundary instanceof Errored)) {
-          throw e;
-        }
-        out.setLength(inner);
-        keepMounted(scope);
-        scope.waitFor(e.cell);
-        tab.showingError.add(scope);
-        Node failed = e.cell;
-        java.util.function.BiFunction<Throwable, Runnable, ? extends DomContent> fallback = ((Errored) boundary).fallback;
-        if (fallback != null) {
-          renderNode(scope, "/fallback", fallback.apply(e.getCause(), () -> tab.post(failed::retry)), false);
-        }
-      }
+      inner.renderChildren(scope, "/0", latest((Boundary<?>) scope.instance).children(), false);
+      inner.finish(scope);
+    } catch (NotReadyError | StatusError e) {
+      unwind(scope);
+      throw e;
     } finally {
       scope.rendering = false;
-      Tracking.swap(previous);
       Tracking.swapScope(previousScope);
+      tab.exitRender();
     }
-    out.append("</div>");
-    finish(scope);
+    return inner.out.toString();
+  }
+
+  private String renderLoadingFallback(Scope scope) {
+    DomContent fallback = ((Loading) latest((Boundary<?>) scope.instance)).fallback;
+    return renderFallback(scope, fallback);
+  }
+
+  private String renderErrorFallback(Scope scope, Throwable error, Runnable reset) {
+    java.util.function.BiFunction<Throwable, Runnable, ? extends DomContent> fallback = ((Errored) latest((Boundary<?>) scope.instance)).fallback;
+    Runnable retry = () -> tab.post(reset);
+    return renderFallback(scope, fallback == null ? null : fallback.apply(error, retry));
+  }
+
+  /** The fallback renders as a scope of its own, which goes when the content takes over. */
+  private String renderFallback(Scope scope, DomContent fallback) {
+    // A new description from the parent runs this again with the same fallback on screen, so what is in it keeps its
+    // state. Any other run is a fallback coming back, which starts over.
+    Scope kept = scope.fallbackScope;
+    boolean same = scope.fallbackRedescribed && kept != null && !kept.disposed;
+    scope.fallbackRedescribed = false;
+    if (kept != null && !same) {
+      kept.dispose();
+    }
+    Scope own = same ? kept : new Scope(tab, scope, scope.address + "/fallback");
+    own.instance = scope.instance;
+    scope.fallbackScope = own;
+    int run = ++own.fallbackRuns;
+    tab.rt.onCleanup(() -> {
+      // During a hold this comes at the commit, so a later run may have taken the scope already.
+      if (scope.fallbackRedescribed || own.fallbackRuns != run) {
+        return;
+      }
+      if (scope.fallbackScope == own) {
+        scope.fallbackScope = null;
+      }
+      own.dispose();
+    });
+    own.previousChildren = own.children;
+    own.children = new java.util.LinkedHashMap<>();
+    tab.enterRender();
+    Renderer inner = new Renderer(tab, tab.renderEpoch());
+    inner.enclosing = enclosing;
+    tab.handlers.begin(own);
+    Scope previousScope = Tracking.swapScope(own);
+    try {
+      if (fallback != null) {
+        inner.renderNode(own, "/fallback", fallback, false);
+      }
+      inner.finish(own);
+    } finally {
+      Tracking.swapScope(previousScope);
+      tab.exitRender();
+    }
+    // No effect of its own shows this, so what it no longer places goes now.
+    own.removing.forEach(Scope::dispose);
+    own.removing.clear();
+    // What is in the fallback patches itself, so it needs to find itself in what is around it.
+    own.html = inner.out.toString();
+    return own.html;
   }
 
   private static Boundary<?> latest(Boundary<?> boundary) {
     return boundary instanceof Loading ? ((Loading) boundary).latest : ((Errored) boundary).latest;
   }
 
-  /** The children stopped partway and their output is gone: what they placed so far stays mounted, hidden. */
-  private static void keepMounted(Scope scope) {
-    Map<String, Scope> merged = new java.util.LinkedHashMap<>(scope.previousChildren);
-    merged.putAll(scope.children);
-    scope.children = merged;
-    scope.previousChildren = new java.util.LinkedHashMap<>();
+  /** Boundaries under a reveal show in its order, which the engine keeps under this scope's owner. */
+  private void renderReveal(Scope scope) {
+    if (scope.renderedEpoch == epoch) {
+      throw new IllegalStateException("one reveal was rendered twice in the same pass");
+    }
+    scope.renderedEpoch = epoch;
+    tab.clearDirty(scope);
+    Reveal reveal = (Reveal) scope.instance;
+    if (scope.revealOwner == null) {
+      scope.revealOwner = tab.rt.runWithOwner(scope.slot, () -> tab.rt.createRevealOwner(
+        () -> ((Reveal) scope.instance).order, () -> ((Reveal) scope.instance).collapsed));
+    }
+    tab.handlers.begin(scope);
+    scope.previousChildren = scope.children;
+    scope.children = new java.util.LinkedHashMap<>();
+    out.append("<div");
+    attribute("data-j2-scope", scope.anchor);
+    attribute("style", "display:contents");
+    out.append('>');
+    Scope previousScope = Tracking.swapScope(scope);
+    scope.rendering = true;
+    try {
+      tab.rt.runWithOwner(scope.revealOwner, () -> {
+        renderChildren(scope, "/0", reveal.latest.children(), false);
+        return null;
+      });
+    } finally {
+      scope.rendering = false;
+      Tracking.swapScope(previousScope);
+    }
+    out.append("</div>");
+    finish(scope);
   }
 
   private void renderComponent(Scope scope) {
@@ -140,15 +235,12 @@ final class Renderer {
         + scope.instance.getClass().getName());
     }
     scope.renderedEpoch = epoch;
-    tab.dirty.remove(scope);
-    scope.dirty = false;
-    scope.unsubscribeAll();
+    tab.clearDirty(scope);
     tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
     scope.children = new java.util.LinkedHashMap<>();
 
     Tag<?> root;
-    Observer previous = Tracking.swap(scope);
     Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
@@ -163,7 +255,6 @@ final class Renderer {
       root = scope.renderView();
     } finally {
       scope.rendering = false;
-      Tracking.swap(previous);
       Tracking.swapScope(previousScope);
     }
     emit(scope, root);
@@ -181,7 +272,7 @@ final class Renderer {
     }
     for (Scope old : scope.previousChildren.values()) {
       if (!kept.containsKey(old)) {
-        old.dispose();
+        scope.removing.add(old);
       }
     }
     scope.previousChildren = new java.util.LinkedHashMap<>();
@@ -381,6 +472,8 @@ final class Renderer {
         // An adopted preloaded page (ADR 0011): its slot is where it renders now.
         child.localPath = local;
       }
+      // Placed again before the pass that dropped it showed.
+      parent.removing.remove(child);
     } else {
       String address = parent.address + local;
       if (parent.children.containsKey(address)) {
@@ -390,6 +483,17 @@ final class Renderer {
         address = parent.address + local;
       }
       child = parent.previousChildren.get(address);
+      if (child == null) {
+        // Not placed by the last pass, but that pass has not shown yet, so it is still there.
+        for (java.util.Iterator<Scope> it = parent.removing.iterator(); it.hasNext();) {
+          Scope going = it.next();
+          if (going.address.equals(address)) {
+            child = going;
+            it.remove();
+            break;
+          }
+        }
+      }
       if (child == null || child.disposed) {
         child = new Scope(tab, parent, address);
       }
@@ -397,7 +501,8 @@ final class Renderer {
       child.bind(component);
     }
     parent.children.put(child.address, child);
-    renderScope(child);
+    child.placedInside = enclosing;
+    out.append(child.renderInParent());
   }
 
   private static Object keyOf(DomContent node) {

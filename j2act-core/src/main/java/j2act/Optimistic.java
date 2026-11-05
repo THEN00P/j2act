@@ -19,7 +19,7 @@ public final class Optimistic<T> extends Primitive implements Supplier<T> {
   @Override
   @SuppressWarnings("unchecked")
   public T get() {
-    return (T) ((Node) requireCell()).read();
+    return (T) ((ValueCell) requireCell()).read();
   }
 
   /** From an action's body: shows this value until the action ends. */
@@ -35,7 +35,7 @@ public final class Optimistic<T> extends Primitive implements Supplier<T> {
       throw new IllegalStateException("an optimistic write is undone when its action ends, so it belongs in an"
         + " action's body (ADR 0031)");
     }
-    call.overlay((Node) requireCell(), value -> change.apply((T) value));
+    ((ValueCell) requireCell()).guess(value -> change.apply((T) value));
   }
 
   @Override Cell createCell(Tab tab, String address) {
