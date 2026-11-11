@@ -41,6 +41,14 @@ final class StoreCell extends Cell {
     write(() -> shape.set(view, value));
   }
 
+  Object readPath(String[] path) {
+    return shape.readPath(view, path);
+  }
+
+  void writePath(String[] path, Object value) {
+    write(() -> shape.writePath(view, path, value));
+  }
+
   private void write(Runnable write) {
     if (tab.lane.isCurrent()) {
       write.run();

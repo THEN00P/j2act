@@ -39,6 +39,38 @@ public class Stored<T> extends Primitive implements Supplier<T> {
     ((StoreCell) requireCell()).set(value);
   }
 
+  /**
+   * One property of the value, named by a reference to its getter: reading it subscribes to that property
+   * alone, and it can be written. What the bytecode enhancer will make of a plain getter chain, by hand.
+   */
+  public <U> Part<U> at(Getter<T, U> getter) {
+    return new Part<>(this, new String[] {j2act.internal.store.Getters.property(getter)});
+  }
+
+  /** A property of a property. */
+  public <A, U> Part<U> at(Getter<T, A> first, Getter<A, U> second) {
+    return new Part<>(this, new String[] {j2act.internal.store.Getters.property(first),
+      j2act.internal.store.Getters.property(second)});
+  }
+
+  /** Three getters deep. */
+  public <A, B, U> Part<U> at(Getter<T, A> first, Getter<A, B> second, Getter<B, U> third) {
+    return new Part<>(this, new String[] {j2act.internal.store.Getters.property(first),
+      j2act.internal.store.Getters.property(second), j2act.internal.store.Getters.property(third)});
+  }
+
+  Object readPath(String[] path) {
+    Cell bound = cellOrNull();
+    if (bound == null) {
+      throw new IllegalStateException("at(...) reads a store that is bound to a tab");
+    }
+    return ((StoreCell) bound).readPath(path);
+  }
+
+  void writePath(String[] path, Object value) {
+    ((StoreCell) requireCell()).writePath(path, value);
+  }
+
   @Override Cell createCell(Tab tab, String address) {
     return new StoreCell(tab, address, initial);
   }

@@ -109,6 +109,29 @@ class JavaStoreTest {
   }
 
   @Test
+  void onePropertyIsReadAndWrittenByItsGettersNames() {
+    Object store = shape.create(new User("Ada", new Address("London", "N1")));
+    String[] city = {Getters.property((java.util.function.Function<User, Address> & java.io.Serializable) User::getAddress),
+      Getters.property((java.util.function.Function<Address, String> & java.io.Serializable) Address::getCity)};
+    assertEquals(List.of("address", "city"), List.of(city));
+    Reader<Object> cityReader = new Reader<>(() -> shape.readPath(store, city));
+    Reader<Object> name = new Reader<>(() -> shape.readPath(store, new String[] {"name"}));
+
+    shape.writePath(store, city, "Wien");
+    rt.flush();
+    assertEquals("Wien", cityReader.last);
+    assertEquals(1, name.runs, "a property nobody wrote is not read again");
+
+    shape.<User>update(store, d -> d.setName("Grace"));
+    rt.flush();
+    assertEquals("Grace", name.last);
+    assertEquals(2, cityReader.runs);
+
+    assertThrows(IllegalArgumentException.class,
+      () -> Getters.property((java.util.function.Function<User, String> & java.io.Serializable) u -> u.getName()));
+  }
+
+  @Test
   void aDraftReadsItsOwnWrites() {
     Object store = shape.create(new User("Ada", new Address("London", "N1")));
     String[] seen = new String[1];

@@ -241,6 +241,32 @@ public final class JavaShape implements StoreShape {
     return at(targetOf(view), () -> present(view));
   }
 
+  private StoreTarget follow(Object view, String[] path, int upTo) {
+    StoreTarget t = targetOf(view);
+    for (int i = 0; i < upTo; i++) {
+      Object next = rt.storeGet(t, path[i]);
+      if (!(next instanceof StoreView)) {
+        throw new IllegalStateException("at(...): " + String.join(".", java.util.Arrays.copyOf(path, i + 1))
+          + (next == null ? " is null" : " is a " + next.getClass().getName() + ", which a store does not look into"));
+      }
+      t = ((StoreView) next).target();
+    }
+    return t;
+  }
+
+  /** One property, by the fields that lead to it: tracked, and only that property. */
+  public Object readPath(Object view, String[] path) {
+    return at(targetOf(view), () -> present(rt.storeGet(follow(view, path, path.length - 1), path[path.length - 1])));
+  }
+
+  /** Writes one property, with no draft. */
+  public void writePath(Object view, String[] path, Object value) {
+    rt.setStore(view, px -> {
+      rt.storeSet(follow(px, path, path.length - 1), path[path.length - 1], unpresent(value));
+      return null;
+    });
+  }
+
   /** The committed value with nothing tracked: real objects all the way down, for saving. */
   public Object snapshot(Object view) {
     return rt.snapshot(view);
