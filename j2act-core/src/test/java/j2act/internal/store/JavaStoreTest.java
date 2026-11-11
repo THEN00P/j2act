@@ -233,6 +233,23 @@ class JavaStoreTest {
   }
 
   @Test
+  void devModeReportsABeanChangedOutsideUpdate() {
+    List<String> reports = new ArrayList<>();
+    shape.checkMutations(reports::add);
+    Object store = shape.create(new User("Ada", new Address("London", "N1")));
+
+    User given = (User) shape.value(store);
+    shape.<User>update(store, d -> d.setName("Grace"));
+    assertEquals(List.of(), reports, "a draft is what to change");
+
+    ((User) shape.value(store)).getAddress().setCity("Wien");
+    shape.value(store);
+    assertEquals(1, reports.size(), reports.toString());
+    assertEquals(true, reports.get(0).contains("Address.city"), reports.get(0));
+    assertEquals("Ada", given.getName());
+  }
+
+  @Test
   void aDraftReadsItsOwnWrites() {
     Object store = shape.create(new User("Ada", new Address("London", "N1")));
     String[] seen = new String[1];

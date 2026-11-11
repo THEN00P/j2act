@@ -58,6 +58,9 @@ final class ReactiveHost {
   j2act.internal.store.JavaShape stores() {
     if (stores == null) {
       stores = new j2act.internal.store.JavaShape(rt);
+      if (engine.devMode()) {
+        stores.checkMutations(message -> engine.log(System.Logger.Level.WARNING, message, null));
+      }
       stores.gate(new j2act.internal.store.JavaShape.Gate() {
         @Override public <T> T call(j2act.internal.signals.StoreTarget target, java.util.function.Supplier<T> op) {
           if (lane.isCurrent()) {

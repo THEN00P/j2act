@@ -54,7 +54,17 @@ public final class JavaShape implements StoreShape {
       return true;
     }
     Kinds.Kind kind = Kinds.of(value);
-    return kind == Kinds.Kind.LIST || kind == Kinds.Kind.MAP || kind == Kinds.Kind.BEAN;
+    return (kind == Kinds.Kind.LIST || kind == Kinds.Kind.MAP || kind == Kinds.Kind.BEAN) && !opaque.test(value)
+      && Unloaded.isLoaded(value);
+  }
+
+  /** What a host knows a store must not look into, beyond what a class says of itself. */
+  private java.util.function.Predicate<Object> opaque = value -> false;
+
+  /** Adds a test for objects a store treats as one value: never copied, never read into. */
+  public void opaque(java.util.function.Predicate<Object> test) {
+    java.util.function.Predicate<Object> before = opaque;
+    opaque = value -> before.test(value) || test.test(value);
   }
 
   @Override public boolean isObject(Object value) {
@@ -210,11 +220,27 @@ public final class JavaShape implements StoreShape {
 
   // ---- what application code sees
 
+  /** Dev mode's memory of the beans readers were given; null otherwise. */
+  private Handed handed;
+
+  /** Turns on the check for a bean changed outside update(...), which dev mode reports through report. */
+  public void checkMutations(java.util.function.Consumer<String> report) {
+    handed = new Handed(report);
+  }
+
   /** A store's view as application code gets it: a bean view becomes a real instance of its class. */
   Object present(Object value) {
     if (value instanceof BeanView) {
       BeanView bean = (BeanView) value;
-      return draft != null && rt.storeWriting(bean.target) ? draft.copyOf(bean) : rt.deep(bean);
+      if (draft != null && rt.storeWriting(bean.target)) {
+        return draft.copyOf(bean);
+      }
+      Object given = rt.deep(bean);
+      if (handed != null) {
+        handed.check();
+        handed.handOut(given);
+      }
+      return given;
     }
     return value;
   }
@@ -307,6 +333,9 @@ public final class JavaShape implements StoreShape {
   /** Runs change on a draft of the view's value and applies what it changed as one write. */
   @SuppressWarnings("unchecked")
   public <T> void update(Object view, Consumer<T> change) {
+    if (handed != null) {
+      handed.check();
+    }
     rt.setStore(view, px -> {
       Draft outer = draft;
       if (outer == null) {

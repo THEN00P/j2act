@@ -13,6 +13,9 @@ import java.util.Map;
  * equals and never copied, a list or map is the store's own to copy, a bean is copied by its constructor
  * without arguments and then field by field, and anything else is opaque, one value that is replaced whole.
  * Fields, not properties: a getter may load something and a setter may do more than set.
+ *
+ * A record cannot be written field by field, so it is one value: compared with equals when all it holds are
+ * values, and opaque otherwise. A set is opaque too.
  */
 public final class Kinds {
   /** What a class is to a store. */
@@ -77,8 +80,34 @@ public final class Kinds {
       || type == java.net.URI.class;
   }
 
+  /** Class.isRecord and getRecordComponents, which Java 11 bytecode cannot name. */
+  private static Class<?>[] recordComponents(Class<?> type) {
+    try {
+      if (!Boolean.TRUE.equals(Class.class.getMethod("isRecord").invoke(type))) {
+        return null;
+      }
+      Object[] components = (Object[]) Class.class.getMethod("getRecordComponents").invoke(type);
+      Class<?>[] types = new Class<?>[components.length];
+      for (int i = 0; i < components.length; i++) {
+        types[i] = (Class<?>) components[i].getClass().getMethod("getType").invoke(components[i]);
+      }
+      return types;
+    } catch (ReflectiveOperationException | RuntimeException e) {
+      return null;
+    }
+  }
+
   private static Info classify(Class<?> type) {
     if (isValue(type)) {
+      return new Info(Kind.VALUE, null);
+    }
+    Class<?>[] components = recordComponents(type);
+    if (components != null) {
+      for (Class<?> c : components) {
+        if (INFO.get(c).kind != Kind.VALUE) {
+          return new Info(Kind.OPAQUE, null);
+        }
+      }
       return new Info(Kind.VALUE, null);
     }
     if (List.class.isAssignableFrom(type)) {

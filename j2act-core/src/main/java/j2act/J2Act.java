@@ -1353,6 +1353,11 @@ public final class J2Act implements AutoCloseable {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
   }
 
+  /** Running from a project on this machine (ADR 0024): checks that cost something are on. */
+  boolean devMode() {
+    return dev != null;
+  }
+
   void log(System.Logger.Level level, String message, Throwable error) {
     if (error == null) {
       LOG.log(level, message);
