@@ -503,11 +503,16 @@
     const proxy = b.createStore(first);
     return [proxy, guard(fn => b.setStore(proxy, fn))];
   });
+  const reconcile = (value, key = "id") => {
+    const keyFn = key === null ? null : typeof key === "string" ? item => (item == null ? undefined : item[key]) : key;
+    return guard(state => b.reconcile(value, state, keyFn));
+  };
   const snapshot = guard(value => b.snapshot(value));
   const deep = guard(value => b.deep(value));
 
   const solid = {
     createStore,
+    reconcile,
     snapshot,
     deep,
     isWrappable,

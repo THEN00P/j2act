@@ -1439,6 +1439,238 @@ public final class Stores {
     return wrap(value, null, null, null);
   }
 
+  // ---- reconcile (store/reconcile.ts): the immutable-diff adoption channel
+
+  /**
+   * Port of store/reconcile.ts: adopts incoming as the backing at every level that has a view, with no copy
+   * and no write to what was given, notifies only where nodes exist, and descends into a changed pair only
+   * where something below is listened to. Rows of a keyed array match by key from the first misalignment,
+   * so a row that survives keeps its view.
+   */
+  void reconcileState(Object value, Object state, Function<Object, Object> keyFn, boolean replace) {
+    StoreTarget t = state != null && shape.isObject(state) ? shape.targetOf(state) : null;
+    if (state == null) {
+      throw new IllegalStateException("Cannot reconcile null or undefined state");
+    }
+    if (t == null || !same(t.px, state)) {
+      throw new IllegalStateException("reconcile target is not a store proxy");
+    }
+    // A user's reconcile on an optimistic family is an optimistic edit: the keyed diff is written into the draft.
+    if (optHooks != null && userWrite && t.fam != null && t.fam.opt) {
+      optHooks.reconcile(state, unwrapValue(value), keyFn);
+      return;
+    }
+    Object incoming = unwrapValue(value);
+    if (keyFn != null) {
+      Object prev = t.pb != null ? t.pb : t.v;
+      Object eq = keyFn.apply(prev);
+      if (eq != null && !sameKey(keyFn.apply(incoming), eq)) {
+        if (!replace) {
+          throw new IllegalStateException("Cannot reconcile states with different identity");
+        }
+        // A different entity at the root: the old backing is disowned and the new one adopted whole.
+        if (isOwned(prev)) {
+          owned.remove(prev);
+        } else {
+          lookupMap(t.fam).remove(prev);
+        }
+        adoptPB(t, incoming, true);
+        return;
+      }
+    }
+    applyAdopt(t, incoming, keyFn, replace);
+  }
+
+  private boolean leafSame(Object ov, Object nv) {
+    return nv != null && shape.isObject(nv) ? targetsEqual(ov, nv) : same(ov, nv);
+  }
+
+  private void applyAdopt(StoreTarget t, Object incoming, Function<Object, Object> keyFn, boolean proj) {
+    Object old = t.pb != null ? t.pb : t.v;
+    if (same(incoming, old) && !isOwned(old)) {
+      return;
+    }
+    Object prevView = optHooks != null && t.fam != null && t.fam.opt ? optHooks.view(t, old, false) : old;
+    boolean nextArr = shape.isArray(incoming);
+    adoptPB(t, incoming, false);
+    boolean bumped = t.dk == null;
+    if (shape.isArray(prevView) != nextArr) {
+      notifyFold(t, old, incoming);
+      return;
+    }
+    Map<Object, Node> nodes = t.n;
+    int nodesHit = 0;
+    if (nextArr) {
+      int plen = shape.length(prevView);
+      int nlen = shape.length(incoming);
+      if (keyFn != null) {
+        int i = 0;
+        for (int end = Math.min(plen, nlen); i < end; i++) {
+          Object nv = shape.get(incoming, i);
+          Object pvRaw = shape.get(prevView, i);
+          if (!same(pvRaw, nv) && !sameRow(pvRaw, nv, keyFn)) {
+            break;
+          }
+          if (nv != null && shape.isObject(nv) && (!same(pvRaw, nv) || isOwned(nv))) {
+            descend(unwrapValue(pvRaw), nv, keyFn, proj, t, i);
+          }
+          if (!bumped && !leafSame(pvRaw, nv)) {
+            bumpDeep(t);
+            bumped = true;
+          }
+          Node node = nodes != null ? nodes.get(i) : null;
+          if (node != null) {
+            nodesHit++;
+            notifyKeyValue(node, shape.get(old, i), nv);
+          }
+        }
+        if (!bumped && i < nlen) {
+          bumpDeep(t);
+        }
+        int structStart = i;
+        Map<Object, java.util.ArrayDeque<Integer>> prevByKey = null;
+        for (; i < nlen; i++) {
+          Object nv = shape.get(incoming, i);
+          if (nv != null && shape.isObject(nv)) {
+            Object nk = keyFn.apply(nv);
+            Object pv = null;
+            if (nk != null) {
+              if (prevByKey == null) {
+                prevByKey = new java.util.HashMap<>();
+                for (int j = structStart; j < plen; j++) {
+                  Object p = unwrapValue(shape.get(prevView, j));
+                  if (p != null && shape.isObject(p)) {
+                    Object pk = keyFn.apply(p);
+                    if (pk != null) {
+                      prevByKey.computeIfAbsent(pk, x -> new java.util.ArrayDeque<>()).add(j);
+                    }
+                  }
+                }
+              }
+              java.util.ArrayDeque<Integer> m = prevByKey.get(nk);
+              if (m != null) {
+                pv = unwrapValue(shape.get(prevView, m.poll()));
+                if (m.isEmpty()) {
+                  prevByKey.remove(nk);
+                }
+              }
+            } else {
+              pv = unwrapValue(shape.get(prevView, i));
+            }
+            descend(pv, nv, keyFn, proj, t, i);
+          }
+          Node node = nodes != null ? nodes.get(i) : null;
+          if (node != null) {
+            nodesHit++;
+            notifyKeyDiff(node, i, old, incoming);
+          }
+        }
+      } else {
+        int dlen = Math.min(plen, nlen);
+        for (int i = 0; i < nlen; i++) {
+          Object nvP = shape.get(incoming, i);
+          Object pvP = shape.get(prevView, i);
+          if (i < dlen && nvP != null && shape.isObject(nvP)) {
+            descend(unwrapValue(pvP), nvP, keyFn, proj, t, i);
+          }
+          if (!bumped && !leafSame(pvP, nvP)) {
+            bumpDeep(t);
+            bumped = true;
+          }
+          Node node = nodes != null ? nodes.get(i) : null;
+          if (node != null) {
+            nodesHit++;
+            notifyKeyDiff(node, i, old, incoming);
+          }
+        }
+      }
+      if (nodes != null && nodesHit < t.nc) {
+        for (Object key : new ArrayList<>(nodes.keySet())) {
+          if (!(key instanceof Integer && (Integer) key >= 0 && (Integer) key < nlen)) {
+            notifyKeyDiff(nodes.get(key), key, old, incoming);
+          }
+        }
+      }
+      notifyFoldTail(t, old, incoming);
+      return;
+    }
+    for (Object k : shape.keys(incoming)) {
+      Object nv = shape.get(incoming, k);
+      Object ov = shape.get(old, k);
+      if (optHooks != null && same(ov, nv) && !same(prevView, old)) {
+        ov = shape.get(prevView, k);
+      }
+      boolean isObj = nv != null && shape.isObject(nv);
+      Node node = nodes != null ? nodes.get(k) : null;
+      if (same(ov, nv) && (!isObj || !isOwned(nv))) {
+        if (node != null) {
+          nodesHit++;
+        }
+        continue;
+      }
+      if (isObj) {
+        descend(unwrapValue(shape.get(prevView, k)), nv, keyFn, proj, t, k);
+      }
+      if (!bumped && !(isObj ? targetsEqual(ov, nv) : same(ov, nv))) {
+        bumpDeep(t);
+        bumped = true;
+      }
+      if (node != null) {
+        nodesHit++;
+        notifyKeyValue(node, ov, nv);
+      }
+    }
+    if (nodes != null && nodesHit < t.nc) {
+      for (Object key : new ArrayList<>(nodes.keySet())) {
+        if (!shape.has(incoming, key)) {
+          notifyKeyDiff(nodes.get(key), key, old, incoming);
+        }
+      }
+    }
+    notifyFoldTail(t, old, incoming);
+  }
+
+  private void descend(Object pv, Object nv, Function<Object, Object> keyFn, boolean proj, StoreTarget t, Object k) {
+    if (pv == null || !shape.isObject(pv)) {
+      return;
+    }
+    StoreFamily fam = t.fam;
+    nv = unwrapValue(nv);
+    StoreTarget ct = lookupTarget(pv, fam);
+    StoreTarget nt = lookupTarget(nv, fam);
+    if (ct != null && !sameKey(ct.pk, k)) {
+      // A row that is still at its own slot of the committed frame is not this slot's.
+      if (same(shape.get(t.v, ct.pk), ct.v)) {
+        ct = null;
+      } else if (ct.u == t) {
+        ct.pk = k;
+      }
+    }
+    if (nt != null && nt != ct) {
+      if (same(nt.v, nv)) {
+        if (nt.u == t) {
+          nt.pk = k;
+        }
+        return;
+      }
+      lookupMap(fam).remove(nv);
+    }
+    if (ct == null || !shape.isWrappable(nv) || shape.isArray(pv) != shape.isArray(nv)) {
+      return;
+    }
+    if (!(k instanceof Integer) && keyFn != null) {
+      Object pk = keyFn.apply(pv);
+      Object nk = keyFn.apply(nv);
+      if (pk != null && nk != null && !sameKey(pk, nk)) {
+        return;
+      }
+    }
+    if (!proj && keyFn != null && !ct.d) {
+      return;
+    }
+    applyAdopt(ct, nv, keyFn, proj);
+  }
+
   // ---- snapshot and deep
 
   /** Tracking snapshot: subscribes to every reachable record. */

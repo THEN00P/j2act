@@ -360,6 +360,14 @@ public final class Runtime {
     stores.track(target);
   }
 
+  /**
+   * Solid's reconcile(value, key), applied to a draft: value becomes the store's by key, and a row that
+   * survives keeps its view. A null key pairs rows by position.
+   */
+  public void reconcile(Object value, Object draft, Function<Object, Object> key) {
+    stores.reconcileState(value, draft, key, false);
+  }
+
   /** Solid's snapshot(store): the current value without tracking, the source object where nothing was written. */
   public Object snapshot(Object value) {
     return stores.snapshot(value);

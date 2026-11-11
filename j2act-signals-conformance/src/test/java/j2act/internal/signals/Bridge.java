@@ -159,6 +159,11 @@ public final class Bridge {
     rt.storeTrack((StoreTarget) target);
   }
 
+  public void reconcile(Value value, Value state, Value keyFn) {
+    rt.reconcile(toJava(value), toJava(state),
+      keyFn == null || !keyFn.canExecute() ? null : item -> toJava(call(keyFn, item)));
+  }
+
   public Object snapshot(Value value) {
     return js(rt.snapshot(toJava(value)));
   }
