@@ -56,6 +56,91 @@ class StoredTest {
     }
   }
 
+  public static class Row {
+    private long id;
+    private String label;
+
+    Row() {
+    }
+
+    Row(long id, String label) {
+      this.id = id;
+      this.label = label;
+    }
+
+    public long getId() {
+      return id;
+    }
+
+    public String getLabel() {
+      return label;
+    }
+
+    /** As a JPA entity usually has it: two rows are equal when their ids are. */
+    @Override public boolean equals(Object o) {
+      return o instanceof Row && ((Row) o).id == id;
+    }
+
+    @Override public int hashCode() {
+      return Long.hashCode(id);
+    }
+  }
+
+  static final java.util.concurrent.atomic.AtomicInteger LOADS = new java.util.concurrent.atomic.AtomicInteger();
+  static final java.util.concurrent.atomic.AtomicInteger FIRST_ROW_READS = new java.util.concurrent.atomic.AtomicInteger();
+
+  /** A row that reads its own part of the projection, so it renders apart from the list. */
+  static final class RowLine extends ComponentTag {
+    private final Prop<Projection<Row>> rows = prop();
+    private final Prop<Integer> index = prop();
+
+    RowLine with(Projection<Row> r, int i) {
+      rows.set(r);
+      index.set(i);
+      return this;
+    }
+
+    @Override protected View setup() {
+      return () -> {
+        if (index.get() == 0) {
+          FIRST_ROW_READS.incrementAndGet();
+        }
+        return T.span("row:" + rows.get().get().get(index.get()).getLabel());
+      };
+    }
+  }
+
+  static final class Loaded extends LiveComponent {
+    @Override protected View setup() {
+      var rows = Reactive.createProjection(() -> Reactive.async(() -> {
+        int n = LOADS.incrementAndGet();
+        return List.of(new Row(1, "one"), new Row(2, "two v" + n));
+      }), Row::getId);
+      return () -> T.page("t", T.div(
+        new RowLine().with(rows, 0).withKey("a"),
+        new RowLine().with(rows, 1).withKey("b"),
+        T.button("again").onClick(e -> Reactive.refresh(rows))));
+    }
+  }
+
+  @Test
+  void aProjectionMergesFreshRowsByKey() {
+    LOADS.set(0);
+    FIRST_ROW_READS.set(0);
+    try (Harness h = new Harness(Loaded::new)) {
+      String html = h.load();
+      assertTrue(html.contains("row:one") && html.contains("row:two v1"), html);
+      h.connect();
+      int firstReads = FIRST_ROW_READS.get();
+
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "again"));
+      String next = h.awaitPatch(from, p -> p.contains("row:two v2")).get("html");
+      assertTrue(next.contains("row:two v2"), "rows whose equals compares ids still update: " + next);
+      assertEquals(firstReads, FIRST_ROW_READS.get(), "the row that came back the same is not rendered again");
+    }
+  }
+
   @Test
   void aStoreOnAPageIsWrittenThroughADraftOfTheRealClass() {
     GIVEN.clear();

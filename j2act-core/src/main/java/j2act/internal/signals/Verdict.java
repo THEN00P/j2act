@@ -298,7 +298,7 @@ final class Verdict {
         && (!uninitialized || (probing && (el.config & CONFIG_STAGED_ERROR) == 0))) {
         pendingVerdict(tracked ? c : null, owner);
       } else if (tracked && q.running) {
-        if (q.flushTransaction != null && el.fn == null && Objects.equals(el.pendingValue, el.value)) {
+        if (q.flushTransaction != null && el.fn == null && rt.core.nets(el)) {
           route(c, q.flushTransaction);
         } else {
           provisionalVerdict(c, !latestActive && !uninitialized);

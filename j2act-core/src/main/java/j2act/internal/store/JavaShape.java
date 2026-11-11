@@ -204,7 +204,8 @@ public final class JavaShape implements StoreShape {
   }
 
   @Override public Object draftView(Object view, DraftControl control) {
-    throw new UnsupportedOperationException("a derive that writes its draft is not built for Java objects yet");
+    // A Java derive answers its value and writes no draft, so the view stands for it.
+    return view;
   }
 
   // ---- what application code sees
@@ -234,6 +235,24 @@ public final class JavaShape implements StoreShape {
   public Object create(Object value) {
     rt.storeShape(this);
     return rt.createStore(value);
+  }
+
+  /**
+   * A derived store over a list (Solid's createProjection): derive answers the whole list, now or as a
+   * CompletionStage, and each answer is merged into the last by key, so a row that came back keeps its view
+   * and only what changed in it is told. A null key pairs rows by position.
+   */
+  public Object createProjection(j2act.internal.signals.Stores.Derive derive, java.util.function.Function<Object, Object> key) {
+    rt.storeShape(this);
+    // The engine asks a list for its key too, as Solid asks an array for its id.
+    java.util.function.Function<Object, Object> rowKey = key == null ? null
+      : row -> row instanceof List || row instanceof Map || row == null ? null : key.apply(row);
+    return rt.createProjection(derive, new ArrayList<>(), rowKey);
+  }
+
+  /** The node behind a derived store, for refresh. */
+  public j2act.internal.signals.Node derive(Object view) {
+    return rt.storeDerive(view);
   }
 
   /** The current value for the reader, tracked: a real instance for a bean, the view for a list or a map. */

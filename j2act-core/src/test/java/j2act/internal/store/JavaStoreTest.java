@@ -131,6 +131,107 @@ class JavaStoreTest {
       () -> Getters.property((java.util.function.Function<User, String> & java.io.Serializable) u -> u.getName()));
   }
 
+  public static class Row {
+    private long id;
+    private String label;
+
+    Row() {
+    }
+
+    Row(long id, String label) {
+      this.id = id;
+      this.label = label;
+    }
+
+    public long getId() {
+      return id;
+    }
+
+    public String getLabel() {
+      return label;
+    }
+
+    /** As a JPA entity usually has it: two rows are equal when their ids are. */
+    @Override public boolean equals(Object o) {
+      return o instanceof Row && ((Row) o).id == id;
+    }
+
+    @Override public int hashCode() {
+      return Long.hashCode(id);
+    }
+  }
+
+  private void drain() {
+    for (int i = 0; i < 20; i++) {
+      Runnable task;
+      while ((task = microtasks.poll()) != null) {
+        task.run();
+      }
+      rt.flush();
+    }
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void aRefreshedProjectionShowsARowsNewValue() {
+    java.util.List<java.util.concurrent.CompletableFuture<Object>> loads = new ArrayList<>();
+    List<Row>[] view = new List[1];
+    rt.createRoot(owner -> {
+      view[0] = (List<Row>) shape.createProjection(draft -> {
+        java.util.concurrent.CompletableFuture<Object> f = new java.util.concurrent.CompletableFuture<>();
+        loads.add(f);
+        return f;
+      }, row -> ((Row) row).getId());
+      return null;
+    });
+    drain();
+    loads.get(0).complete(List.of(new Row(1, "one"), new Row(2, "two v1")));
+    drain();
+    Reader<String> second = new Reader<>(() -> view[0].get(1).getLabel());
+    Reader<String> first = new Reader<>(() -> view[0].get(0).getLabel());
+    assertEquals("two v1", second.last);
+
+    rt.refresh(shape.derive(view[0]));
+    drain();
+    loads.get(1).complete(List.of(new Row(1, "one"), new Row(2, "two v2")));
+    drain();
+
+    assertEquals("two v2", second.last);
+    assertEquals(1, first.runs, "a row that came back the same is not read again");
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void aReloadHeldByItsReadersShowsARowsNewValue() {
+    java.util.List<java.util.concurrent.CompletableFuture<Object>> loads = new ArrayList<>();
+    List<Row>[] view = new List[1];
+    Runtime.SignalRef<Integer> x = rt.createSignal(0);
+    rt.createRoot(owner -> {
+      view[0] = (List<Row>) shape.createProjection(draft -> {
+        x.get();
+        java.util.concurrent.CompletableFuture<Object> f = new java.util.concurrent.CompletableFuture<>();
+        loads.add(f);
+        return f;
+      }, row -> ((Row) row).getId());
+      return null;
+    });
+    drain();
+    loads.get(0).complete(List.of(new Row(1, "one"), new Row(2, "two v1")));
+    drain();
+    Reader<String> second = new Reader<>(() -> view[0].get(1).getLabel());
+    Reader<String> first = new Reader<>(() -> view[0].get(0).getLabel());
+    assertEquals("two v1", second.last);
+
+    x.set(1);
+    drain();
+    assertEquals("two v1", second.last, "the old row stays while the new one loads");
+    loads.get(1).complete(List.of(new Row(1, "one"), new Row(2, "two v2")));
+    drain();
+
+    assertEquals("two v2", second.last);
+    assertEquals(1, first.runs, "a row that came back the same is not read again");
+  }
+
   @Test
   void aDraftReadsItsOwnWrites() {
     Object store = shape.create(new User("Ada", new Address("London", "N1")));

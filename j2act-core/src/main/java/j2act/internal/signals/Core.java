@@ -638,6 +638,16 @@ final class Core {
     }
   }
 
+  /**
+   * A staging equal to the committed value is writes that netted (D-8). Solid asks with `===`; here a value
+   * compares by content, but a store's slot holds backings and rows, which are told apart by identity: two
+   * loads of one row are equal to an equals that compares ids, and are not the same value.
+   */
+  boolean nets(Node el) {
+    return el.pendingValue == el.value
+      || ((el.config & CONFIG_SLOT_NODE) == 0 && java.util.Objects.equals(el.pendingValue, el.value));
+  }
+
   boolean readerSeesCommitted(Node el, Node c) {
     return c == null || el.pendingValue == NOT_PENDING || (c.config & CONFIG_CHILDREN_FORBIDDEN) != 0;
   }
@@ -740,7 +750,7 @@ final class Core {
       if (c == null || el.pendingValue == NOT_PENDING || (c.config & CONFIG_CHILDREN_FORBIDDEN) != 0) {
         return el.value;
       }
-      boolean netted = el.pendingValue == el.value || java.util.Objects.equals(el.pendingValue, el.value);
+      boolean netted = nets(el);
       if (netted || (((q.observeFlightHook != null && (c.config & CONFIG_VERDICT) != 0)
         || (q.laneStageHook != null && q.passLane != null && q.passLane.folded != null)) && stagedScreen(c, el))) {
         return el.value;

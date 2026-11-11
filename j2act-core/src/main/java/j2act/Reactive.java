@@ -90,6 +90,21 @@ public final class Reactive {
     return own(new Stored<>(initial));
   }
 
+  /**
+   * A list a derive answers, merged by key (ADR 0035): the usual shape for rows from a database, whose
+   * objects are new on every load. See {@link Projection}.
+   */
+  @SuppressWarnings("unchecked")
+  public static <E> Projection<E> createProjection(AsyncSupplier<java.util.List<E>> body, Function<? super E, ?> key) {
+    return own(new Projection<>(body::get, row -> key.apply((E) row)));
+  }
+
+  /** A projection over a derived list, for rows computed from other state. */
+  @SuppressWarnings("unchecked")
+  public static <E> Projection<E> createProjection(Supplier<java.util.List<E>> body, Function<? super E, ?> key) {
+    return own(new Projection<>(body::get, row -> key.apply((E) row)));
+  }
+
   /** A pure derived value, recomputed when what it read changes; readers re-render only when it changes. */
   public static <T> Memo<T> createMemo(Supplier<T> body) {
     return own(new Memo<>(body));
@@ -206,6 +221,9 @@ public final class Reactive {
    */
   @SuppressWarnings("unchecked")
   public static <T> CompletableFuture<T> refresh(Supplier<T> memo) {
+    if (memo instanceof Projection) {
+      return refreshProjection((Projection<?>) memo, memo);
+    }
     ValueCell cell = valueOf(memo, "refresh");
     Action.Call call = Action.Call.current();
     CompletableFuture<Object> landed = new CompletableFuture<>();
@@ -225,6 +243,36 @@ public final class Reactive {
       start.run();
     } else {
       cell.tab.host.job(() -> Tracking.in(cell.tab, null, () -> {
+        start.run();
+        return null;
+      }));
+    }
+    return (CompletableFuture<T>) landed;
+  }
+
+  /** A projection's derive runs again; the future finishes with the projection once its answer is merged. */
+  @SuppressWarnings("unchecked")
+  private static <T> CompletableFuture<T> refreshProjection(Projection<?> projection, Supplier<T> result) {
+    StoreCell cell = (StoreCell) projection.requireCell();
+    Tab tab = cell.tab;
+    Action.Call call = Action.Call.current();
+    CompletableFuture<Object> landed = new CompletableFuture<>();
+    Runnable start = () -> tab.rt.refresh(cell.deriveNode()).whenComplete((value, failure) -> {
+      if (failure != null) {
+        landed.completeExceptionally(failure);
+      } else {
+        landed.complete(result.get());
+      }
+    });
+    if (call != null) {
+      call.enter(tab, () -> {
+        start.run();
+        return null;
+      });
+    } else if (tab.lane.isCurrent()) {
+      start.run();
+    } else {
+      tab.host.job(() -> Tracking.in(tab, null, () -> {
         start.run();
         return null;
       }));
