@@ -56,6 +56,11 @@ public final class StoreTarget implements Node.Host {
     return px;
   }
 
+  /** The committed backing, for a shape choosing the view of a new target. */
+  public Object backing() {
+    return v;
+  }
+
   /** One setter's written keys; `u` is the batch's earlier setters', the fold's union. */
   static final class WrittenKeys extends LinkedHashSet<Object> {
     private static final long serialVersionUID = 1L;

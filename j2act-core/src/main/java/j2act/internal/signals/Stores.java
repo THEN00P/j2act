@@ -872,7 +872,7 @@ public final class Stores {
     return t;
   }
 
-  private boolean inDraft(StoreTarget target) {
+  boolean inDraft(StoreTarget target) {
     return writeScopes != null && writeScopes.contains(scopeKey(target));
   }
 

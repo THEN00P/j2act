@@ -339,6 +339,11 @@ public final class Runtime {
     return stores.deriveOf(view);
   }
 
+  /** Whether a setter's draft is open on this target's store: writes land, and reads see them. */
+  public boolean storeWriting(StoreTarget target) {
+    return stores.inDraft(target);
+  }
+
   public Object storeGet(StoreTarget target, Object key) {
     return stores.get(target, key);
   }

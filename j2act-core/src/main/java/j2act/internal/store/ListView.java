@@ -1,0 +1,80 @@
+package j2act.internal.store;
+
+import j2act.internal.signals.StoreShape;
+import j2act.internal.signals.StoreTarget;
+import java.util.AbstractList;
+import java.util.RandomAccess;
+
+/**
+ * The view of a list, a List itself. Reading an element or the size subscribes to just that. Inside
+ * update(...) it is the draft: its writes are the store's, each one a write to an index and to the length,
+ * as a JavaScript array's are.
+ */
+public final class ListView<E> extends AbstractList<E> implements StoreView, RandomAccess {
+  private final JavaShape shape;
+  private final StoreTarget target;
+
+  ListView(JavaShape shape, StoreTarget target) {
+    this.shape = shape;
+    this.target = target;
+  }
+
+  @Override public StoreTarget target() {
+    return target;
+  }
+
+  @Override public int size() {
+    return shape.rt.storeLength(target);
+  }
+
+  @Override @SuppressWarnings("unchecked") public E get(int index) {
+    int size = size();
+    if (index < 0 || index >= size) {
+      throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
+    }
+    return (E) shape.present(shape.rt.storeGet(target, index));
+  }
+
+  @Override public E set(int index, E element) {
+    shape.requireWriting(target);
+    E old = get(index);
+    shape.rt.storeSet(target, index, shape.unpresent(element));
+    return old;
+  }
+
+  @Override public void add(int index, E element) {
+    shape.requireWriting(target);
+    int size = size();
+    if (index < 0 || index > size) {
+      throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
+    }
+    for (int i = size; i > index; i--) {
+      shape.rt.storeSet(target, i, shape.rt.storeGet(target, i - 1));
+    }
+    shape.rt.storeSet(target, index, shape.unpresent(element));
+  }
+
+  @Override public E remove(int index) {
+    shape.requireWriting(target);
+    E old = get(index);
+    int size = size();
+    for (int i = index; i < size - 1; i++) {
+      shape.rt.storeSet(target, i, shape.rt.storeGet(target, i + 1));
+    }
+    shape.rt.storeSet(target, StoreShape.LENGTH, size - 1);
+    return old;
+  }
+
+  @Override public void clear() {
+    shape.requireWriting(target);
+    shape.rt.storeSet(target, StoreShape.LENGTH, 0);
+  }
+
+  @Override public boolean equals(Object o) {
+    return o == this;
+  }
+
+  @Override public int hashCode() {
+    return System.identityHashCode(this);
+  }
+}
