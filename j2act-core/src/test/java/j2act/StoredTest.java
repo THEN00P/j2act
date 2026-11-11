@@ -141,6 +141,48 @@ class StoredTest {
     }
   }
 
+  static final List<Row> SAVED = new java.util.concurrent.CopyOnWriteArrayList<>();
+  static final java.util.concurrent.CompletableFuture<Void>[] GATE = new java.util.concurrent.CompletableFuture[1];
+
+  static final class Guessed extends LiveComponent {
+    @Override protected View setup() {
+      var rows = Reactive.createOptimisticStore(() -> Reactive.async(() -> new ArrayList<>(SAVED)), Row::getId);
+      var add = action((String label) -> {
+        rows.update(d -> d.add(new Row(-1, label + "?")));
+        GATE[0].join();
+        SAVED.add(new Row(SAVED.size() + 1, label));
+        Reactive.refresh(rows).join();
+        return null;
+      });
+      return () -> T.page("t", T.div(
+        T.span("rows:" + rows.get().stream().map(Row::getLabel).collect(Collectors.joining(","))),
+        T.button("add").onClick(e -> add.run("two"))));
+    }
+  }
+
+  @Test
+  void anOptimisticStoreShowsAnActionsGuessUntilTheTruthLands() {
+    SAVED.clear();
+    SAVED.add(new Row(1, "one"));
+    GATE[0] = new java.util.concurrent.CompletableFuture<>();
+    try (Harness h = new Harness(Guessed::new)) {
+      String html = h.load();
+      assertTrue(html.contains("rows:one<"), html);
+      h.connect();
+
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "add"));
+      String guessed = h.awaitPatch(from, p -> p.contains("rows:one,two?")).get("html");
+      assertTrue(guessed.contains("rows:one,two?"), "the guess shows while the save is out: " + guessed);
+      assertEquals(1, SAVED.size());
+
+      from = h.conn.size();
+      GATE[0].complete(null);
+      String saved = h.awaitPatch(from, p -> p.contains("rows:one,two<")).get("html");
+      assertTrue(saved.contains("rows:one,two<"), "the saved row replaces the guess: " + saved);
+    }
+  }
+
   @Test
   void aStoreOnAPageIsWrittenThroughADraftOfTheRealClass() {
     GIVEN.clear();

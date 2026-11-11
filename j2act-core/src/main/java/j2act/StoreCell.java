@@ -9,6 +9,7 @@ import java.util.function.Supplier;
 final class StoreCell extends Cell {
   private final JavaShape shape;
   final Object view;
+  private boolean optimistic;
 
   StoreCell(Tab tab, String address, Object initial) {
     super(tab, address);
@@ -17,12 +18,17 @@ final class StoreCell extends Cell {
     tab.host.storeTabs.put(shape.targetOf(view), tab);
   }
 
-  /** A derived store: body answers a list or a CompletionStage of one, read with its creator around it. */
-  StoreCell(Tab tab, String address, java.util.concurrent.Callable<Object> body, java.util.function.Function<Object, Object> key) {
+  /**
+   * A derived store: body answers a list or a CompletionStage of one, read with its creator around it. An
+   * optimistic one takes an action's writes as guesses, and has a value in place of a body when it derives nothing.
+   */
+  StoreCell(Tab tab, String address, java.util.concurrent.Callable<Object> body, Object initial,
+      java.util.function.Function<Object, Object> key, boolean optimistic) {
     super(tab, address);
     this.shape = tab.host.stores();
+    this.optimistic = optimistic;
     Scope creator = Tracking.scope();
-    this.view = onLane(() -> shape.createProjection(draft -> {
+    j2act.internal.signals.Stores.Derive derive = body == null ? null : draft -> {
       Scope previous = Tracking.swapScope(creator);
       Tab previousTab = Tab.swapCurrent(tab);
       try {
@@ -31,7 +37,8 @@ final class StoreCell extends Cell {
         Tab.swapCurrent(previousTab);
         Tracking.swapScope(previous);
       }
-    }, key));
+    };
+    this.view = onLane(() -> optimistic ? shape.createOptimistic(derive, initial, key) : shape.createProjection(derive, key));
     tab.host.storeTabs.put(shape.targetOf(view), tab);
   }
 
@@ -56,11 +63,20 @@ final class StoreCell extends Cell {
     return shape.value(view);
   }
 
+  private void requireAction() {
+    if (optimistic && Action.Call.current() == null) {
+      throw new IllegalStateException("an optimistic write is undone when its action ends, so it belongs in an"
+        + " action's body (ADR 0031)");
+    }
+  }
+
   <T> void update(Consumer<T> change) {
+    requireAction();
     write(() -> shape.update(view, change));
   }
 
   void set(Object value) {
+    requireAction();
     write(() -> shape.set(view, value));
   }
 

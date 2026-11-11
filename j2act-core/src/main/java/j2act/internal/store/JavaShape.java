@@ -250,6 +250,19 @@ public final class JavaShape implements StoreShape {
     return rt.createProjection(derive, new ArrayList<>(), rowKey);
   }
 
+  /**
+   * An optimistic store (Solid's createOptimisticStore): a write from an action shows at once and is undone
+   * when the action ends. With a derive it is a projection over a list too, whose answer confirms or corrects
+   * what was guessed; without one it is a store over value.
+   */
+  public Object createOptimistic(j2act.internal.signals.Stores.Derive derive, Object value,
+      java.util.function.Function<Object, Object> key) {
+    rt.storeShape(this);
+    java.util.function.Function<Object, Object> rowKey = key == null ? null
+      : row -> row instanceof List || row instanceof Map || row == null ? null : key.apply(row);
+    return rt.createOptimisticStore(derive, derive != null ? new ArrayList<>() : value, rowKey);
+  }
+
   /** The node behind a derived store, for refresh. */
   public j2act.internal.signals.Node derive(Object view) {
     return rt.storeDerive(view);

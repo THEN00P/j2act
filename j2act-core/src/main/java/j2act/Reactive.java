@@ -105,6 +105,25 @@ public final class Reactive {
     return own(new Projection<>(body::get, row -> key.apply((E) row)));
   }
 
+  /**
+   * A store that takes optimistic writes (ADR 0035): an update from an action's body shows at once and is
+   * undone when that action ends, like {@link #createOptimistic}, and only the rows and properties it
+   * touched are guessed.
+   */
+  public static <T> Stored<T> createOptimisticStore(T initial) {
+    return own(new Stored<>(initial, null, null, true));
+  }
+
+  /**
+   * An optimistic store over a list a derive answers, the usual shape: an action adds a row, saves it and
+   * refreshes, and the row it guessed keeps its place when the saved one comes back with the same key.
+   */
+  @SuppressWarnings("unchecked")
+  public static <E> Stored<java.util.List<E>> createOptimisticStore(AsyncSupplier<java.util.List<E>> body,
+      Function<? super E, ?> key) {
+    return own(new Stored<>(null, body::get, row -> key.apply((E) row), true));
+  }
+
   /** A pure derived value, recomputed when what it read changes; readers re-render only when it changes. */
   public static <T> Memo<T> createMemo(Supplier<T> body) {
     return own(new Memo<>(body));
@@ -221,8 +240,8 @@ public final class Reactive {
    */
   @SuppressWarnings("unchecked")
   public static <T> CompletableFuture<T> refresh(Supplier<T> memo) {
-    if (memo instanceof Projection) {
-      return refreshProjection((Projection<?>) memo, memo);
+    if (memo instanceof Projection || memo instanceof Stored) {
+      return refreshProjection((Primitive) memo, memo);
     }
     ValueCell cell = valueOf(memo, "refresh");
     Action.Call call = Action.Call.current();
@@ -252,8 +271,11 @@ public final class Reactive {
 
   /** A projection's derive runs again; the future finishes with the projection once its answer is merged. */
   @SuppressWarnings("unchecked")
-  private static <T> CompletableFuture<T> refreshProjection(Projection<?> projection, Supplier<T> result) {
+  private static <T> CompletableFuture<T> refreshProjection(Primitive projection, Supplier<T> result) {
     StoreCell cell = (StoreCell) projection.requireCell();
+    if (cell.deriveNode() == null) {
+      throw new IllegalArgumentException("refresh takes an async memo, a projection or an optimistic store over a load");
+    }
     Tab tab = cell.tab;
     Action.Call call = Action.Call.current();
     CompletableFuture<Object> landed = new CompletableFuture<>();

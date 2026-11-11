@@ -16,16 +16,28 @@ import java.util.function.Supplier;
  */
 public class Stored<T> extends Primitive implements Supplier<T> {
   private final T initial;
+  private final java.util.concurrent.Callable<Object> body;
+  private final java.util.function.Function<Object, Object> key;
+  private final boolean optimistic;
 
   Stored(T initial) {
+    this(initial, null, null, false);
+  }
+
+  /** An optimistic store: over a value, or over a list a derive answers. */
+  Stored(T initial, java.util.concurrent.Callable<Object> body, java.util.function.Function<Object, Object> key,
+      boolean optimistic) {
     this.initial = initial;
+    this.body = body;
+    this.key = key;
+    this.optimistic = optimistic;
   }
 
   /** The current value. Tracked. Changing what this returns changes nothing on the page: use update. */
   @Override
   @SuppressWarnings("unchecked")
   public T get() {
-    Cell bound = cellOrNull();
+    Cell bound = body != null ? requireCell() : cellOrNull();
     return bound == null ? initial : (T) ((StoreCell) bound).value();
   }
 
@@ -72,11 +84,11 @@ public class Stored<T> extends Primitive implements Supplier<T> {
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    return new StoreCell(tab, address, initial);
+    return optimistic ? new StoreCell(tab, address, body, initial, key, true) : new StoreCell(tab, address, initial);
   }
 
   @Override boolean accepts(Cell cell) {
-    return cell instanceof StoreCell;
+    return cell instanceof StoreCell && (((StoreCell) cell).deriveNode() != null) == (body != null);
   }
 
   @Override void attach(Cell cell, boolean created) {

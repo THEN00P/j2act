@@ -31,7 +31,7 @@ public final class Projection<E> extends Primitive implements Supplier<List<E>> 
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    return new StoreCell(tab, address, body, key);
+    return new StoreCell(tab, address, body, null, key, false);
   }
 
   @Override boolean accepts(Cell cell) {
