@@ -176,7 +176,7 @@ final class Effects {
       for (Link d = node.deps; d != null; d = d.nextDep) {
         Node dep = d.dep;
         if (dep.pendingValue != NOT_PENDING && (dep.config & CONFIG_OVERRIDE) == 0
-          && !java.util.Objects.equals(dep.pendingValue, dep.value)) {
+          && !ValueEquality.same(dep.pendingValue, dep.value)) {
           if ((dep.config & CONFIG_HELD) != 0) {
             if (!owed) {
               owed = true;

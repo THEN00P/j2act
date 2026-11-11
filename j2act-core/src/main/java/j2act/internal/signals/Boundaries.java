@@ -481,7 +481,7 @@ final class Boundaries {
             return null;
           }
         }
-        if (b.onMounted && (!b.onRedescribed || !java.util.Objects.equals(prev, read))) {
+        if (b.onMounted && (!b.onRedescribed || !ValueEquality.same(prev, read))) {
           arm(b);
         }
         b.onMounted = true;
@@ -587,7 +587,7 @@ final class Boundaries {
           b.fb = null;
         }
       };
-      if (!java.util.Objects.equals(b.output.value, fb.value)) {
+      if (!ValueEquality.same(b.output.value, fb.value)) {
         drop.run();
       } else {
         s().enqueue(EFFECT_RENDER, t -> drop.run());
