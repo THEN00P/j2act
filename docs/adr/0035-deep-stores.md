@@ -12,8 +12,6 @@ todos.update(d -> { d.add(todo); d.get(0).setDone(true); });   // d is a List<To
 user.update(d -> d.getAddress().setCity("Wien"));              // d is a User
 
 var loaded = createProjection(() -> async(repo::list), Todo::getId);
-
-each(todos, row -> li(row.get().getTitle()).onClick(() -> row.update(d -> d.setDone(true))));
 ```
 
 No annotation, interface, wrapper or copy strategy is written for a model class, and classes from other libraries work the same way. Nothing is generated.
@@ -39,7 +37,7 @@ They are Solid's, with Solid's division of work:
 | `createStore(fn, seed)` | A projection that also takes writes | With `update` |
 | `createOptimisticStore(...)` | Writes from an action, undone when it ends | In an action |
 
-`createStore` is one name. Overloads pick a list, map, set or object store from the static type of what is passed. The store keeps the collection's contract, not its class: `List`, `Set` or `Map`, and its order, which is insertion order or a `SortedMap`'s comparator. It owns versioned storage, so a `LinkedList` does not stay one.
+`createStore` is one name and `Stored<T>` one type: `createStore(new ArrayList<Todo>())` is a `Stored<List<Todo>>`. What a store hands out for a list or a map is a `List` or a `Map` itself, whose reads subscribe to an element, a key, a key's presence or the size, so a store of a list needs no type of its own. The store keeps the collection's contract, not its class: `List` or `Map`, and its order, which is insertion order or a `SortedMap`'s comparator. It owns versioned storage, so a `LinkedList` does not stay one.
 
 A local store has no keys. A row's identity is the store's own. A key function appears where fresh objects stand for rows already on the page, on a projection or `reconcile`, and is always given explicitly. Without one, rows pair by position.
 
@@ -50,7 +48,7 @@ return () -> p(user.get().getAddress().getCity());                    // the usu
 return () -> p(user.at(User::getAddress, Address::getCity).get());    // only the city
 ```
 
-`get()` returns a real `User` and subscribes to the whole object. That is always correct and re-runs the reader on any change to it. A row handed out by `each` is its own store and its own render scope, on the ported `mapArray`, so a changed row renders alone.
+`get()` returns a real `User` and subscribes to the whole object. That is always correct and re-runs the reader on any change to it. An element read from a list, `todos.get().get(0)`, is a real `Todo` and subscribes to that row, so a row component that reads its own row renders alone. Rows that render alone without being components, on the ported `mapArray`, are not built yet.
 
 `at(...)` reads one property. Its arguments are method references, and the property each names comes from `SerializedLambda`. It gives a value with `get()` and `set(x)`, so it also binds a field:
 
@@ -100,7 +98,7 @@ What cannot be written fails where it is found, naming the path (`todos[3].attac
 
 ## Equality
 
-Nodes keep comparing with `Objects.equals` (ADR 0033). Inside a store and in `reconcile`, beans and records are compared by identity and matched by key, and only values by `equals`.
+Nodes keep comparing with `Objects.equals` (ADR 0033). Inside a store and in `reconcile`, beans and records are compared by identity and matched by key, and only values by `equals`. That reaches into the engine in one place: a staged value equal to the committed one counts as writes that netted, which Solid asks with `===`, and for a store's slot nodes the port asks it by identity too. With `equals` there, a reader held with a reload of rows that compare by id was served the old rows and never ran again.
 
 That matters for entities whose `equals` compares ids. Today a refreshed list of them equals the old list and the page does not update. A check with the harness showed it: the reload ran and no patch went out, while the same page without that `equals` got its patch. A projection does not have this problem. Whether signals and memos should is its own decision.
 
@@ -125,6 +123,10 @@ That matters for entities whose `equals` compares ids. Today a refreshed list of
 - **Subclasses generated at run time, as Hibernate has them.** Final classes and fields are out of reach. It can replace copy and compare later where it applies.
 
 Two other models were asked to design this from the constraints alone and then to attack all three designs. They proposed the handles and the versions above, and both ended at this one, with `at(...)`, the bean built per reader, the draft's identity and copying by field as their changes.
+
+## Built, and not yet
+
+Built: the engine with `reconcile` and projections, running Solid's store tests; `createStore`, `update`, `set`, `at(...)` and `createProjection` over lists, maps and beans. Not yet: optimistic stores and `affects()` on a store, records and sets, the hook for JPA state, rows as their own render scopes, the cached bean per reader and the dev-mode check for a changed one, the processor's check for `at(...)`, retained stores, and the writable derived store. `createProjection` answers a list. Left out of the port with what JavaScript needs them for: the prototype overlay, accessor properties and descriptors, shallow stores, chained backings, and a seed shown while a first answer loads.
 
 ## Open
 
