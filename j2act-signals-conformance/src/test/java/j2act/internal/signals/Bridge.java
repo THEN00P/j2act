@@ -103,6 +103,16 @@ public final class Bridge {
     return rt.createStore(value);
   }
 
+  public Object createProjection(Value fn, Value seed, Value keyFn) {
+    return rt.createProjection(fn == null || !fn.canExecute() ? null : draft -> toJavaResult(call(fn, draft)), seed,
+      keyFn == null || !keyFn.canExecute() ? null : item -> toJava(call(keyFn, item)));
+  }
+
+  public Object storeDerive(Object target) {
+    StoreTarget t = (StoreTarget) target;
+    return t.fam != null && t.fam.node != null ? t.fam.node : undefined;
+  }
+
   public void setStore(Value view, Value fn) {
     rt.setStore(view, draft -> {
       Value result = call(fn, draft);

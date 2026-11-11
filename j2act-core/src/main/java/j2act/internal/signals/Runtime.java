@@ -326,6 +326,19 @@ public final class Runtime {
     stores.storeSetter(view, fn, true);
   }
 
+  /**
+   * Solid's createProjection(fn, seed, {key}): a store a derive writes or answers, merged by key. With
+   * writable, Solid's createStore(fn, seed): setStore works on it too.
+   */
+  public Object createProjection(Stores.Derive fn, Object seed, Function<Object, Object> key) {
+    return stores.createProjection(fn, seed, key, false);
+  }
+
+  /** The node behind a derived store, for refresh, isPending and affects; null for a plain store. */
+  public Node storeDerive(Object view) {
+    return stores.deriveOf(view);
+  }
+
   public Object storeGet(StoreTarget target, Object key) {
     return stores.get(target, key);
   }

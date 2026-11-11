@@ -2,6 +2,9 @@
 
 accessor-to-data-3949 :: #3949 accessor key replaced by data > a getter replaced by an undefined data value reads undefined	JavaScript only: accessor properties, left out of the store port
 accessor-to-data-3949 :: #3949 accessor key replaced by data > defineProperty inside a setter draft replaces a getter with data	JavaScript only: accessor properties, left out of the store port
+adoption-unchanged-key-read-3706 :: #3706 unchanged key read under an adoption hold > contrast: a descriptor read of a key whose enumerability changed still holds (A29)	JavaScript only: enumerability, inherited accessors and a swapped prototype, left out of the store port
+adoption-unchanged-key-read-3706 :: #3706 unchanged key read under an adoption hold > contrast: a prototype swap still holds the reader (A29)	JavaScript only: enumerability, inherited accessors and a swapped prototype, left out of the store port
+adoption-unchanged-key-read-3706 :: #3706 unchanged key read under an adoption hold > contrast: an inherited accessor reading `this` still holds the reader (A29)	JavaScript only: enumerability, inherited accessors and a swapped prototype, left out of the store port
 affects-audit-2893 :: bug 1: addPendingSource dual state > keyless store mark over a live mapArray releases at settle (#2893 flagship)	affects() on a store, store/affects.ts, not ported yet
 affects-propagation :: affects — propagation through derivation > keyed mark pends derived readers of that slot only	affects() on a store, store/affects.ts, not ported yet
 array-clone-slice :: array clone on first draft write > keeps named keys on an array	JavaScript only: named keys on an array, left out of the store port
@@ -11,6 +14,12 @@ attribution-engine-cost :: <file>	tooling: attribution, left out
 attribution-navigation :: withOrigin — navigation provenance > is a plain call when no engine is installed	tooling: attribution, left out
 boundary-not-born-held-3540 :: Loading `on` beside a keyed Show around the boundary (#3540) > on over committed: mid-flight holds	tooling: the assertion is on the dev warning LOADING_ON_OUTSIDE_HOLD; the frames match
 createLoadingBoundary :: createLoadingBoundary > throws dev error when pending async value is read outside tracking scope with strictRead	tooling: strictRead dev error, left out
+createProjection :: projection over a store — chained backing (#2941) > array store at the root: structural and row updates flow	chained backings, a store as another store's backing, left out of the store port
+createProjection :: projection over a store — chained backing (#2941) > derive returning a store adopts it live: updates flow with no re-derive	chained backings, a store as another store's backing, left out of the store port
+createProjection :: projection over a store — chained backing (#2941) > derive switching store -> plain -> other store notifies and drops the old chain	chained backings, a store as another store's backing, left out of the store port
+createProjection :: projection over a store — chained backing (#2941) > derived createStore(fn, seed) chains the same way	chained backings, a store as another store's backing, left out of the store port
+createProjection :: projection over a store — chained backing (#2941) > enumeration tracks through the chain	chained backings, a store as another store's backing, left out of the store port
+createProjection :: projection over a store — chained backing (#2941) > nested updates stay fine-grained through the chain	chained backings, a store as another store's backing, left out of the store port
 createRoot :: should reset child ids when computations rerun	hydration ids, left out
 createRoot :: transparent owners > should delegate child IDs through transparent computed	hydration ids, left out
 createRoot :: transparent owners > should delegate child IDs to the nearest non-transparent ancestor	hydration ids, left out
@@ -20,6 +29,7 @@ createRoot :: transparent owners > should not consume _childCount with transpare
 createRoot :: transparent owners > should not consume a _childCount slot from parent	hydration ids, left out
 createStore :: Nested Classes > does not wrap Node instances	JavaScript only: accessors, property descriptors, prototype keys and DOM nodes, left out of the store port
 createStore :: Nested Classes > prototype getters track instance field updates	JavaScript only: accessors, property descriptors, prototype keys and DOM nodes, left out of the store port
+createStore :: Nested Classes > prototype getters track through projection stores seeded from another store	chained backings, a store as another store's backing, left out of the store port
 createStore :: Proxy invariant correctness > writes preserve the base descriptor's structure, matching plain assignment semantics	JavaScript only: accessors, property descriptors, prototype keys and DOM nodes, left out of the store port
 createStore :: Proxy invariant correctness > written accessor properties keep accessor descriptors	JavaScript only: accessors, property descriptors, prototype keys and DOM nodes, left out of the store port
 createStore :: Proxy invariant correctness > written non-configurable properties keep satisfying the proxy invariant	JavaScript only: accessors, property descriptors, prototype keys and DOM nodes, left out of the store port
@@ -29,6 +39,7 @@ delete-key-count :: the store's key count follows deletes > delete and re-add in
 delete-key-count :: the store's key count follows deletes > delete-then-set selection keeps the count at the object's own keys and never drafts as an overlay	the prototype overlay and its key count, left out of the store port
 delete-key-count :: the store's key count follows deletes > deleting a never-committed key of a draft does not go below the real count	the prototype overlay and its key count, left out of the store port
 delete-key-count :: the store's key count follows deletes > under an overlay, an own add deleted again is uncounted and a committed key's delete counts at the rebuild	the prototype overlay and its key count, left out of the store port
+derived-store-first-landing-verdict :: a derived store's first landing is not pending > dev: a staged first-landing read of the leaf still reaches the read hook	tooling: dev diagnostics and warnings, left out
 dev :: Phase 1b: Notification hooks > onGraph > fires for stores	tooling: dev diagnostics and warnings, left out
 dev :: Phase 1b: Notification hooks > onGraph > fires for unowned signals with owner=null	tooling: dev diagnostics and warnings, left out
 dev :: Phase 1b: Notification hooks > onGraph > fires when a signal is created with an owner	tooling: dev diagnostics and warnings, left out
@@ -57,11 +68,21 @@ observe-records :: OBSERVE.records > is one object per process, registered on gl
 overlay :: overlay pending backings (#3044) > repeated few-key writes into a wide store stay O(written) (#3044 shape)	the prototype overlay, left out of the store port
 overlay :: overlay pending backings (#3044) > writes through non-writable committed properties (R51 parity)	the prototype overlay, left out of the store port
 overlay-rebuild-3689 :: <file>	the prototype overlay, left out of the store port
+projection-absent-key-tracking :: projection derives subscribe to external absent keys (#3037) > tracks external accessor keys read mid-derive	JavaScript only: accessor properties, left out of the store port
+projection-proxy-then-array-4361 :: #4361 projection returning a store proxy, then an array, then the proxy > keys store memo=false	chained backings, a store as another store's backing, left out of the store port
+projection-proxy-then-array-4361 :: #4361 projection returning a store proxy, then an array, then the proxy > leaves store memo=false	chained backings, a store as another store's backing, left out of the store port
+projection-proxy-then-array-4361 :: #4361 projection returning a store proxy, then an array, then the proxy > leaves store memo=true	chained backings, a store as another store's backing, left out of the store port
+projection-root-overlay :: projection root writes are O(written) (#3352) > a derive deleting + re-adding one root key does not clone the record	the prototype overlay, left out of the store port
+projection-root-overlay :: projection root writes are O(written) (#3352) > a projection seeded with another store (chained backing) keeps deriving	chained backings, a store as another store's backing, left out of the store port
+projection-root-overlay :: projection root writes are O(written) (#3352) > derived store setter root writes do not clone the record	the prototype overlay, left out of the store port
+projection-root-overlay :: projection root writes are O(written) (#3352) > post-await landings on a root key commit in place without cloning	the prototype overlay, left out of the store port
+projection-root-overlay :: projection root writes are O(written) (#3352) > root deletes in a derive read as absent everywhere and notify	the prototype overlay, left out of the store port
 question-scoped-pending :: affects — captured proxies (#2882) > affects(array store) covers symbol-keyed metadata	affects() on a store, store/affects.ts, not ported yet
 question-scoped-pending :: affects — captured proxies (#2882) > affects(plain store) covers an untouched symbol-keyed grandchild	affects() on a store, store/affects.ts, not ported yet
 question-scoped-pending :: affects — captured proxies (#2882) > affects(plain store) covers captured proxies at any depth	affects() on a store, store/affects.ts, not ported yet
 question-scoped-pending :: affects — captured proxies (#2882) > keyless mark on a nested record covers its captured subtree, not siblings	affects() on a store, store/affects.ts, not ported yet
 question-scoped-pending :: affects — captured proxies (#2882) > registering a mark wakes an already-materialized false verdict on a captured proxy	affects() on a store, store/affects.ts, not ported yet
+question-scoped-pending :: same-question motion is silent > 3.4-held-write: refresh() after a held manual write is still a re-ask — siblings silent, affects() scopes it	affects() on a store, store/affects.ts, not ported yet
 rules-index :: <file>	tooling: dev diagnostics and warnings, left out
 snapshot :: store snapshot support > excludes non-enumerable symbol-keyed properties from written copies	JavaScript only: symbol-keyed properties on arrays, left out of the store port
 snapshot :: store snapshot support > preserves symbol-keyed array metadata after an index write	JavaScript only: symbol-keyed properties on arrays, left out of the store port
@@ -76,6 +97,7 @@ strictRead :: strictRead > restores strictRead correctly through nested untrack 
 strictRead :: strictRead > warns on memo read under strict + untracked	tooling: dev diagnostics and warnings, left out
 strictRead :: strictRead > warns on signal read under strict + untracked	tooling: dev diagnostics and warnings, left out
 strictRead :: strictRead > warns on store property read under strict + untracked	tooling: strictRead dev warning, left out
+unchanged-presence-no-hold-3743 :: #3743 unchanged presence under an open action > a projection adopting away from a chained store still writes presence the inner store changed	chained backings, a store as another store's backing, left out of the store port
 untracked-async-read :: untracked async read after await (#2987) > memo form errors identically	difference: the Java message says the read came off the lane, not after an await
 untracked-async-read :: untracked async read after await (#2987) > post-await first-read of an unready source errors instead of wedging	difference: the Java message says the read came off the lane, not after an await
 utilities-no-proxy :: merge/omit without Proxy > the flag is off and nothing wears the proxy mark	the test turns proxies off, which the shim cannot

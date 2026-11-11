@@ -1671,6 +1671,253 @@ public final class Stores {
     applyAdopt(ct, nv, keyFn, proj);
   }
 
+  // ---- projection (store/projection.ts): a derived store
+
+  /** A derive: given its draft, it writes it or returns the value, now, as a CompletionStage or as an AsyncIterable. */
+  @FunctionalInterface
+  public interface Derive {
+    Object apply(Object draft) throws Exception;
+  }
+
+  /** Wraps the commit of a derive's answer, as an optimistic store does. */
+  @FunctionalInterface
+  interface WrapCommit {
+    void wrap(Runnable write, Object value);
+  }
+
+  private Object wrapDraft(Object inner, java.util.function.BooleanSupplier isActive,
+      java.util.function.Consumer<Runnable> aroundWrite, Runnable afterWrite, java.util.function.IntSupplier asking) {
+    Scheduler q = s();
+    return shape.draftView(inner, new StoreShape.DraftControl() {
+      @Override public <T> T read(java.util.function.Supplier<T> op) {
+        writeOverride = true;
+        try {
+          return op.get();
+        } finally {
+          writeOverride = false;
+        }
+      }
+
+      @Override public void mutate(Runnable op) {
+        if (!isActive.getAsBoolean()) {
+          return;
+        }
+        writeOverride = true;
+        int prevQ = q.question;
+        if (asking != null) {
+          q.question = asking.getAsInt();
+        }
+        try {
+          if (aroundWrite != null) {
+            aroundWrite.accept(op);
+          } else {
+            op.run();
+          }
+        } finally {
+          writeOverride = false;
+          q.question = prevQ;
+        }
+        if (afterWrite != null) {
+          afterWrite.run();
+        }
+      }
+
+      @Override public void alias(Object draft, Object view) {
+        StoreTarget t = view != null && shape.isObject(view) ? shape.targetOf(view) : null;
+        if (t != null) {
+          setLookup(draft, t);
+        }
+      }
+    });
+  }
+
+  /** The derive went pending: its leaves' readers wait on the derive itself. */
+  void wakeFamily(StoreFamily fam) {
+    Node fw = fam.node;
+    Errors.NotReadyError error = new Errors.NotReadyError(fw);
+    fam.woke = true;
+    if (optHooks != null) {
+      optHooks.ask(fam);
+    }
+    fam.eachLiveNode(n -> {
+      if (n.subs == null) {
+        return;
+      }
+      rt.async.addPendingSource(n, fw);
+      rt.async.propagateStatus(n, STATUS_PENDING, error);
+    });
+  }
+
+  /** The derive failed: every live reader re-derives and meets the error at its pull. */
+  void errorFamily(StoreFamily fam, Throwable error) {
+    fam.eachLiveNode(n -> {
+      for (Link l = n.subs; l != null; l = l.nextSub) {
+        Node sub = l.sub;
+        if (!((sub.statusFlags & STATUS_ERROR) != 0 && sub.x != null && sub.x.error == error)) {
+          s().dirtyQueue.enqueueSub(sub);
+        }
+      }
+    });
+    s().schedule();
+  }
+
+  void settleFamily(StoreFamily fam) {
+    if (!fam.woke) {
+      return;
+    }
+    fam.woke = false;
+    Node fw = fam.node;
+    fam.eachLiveNode(n -> {
+      if (n.subs != null) {
+        rt.async.settlePendingSource(n, fw);
+      }
+    });
+    s().insertSubs(fw);
+  }
+
+  private void familyStatus(StoreFamily fam, int status, Throwable error) {
+    if ((status & STATUS_PENDING) != 0) {
+      wakeFamily(fam);
+    } else if (status == 0) {
+      settleFamily(fam);
+    } else if ((status & STATUS_ERROR) != 0) {
+      errorFamily(fam, error);
+    }
+  }
+
+  /** One pass of a derive, inside its computed: the draft's writes and the answer's reconcile. */
+  void runProjectionComputed(Object wrappedStore, Derive fn, Function<Object, Object> key, WrapCommit wrapCommit,
+      java.util.function.Consumer<Runnable> aroundDraftWrite) {
+    Scheduler q = s();
+    Node owner = (Node) rt.owners.getOwner();
+    StoreTarget target = shape.targetOf(wrappedStore);
+    StoreFamily fam = target.fam;
+    int run = ++fam.run;
+    if (q.observeFlightHook != null && (fam.woke || fam.w != 0)) {
+      fam.w = 0;
+      owner.config &= ~CONFIG_VERDICT;
+    }
+    java.util.function.IntSupplier asking = () ->
+      q.question != 0 ? q.question : owner.x != null && owner.x.inFlight != null ? owner.x.q : 0;
+    Object draft = wrapDraft(wrappedStore, () -> fam.run == run && !rt.owners.isDisposed(owner), aroundDraftWrite, () -> {
+      if ((owner.statusFlags & STATUS_PENDING) == 0 && !owner.loading) {
+        q.schedule();
+      }
+    }, asking);
+    boolean first = run == 1;
+    Runnable pass = () -> storeSetter(draft, st -> {
+      Object result;
+      try {
+        result = fn.apply(st);
+      } catch (Exception e) {
+        throw Errors.<RuntimeException>sneak(e);
+      }
+      java.util.function.BiConsumer<Object, Boolean> commit = (v, wake) -> {
+        if (v != null && !same(v, st)) {
+          Runnable write = () -> {
+            int prevQ = q.question;
+            q.question = asking.getAsInt();
+            try {
+              storeSetter(wrappedStore, s2 -> {
+                reconcileState(v, s2, key, true);
+                return null;
+              }, false);
+            } finally {
+              q.question = prevQ;
+            }
+          };
+          if (wrapCommit != null) {
+            wrapCommit.wrap(write, v);
+          } else {
+            write.run();
+          }
+        }
+        if (!first || (owner.statusFlags & STATUS_UNINITIALIZED) == 0) {
+          settleFamily(fam);
+        }
+        if (wake) {
+          q.insertSubs(owner);
+        }
+      };
+      Object sync;
+      if (Async.isAsync(result)) {
+        sync = rt.async.handleAsync(owner, result, v -> commit.accept(v, true), (error, pending) -> {
+          if (first && (owner.statusFlags & STATUS_UNINITIALIZED) != 0) {
+            return;
+          }
+          if (pending) {
+            wakeFamily(fam);
+          } else {
+            errorFamily(fam, error);
+          }
+        });
+      } else {
+        // handleAsync's own answer to a plain value, which the port's recompute has inline.
+        if (owner.x != null) {
+          owner.x.inFlight = null;
+          if (q.holdWorkHook != null) {
+            owner.config &= ~CONFIG_ASYNC;
+          }
+        }
+        owner.loading = false;
+        sync = result;
+      }
+      // (The status is the one before this pass: recompute sets it after.)
+      if (!owner.loading) {
+        commit.accept(sync, (owner.statusFlags & (STATUS_PENDING | STATUS_ERROR)) != 0);
+      }
+      return null;
+    }, false);
+    try {
+      if (first) {
+        runDirect(pass);
+      } else {
+        pass.run();
+      }
+    } catch (Throwable e) {
+      if (!first) {
+        if (e instanceof Errors.NotReadyError) {
+          wakeFamily(fam);
+        } else {
+          errorFamily(fam, e);
+        }
+      }
+      throw Errors.<RuntimeException>sneak(e);
+    }
+    if ((owner.statusFlags & STATUS_PENDING) != 0 && owner.x != null && owner.x.inFlight != null && !owner.loading && !first) {
+      wakeFamily(fam);
+    }
+  }
+
+  /** A derived store's family and root: Solid's createProjectionInternal. fn is null for a plain optimistic store. */
+  Object createProjection(Derive fn, Object seed, Function<Object, Object> key, boolean opt) {
+    shape();
+    StoreFamily fam = new StoreFamily();
+    fam.opt = opt;
+    fam.key = key;
+    fam.st = (status, error) -> familyStatus(fam, status, error);
+    Object store = wrap(seed, null, null, fam);
+    if (fn != null) {
+      Node node = rt.core.computed(prev -> {
+        if (fam.node == null) {
+          fam.node = (Node) rt.owners.getOwner();
+        }
+        runProjectionComputed(store, fn, key, null, null);
+        return null;
+      }, null);
+      node.config &= ~CONFIG_AUTO_DISPOSE;
+      fam.node = node;
+      node.fam = fam;
+    }
+    return store;
+  }
+
+  /** The derive of a derived store's view, Solid's store[$REFRESH]. */
+  Node deriveOf(Object view) {
+    StoreTarget t = shape.targetOf(view);
+    return t != null && t.fam != null ? t.fam.node : null;
+  }
+
   // ---- snapshot and deep
 
   /** Tracking snapshot: subscribes to every reachable record. */

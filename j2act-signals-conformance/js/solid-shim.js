@@ -187,7 +187,9 @@
           "Pass the original source target, not a wrapper function or derived property read."
       );
     }
-    const promise = b.refresh(unmirror(node));
+    const landed = b.refresh(unmirror(node));
+    // A store resolves with itself, as it has no one value.
+    const promise = typeof target === "function" ? landed : landed.then(() => target);
     promise.catch(() => {});
     return promise;
   });
@@ -373,7 +375,7 @@
   const slotMap = map => {
     if (map === null || map === undefined) return null;
     const out = {};
-    for (const [k, v] of b.entriesOf(map)) out[typeof k === "number" ? String(k) : k] = mirror(v);
+    for (const [k, v] of b.entriesOf(map)) out[typeof k === "number" || Java.isJavaObject(k) ? String(k) : k] = mirror(v);
     return out;
   };
   const targetMirror = jt => {
@@ -388,7 +390,21 @@
           if (prop === "n" || prop === "h") return slotMap(b.fieldOf(jt, prop));
           if (prop === "k" || prop === "dk") return mirror(b.fieldOf(jt, prop)) ?? null;
           if (prop === "u") return targetMirror(b.fieldOf(jt, "u")) ?? null;
-          if (prop === "_fam") return b.fieldOf(jt, "fam") ?? null;
+          if (prop === "_fam") {
+            const fam = b.fieldOf(jt, "fam");
+            if (fam === null || fam === undefined) return null;
+            return {
+              get live() {
+                return new Set(b.entriesOf(b.fieldOf(fam, "live")).map(targetMirror));
+              },
+              get node() {
+                return mirror(b.fieldOf(fam, "node")) ?? null;
+              },
+              get opt() {
+                return b.fieldOf(fam, "opt");
+              }
+            };
+          }
           const v = b.fieldOf(jt, prop);
           return v === undefined ? null : v;
         }
@@ -412,7 +428,8 @@
     }
     return wrappable;
   }
-  const storeTraps = {
+  const guardTraps = traps => Object.fromEntries(Object.entries(traps).map(([name, trap]) => [name, guard(trap)]));
+  const storeTraps = guardTraps({
     get(t, key, receiver) {
       const jt = targets.get(t);
       const arr = Array.isArray(t);
@@ -421,7 +438,7 @@
         if (key === $TARGET) return targetMirror(jt);
         if (key === $PROXY) return receiver;
         if (key === $RECORD) return undefined;
-        if (key === $REFRESH) return undefined;
+        if (key === $REFRESH) return mirror(b.storeDerive(jt));
         if (key === $TRACK) {
           b.storeTrack(jt);
           return undefined;
@@ -469,7 +486,7 @@
       b.storeDelete(targets.get(t), key, Array.isArray(t));
       return true;
     }
-  };
+  });
   b.installStoreOps({
     isWrappable,
     isObject: v => typeof v === "object" && v !== null,
@@ -495,10 +512,58 @@
       targets.set(t, jt);
       return new Proxy(t, storeTraps);
     },
-    targetOf: v => v[$JT]
+    targetOf: v => v[$JT],
+    // Solid's wrapDraft: a proxy over a view whose reads and writes go through the derive's control.
+    draft: function draft(inner, read, mutate, alias) {
+      const px = new Proxy(Array.isArray(inner) ? [] : {}, {
+        get(_, prop) {
+          const value = read(() => inner[prop]);
+          return typeof value === "object" && value !== null && prop !== $TARGET && prop !== $JT && !Java.isJavaObject(value)
+            ? draft(value, read, mutate, alias)
+            : value;
+        },
+        has: (_, prop) => read(() => prop in inner),
+        set: (_, prop, value) =>
+          mutate(() => {
+            inner[prop] = value;
+          }),
+        deleteProperty: (_, prop) =>
+          mutate(() => {
+            delete inner[prop];
+          }),
+        ownKeys: () => read(() => Reflect.ownKeys(inner)),
+        getOwnPropertyDescriptor(_, prop) {
+          const d = read(() => Reflect.getOwnPropertyDescriptor(inner, prop));
+          if (d && !(prop === "length" && Array.isArray(inner))) d.configurable = true;
+          return d;
+        },
+        defineProperty: (_, prop, desc) =>
+          mutate(() => {
+            Reflect.defineProperty(inner, prop, desc);
+          })
+      });
+      if (inner[$JT] !== undefined) alias(px, inner);
+      return px;
+    }
   });
-  const createStore = guard((first, second) => {
-    if (typeof first === "function") throw new Error("[left out] createProjection");
+  const keyOf = options => {
+    const key = options && options.key !== undefined ? options.key : "id";
+    return typeof key === "function" ? key : key === null ? null : row => (isWrappable(row) ? row[key] : undefined);
+  };
+  const projectionOptions = options => {
+    if (options && options.shallow) throw new Error("[left out] shallowStore");
+    if (options && options.seedLoadingValue) throw new Error("[left out] seedLoadingValue");
+  };
+  const createProjection = guard((fn, seed, options) => {
+    projectionOptions(options);
+    return b.createProjection(fn, seed || {}, keyOf(options));
+  });
+  const createStore = guard((first, second, third) => {
+    if (typeof first === "function") {
+      projectionOptions(third);
+      const store = b.createProjection(first, second || {}, keyOf(third));
+      return [store, guard(fn => b.setStore(store, fn))];
+    }
     if (second && second.shallow) throw new Error("[left out] shallowStore");
     const proxy = b.createStore(first);
     return [proxy, guard(fn => b.setStore(proxy, fn))];
@@ -512,6 +577,7 @@
 
   const solid = {
     createStore,
+    createProjection,
     reconcile,
     snapshot,
     deep,

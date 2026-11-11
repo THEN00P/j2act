@@ -96,6 +96,19 @@ final class JsShape implements StoreShape {
     return ops.invokeMember("view", target, isArray(target.v));
   }
 
+  @Override public Object draftView(Object view, DraftControl control) {
+    org.graalvm.polyglot.proxy.ProxyExecutable read = args -> bridge.js(control.read(() -> bridge.toJava(bridge.call(args[0]))));
+    org.graalvm.polyglot.proxy.ProxyExecutable mutate = args -> {
+      control.mutate(() -> bridge.call(args[0]));
+      return true;
+    };
+    org.graalvm.polyglot.proxy.ProxyExecutable alias = args -> {
+      control.alias(args[0], args[1]);
+      return true;
+    };
+    return ops.invokeMember("draft", view, read, mutate, alias);
+  }
+
   @Override public StoreTarget targetOf(Object value) {
     if (!isJsObject(value)) {
       return null;

@@ -63,4 +63,21 @@ public interface StoreShape {
 
   /** The target a view stands for, or null when the value is not a view. */
   StoreTarget targetOf(Object value);
+
+  /**
+   * What a derived store's derive writes: a view of a view whose every read and write goes through control,
+   * so the derive may write it outside any setter, also after it has waited for something. Solid's wrapDraft.
+   */
+  Object draftView(Object view, DraftControl control);
+
+  /** How a derive's draft reaches the store. */
+  interface DraftControl {
+    <T> T read(java.util.function.Supplier<T> op);
+
+    /** Runs a write, unless a newer run of the derive has replaced this one. */
+    void mutate(Runnable op);
+
+    /** A draft of a view below this one stands for that view's target too. */
+    void alias(Object draft, Object view);
+  }
 }
