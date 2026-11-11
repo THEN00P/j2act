@@ -15,7 +15,7 @@ import java.util.function.UnaryOperator;
 
 /**
  * Port of @solidjs/signals core/core.ts at 9449845: recompute, read, and write. Left out: the shadow seat,
- * strict reads and other dev-only checks, attribution, hydration snapshots, store slot nodes and ids.
+ * strict reads and other dev-only checks, attribution, hydration snapshots and ids.
  */
 final class Core {
 
@@ -575,6 +575,23 @@ final class Core {
     if (options != null && options.unobserved != null) {
       ext(n).unobserved = options.unobserved;
     }
+    return n;
+  }
+
+  /**
+   * A store slot node (CONFIG_SLOT_NODE): the target and key as back-refs in place of closures, and the store's
+   * wrap cache and accessor verdict pre-shaped. `ownedWrite` is baked in: the setter carries the owned-scope
+   * guard, and node-level writes are the store's notification machinery.
+   */
+  Node slotSignal(Object v, java.util.function.BiPredicate<Object, Object> equals, Node.Host host, Object key, boolean acc) {
+    Node n = new Node(rt);
+    n.equals = equals;
+    n.config = CONFIG_OWNED_WRITE | CONFIG_SLOT_NODE;
+    n.value = v;
+    n.time = s().clock;
+    n.host = host;
+    n.key = key;
+    n.acc = acc;
     return n;
   }
 
