@@ -334,6 +334,11 @@ public final class Runtime {
     return stores.createProjection(fn, seed, key, false);
   }
 
+  /** Solid's createOptimisticStore(fn, seed, {key}); fn is null for one with no derive. */
+  public Object createOptimisticStore(Stores.Derive fn, Object seed, Function<Object, Object> key) {
+    return stores.createOptimisticStore(fn, seed, key);
+  }
+
   /** The node behind a derived store, for refresh, isPending and affects; null for a plain store. */
   public Node storeDerive(Object view) {
     return stores.deriveOf(view);

@@ -37,7 +37,8 @@ final class JsShape implements StoreShape {
   }
 
   @Override public boolean isArray(Object raw) {
-    return raw instanceof Value && ((Value) raw).hasArrayElements();
+    // Asked in JS: a proxy of an array is an array there, and not one to the host's own test.
+    return isJsObject(raw) && ops.invokeMember("isArray", raw).asBoolean();
   }
 
   @Override public boolean same(Object a, Object b) {
@@ -73,7 +74,7 @@ final class JsShape implements StoreShape {
   }
 
   @Override public int length(Object array) {
-    return (int) ((Value) array).getArraySize();
+    return ops.invokeMember("length", array).asInt();
   }
 
   @Override public Object clone(Object raw) {

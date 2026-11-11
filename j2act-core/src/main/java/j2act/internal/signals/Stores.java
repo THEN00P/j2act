@@ -28,7 +28,7 @@ import java.util.function.Function;
  *
  * A JS proxy's traps are the methods get, has, ownKeys, set and delete here, and what they ask of an object
  * goes through {@link StoreShape}. Left out with what JavaScript needs them for: the prototype overlay,
- * accessor properties and descriptors, chained backings, shallow stores, and dev and observe output.
+ * accessor properties and descriptors, shallow stores, and dev and observe output.
  */
 public final class Stores {
   /** The container node's key, Solid's $TRACK. */
@@ -62,6 +62,9 @@ public final class Stores {
     /** null is Solid's undefined: no guess. */
     Boolean has(StoreTarget t, Object key);
 
+    /** NO_GUESS, null for a key guessed away, or the guessed value in a one-element array. */
+    Object descriptor(StoreTarget t, Object key);
+
     void sweep();
 
     boolean arrangement(StoreTarget t, Object a, Object b);
@@ -84,10 +87,16 @@ public final class Stores {
     void witness(StoreTarget t, Object key);
   }
 
-  /** The container node's arrangement guess: the rows the setter left the container with, in order. */
+  /**
+   * The container node's arrangement guess: the rows the setter left the container with, in order, as a List,
+   * or for a record its keys, as a Set.
+   */
   static final class LaneView {
-    List<Object> g;
-    final Object rows;
+    /** Solid's `g` left undefined: no re-base has run and none is owed. */
+    static final Object UNSET = new Object();
+    /** The rows the setter wrote, kept across re-bases; null until the first re-base on a guess written while the derive asked. */
+    Object g = UNSET;
+    Object rows;
     Object base;
     final Set<Object> removed;
 
@@ -97,6 +106,9 @@ public final class Stores {
       this.removed = removed;
     }
   }
+
+  /** An optimistic store has no guess for a key. */
+  static final Object NO_GUESS = new Object();
 
   private final Runtime rt;
   private StoreShape shape;
@@ -160,7 +172,20 @@ public final class Stores {
       StoreFamily fam = n.host instanceof StoreTarget ? ((StoreTarget) n.host).fam : null;
       return fam != null && fam.node != null && (fam.node.statusFlags & STATUS_PENDING) != 0;
     };
-    q.slotCoveredHook = n -> n.value;
+    q.slotCoveredHook = n -> {
+      // A chained link's committed value is the inner store's, whose commits it never learned of under a guess.
+      StoreTarget t = (StoreTarget) n.host;
+      if (t.ch) {
+        Object key = n.key;
+        Object inner = t.v;
+        if (t.h != null && t.h.get(key) == n) {
+          n.value = rt.core.untrack(() -> shape.has(inner, key));
+        } else if (t.n != null && t.n.get(key) == n) {
+          n.value = rt.core.untrack(() -> unwrapValue(shape.get(inner, key)));
+        }
+      }
+      return n.value;
+    };
     q.storeNodeHook = (t, key) -> getNode((StoreTarget) t, key);
     q.storeWrappableHook = shape::isWrappable;
   }
@@ -172,7 +197,12 @@ public final class Stores {
     return shape;
   }
 
-  private boolean same(Object a, Object b) {
+  /** Solid's `value[$TARGET] !== undefined`: the value is a store's view. */
+  boolean isView(Object v) {
+    return v != null && shape.isObject(v) && shape.targetOf(v) != null;
+  }
+
+  boolean same(Object a, Object b) {
     return a == b || (a != null && b != null && shape.same(a, b));
   }
 
@@ -215,6 +245,7 @@ public final class Stores {
   private StoreTarget createTarget(Object value, StoreTarget parent, Object parentKey, StoreFamily fam) {
     StoreTarget t = new StoreTarget();
     t.v = value;
+    t.ch = isView(value);
     t.u = parent;
     t.pk = parentKey;
     t.fam = fam;
@@ -239,7 +270,8 @@ public final class Stores {
       if (fam == null || t.fam == fam) {
         return value;
       }
-      throw new UnsupportedOperationException("chained store backings are left out of the port");
+      // A view of another family wraps into this one, chained to it: writes stay apart.
+      return createTarget(value, parent, parentKey, fam).px;
     }
     return createTarget(value, parent, parentKey, fam).px;
   }
@@ -494,6 +526,7 @@ public final class Stores {
     }
     Object before = target.v;
     target.v = cloneRaw(before, target);
+    target.ch = false;
     if (target.u != null) {
       privatizeCommitted(target.u);
       Object pv = target.u.v;
@@ -538,6 +571,7 @@ public final class Stores {
       stageOn(target, incoming);
     }
     target.v = incoming;
+    target.ch = isView(incoming);
     target.wk = null;
     StoreTarget owner = deref(owned.get(incoming));
     if (owner != null && owner.fam == target.fam) {
@@ -659,6 +693,7 @@ public final class Stores {
         }
       } else {
         t.v = pb;
+        t.ch = isView(pb);
       }
       t.pb = null;
       t.wk = null;
@@ -816,7 +851,7 @@ public final class Stores {
   void notifyKeyDiff(Node node, Object key, Object old, Object neu) {
     Object ov = shape.get(old, key);
     Object nv = shape.get(neu, key);
-    if (!same(ov, nv) && !targetsEqual(ov, nv)) {
+    if (isView(old) || (!same(ov, nv) && !targetsEqual(ov, nv))) {
       rt.core.setSignal(node, nv);
     }
   }
@@ -829,16 +864,19 @@ public final class Stores {
 
   void notifyFoldTail(StoreTarget t, Object old, Object neu) {
     Map<Object, Node> has = t.h;
+    // A chained backing being left: what it showed is not what `old` reads now, so everything is told.
+    boolean live = isView(old);
     if (has != null) {
       for (Object key : new ArrayList<>(has.keySet())) {
-        if (shape.has(old, key) != shape.has(neu, key)) {
+        if (live || shape.has(old, key) != shape.has(neu, key)) {
           rt.core.setSignal(has.get(key), shape.has(neu, key));
         }
       }
     }
     Node k = t.k;
     if (k != null && (k.subs != null || (k.config & CONFIG_OVERRIDE) != 0)) {
-      boolean changed = shape.isArray(neu) && shape.isArray(old) ? arrayStructureChanged(old, neu) : membershipChanged(old, neu);
+      boolean changed = live
+        || (shape.isArray(neu) && shape.isArray(old) ? arrayStructureChanged(old, neu) : membershipChanged(old, neu));
       if (changed) {
         notifyContainer(k, neu);
       }
@@ -1040,7 +1078,7 @@ public final class Stores {
   }
 
   private boolean changedBetween(StoreTarget target, Object v, Object pb, Object key) {
-    if (shape.targetOf(pb) != null || !shape.sameKind(pb, v)) {
+    if (target.ch || isView(pb) || !shape.sameKind(pb, v)) {
       return true;
     }
     boolean inNew = shape.has(pb, key);
@@ -1067,14 +1105,30 @@ public final class Stores {
     return rt.core.read(node);
   }
 
-  private Object serveDataKey(StoreTarget target, Object key, Object backingValue, Node node) {
+  private Object serveDataKey(StoreTarget target, Object key, Object backingValue, Object src, Node node) {
+    boolean chained = target.ch && same(src, target.v);
     Object v = backingValue;
     if (!inDraft(target) && !writeOverride) {
       if (node == null && rt.owners.getObserver() != null) {
         node = getNode(target, key);
       }
       if (node != null) {
-        v = nodeValue(node, target);
+        Object nv = nodeValue(node, target);
+        if (chained) {
+          // The link follows the inner store: its value is what was just read through it.
+          node.value = backingValue;
+          if ((node.config & CONFIG_OVERRIDE) != 0) {
+            v = nv;
+          }
+        } else {
+          v = nv;
+        }
+      }
+    }
+    if (target.ch && !chained && v != null && shape.isObject(v)) {
+      StoreTarget vt = shape.targetOf(v);
+      if (vt == null || !same(vt.px, v)) {
+        v = resolveChainedRaw(target, key, v);
       }
     }
     if (node != null) {
@@ -1093,6 +1147,26 @@ public final class Stores {
       return v;
     }
     return draftServe(target, wrap(v, target, key));
+  }
+
+  /** A raw read from a chained target's own staging, as the inner store's view of it when it has one. */
+  Object resolveChainedRaw(StoreTarget target, Object key, Object v) {
+    StoreTarget innerT = shape.targetOf(target.v);
+    if (innerT == null) {
+      return v;
+    }
+    if (innerT.ch) {
+      Object iv = resolveChainedRaw(innerT, key, v);
+      return same(iv, v) ? v : wrap(iv, innerT, key);
+    }
+    StoreTarget ownedBy = lookupTarget(v, innerT.fam);
+    if (ownedBy != null) {
+      return ownedBy.px;
+    }
+    if ((same(shape.get(innerT.v, key), v) || (innerT.pb != null && same(shape.get(innerT.pb, key), v))) && shape.isWrappable(v)) {
+      return wrap(v, innerT, key);
+    }
+    return v;
   }
 
   static boolean linkedTo(Node c, Node n) {
@@ -1203,7 +1277,7 @@ public final class Stores {
       pullFamily(target);
     }
     Node node0 = target.n != null ? target.n.get(key) : null;
-    if (writeScopes == null && !writeOverride && node0 != null) {
+    if (writeScopes == null && !writeOverride && node0 != null && (!target.ch || (node0.config & CONFIG_OVERRIDE) != 0)) {
       Object nv = nodeValue(node0, target);
       if (nv == null || !shape.isObject(nv)) {
         return nv;
@@ -1222,6 +1296,9 @@ public final class Stores {
     Object src = readSource(target, key, true, false);
     Object v = shape.get(src, key);
     if (isUndefined(v) && !shape.has(src, key)) {
+      if (target.ch && same(src, target.v)) {
+        return serveDataKey(target, key, v, src, node0);
+      }
       if (!inDraft(target)) {
         if (rt.owners.getObserver() != null) {
           getNode(target, key);
@@ -1234,7 +1311,7 @@ public final class Stores {
       }
       return v;
     }
-    return serveDataKey(target, key, v, node0);
+    return serveDataKey(target, key, v, src, node0);
   }
 
   /** The has trap: presence of a key, tracked apart from its value. */
@@ -1246,7 +1323,14 @@ public final class Stores {
     Object src = readSource(target, key, true, false);
     if (!inDraft(target) && !writeOverride) {
       if (rt.owners.getObserver() != null) {
-        return Signals.truthy(rt.core.read(getHasNode(target, key)));
+        Node node = getHasNode(target, key);
+        Object nv = rt.core.read(node);
+        if (!target.ch || !same(src, target.v)) {
+          return Signals.truthy(nv);
+        }
+        boolean present = shape.has(src, key);
+        node.value = present;
+        return (node.config & CONFIG_OVERRIDE) != 0 ? Signals.truthy(nv) : present;
       } else if (optHooks != null && optRead(target)) {
         Boolean guessed = optHooks.has(target, key);
         if (guessed != null) {
@@ -1282,13 +1366,20 @@ public final class Stores {
     if (plain && observerHoldsContainer(target, obs)) {
       src = enumerationSource(target);
     } else if (plain) {
-      boolean present = Signals.truthy(rt.core.read(getHasNode(target, key)));
+      Node node = getHasNode(target, key);
+      boolean present = Signals.truthy(rt.core.read(node));
       src = readSource(target, key, true, true);
-      if (!present) {
+      if (!present && (!target.ch || (node.config & CONFIG_OVERRIDE) != 0 || !shape.has(src, key))) {
         return null;
       }
     } else {
       src = readSource(target, key, true, true);
+    }
+    if (optHooks != null && !(plain && observerHoldsContainer(target, obs)) && optRead(target)) {
+      Object guessed = optHooks.descriptor(target, key);
+      if (guessed != NO_GUESS) {
+        return (Object[]) guessed;
+      }
     }
     return shape.has(src, key) ? new Object[] {shape.get(src, key)} : null;
   }
@@ -1317,6 +1408,10 @@ public final class Stores {
     }
     if (!inDraft(target) && rt.owners.getObserver() != null) {
       rt.core.read(getContainerNode(target));
+      Object src = readSource(target);
+      if (isView(src)) {
+        track(shape.targetOf(src));
+      }
     }
   }
 
@@ -1460,6 +1555,14 @@ public final class Stores {
       optHooks.reconcile(state, unwrapValue(value), keyFn);
       return;
     }
+    // Replace-mode root handed another store's view: chain to it.
+    if (replace && !same(value, state) && isView(value)) {
+      Object prev = t.pb != null ? t.pb : t.v;
+      if (!same(prev, value)) {
+        adoptPB(t, value, true);
+      }
+      return;
+    }
     Object incoming = unwrapValue(value);
     if (keyFn != null) {
       Object prev = t.pb != null ? t.pb : t.v;
@@ -1494,7 +1597,7 @@ public final class Stores {
     boolean nextArr = shape.isArray(incoming);
     adoptPB(t, incoming, false);
     boolean bumped = t.dk == null;
-    if (shape.isArray(prevView) != nextArr) {
+    if (shape.isArray(prevView) != nextArr || isView(old)) {
       notifyFold(t, old, incoming);
       return;
     }
@@ -1912,6 +2015,18 @@ public final class Stores {
     return store;
   }
 
+  /**
+   * Solid's createOptimisticStore: a store whose setter's writes are guesses, shown at once and undone when
+   * the action that made them ends. With a derive it is a projection too, and a landing confirms a guess.
+   */
+  Object createOptimisticStore(Derive fn, Object seed, Function<Object, Object> key) {
+    shape();
+    if (optHooks == null) {
+      optHooks = new StoreOptimistic(rt, this);
+    }
+    return createProjection(fn, seed, key, true);
+  }
+
   /** The derive of a derived store's view, Solid's store[$REFRESH]. */
   Node deriveOf(Object view) {
     StoreTarget t = shape.targetOf(view);
@@ -1939,10 +2054,19 @@ public final class Stores {
       return;
     }
     rt.core.read(getDeepNode(t));
+    // A chained backing changes without this store's nodes moving: witness the inner store too.
+    for (StoreTarget it = t; it.ch;) {
+      it = shape.targetOf(it.v);
+      rt.core.read(getContainerNode(it));
+      rt.core.read(getDeepNode(it));
+    }
     for (Object key : shape.keys(src)) {
       Object child = shape.get(src, key);
       if (child == null || !shape.isObject(child)) {
         continue;
+      }
+      if (t.ch && shape.targetOf(child) == null) {
+        child = resolveChainedRaw(t, key, child);
       }
       StoreTarget ct = lookupTarget(child, t.fam);
       if (ct == null) {

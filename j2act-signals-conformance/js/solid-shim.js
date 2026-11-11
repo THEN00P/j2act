@@ -491,6 +491,8 @@
     isWrappable,
     isObject: v => typeof v === "object" && v !== null,
     same: (x, y) => x === y,
+    isArray: o => Array.isArray(o),
+    length: o => o.length,
     sameKind: (x, y) => Object.getPrototypeOf(x) === Object.getPrototypeOf(y),
     has: (o, k) => hasOwn.call(o, k),
     get: (o, k) => (hasOwn.call(o, k) ? o[k] : undefined),
@@ -500,7 +502,11 @@
       for (let i = 0; i < o.length; i++) if (i in o) out.push(i);
       return out;
     },
-    clone: o => (Array.isArray(o) ? o.slice() : Object.create(Object.getPrototypeOf(o), Object.getOwnPropertyDescriptors(o))),
+    // A view is copied by reading it, as a spread does, so its children come as views.
+    clone: o =>
+      Array.isArray(o) ? o.slice()
+        : o[$JT] !== undefined ? { ...o }
+          : Object.create(Object.getPrototypeOf(o), Object.getOwnPropertyDescriptors(o)),
     set: (o, k, v) => {
       o[k] = v;
     },
@@ -558,6 +564,13 @@
     projectionOptions(options);
     return b.createProjection(fn, seed || {}, keyOf(options));
   });
+  const createOptimisticStore = guard((first, second, third) => {
+    const derived = typeof first === "function";
+    const options = derived ? third : second;
+    projectionOptions(options);
+    const store = b.createOptimisticStore(derived ? first : undefined, (derived ? second : first) || {}, keyOf(options));
+    return [store, guard(fn => b.setStore(store, fn))];
+  });
   const createStore = guard((first, second, third) => {
     if (typeof first === "function") {
       projectionOptions(third);
@@ -577,6 +590,7 @@
 
   const solid = {
     createStore,
+    createOptimisticStore,
     createProjection,
     reconcile,
     snapshot,

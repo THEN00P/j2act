@@ -12,13 +12,15 @@ import java.util.function.BiPredicate;
  * which is also what the container node `k` stages. Nodes are made when something subscribes.
  *
  * Left out, with what they serve in JavaScript: the prototype overlay (`ovl`, `del`), accessor properties
- * (`a`, `sc`, `kc`), chained backings (`ch`) and shallow stores (`s`).
+ * (`a`, `sc`, `kc`) and shallow stores (`s`).
  */
 public final class StoreTarget implements Node.Host {
   /** Committed backing: the source object, shared, or an owned copy. */
   Object v;
   /** Pending backing for the current batch, null when settled. */
   Object pb;
+  /** The committed backing is another store's view: this store is chained to it. */
+  boolean ch;
   /** Live value-node count. */
   int nc;
   /** Per-property subscription nodes. */
@@ -100,6 +102,10 @@ public final class StoreTarget implements Node.Host {
     int run;
     boolean woke;
     int w;
+    /** Targets carrying a lane value on one of their nodes; dropped once none is. */
+    Set<StoreTarget> overlaid;
+    /** The derive asked a new question over the family's guesses, stamped with that flush's clock. */
+    long asked;
 
     @Override public Node node() {
       return node;
