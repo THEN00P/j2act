@@ -22,6 +22,11 @@ final class ReactiveHost {
   /** Every tab on this lane, hub included. */
   final Set<Tab> tabs = ConcurrentHashMap.newKeySet();
   private boolean flushing;
+  /** The stores of this lane's runtime (ADR 0035), made with the first one. Lane-only. */
+  private j2act.internal.store.JavaShape stores;
+  /** The tab each store belongs to, by its root target. */
+  final java.util.Map<j2act.internal.signals.StoreTarget, Tab> storeTabs =
+    java.util.Collections.synchronizedMap(new java.util.IdentityHashMap<>());
   private final java.util.Queue<Runnable> foreignWrites = new java.util.concurrent.ConcurrentLinkedQueue<>();
   private final java.util.concurrent.atomic.AtomicBoolean foreignWriteQueued = new java.util.concurrent.atomic.AtomicBoolean();
 
@@ -44,6 +49,44 @@ final class ReactiveHost {
       });
       return () -> cancelled.set(true);
     });
+  }
+
+  /**
+   * This runtime's stores. What a store hands out can be read anywhere, so each read finds the lane: at once
+   * on it, in an action's transaction from its body, and by a hop from any other thread, untracked.
+   */
+  j2act.internal.store.JavaShape stores() {
+    if (stores == null) {
+      stores = new j2act.internal.store.JavaShape(rt);
+      stores.gate(new j2act.internal.store.JavaShape.Gate() {
+        @Override public <T> T call(j2act.internal.signals.StoreTarget target, java.util.function.Supplier<T> op) {
+          if (lane.isCurrent()) {
+            return op.get();
+          }
+          Tab tab = storeTabs.get(target.root());
+          Action.Call call = Action.Call.current();
+          if (call != null && tab != null) {
+            return call.enter(tab, op);
+          }
+          Object[] out = new Object[1];
+          RuntimeException[] failure = new RuntimeException[1];
+          hop(() -> {
+            try {
+              out[0] = rt.untrack(op);
+            } catch (RuntimeException e) {
+              failure[0] = e;
+            }
+          });
+          if (failure[0] != null) {
+            throw failure[0];
+          }
+          @SuppressWarnings("unchecked")
+          T value = (T) out[0];
+          return value;
+        }
+      });
+    }
+    return stores;
   }
 
   /** A landing from another thread: a job of its own, ending with a flush. */

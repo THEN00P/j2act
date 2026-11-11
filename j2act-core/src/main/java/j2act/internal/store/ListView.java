@@ -24,50 +24,62 @@ public final class ListView<E> extends AbstractList<E> implements StoreView, Ran
   }
 
   @Override public int size() {
-    return shape.rt.storeLength(target);
+    return shape.at(target, () -> shape.rt.storeLength(target));
   }
 
   @Override @SuppressWarnings("unchecked") public E get(int index) {
-    int size = size();
-    if (index < 0 || index >= size) {
-      throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
-    }
-    return (E) shape.present(shape.rt.storeGet(target, index));
+    return shape.at(target, () -> {
+      int size = shape.rt.storeLength(target);
+      if (index < 0 || index >= size) {
+        throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
+      }
+      return (E) shape.present(shape.rt.storeGet(target, index));
+    });
   }
 
   @Override public E set(int index, E element) {
-    shape.requireWriting(target);
-    E old = get(index);
-    shape.rt.storeSet(target, index, shape.unpresent(element));
-    return old;
+    return shape.at(target, () -> {
+      shape.requireWriting(target);
+      E old = get(index);
+      shape.rt.storeSet(target, index, shape.unpresent(element));
+      return old;
+    });
   }
 
   @Override public void add(int index, E element) {
-    shape.requireWriting(target);
-    int size = size();
-    if (index < 0 || index > size) {
-      throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
-    }
-    for (int i = size; i > index; i--) {
-      shape.rt.storeSet(target, i, shape.rt.storeGet(target, i - 1));
-    }
-    shape.rt.storeSet(target, index, shape.unpresent(element));
+    shape.at(target, () -> {
+      shape.requireWriting(target);
+      int size = shape.rt.storeLength(target);
+      if (index < 0 || index > size) {
+        throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
+      }
+      for (int i = size; i > index; i--) {
+        shape.rt.storeSet(target, i, shape.rt.storeGet(target, i - 1));
+      }
+      shape.rt.storeSet(target, index, shape.unpresent(element));
+      return null;
+    });
   }
 
   @Override public E remove(int index) {
-    shape.requireWriting(target);
-    E old = get(index);
-    int size = size();
-    for (int i = index; i < size - 1; i++) {
-      shape.rt.storeSet(target, i, shape.rt.storeGet(target, i + 1));
-    }
-    shape.rt.storeSet(target, StoreShape.LENGTH, size - 1);
-    return old;
+    return shape.at(target, () -> {
+      shape.requireWriting(target);
+      E old = get(index);
+      int size = shape.rt.storeLength(target);
+      for (int i = index; i < size - 1; i++) {
+        shape.rt.storeSet(target, i, shape.rt.storeGet(target, i + 1));
+      }
+      shape.rt.storeSet(target, StoreShape.LENGTH, size - 1);
+      return old;
+    });
   }
 
   @Override public void clear() {
-    shape.requireWriting(target);
-    shape.rt.storeSet(target, StoreShape.LENGTH, 0);
+    shape.at(target, () -> {
+      shape.requireWriting(target);
+      shape.rt.storeSet(target, StoreShape.LENGTH, 0);
+      return null;
+    });
   }
 
   @Override public boolean equals(Object o) {

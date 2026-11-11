@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * The store's seam over Java objects (ADR 0035). A list is Solid's array, with Integer indices; a map and a
@@ -22,6 +23,25 @@ public final class JavaShape implements StoreShape {
   final Runtime rt;
   /** The open draft, while update(...) runs. */
   Draft draft;
+  /** Where a read or a write of a store runs. A runtime has one lane, and whoever owns it says how to get there. */
+  private Gate gate = new Gate() {
+    @Override public <T> T call(StoreTarget target, Supplier<T> op) {
+      return op.get();
+    }
+  };
+
+  /** Runs what touches a store where the store's runtime runs. */
+  public interface Gate {
+    <T> T call(StoreTarget target, Supplier<T> op);
+  }
+
+  public void gate(Gate gate) {
+    this.gate = gate;
+  }
+
+  <T> T at(StoreTarget target, Supplier<T> op) {
+    return gate.call(target, op);
+  }
 
   public JavaShape(Runtime rt) {
     this.rt = rt;
@@ -218,7 +238,12 @@ public final class JavaShape implements StoreShape {
 
   /** The current value for the reader, tracked: a real instance for a bean, the view for a list or a map. */
   public Object value(Object view) {
-    return present(view);
+    return at(targetOf(view), () -> present(view));
+  }
+
+  /** The committed value with nothing tracked: real objects all the way down, for saving. */
+  public Object snapshot(Object view) {
+    return rt.snapshot(view);
   }
 
   /** Runs change on a draft of the view's value and applies what it changed as one write. */

@@ -56,6 +56,15 @@ public final class StoreTarget implements Node.Host {
     return px;
   }
 
+  /** The target of the store this one is part of. */
+  public StoreTarget root() {
+    StoreTarget t = this;
+    while (t.u != null) {
+      t = t.u;
+    }
+    return t;
+  }
+
   /** The committed backing, for a shape choosing the view of a new target. */
   public Object backing() {
     return v;

@@ -26,40 +26,47 @@ public final class MapView<K, V> extends AbstractMap<K, V> implements StoreView 
   }
 
   @Override @SuppressWarnings("unchecked") public V get(Object key) {
-    return (V) shape.present(shape.rt.storeGet(target, key));
+    return shape.at(target, () -> (V) shape.present(shape.rt.storeGet(target, key)));
   }
 
   @Override public boolean containsKey(Object key) {
-    return shape.rt.storeHas(target, key);
+    return shape.at(target, () -> shape.rt.storeHas(target, key));
   }
 
   @Override public int size() {
-    return shape.rt.storeKeys(target).size();
+    return shape.at(target, () -> shape.rt.storeKeys(target).size());
   }
 
   @Override public V put(K key, V value) {
-    shape.requireWriting(target);
-    V old = get(key);
-    shape.rt.storeSet(target, key, shape.unpresent(value));
-    return old;
+    return shape.at(target, () -> {
+      shape.requireWriting(target);
+      V old = get(key);
+      shape.rt.storeSet(target, key, shape.unpresent(value));
+      return old;
+    });
   }
 
   @Override public V remove(Object key) {
-    shape.requireWriting(target);
-    V old = get(key);
-    shape.rt.storeDelete(target, key);
-    return old;
+    return shape.at(target, () -> {
+      shape.requireWriting(target);
+      V old = get(key);
+      shape.rt.storeDelete(target, key);
+      return old;
+    });
   }
 
   @Override public void clear() {
-    shape.requireWriting(target);
-    for (Object key : shape.rt.storeKeys(target)) {
-      shape.rt.storeDelete(target, key);
-    }
+    shape.at(target, () -> {
+      shape.requireWriting(target);
+      for (Object key : shape.rt.storeKeys(target)) {
+        shape.rt.storeDelete(target, key);
+      }
+      return null;
+    });
   }
 
   @Override public Set<Entry<K, V>> entrySet() {
-    List<Object> keys = shape.rt.storeKeys(target);
+    List<Object> keys = shape.at(target, () -> shape.rt.storeKeys(target));
     return new AbstractSet<>() {
       @Override public int size() {
         return keys.size();

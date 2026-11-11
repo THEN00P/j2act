@@ -72,6 +72,24 @@ public final class Reactive {
     return own(new RetainedValue<>(save, restore, name, null));
   }
 
+  /**
+   * A store over an object, a list or a map (ADR 0035): what read one part of it re-runs when that part
+   * changes, and a write is a change to a draft of the real type. See {@link Stored}.
+   */
+  public static <T> Stored<T> createStore(T initial) {
+    return own(new Stored<>(initial));
+  }
+
+  /** A store over a list: get() is a List whose reads subscribe to an element or the size. */
+  public static <E> Stored<java.util.List<E>> createStore(java.util.List<E> initial) {
+    return own(new Stored<>(initial));
+  }
+
+  /** A store over a map: get() is a Map whose reads subscribe to a key, its presence or the keys. */
+  public static <K, V> Stored<java.util.Map<K, V>> createStore(java.util.Map<K, V> initial) {
+    return own(new Stored<>(initial));
+  }
+
   /** A pure derived value, recomputed when what it read changes; readers re-render only when it changes. */
   public static <T> Memo<T> createMemo(Supplier<T> body) {
     return own(new Memo<>(body));
