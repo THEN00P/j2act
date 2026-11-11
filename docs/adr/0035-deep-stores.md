@@ -1,0 +1,134 @@
+# Deep stores
+
+A signal holds a whole value. Changing one field of one object in a list means replacing the list, and everything that read any of it runs again. Solid 2 solves this with stores, which ADR 0033 left out because they are built on JS proxies. This ADR brings them in.
+
+The rule: **the engine is Solid's store, ported, and the data is the application's own classes.** A store takes ordinary Java objects, lists and maps, tracks what was read per property, and is written by mutating a draft that is an instance of the real class.
+
+```java
+var todos = createStore(new ArrayList<Todo>());
+var user  = createStore(new User("Ada", address));
+
+todos.update(d -> { d.add(todo); d.get(0).setDone(true); });   // d is a List<Todo>
+user.update(d -> d.getAddress().setCity("Wien"));              // d is a User
+
+var loaded = createProjection(() -> async(repo::list), Todo::getId);
+
+each(todos, row -> li(row.get().getTitle()).onClick(() -> row.update(d -> d.setDone(true))));
+```
+
+No annotation, interface, wrapper or copy strategy is written for a model class, and classes from other libraries work the same way. Nothing is generated.
+
+## The engine
+
+`packages/signals/src/store` is ported file by file like the rest (ADR 0033), and Solid's store tests run against it in `j2act-signals-conformance`. A JS proxy's traps become explicit calls on the engine (read a key, write a key, list keys, has a key), which a proxy in the test shim forwards to. The port left out the store slot nodes in `Core`; they come back first.
+
+What that gives, all of it Solid's:
+
+- A node per property, made when the property is first read or written. Whether a node exists is never observable (Solid's rule R1), so how finely a read is tracked is an optimization and never changes what a page shows.
+- A store never changes an object it was given. The first write to an object copies it, and pending and optimistic values stay beside the committed ones until they commit, so a frame that is held keeps showing what it showed.
+- Holds, guesses and refreshes are per key. Two actions guessing on different rows finish apart.
+
+## The four primitives
+
+They are Solid's, with Solid's division of work:
+
+| | For | Written |
+|---|---|---|
+| `createStore(value)` | Local state | With `update` |
+| `createProjection(fn, key)` | Derived or loaded data, merged by key | No |
+| `createStore(fn, seed)` | A projection that also takes writes | With `update` |
+| `createOptimisticStore(...)` | Writes from an action, undone when it ends | In an action |
+
+`createStore` is one name. Overloads pick a list, map, set or object store from the static type of what is passed. The store keeps the collection's contract, not its class: `List`, `Set` or `Map`, and its order, which is insertion order or a `SortedMap`'s comparator. It owns versioned storage, so a `LinkedList` does not stay one.
+
+A local store has no keys. A row's identity is the store's own. A key function appears where fresh objects stand for rows already on the page, on a projection or `reconcile`, and is always given explicitly. Without one, rows pair by position.
+
+## Reading
+
+```java
+return () -> p(user.get().getAddress().getCity());                    // the usual way
+return () -> p(user.at(User::getAddress, Address::getCity).get());    // only the city
+```
+
+`get()` returns a real `User` and subscribes to the whole object. That is always correct and re-runs the reader on any change to it. A row handed out by `each` is its own store and its own render scope, on the ported `mapArray`, so a changed row renders alone.
+
+`at(...)` reads one property. Its arguments are method references, and the property each names comes from `SerializedLambda`. It gives a value with `get()` and `set(x)`, so it also binds a field:
+
+```java
+var city = user.at(User::getAddress, Address::getCity);
+input().withValue(city.get()).onInput(e -> city.set(e.value()));
+```
+
+Getter chains are what the bytecode enhancer will narrow on its own: `user.get().getAddress().getCity()` in a view becomes the `at(...)` read, within one method. `at(...)` is that written by hand, for a field binding or a small component over a large object. Passing the bean to another method keeps the coarse read.
+
+The bean `get()` returns is built for the reader. Inside a pending or optimistic lane it holds that lane's values, as Solid's `snapshot` does: records that changed are copied, and those that did not are the objects the store was given. One copy is kept per record and version, so a memo comparing by identity still stops.
+
+## Writing
+
+`update` hands its lambda a draft of the real type.
+
+- A list, set or map in a draft is j2act's own implementation of the interface. Nothing is copied until it is touched.
+- A bean is copied when the draft hands it out, down to the next collection.
+- Each object is copied once per draft, by identity. Two rows sharing one `Address` share one copy, and a change through either reaches both, as Solid keeps one target per object.
+- When the lambda returns, each copy is compared with what it was copied from, property by property, and each difference is one write to that property's node. Solid also notifies at the outermost setter's exit.
+
+Inside the lambda, reads see what it wrote. A draft used after the lambda returned fails. An object taken from `get()` beforehand is not part of the draft, and changing it changes nothing on the page.
+
+`at(...).set(x)` writes one property without a draft. `set(value)` on a store replaces its value; there is no `update(UnaryOperator)`, which `u -> u.setX(..)` would make ambiguous.
+
+## Which classes can be copied
+
+Decided once per class by reflection:
+
+| Kind | Classes | Copied by |
+|---|---|---|
+| Value | Boxes, `String`, enums, `java.time`, `BigDecimal`, `BigInteger`, `UUID` | Never copied; compared with `equals` |
+| Collection | `List`, `Set`, `Map`, arrays | j2act |
+| Bean | A no-argument constructor of any visibility | The constructor, then its fields |
+| Record | On Java 16 and later | The canonical constructor, found reflectively |
+| Opaque | Anything else | Never copied or looked into |
+
+Fields are copied, not properties: a getter may load a lazy association and a setter may do more than set. An opaque value is one value to the store. Assigning a new one is a change, and what is inside it is not tracked. That is right for an immutable type, and dev mode warns when a mutable class that cannot be copied enters a store.
+
+A hook lets a host say more about a class. `j2act-jakarta` and `j2act-spring` use it to make JPA state that is not loaded opaque, through `PersistenceUtil.isLoaded`, so a store never initializes it. The application's own call still loads it or fails as Hibernate has it, and editing inside one fails with a hint to fetch it in the query.
+
+## Retained stores
+
+`createRetainedStore(value)` is a store whose value goes into its owner's Snapshot (ADR 0026), keyed like `createRetained`. It is saved as JSON through the app's `JsonBinding` or a `RetainedCodec`, from the committed value, and read back as the type it was created with, so the element type of a list comes from the variable it is assigned to, through the processor, or from an explicit type.
+
+What cannot be written fails where it is found, naming the path (`todos[3].attachment`), when the store is created in dev mode and at the save otherwise, where it is logged and that store is left out of the snapshot as a bad entry is today. A value that reads back as something else is dropped with a warning and the store starts from its initial value.
+
+## Equality
+
+Nodes keep comparing with `Objects.equals` (ADR 0033). Inside a store and in `reconcile`, beans and records are compared by identity and matched by key, and only values by `equals`.
+
+That matters for entities whose `equals` compares ids. Today a refreshed list of them equals the old list and the page does not update. A check with the harness showed it: the reload ran and no patch went out, while the same page without that `equals` got its patch. A projection does not have this problem. Whether signals and memos should is its own decision.
+
+## What an application can get wrong
+
+- Changing a bean that `get()` returned. Untouched parts are the store's own objects, so this changes committed state with no update. Solid takes no responsibility for it. With mutable beans it is easier to do, so dev mode fingerprints what it handed out and reports a difference at the next commit.
+- Passing `at(...)` anything but a method reference of a public getter. A lambda, or a reference the compiler compiles into one, names no property. It fails when it first runs, and the processor reports it at build time.
+
+## Checked
+
+`SerializedLambda` was tried under javac and ECJ 3.46 with `--release 11`, run on Java 21 and 25. Both name the getter for a method reference to a public getter of an application class, an interface, a superclass, a generic type and a JDK class, with or without boxing of what it returns. A lambda gives a `lambda$` name under both. A protected getter of another package gives its name under ECJ and a `lambda$` name under javac, so the rule is public getters.
+
+## Considered and rejected
+
+- **`createList` and `createMap` with a key each.** Verbose, and keying a list is building a map by hand.
+- **Generated drafts per class, as Immer has them.** A type and a token per class, records only, and nothing for a class from a library.
+- **Objects made of signals.** Every model class has to be written for it.
+- **Interface proxies.** `java.lang.reflect.Proxy` implements interfaces only, so each class needs one written by hand.
+- **Handles over a graph j2act owns** (`user.address().city().get()`). A handle cannot go where a `User` is expected, turning it back into one has the same limits as copying, and taking data in reads every getter.
+- **A signal holding an immutable version, with a memo per path.** One node per root: two guesses on different rows finish together, a held write holds every field, and a refresh waits behind any guess. A memo made under the root's owner gets no lane from the pass reading it, so a held frame would show two worlds.
+- **A generated metamodel for reading one property** (`User_.address`). `at(...)` needs nothing generated.
+- **Subclasses generated at run time, as Hibernate has them.** Final classes and fields are out of reach. It can replace copy and compare later where it applies.
+
+Two other models were asked to design this from the constraints alone and then to attack all three designs. They proposed the handles and the versions above, and both ended at this one, with `at(...)`, the bean built per reader, the draft's identity and copying by field as their changes.
+
+## Open
+
+- The scoped `Store` class shares its name with `createStore`. It is renamed or replaced separately; until then the new types avoid the bare name.
+- "Draft" and "createStore" are on CONTEXT.md's lists of words to avoid, from before this.
+- What building a bean per reader costs on a list of a thousand rows.
+- The port is made at the pinned commit. Moving the pin is separate.
