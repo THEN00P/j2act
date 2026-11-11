@@ -115,7 +115,7 @@ All done, though not in this order: the skeleton came last, once the engine had 
 - **A failed action's plain writes stand.** Only its guesses are undone. Before, they were dropped. A write that must not outlive a failure goes after the call that can fail.
 - **An action's future finishes when its body ends**, not when its writes show. To wait for a refresh, join `refresh(x)`'s future in the body, as a Solid action yields it. A refresh of something nothing reads holds nothing.
 - **A write to a derived signal stands until its source changes**, even to the same result: the body runs again and decides (Solid's R31).
-- **`equals` on a write.** Unchanged, but see the table.
+- **Equality on a write.** Value equality checks content beyond `equals`; see the table and the policy below.
 
 ## How a view renders
 
@@ -138,11 +138,21 @@ Every scope has a render effect. Its first half renders to a string, and a paren
 | Action body | Generator; can escape the hold after `await` | A thread that stays in its transaction | Better |
 | Guess outside an action | Void | The engine voids it, and `Optimistic` refuses it with an error first | Better for finding the mistake |
 | Deep stores | `createStore` and friends | Not ported | Constraint: no proxies |
-| Equality | `===` | `Objects.equals`, so a value compares by content, 0.0 differs from -0.0 and NaN equals itself | Constraint: Java has no `===` that treats strings by value. A signal holding a large list compares it on each write |
+| Equality | `===` | `ValueEquality.same`: identity, or `equals` plus recursive content checks for lists, sets, maps, optional values and application instance fields; other JDK types and enums retain `equals`. 0.0 differs from -0.0 and NaN equals itself | Deliberate Java adaptation: equal new value results still cut propagation, but equality by entity id cannot hide changed fields. Inaccessible state and copies reaching depth 32 count as changed. Custom primitive comparators remain authoritative |
 | An error nothing caught | Halts all reactivity for good | Logged, and what failed keeps what it shows, since one runtime serves all of a browser's tabs | Better for a server |
 | A future already done | A promise always lands a tick later | Read at once, as Solid reads a synchronous thenable | Constraint: it is what a done `CompletableFuture` is |
 | `withStaleOnError`, `failed(x)` | No such thing | Wrappers above the line | Addition |
 | Dev warnings | Many, through `DEV` and `OBSERVE` | The ones that throw are kept; the ones that warn are on the backlog with the diagnostics | Worse: closing it is the backlog's "Reactive diagnostics" |
+
+## Java value equality
+
+Signals and memos share one default comparison, including the default-comparator write fast path, screen-read suppression, boundary comparisons and the three netted checks in `Core`, `Verdict` and `Effects`. Solid uses identity for objects at these sites; using Java `equals` alone loses freshly loaded entities whose equality only names their database row. Switching all objects to identity would instead make ordinary filtered lists and DTOs propagate on every recomputation.
+
+The default therefore requires both `equals` and agreement of recursively compared content. Lists compare in order; sets and maps match entries without order, including both keys and values; optionals compare their contents. Other JDK types and enums retain established equality, including strings, boxed primitives, dates and `java.time` values. Arrays retain identity equality. For other application classes, cached reflection reads every nonstatic field, including inherited, transient and synthetic state, without invoking getters. Unreadable fields and copies reaching depth 32 conservatively count as changed. Set/map matching can be quadratic; list and DTO checks traverse their state. The initial `equals` call still has the class's own cost and limitations, including recursive equality on cyclic graphs. A supplied comparator still controls its primitive, as in Solid.
+
+This is a conservative change test, not an ORM detector or a snapshot. It may propagate for irrelevant caches, captured state, proxies or inaccessible modules. It cannot detect mutation of an object already stored: replace values. Reflection does not call bean getters, but collection equality and iteration can initialize lazy ORM collections; supply loaded data. No JPA dependency or application annotation is needed. Identity everywhere, guessing value classes from names/annotations, an application-only comparator option and a dev-only warning were rejected: they respectively lose useful memo cuts, miss valid Java models, require every application to fix the common case, or leave production updates lost.
+
+`MapArray` retains Java `equals` at its item/key matching sites, consistently with its `HashMap`/`HashSet` indexes: these choose row ownership by key, rather than decide whether a signal's value changed. Its row signals use the new default comparison. Changing its key model is separate from this fix; it has no public caller yet. The boundary output comparison also uses the default change test, even though j2act's views normally supply strings.
 
 ## Not settled: state across browsers
 

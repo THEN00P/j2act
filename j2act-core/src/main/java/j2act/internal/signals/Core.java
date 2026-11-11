@@ -301,7 +301,7 @@ final class Core {
       boolean valueChanged = (unstaged && wasUninitialized != 0 && isEffect == 0)
         || (el.x != null && el.x.shownError != null) || replaced || !isSame(el, compareValue, value);
       if (isEffect != 0 && valueChanged
-        && !((el.flags & REACTIVE_SCREEN_READ) != 0 && !el.modified && java.util.Objects.equals(el.prevValue, value))
+        && !((el.flags & REACTIVE_SCREEN_READ) != 0 && !el.modified && ValueEquality.same(el.prevValue, value))
         && unstaged) {
         el.modified = el.x == null || el.x.error == null;
         if (!create) {
@@ -723,7 +723,7 @@ final class Core {
       if (c == null || el.pendingValue == NOT_PENDING || (c.config & CONFIG_CHILDREN_FORBIDDEN) != 0) {
         return el.value;
       }
-      boolean netted = el.pendingValue == el.value || java.util.Objects.equals(el.pendingValue, el.value);
+      boolean netted = ValueEquality.same(el.pendingValue, el.value);
       if (netted || (((q.observeFlightHook != null && (c.config & CONFIG_VERDICT) != 0)
         || (q.laneStageHook != null && q.passLane != null && q.passLane.folded != null)) && stagedScreen(c, el))) {
         return el.value;
@@ -870,7 +870,7 @@ final class Core {
 
   boolean isSame(Node el, Object a, Object b) {
     if (el.equals == Node.IS_EQUAL) {
-      return java.util.Objects.equals(a, b);
+      return ValueEquality.same(a, b);
     }
     try {
       return el.equals != null && el.equals.test(a, b);
@@ -911,7 +911,7 @@ final class Core {
     boolean hasCustom = q.observeFlightHook != null;
     boolean custom = hasCustom && el.equals != Node.IS_EQUAL;
     boolean valueChanged = (el.statusFlags & STATUS_UNINITIALIZED) != 0 || (el.x != null && el.x.shownError != null)
-      || (hasCustom && !custom ? !java.util.Objects.equals(currentValue, v) : !isSame(el, currentValue, v));
+      || (hasCustom && !custom ? !ValueEquality.same(currentValue, v) : !isSame(el, currentValue, v));
     if (!valueChanged) {
       return v;
     }

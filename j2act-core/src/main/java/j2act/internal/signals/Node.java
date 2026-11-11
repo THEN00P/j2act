@@ -30,8 +30,8 @@ public final class Node extends Owner {
     void apply(Throwable error, Runnable cleanup) throws Exception;
   }
 
-  /** Solid compares with `===`, which on JS strings and numbers is by value. Java's closest is equals. */
-  static final BiPredicate<Object, Object> IS_EQUAL = java.util.Objects::equals;
+  /** Solid's default === adapted to Java values; see ValueEquality and ADR 0033. */
+  static final BiPredicate<Object, Object> IS_EQUAL = ValueEquality::same;
 
   // ---- RawSignal
   Link subs;

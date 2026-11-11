@@ -5,7 +5,7 @@ Server-driven reactive UI in pure Java. No IDE plugins, no templating language â
 ## Language
 
 **Signal**:
-Server-side reactive value, created with createSignal() and owned by a component, a tab or a browser (ADR 0030, 0031). Writes batch until the end of the lane task: a read after set() still sees the old value. A write that makes an async memo on screen reload is held until it landed, so everything changes in one update. "State" stays the general word: tab state, browser state, Retained State.
+Server-side reactive value, created with createSignal() and owned by a component, a tab or a browser (ADR 0030, 0031). Writes use value equality: `equals` plus a recursive check of collection contents and application instance fields, so entity equality by id cannot hide changed data. Equal DTOs and value lists still stop updates. Inaccessible or overly deep state counts as changed; replace values rather than mutating stored objects (ADR 0033). Writes batch until the end of the lane task: a read after set() still sees the old value. A write that makes an async memo on screen reload is held until it landed, so everything changes in one update. "State" stays the general word: tab state, browser state, Retained State.
 _Avoid_: Atom, SharedVar
 
 **Tab**:
@@ -45,7 +45,7 @@ Tracked component input, a field of the component. A with* builder writes it on 
 _Avoid_: Input, Attribute, Param
 
 **Memo**:
-Derived value from createMemo(), recomputed when what it read changes. No side effects. Readers re-render only when the derived value itself changes. A memo whose body returns a future is an Async memo.
+Derived value from createMemo(), recomputed when what it read changes. No side effects. Readers re-render only when the derived value itself changes under the same value equality as Signal: equal new DTOs and value lists stop here, while changed fields of an entity with equality by id pass through. A memo whose body returns a future is an Async memo.
 _Avoid_: Derived, Computed
 
 **Effect**:
