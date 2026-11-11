@@ -113,6 +113,14 @@ public final class Bridge {
       keyFn == null || !keyFn.canExecute() ? null : item -> toJava(call(keyFn, item)));
   }
 
+  public void storeAffects(Value view) {
+    rt.storeAffects(view);
+  }
+
+  public void storeAffectsKey(Value view, Value key, boolean array) {
+    rt.storeAffects(view, storeKey(key, array));
+  }
+
   public Object storeDerive(Object target) {
     StoreTarget t = (StoreTarget) target;
     return t.fam != null && t.fam.node != null ? t.fam.node : undefined;

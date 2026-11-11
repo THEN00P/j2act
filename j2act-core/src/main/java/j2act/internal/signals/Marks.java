@@ -58,9 +58,14 @@ final class Marks {
       || ((n.config & CONFIG_SLOT_NODE) != 0 && rt.scheduler.slotFlightHook != null && rt.scheduler.slotFlightHook.test(n));
   }
 
+  /** store/affects.ts releaseMarkScope: a store's mark that ended lets go of what inherited it. */
+  java.util.function.Consumer<Node> releaseScopeHook;
+
   private void release(List<Node> nodes) {
-    for (Node n : nodes) {
-      unmark(n);
+    for (Node n : new ArrayList<>(nodes)) {
+      if (unmark(n) && releaseScopeHook != null) {
+        releaseScopeHook.accept(n);
+      }
     }
     nodes.clear();
   }
@@ -82,6 +87,14 @@ final class Marks {
 
   void affects(Node node) {
     register(node);
+    rt.scheduler.schedule();
+  }
+
+  /** affects(store) and affects(store, key): the marks land on the store's nodes. */
+  void affects(List<Node> nodes) {
+    for (Node node : nodes) {
+      register(node);
+    }
     rt.scheduler.schedule();
   }
 

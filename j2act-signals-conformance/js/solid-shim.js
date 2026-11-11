@@ -283,6 +283,11 @@
           'with its own affects(record, key) call, or pass the nested record itself: affects(state.user, "name").'
       );
     }
+    if (target && typeof target === "object" && target[$JT] !== undefined) {
+      if (arguments.length > 1 && key !== undefined) b.storeAffectsKey(target, key, Array.isArray(target));
+      else b.storeAffects(target);
+      return;
+    }
     const node = target && target[$REFRESH];
     if (!node) {
       throw new Error(

@@ -2027,6 +2027,15 @@ public final class Stores {
     return createProjection(fn, seed, key, true);
   }
 
+  /** Solid's affects(store) and affects(store, key): the record, or one key of it, is about to change. */
+  void affects(Object view, Object key, boolean keyed) {
+    StoreTarget t = shape.targetOf(view);
+    if (affectsHooks == null) {
+      affectsHooks = new StoreAffects(rt, this);
+    }
+    rt.marks.affects(((StoreAffects) affectsHooks).storeMarks(t, key, keyed));
+  }
+
   /** The derive of a derived store's view, Solid's store[$REFRESH]. */
   Node deriveOf(Object view) {
     StoreTarget t = shape.targetOf(view);

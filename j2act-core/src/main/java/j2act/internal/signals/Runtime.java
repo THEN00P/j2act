@@ -339,6 +339,16 @@ public final class Runtime {
     return stores.createOptimisticStore(fn, seed, key);
   }
 
+  /** Solid's affects(store): isPending turns true for what reads the record, until it next lands. */
+  public void storeAffects(Object view) {
+    stores.affects(view, null, false);
+  }
+
+  /** Solid's affects(store, key), for one key of a record. */
+  public void storeAffects(Object view, Object key) {
+    stores.affects(view, key, true);
+  }
+
   /** The node behind a derived store, for refresh, isPending and affects; null for a plain store. */
   public Node storeDerive(Object view) {
     return stores.deriveOf(view);

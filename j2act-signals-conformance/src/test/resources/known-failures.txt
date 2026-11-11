@@ -5,8 +5,6 @@ accessor-to-data-3949 :: #3949 accessor key replaced by data > defineProperty in
 adoption-unchanged-key-read-3706 :: #3706 unchanged key read under an adoption hold > contrast: a descriptor read of a key whose enumerability changed still holds (A29)	JavaScript only: enumerability, inherited accessors and a swapped prototype, left out of the store port
 adoption-unchanged-key-read-3706 :: #3706 unchanged key read under an adoption hold > contrast: a prototype swap still holds the reader (A29)	JavaScript only: enumerability, inherited accessors and a swapped prototype, left out of the store port
 adoption-unchanged-key-read-3706 :: #3706 unchanged key read under an adoption hold > contrast: an inherited accessor reading `this` still holds the reader (A29)	JavaScript only: enumerability, inherited accessors and a swapped prototype, left out of the store port
-affects-audit-2893 :: bug 1: addPendingSource dual state > keyless store mark over a live mapArray releases at settle (#2893 flagship)	affects() on a store, store/affects.ts, not ported yet
-affects-propagation :: affects — propagation through derivation > keyed mark pends derived readers of that slot only	affects() on a store, store/affects.ts, not ported yet
 array-clone-slice :: array clone on first draft write > keeps named keys on an array	JavaScript only: named keys on an array, left out of the store port
 async-chain-supersession :: a second write while an async chain is in flight > A33 / #3375 a Loading boundary reset keeps the hold while a reader outside the boundary observes the flight	tooling: the assertion is on the dev warning LOADING_ON_OUTSIDE_HOLD; the frames match
 attribution-current-origin :: currentOrigin > is undefined with no engine installed, and outside any frame with one	tooling: attribution, left out
@@ -109,22 +107,7 @@ projection-root-overlay :: projection root writes are O(written) (#3352) > a der
 projection-root-overlay :: projection root writes are O(written) (#3352) > derived store setter root writes do not clone the record	the prototype overlay, left out of the store port
 projection-root-overlay :: projection root writes are O(written) (#3352) > post-await landings on a root key commit in place without cloning	the prototype overlay, left out of the store port
 projection-root-overlay :: projection root writes are O(written) (#3352) > root deletes in a derive read as absent everywhere and notify	the prototype overlay, left out of the store port
-question-scoped-pending :: affects — captured proxies (#2882) > a record written in the same tick is covered when declared on the draft	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — captured proxies (#2882) > affects(array store) covers symbol-keyed metadata	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — captured proxies (#2882) > affects(plain store) covers an untouched symbol-keyed grandchild	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — captured proxies (#2882) > affects(plain store) covers captured proxies at any depth	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — captured proxies (#2882) > keyless mark on a nested record covers its captured subtree, not siblings	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — captured proxies (#2882) > optimistically written records are covered by a same-tick affects(parent)	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — captured proxies (#2882) > overlapping keyless marks: a re-declaration covers records added since the first	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — captured proxies (#2882) > records added after the mark registers are not covered (snapshot at declaration)	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — captured proxies (#2882) > registering a mark wakes an already-materialized false verdict on a captured proxy	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — cross-family raw sharing (#2904) > a node born in the other family during a keyed window inherits the mark	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — cross-family raw sharing (#2904) > keyed affects(source, key) is visible through a derived optimistic store (the issue repro)	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — cross-family raw sharing (#2904) > keyed mark held by an action releases at settle, through both proxies	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — cross-family raw sharing (#2904) > keyed marks stay scoped to their key across families	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — the declaration verb > 3.6: slot form — affects(record, key) pends exactly the named slot	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: affects — the declaration verb > record form — affects(record) covers every read through that record, not siblings	affects() on a store, store/affects.ts, not ported yet
-question-scoped-pending :: same-question motion is silent > 3.4-held-write: refresh() after a held manual write is still a re-ask — siblings silent, affects() scopes it	affects() on a store, store/affects.ts, not ported yet
+question-scoped-pending :: affects — captured proxies (#2882) > affects(array store) covers symbol-keyed metadata	open: differs from Solid on the port, not understood yet
 rules-index :: <file>	tooling: dev diagnostics and warnings, left out
 snapshot :: store snapshot support > excludes non-enumerable symbol-keyed properties from written copies	JavaScript only: symbol-keyed properties on arrays, left out of the store port
 snapshot :: store snapshot support > preserves symbol-keyed array metadata after an index write	JavaScript only: symbol-keyed properties on arrays, left out of the store port
@@ -141,11 +124,9 @@ strictRead :: strictRead > restores strictRead correctly through nested untrack 
 strictRead :: strictRead > warns on memo read under strict + untracked	tooling: dev diagnostics and warnings, left out
 strictRead :: strictRead > warns on signal read under strict + untracked	tooling: dev diagnostics and warnings, left out
 strictRead :: strictRead > warns on store property read under strict + untracked	tooling: strictRead dev warning, left out
-uninitialized-visibility :: A25 write-visibility corollary: seed visible on the write path > store: getter throws while uninitialized, setter draft reads the seed	affects() on a store, store/affects.ts, not ported yet
-uninitialized-visibility :: affects() throw surface on uninitialized targets > inside an action, an uninitialized nested arg fetch rejects the action (loud, typed)	affects() on a store, store/affects.ts, not ported yet
-uninitialized-visibility :: affects() throw surface on uninitialized targets > never throws for keyless/keyed/accessor forms; only the nested arg fetch throws	affects() on a store, store/affects.ts, not ported yet
-uninitialized-visibility :: loading vs pending: uninitialized derived stores (#2910) > a landed derived store holding the source proxy witnesses marks through it	affects() on a store, store/affects.ts, not ported yet
-uninitialized-visibility :: loading vs pending: uninitialized derived stores (#2910) > probes report false through an uninitialized derived store, true on the marked store itself	affects() on a store, store/affects.ts, not ported yet
+uninitialized-visibility :: A25 write-visibility corollary: seed visible on the write path > store: getter throws while uninitialized, setter draft reads the seed	open: differs from Solid on the port, not understood yet
+uninitialized-visibility :: affects() throw surface on uninitialized targets > inside an action, an uninitialized nested arg fetch rejects the action (loud, typed)	open: differs from Solid on the port, not understood yet
+uninitialized-visibility :: affects() throw surface on uninitialized targets > never throws for keyless/keyed/accessor forms; only the nested arg fetch throws	open: differs from Solid on the port, not understood yet
 untracked-async-read :: untracked async read after await (#2987) > memo form errors identically	difference: the Java message says the read came off the lane, not after an await
 untracked-async-read :: untracked async read after await (#2987) > post-await first-read of an unready source errors instead of wedging	difference: the Java message says the read came off the lane, not after an await
 utilities-no-proxy :: merge/omit without Proxy > the flag is off and nothing wears the proxy mark	the test turns proxies off, which the shim cannot
