@@ -79,6 +79,94 @@ public final class Bridge {
     }, microtask);
   }
 
+  // ---- stores: the proxy's traps, called from solid-shim.js
+
+  public void installStoreOps(Value ops) {
+    rt.storeShape(new JsShape(this, ops));
+  }
+
+  /** An array's index is an Integer and its length the shape's LENGTH; any other key is itself. */
+  private Object storeKey(Value key, boolean array) {
+    if (array && key.isString()) {
+      String s = key.asString();
+      if ("length".equals(s)) {
+        return StoreShape.LENGTH;
+      }
+      if (!s.isEmpty() && s.length() < 10 && s.chars().allMatch(Character::isDigit) && (s.length() == 1 || s.charAt(0) != '0')) {
+        return Integer.valueOf(s);
+      }
+    }
+    return toJava(key);
+  }
+
+  public Object createStore(Value value) {
+    return rt.createStore(value);
+  }
+
+  public void setStore(Value view, Value fn) {
+    rt.setStore(view, draft -> {
+      Value result = call(fn, draft);
+      // A thenable is the mark of an async callback, which Java sees as a CompletionStage.
+      if (result != null && !result.isNull() && result.hasMember("then") && result.getMember("then").canExecute()) {
+        return new java.util.concurrent.CompletableFuture<>();
+      }
+      return toJava(result);
+    });
+  }
+
+  public Object storeGet(Object target, Value key, boolean array) {
+    return js(rt.storeGet((StoreTarget) target, storeKey(key, array)));
+  }
+
+  public boolean storeHas(Object target, Value key, boolean array) {
+    return rt.storeHas((StoreTarget) target, storeKey(key, array));
+  }
+
+  /** Whether the current backing has the key itself, asked without tracking. */
+  public boolean storeOwn(Object target, Value key, boolean array) {
+    StoreTarget t = (StoreTarget) target;
+    return rt.stores.shape().has(t.pb != null ? t.pb : t.v, storeKey(key, array));
+  }
+
+  /** [value] for a key that is there, undefined otherwise. */
+  public Object storeDescriptor(Object target, Value key, boolean array) {
+    Object[] d = rt.storeDescriptor((StoreTarget) target, storeKey(key, array));
+    if (d == null) {
+      return undefined;
+    }
+    Value out = context.eval("js", "[]");
+    out.invokeMember("push", js(d[0]));
+    return out;
+  }
+
+  public Value storeKeys(Object target) {
+    Value array = context.eval("js", "[]");
+    for (Object key : rt.storeKeys((StoreTarget) target)) {
+      array.invokeMember("push", key instanceof Integer ? String.valueOf(key) : js(key));
+    }
+    return array;
+  }
+
+  public void storeSet(Object target, Value key, Value value, boolean array) {
+    rt.storeSet((StoreTarget) target, storeKey(key, array), toJava(value));
+  }
+
+  public void storeDelete(Object target, Value key, boolean array) {
+    rt.storeDelete((StoreTarget) target, storeKey(key, array));
+  }
+
+  public void storeTrack(Object target) {
+    rt.storeTrack((StoreTarget) target);
+  }
+
+  public Object snapshot(Value value) {
+    return js(rt.snapshot(toJava(value)));
+  }
+
+  public Object deep(Value value) {
+    return js(rt.deep(toJava(value)));
+  }
+
   public void setErrorFactory(Value factory) {
     this.errorFactory = factory;
   }

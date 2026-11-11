@@ -1,5 +1,10 @@
 # Solid tests that fail here for a stated reason, by file and test name. A test that passes is taken off.
 
+accessor-to-data-3949 :: #3949 accessor key replaced by data > a getter replaced by an undefined data value reads undefined	JavaScript only: accessor properties, left out of the store port
+accessor-to-data-3949 :: #3949 accessor key replaced by data > defineProperty inside a setter draft replaces a getter with data	JavaScript only: accessor properties, left out of the store port
+affects-audit-2893 :: bug 1: addPendingSource dual state > keyless store mark over a live mapArray releases at settle (#2893 flagship)	affects() on a store, store/affects.ts, not ported yet
+affects-propagation :: affects — propagation through derivation > keyed mark pends derived readers of that slot only	affects() on a store, store/affects.ts, not ported yet
+array-clone-slice :: array clone on first draft write > keeps named keys on an array	JavaScript only: named keys on an array, left out of the store port
 async-chain-supersession :: a second write while an async chain is in flight > A33 / #3375 a Loading boundary reset keeps the hold while a reader outside the boundary observes the flight	tooling: the assertion is on the dev warning LOADING_ON_OUTSIDE_HOLD; the frames match
 attribution-current-origin :: currentOrigin > is undefined with no engine installed, and outside any frame with one	tooling: attribution, left out
 attribution-engine-cost :: <file>	tooling: attribution, left out
@@ -13,11 +18,24 @@ createRoot :: transparent owners > should handle nested transparent owners deleg
 createRoot :: transparent owners > should inherit parent id on the transparent owner itself	hydration ids, left out
 createRoot :: transparent owners > should not consume _childCount with transparent computed	hydration ids, left out
 createRoot :: transparent owners > should not consume a _childCount slot from parent	hydration ids, left out
+createStore :: Nested Classes > does not wrap Node instances	JavaScript only: accessors, property descriptors, prototype keys and DOM nodes, left out of the store port
+createStore :: Nested Classes > prototype getters track instance field updates	JavaScript only: accessors, property descriptors, prototype keys and DOM nodes, left out of the store port
+createStore :: Proxy invariant correctness > writes preserve the base descriptor's structure, matching plain assignment semantics	JavaScript only: accessors, property descriptors, prototype keys and DOM nodes, left out of the store port
+createStore :: Proxy invariant correctness > written accessor properties keep accessor descriptors	JavaScript only: accessors, property descriptors, prototype keys and DOM nodes, left out of the store port
+createStore :: Proxy invariant correctness > written non-configurable properties keep satisfying the proxy invariant	JavaScript only: accessors, property descriptors, prototype keys and DOM nodes, left out of the store port
+createStore :: getters > supports Object.defineProperty inside a setter	JavaScript only: accessors, property descriptors, prototype keys and DOM nodes, left out of the store port
+createStore :: objects > ignores prototype pollution keys in draft setters	JavaScript only: accessors, property descriptors, prototype keys and DOM nodes, left out of the store port
+delete-key-count :: the store's key count follows deletes > delete and re-add in one draft leaves the count unchanged	the prototype overlay and its key count, left out of the store port
+delete-key-count :: the store's key count follows deletes > delete-then-set selection keeps the count at the object's own keys and never drafts as an overlay	the prototype overlay and its key count, left out of the store port
+delete-key-count :: the store's key count follows deletes > deleting a never-committed key of a draft does not go below the real count	the prototype overlay and its key count, left out of the store port
+delete-key-count :: the store's key count follows deletes > under an overlay, an own add deleted again is uncounted and a committed key's delete counts at the rebuild	the prototype overlay and its key count, left out of the store port
+dev :: Phase 1b: Notification hooks > onGraph > fires for stores	tooling: dev diagnostics and warnings, left out
 dev :: Phase 1b: Notification hooks > onGraph > fires for unowned signals with owner=null	tooling: dev diagnostics and warnings, left out
 dev :: Phase 1b: Notification hooks > onGraph > fires when a signal is created with an owner	tooling: dev diagnostics and warnings, left out
 dev :: Phase 1b: Notification hooks > onOwner > fires for transparent owners	tooling: dev diagnostics and warnings, left out
 dev :: Phase 1b: Notification hooks > onOwner > fires when createMemo creates a computed owner	tooling: dev diagnostics and warnings, left out
 dev :: Phase 1b: Notification hooks > onOwner > fires when createRoot creates an owner	tooling: dev diagnostics and warnings, left out
+dev :: Phase 1b: Notification hooks > onStoreNodeUpdate > fires on store property mutation with old and new values	tooling: dev diagnostics and warnings, left out
 dev :: Phase 1b: Notification hooks > onUpdate > fires once even with multiple signal writes	tooling: dev diagnostics and warnings, left out
 dev :: Phase 1b: Notification hooks > onUpdate > fires once per flush	tooling: dev diagnostics and warnings, left out
 diagnostics :: <file>	tooling: dev diagnostics and warnings, left out
@@ -31,18 +49,45 @@ errorHalt :: REACTIVITY_HALTED names where it happened (#4178) > locates an effe
 errorHalt :: REACTIVITY_HALTED names where it happened (#4178) > names an unlabelled effect by its default name	tooling: owner paths in the halt message, and the browser reportError
 errorHalt :: uncaught effect errors halt the reactive system (A5) > hands the cause to reportError where the platform provides one	tooling: owner paths in the halt message, and the browser reportError
 gc :: <file>	JS: needs node:inspector and a JS garbage collector
+lane-authority-twins :: store twins of the lane-authority fixes (#3335/#3334/#3330/#3331) > adoptions under a live transaction hold — plain, derived, optimistic > a plain store's reconcile inside an action holds: handlers read committed until the commit	reconcile, not ported yet
 lane-contract :: lane hardening — errors, disposal, nesting, growth > a long-lived lane does not grow its bookkeeping with every pass	tooling: finds its node through DEV.hooks.onOwner
+native-collections :: platform objects in stores (#2952) > user class instances still wrap: getters track on the same store where map.size works	JavaScript only: class instances with prototype getters and methods, left out of the store port
+native-collections :: platform objects in stores (#2952) > user-class methods on the draft keep the proxy `this` (reactive writes)	JavaScript only: class instances with prototype getters and methods, left out of the store port
 observe-idle-cost :: <file>	tooling: dev diagnostics and warnings, left out
 observe-records :: OBSERVE.records > is one object per process, registered on globalThis under its name	tooling: dev diagnostics and warnings, left out
+overlay :: overlay pending backings (#3044) > repeated few-key writes into a wide store stay O(written) (#3044 shape)	the prototype overlay, left out of the store port
+overlay :: overlay pending backings (#3044) > writes through non-writable committed properties (R51 parity)	the prototype overlay, left out of the store port
+overlay-rebuild-3689 :: <file>	the prototype overlay, left out of the store port
+posture-store-parity :: S4 — a stale reader's untracked read of a foreign hold replays at the hold's commit (A15 / A26 replay contract) — signal vs store > store reconcile held by a live action, with a node: the same replay	reconcile, not ported yet
+posture-store-parity :: S4 — a stale reader's untracked read of a foreign hold replays at the hold's commit (A15 / A26 replay contract) — signal vs store > store reconcile held by a live action, without a node: the same replay	reconcile, not ported yet
+posture-store-parity :: S5 — a mainline derivation's UNTRACKED read of a held value is born held (A29) — signal vs store > store reconcile+node: memo → render effect publishes nothing until the action commits	reconcile, not ported yet
+posture-store-parity :: S5 — a mainline derivation's UNTRACKED read of a held value is born held (A29) — signal vs store > store reconcile+node: user effect runs once, after the commit	reconcile, not ported yet
+posture-store-parity :: S5 — a mainline derivation's UNTRACKED read of a held value is born held (A29) — signal vs store > store reconcile: memo → render effect publishes nothing until the action commits	reconcile, not ported yet
+posture-store-parity :: S5 — a mainline derivation's UNTRACKED read of a held value is born held (A29) — signal vs store > store reconcile: user effect runs once, after the commit	reconcile, not ported yet
+question-scoped-pending :: affects — captured proxies (#2882) > affects(array store) covers symbol-keyed metadata	affects() on a store, store/affects.ts, not ported yet
+question-scoped-pending :: affects — captured proxies (#2882) > affects(plain store) covers an untouched symbol-keyed grandchild	affects() on a store, store/affects.ts, not ported yet
+question-scoped-pending :: affects — captured proxies (#2882) > affects(plain store) covers captured proxies at any depth	affects() on a store, store/affects.ts, not ported yet
+question-scoped-pending :: affects — captured proxies (#2882) > keyless mark on a nested record covers its captured subtree, not siblings	affects() on a store, store/affects.ts, not ported yet
+question-scoped-pending :: affects — captured proxies (#2882) > registering a mark wakes an already-materialized false verdict on a captured proxy	affects() on a store, store/affects.ts, not ported yet
 rules-index :: <file>	tooling: dev diagnostics and warnings, left out
+snapshot :: store snapshot support > excludes non-enumerable symbol-keyed properties from written copies	JavaScript only: symbol-keyed properties on arrays, left out of the store port
+snapshot :: store snapshot support > preserves symbol-keyed array metadata after an index write	JavaScript only: symbol-keyed properties on arrays, left out of the store port
 snapshot-derived-store-rows :: <file>	hydration snapshots and stores, left out
 staged-signed-zero :: keeps an accepted NaN rewrite as a proposal	difference: equality is Objects.equals, which tells 0.0 from -0.0 and NaN equals itself; JS === does the opposite
 staged-signed-zero :: keeps the default comparator's signed-zero equality	difference: equality is Objects.equals, which tells 0.0 from -0.0 and NaN equals itself; JS === does the opposite
 strict-read-pending-store :: uninitialized derived stores never leak the seed (#2897) > memo control: uninitialized async memo read in a component body throws the dev error	tooling: dev diagnostics and warnings, left out
 strictRead :: strictRead > effect callback (back half) > warns on isPending read in effect callback	tooling: dev diagnostics and warnings, left out
 strictRead :: strictRead > effect callback (back half) > warns on signal read in effect callback	tooling: dev diagnostics and warnings, left out
+strictRead :: strictRead > effect callback (back half) > warns on store property read in effect callback	tooling: strictRead dev warning, left out
 strictRead :: strictRead > restores strictRead correctly through nested untrack calls	tooling: dev diagnostics and warnings, left out
 strictRead :: strictRead > warns on memo read under strict + untracked	tooling: dev diagnostics and warnings, left out
 strictRead :: strictRead > warns on signal read under strict + untracked	tooling: dev diagnostics and warnings, left out
+strictRead :: strictRead > warns on store property read under strict + untracked	tooling: strictRead dev warning, left out
 untracked-async-read :: untracked async read after await (#2987) > memo form errors identically	difference: the Java message says the read came off the lane, not after an await
 untracked-async-read :: untracked async read after await (#2987) > post-await first-read of an unready source errors instead of wedging	difference: the Java message says the read came off the lane, not after an await
+utilities-no-proxy :: merge/omit without Proxy > the flag is off and nothing wears the proxy mark	the test turns proxies off, which the shim cannot
+write-floor :: narrow store writes (#3360) > a custom prototype survives the clone	JavaScript only: property descriptors, frozen sources and custom prototypes, left out of the store port
+write-floor :: narrow store writes (#3360) > a frozen source clones unfrozen and stays writable (R51)	JavaScript only: property descriptors, frozen sources and custom prototypes, left out of the store port
+write-floor :: narrow store writes (#3360) > a non-enumerable own key keeps its attributes through a write (descriptor clone)	JavaScript only: property descriptors, frozen sources and custom prototypes, left out of the store port
+write-floor :: narrow store writes (#3360) > a non-plain defineProperty through the draft is preserved by later writes	JavaScript only: property descriptors, frozen sources and custom prototypes, left out of the store port
+write-floor :: narrow store writes (#3360) > an accessor installed through the draft stays live	JavaScript only: property descriptors, frozen sources and custom prototypes, left out of the store port

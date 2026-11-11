@@ -33,6 +33,7 @@ public final class Runtime {
   final Action action;
   final Signals signals;
   final MapArray mapArray;
+  final Stores stores;
   final Executor microtasks;
   final Executor lane;
   /** What a boundary does with its content's value, Solid's `flatten`. Java's content has nothing to flatten. */
@@ -66,6 +67,7 @@ public final class Runtime {
     this.action = new Action(this);
     this.signals = new Signals(this);
     this.mapArray = new MapArray(this);
+    this.stores = new Stores(this);
   }
 
   private static final java.util.concurrent.ScheduledExecutorService TIMERS =
@@ -306,6 +308,67 @@ public final class Runtime {
   }
 
   // ---- What j2act builds on (ADR 0033): the same functions, by node rather than by accessor.
+
+  // ---- stores (store/store.ts): a view stands for a target, and the traps are calls
+
+  /** The objects this runtime's stores hold; given once, before the first store. */
+  public void storeShape(StoreShape shape) {
+    stores.install(shape);
+  }
+
+  /** Solid's createStore(value): the view of a store over value. */
+  public Object createStore(Object value) {
+    return stores.createStore(value);
+  }
+
+  /** Solid's setStore(fn): fn writes the draft it is given, or returns a value to replace the store's with. */
+  public void setStore(Object view, Function<Object, Object> fn) {
+    stores.storeSetter(view, fn, true);
+  }
+
+  public Object storeGet(StoreTarget target, Object key) {
+    return stores.get(target, key);
+  }
+
+  public boolean storeHas(StoreTarget target, Object key) {
+    return stores.has(target, key);
+  }
+
+  /** The raw value at key in a one-element array, or null when the key is not there. */
+  public Object[] storeDescriptor(StoreTarget target, Object key) {
+    return stores.descriptor(target, key);
+  }
+
+  public java.util.List<Object> storeKeys(StoreTarget target) {
+    return stores.ownKeys(target);
+  }
+
+  public int storeLength(StoreTarget target) {
+    return stores.length(target);
+  }
+
+  public void storeSet(StoreTarget target, Object key, Object value) {
+    stores.set(target, key, value);
+  }
+
+  public void storeDelete(StoreTarget target, Object key) {
+    stores.delete(target, key);
+  }
+
+  /** Solid's store[$TRACK]: subscribes to a container's membership and order. */
+  public void storeTrack(StoreTarget target) {
+    stores.track(target);
+  }
+
+  /** Solid's snapshot(store): the current value without tracking, the source object where nothing was written. */
+  public Object snapshot(Object value) {
+    return stores.snapshot(value);
+  }
+
+  /** Solid's deep(store): a snapshot that subscribes to every record it reaches. */
+  public Object deep(Object value) {
+    return stores.deep(value);
+  }
 
   /** A signal's node. `ownedWrite` lets computations write it, as a component's props need. */
   public Node signalNode(Object value, boolean ownedWrite) {

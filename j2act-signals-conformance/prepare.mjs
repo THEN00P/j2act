@@ -30,7 +30,9 @@ if (!existsSync(join(cache, "packages", "signals", "tests"))) {
 
 const { build } = await import("esbuild");
 const tests = join(cache, "packages", "signals", "tests");
-const entries = readdirSync(tests).filter(f => f.endsWith(".test.ts")).map(f => join(tests, f));
+// The store's tests sit in their own folder, and no name there is also a name above it.
+const entries = [tests, join(tests, "store")]
+  .flatMap(dir => readdirSync(dir).filter(f => f.endsWith(".test.ts")).map(f => join(dir, f)));
 
 const global = (name, expr) => ({ path: name, namespace: "shim", pluginData: expr });
 const shims = {
