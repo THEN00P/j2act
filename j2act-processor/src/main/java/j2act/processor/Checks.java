@@ -36,6 +36,7 @@ final class Checks {
   private static final String UNSAFE_HTML = "j2act.UnsafeHtml";
   private static final String ALLOW_UNSAFE = "j2act.AllowUnsafe";
   private static final String PRIMITIVE = "j2act.Primitive";
+  private static final String STORED = "j2act.Stored";
   private static final String STORE = "j2act.Store";
   private static final String STREAM = "java.util.stream.Stream";
 
@@ -105,6 +106,7 @@ final class Checks {
       retainedChangedInPlace(node, scope);
       readsInAsync(node, scope);
       transactionalSelfCall(node, scope);
+      partGetters(node, scope);
     } else if (node.kind == Node.Kind.REF) {
       transactionalSelfCall(node, scope);
     } else if (node.kind == Node.Kind.NEW && !allowsUnsafe && scope.isType(scope.typeNamed(node.type), UNSAFE_HTML)) {
@@ -224,6 +226,20 @@ final class Checks {
           + "lambda, or say it is meant with untrack(...) (ADR 0031)");
       }
       readOnceInSetup(child, scope);
+    }
+  }
+
+  /** at(...) reads the property off a method reference, and anything else names none (ADR 0035). */
+  private void partGetters(Node call, Scope scope) {
+    if (!call.name.equals("at") || call.receiver == null || call.receiver.kind != Node.Kind.IDENT || call.args.isEmpty()
+        || !scope.isType(scope.typeOf(call.receiver), STORED)) {
+      return;
+    }
+    for (Node arg : call.args) {
+      if (arg.kind != Node.Kind.REF) {
+        report(arg, scope, "at(...) takes a reference to a public getter, such as User::getName: this names no property"
+          + " and fails when it runs (ADR 0035)");
+      }
     }
   }
 
