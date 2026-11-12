@@ -29,7 +29,7 @@ A class annotated @TabScoped or @BrowserScoped that extends Store: one instance 
 _Avoid_: GlobalState, Context, Singleton, Session, createStore
 
 **Stored**:
-A Stored<T> created with createStore(value) over an object, a list or a map of the application's own classes (ADR 0035): what read one part re-runs when that part changes. get() gives a real instance, or a List or Map whose reads subscribe to an element or a key; update(d -> ...) hands out a draft of the same type and writes what the lambda changed; at(User::getAddress, Address::getCity) is one property. The object it was given is never changed. Not the scoped Store class below it in name only.
+A Stored<T> created with createStore(value) over an object, a list or a map of the application's own classes (ADR 0035): what read one part re-runs when that part changes. get() gives a real instance, or a List or Map whose reads subscribe to an element or a key; update(d -> ...) hands out a draft of the same type and writes what the lambda changed; at(User::getAddress, Address::getCity) is one property. The object it was given is never changed. createOptimisticStore(...) makes one whose updates, from an action's body, are guesses undone when the action ends, and createRetainedStore(...) one that goes into its owner's Snapshot as JSON. Not the scoped Store class below it in name only.
 _Avoid_: Deep signal, Reactive object, Proxy
 
 **Projection**:

@@ -83,7 +83,7 @@ Decided once per class by reflection:
 | Value | Boxes, `String`, enums, `java.time`, `BigDecimal`, `BigInteger`, `UUID` | Never copied; compared with `equals` |
 | Collection | `List`, `Set`, `Map`, arrays | j2act |
 | Bean | A no-argument constructor of any visibility | The constructor, then its fields |
-| Record | On Java 16 and later | The canonical constructor, found reflectively |
+| Record | On Java 16 and later | Not copied: one value, compared with `equals` when all it holds are values |
 | Opaque | Anything else | Never copied or looked into |
 
 Fields are copied, not properties: a getter may load a lazy association and a setter may do more than set. An opaque value is one value to the store. Assigning a new one is a change, and what is inside it is not tracked. That is right for an immutable type, and dev mode warns when a mutable class that cannot be copied enters a store.
@@ -92,9 +92,9 @@ A hook lets a host say more about a class. `j2act-jakarta` and `j2act-spring` us
 
 ## Retained stores
 
-`createRetainedStore(value)` is a store whose value goes into its owner's Snapshot (ADR 0026), keyed like `createRetained`. It is saved as JSON through the app's `JsonBinding` or a `RetainedCodec`, from the committed value, and read back as the type it was created with, so the element type of a list comes from the variable it is assigned to, through the processor, or from an explicit type.
+`createRetainedStore(value)` is a store whose value goes into its owner's Snapshot (ADR 0026), keyed like `createRetained` by the variable it is assigned to. It is saved as JSON through the app's `JsonBinding`, from the whole value, and read back as the class of what it was created with. A list or a map names what it holds, `createRetainedStore(new ArrayList<Todo>(), Todo.class)`, since the JSON does not say.
 
-What cannot be written fails where it is found, naming the path (`todos[3].attachment`), when the store is created in dev mode and at the save otherwise, where it is logged and that store is left out of the snapshot as a bad entry is today. A value that reads back as something else is dropped with a warning and the store starts from its initial value.
+A value that cannot be written is warned about once, with the binding's own message, and that store is left out of the snapshot. A value that no longer reads as its type is dropped with a warning and the store starts from its initial value.
 
 ## Equality
 
@@ -126,7 +126,19 @@ Two other models were asked to design this from the constraints alone and then t
 
 ## Built, and not yet
 
-Built: the engine with `reconcile` and projections, running Solid's store tests; `createStore`, `update`, `set`, `at(...)` and `createProjection` over lists, maps and beans. Not yet: optimistic stores and `affects()` on a store, records and sets, the hook for JPA state, rows as their own render scopes, the cached bean per reader and the dev-mode check for a changed one, the processor's check for `at(...)`, retained stores, and the writable derived store. `createProjection` answers a list. Left out of the port with what JavaScript needs them for: the prototype overlay, accessor properties and descriptors, shallow stores, chained backings, and a seed shown while a first answer loads.
+Built: the engine with `reconcile`, projections, optimistic stores, chained backings and `affects()` on a store, running Solid's store tests; and over lists, maps and beans `createStore`, `update`, `set`, `at(...)` with the processor's check, `createProjection`, `createOptimisticStore` and `createRetainedStore`, the dev-mode report of a bean changed outside `update`, and unloaded JPA state kept whole.
+
+Not yet:
+
+- The bean a reader gets is copied on every read of a record that was written. One copy per record and version is the plan above.
+- Rows that render alone without being components are the bytecode enhancer's to give.
+- `createProjection` and the optimistic store over a load answer a list, and a derive answers its value: it does not write a draft. Solid's writable derived store is in the engine and not in the API.
+- A record is one value, replaced whole, and so is a set.
+- A draft cannot stand in for a field declared as `ArrayList` or `HashMap`: it says to declare `List` or `Map`.
+- `restored()` on a retained store.
+- 44 of Solid's store tests differ on the port for reasons not understood yet. They are listed as open in `known-failures.txt`; most are `mapArray` by index over a chained optimistic store.
+
+Left out of the port with what JavaScript needs them for: the prototype overlay, accessor properties and descriptors, shallow stores, and a seed shown while a first answer loads.
 
 ## Open
 
