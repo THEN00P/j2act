@@ -147,8 +147,44 @@ public final class Bridge {
 
   /** Whether the current backing has the key itself, asked without tracking. */
   public boolean storeOwn(Object target, Value key, boolean array) {
-    StoreTarget t = (StoreTarget) target;
-    return rt.stores.shape().has(t.pb != null ? t.pb : t.v, storeKey(key, array));
+    return rt.stores.shape().has(rawBacking((StoreTarget) target), storeKey(key, array));
+  }
+
+  /**
+   * The object a target's reads end at: its backing, or through a chained backing the inner store's, so asking
+   * it runs no trap. A trap here would be a read, tracked and witnessed, that the code asking never made.
+   */
+  private Object rawBacking(StoreTarget t) {
+    Object raw = t.pb != null ? t.pb : t.v;
+    for (StoreTarget inner = rt.stores.shape().targetOf(raw); inner != null; inner = rt.stores.shape().targetOf(raw)) {
+      raw = inner.pb != null ? inner.pb : inner.v;
+    }
+    return raw;
+  }
+
+  /** The plain store's target for a raw object, undefined when it has none. */
+  public Object plainLookup(Value raw) {
+    StoreTarget t = rt.stores.lookupTarget(toJava(raw), null);
+    return t == null ? undefined : t;
+  }
+
+  /** Whether the store allocated this object: a copy it owns, never what it was given. */
+  public boolean isOwnedRaw(Value raw) {
+    Object o = toJava(raw);
+    return o != null && rt.stores.isOwned(o);
+  }
+
+  /** The target a family's lookup holds for a value, undefined when it holds none. */
+  public Object familyLookup(Object family, Value value) {
+    StoreTarget.StoreFamily fam = (StoreTarget.StoreFamily) family;
+    java.lang.ref.WeakReference<StoreTarget> ref = fam.mapRefs == null ? null : fam.mapRefs.get(toJava(value));
+    StoreTarget t = ref == null ? null : ref.get();
+    return t == null ? undefined : t;
+  }
+
+  /** The backing a target's reads come from now, for what JS asks of the object itself, such as its prototype. */
+  public Object storeBacking(Object target) {
+    return rawBacking((StoreTarget) target);
   }
 
   /** [value] for a key that is there, undefined otherwise. */
@@ -271,8 +307,20 @@ public final class Bridge {
     return v;
   }
 
-  /** A compute's result: a thenable becomes a future and an async iterable an AsyncIterable, as handleAsync reads them. */
+  /**
+   * A compute's result: a thenable becomes a future and an async iterable an AsyncIterable, as handleAsync reads
+   * them. Asking a store's view reads it through its traps, which may throw what the engine throws, such as a
+   * NotReadyError from a store not loaded yet: that reaches the engine as itself, not wrapped by GraalJS.
+   */
   Object toJavaResult(Value v) {
+    try {
+      return toJavaResultUnwrapped(v);
+    } catch (PolyglotException e) {
+      throw Errors.<RuntimeException>sneak(unwrap(e));
+    }
+  }
+
+  private Object toJavaResultUnwrapped(Value v) {
     if (v == null || v.isNull() || !v.hasMembers() || v.isHostObject()) {
       return toJava(v);
     }

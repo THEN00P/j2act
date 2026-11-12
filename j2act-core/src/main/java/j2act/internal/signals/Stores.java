@@ -373,7 +373,7 @@ public final class Stores {
 
   Node getNode(StoreTarget target, Object key) {
     if (target.n == null) {
-      target.n = new LinkedHashMap<>();
+      target.n = new SlotMap<>();
     }
     Node node = target.n.get(key);
     if (node == null) {
@@ -391,7 +391,7 @@ public final class Stores {
 
   Node getHasNode(StoreTarget target, Object key) {
     if (target.h == null) {
-      target.h = new LinkedHashMap<>();
+      target.h = new SlotMap<>();
     }
     Node node = target.h.get(key);
     if (node == null) {

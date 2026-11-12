@@ -39,6 +39,8 @@ const shims = {
   name: "shims",
   setup(b) {
     b.onResolve({ filter: /^vitest$/ }, () => global("vitest", "globalThis.__vitest"));
+    // The one Node built-in a store test asks for, types.isProxy: solid-shim.js answers it for its own proxies.
+    b.onResolve({ filter: /^node:util$/ }, () => global("node:util", "globalThis.__nodeUtil"));
     b.onResolve({ filter: /(^|\/)src\// }, args => global(args.path, "globalThis.__solid"));
     b.onLoad({ filter: /.*/, namespace: "shim" }, args => ({
       contents: `module.exports = ${args.pluginData};`,

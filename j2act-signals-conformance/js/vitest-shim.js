@@ -304,8 +304,11 @@
       if (isHost(v)) return "[Java " + v + "]";
       if (v instanceof Error) return `${v.name}: ${v.message}`;
       if (depth > 3) return "...";
-      if (Array.isArray(v)) return "[" + v.map(x => show(x, depth + 1)).join(", ") + "]";
-      return "{" + Object.keys(v).map(k => `${k}: ${show(v[k], depth + 1)}`).join(", ") + "}";
+      // A long value is cut, as vitest's own output is: a message built from a thousand keys overflows GraalJS's stack.
+      const more = n => (n > 20 ? `, …${n - 20} more` : "");
+      if (Array.isArray(v)) return "[" + v.slice(0, 20).map(x => show(x, depth + 1)).join(", ") + more(v.length) + "]";
+      const keys = Object.keys(v);
+      return "{" + keys.slice(0, 20).map(k => `${k}: ${show(v[k], depth + 1)}`).join(", ") + more(keys.length) + "}";
     } catch (e) {
       return "<unprintable>";
     }

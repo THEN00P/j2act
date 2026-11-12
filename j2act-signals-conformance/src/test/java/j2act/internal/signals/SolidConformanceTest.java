@@ -29,8 +29,7 @@ class SolidConformanceTest {
     // parts of the store with no meaning for Java objects, or not ported yet
     "shallowStore", "markRaw", "storePath", "omit", "mergeView", "viewOf", "omitView", "storeIsShallow",
     "isStatic", "hasStaticKeys",
-    // the store's own bookkeeping, which a test reads by name
-    "storeLookup", "isOwned", "$OWNER",
+
     // developer tooling
     "attribution", "OBSERVE", "DEV", "graphSize", "GRAPH_SIZE_WARN_AT", "setSignalIdentities", "setWriteHook",
     "asyncTailFlights", "enforceLoadingBoundary",

@@ -350,14 +350,18 @@
       if (rowsMode) return map(accessor(item), indexes ? accessor(index) : undefined);
       return indexes ? map(item, accessor(index)) : map(item);
     };
-    // A store's array is read as Solid's map.ts reads it: its container, then its length and each row.
+    // A store's array is read as Solid's map.ts reads it: its container and its length tracked, and its rows
+    // untracked, as map.ts reads them under its own owner, so no row's node gains the list as a reader.
     const rows = () => {
       const items = list();
       if (!items || typeof items !== "object" || items[$JT] === undefined) return items;
       items[$TRACK];
-      const out = [];
-      for (let i = 0, n = items.length; i < n; i++) out.push(items[i]);
-      return out;
+      const n = items.length;
+      return untrack(() => {
+        const out = [];
+        for (let i = 0; i < n; i++) out.push(items[i]);
+        return out;
+      });
     };
     return accessor(b.mapArray(rows, wrapped, indexes, keyFn, byIndex, options && options.fallback));
   });
@@ -407,6 +411,10 @@
               },
               get opt() {
                 return b.fieldOf(fam, "opt");
+              },
+              // The family's raw-to-target lookup, as Solid's WeakMap answers get().
+              get map() {
+                return { get: v => targetMirror(b.familyLookup(fam, v)) ?? undefined };
               }
             };
           }
@@ -420,6 +428,9 @@
   };
   const hasOwn = Object.prototype.hasOwnProperty;
   const targets = new WeakMap();
+  // Every proxy the shim makes, for node:util's types.isProxy, which GraalJS has no Node built-ins for.
+  const shimProxies = new WeakSet();
+  globalThis.__nodeUtil = { types: { isProxy: v => typeof v === "object" && v !== null && shimProxies.has(v) } };
   const wrappableProtos = new WeakMap();
   function isWrappable(obj) {
     if (obj == null || typeof obj !== "object" || Object.isFrozen(obj)) return false;
@@ -428,7 +439,8 @@
     if (Array.isArray(obj)) return true;
     let wrappable = wrappableProtos.get(proto);
     if (wrappable === undefined) {
-      wrappable = Object.prototype.toString.call(obj) === "[object Object]";
+      wrappable = Object.prototype.toString.call(obj) === "[object Object]" &&
+        (typeof Node === "undefined" || !(obj instanceof Node));
       wrappableProtos.set(proto, wrappable);
     }
     return wrappable;
@@ -449,11 +461,15 @@
           return undefined;
         }
       }
-      // A method of the prototype is served untracked, as a key the object does not have itself.
-      const proto = arr ? Array.prototype : Object.prototype;
-      if (key in proto && !b.storeOwn(jt, key, arr)) {
-        const pv = Reflect.get(proto, key, receiver);
-        if (typeof pv === "function" || key === "constructor" || key === "__proto__") return typeof pv === "function" ? pv : undefined;
+      // A key the object does not have itself is its prototype's, as Solid's trap has it: a method is
+      // served untracked, and a getter runs with the view as `this`, so what it reads is tracked.
+      if (!b.storeOwn(jt, key, arr)) {
+        if (key === "constructor" || key === "__proto__" || key === "prototype") return undefined;
+        const proto = Object.getPrototypeOf(b.storeBacking(jt));
+        if (proto !== null && key in proto) {
+          const pv = Reflect.get(proto, key, receiver);
+          if (pv !== undefined) return pv;
+        }
       }
       return b.storeGet(jt, key, arr);
     },
@@ -461,6 +477,9 @@
       if (key === $TARGET || key === $PROXY || key === $TRACK || key === $JT) return true;
       if (key === $RECORD) return false;
       return b.storeHas(targets.get(t), key, Array.isArray(t));
+    },
+    getPrototypeOf(t) {
+      return Object.getPrototypeOf(b.storeBacking(targets.get(t)));
     },
     ownKeys(t) {
       const keys = b.storeKeys(targets.get(t));
@@ -501,17 +520,38 @@
     sameKind: (x, y) => Object.getPrototypeOf(x) === Object.getPrototypeOf(y),
     has: (o, k) => hasOwn.call(o, k),
     get: (o, k) => (hasOwn.call(o, k) ? o[k] : undefined),
+    // Reflect.ownKeys, as Solid walks a record: an array's indices first, then its named and symbol keys.
     keys: o => {
       if (!Array.isArray(o)) return Reflect.ownKeys(o);
       const out = [];
       for (let i = 0; i < o.length; i++) if (i in o) out.push(i);
+      for (const k of Reflect.ownKeys(o)) {
+        if (k === "length" || (typeof k === "string" && String(k >>> 0) === k && (k >>> 0) !== 4294967295)) continue;
+        out.push(k);
+      }
       return out;
     },
+    // Solid's cloneRaw: every own key, named and symbol keys of an array included, with each data property
+    // made writable and configurable, so a frozen or sealed source clones into something the store can write.
     // A view is copied by reading it, as a spread does, so its children come as views.
-    clone: o =>
-      Array.isArray(o) ? o.slice()
-        : o[$JT] !== undefined ? { ...o }
-          : Object.create(Object.getPrototypeOf(o), Object.getOwnPropertyDescriptors(o)),
+    clone: o => {
+      if (o[$JT] !== undefined) return Array.isArray(o) ? o.slice() : { ...o };
+      const descs = Object.getOwnPropertyDescriptors(o);
+      for (const k of Reflect.ownKeys(descs)) {
+        const d = descs[k];
+        if (k === "length" && Array.isArray(o)) {
+          delete descs[k];
+          continue;
+        }
+        d.configurable = true;
+        if (!d.get && !d.set) d.writable = true;
+      }
+      if (!Array.isArray(o)) return Object.create(Object.getPrototypeOf(o), descs);
+      // The length first, so trailing holes stay holes.
+      const a = [];
+      a.length = o.length;
+      return Object.defineProperties(a, descs);
+    },
     set: (o, k, v) => {
       o[k] = v;
     },
@@ -521,7 +561,9 @@
     view: (jt, array) => {
       const t = array ? [] : {};
       targets.set(t, jt);
-      return new Proxy(t, storeTraps);
+      const px = new Proxy(t, storeTraps);
+      shimProxies.add(px);
+      return px;
     },
     targetOf: v => v[$JT],
     // Solid's wrapDraft: a proxy over a view whose reads and writes go through the derive's control.
@@ -554,6 +596,7 @@
           })
       });
       if (inner[$JT] !== undefined) alias(px, inner);
+      shimProxies.add(px);
       return px;
     }
   });
@@ -594,6 +637,11 @@
   const deep = guard(value => b.deep(value));
 
   const solid = {
+    // The store's ownership, which tests read by name. The port keeps it in an identity map, not as a stamp on
+    // the object, so $OWNER is a symbol nothing carries.
+    storeLookup: { get: raw => targetMirror(b.plainLookup(raw)) ?? undefined },
+    isOwned: guard(raw => b.isOwnedRaw(raw)),
+    $OWNER: Symbol("STORE_OWNER"),
     createStore,
     createOptimisticStore,
     createProjection,
