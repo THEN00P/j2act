@@ -29,8 +29,11 @@ public final class ListView<E> extends AbstractList<E> implements StoreView, Ran
 
   @Override @SuppressWarnings("unchecked") public E get(int index) {
     return shape.at(target, () -> {
-      int size = shape.rt.storeLength(target);
+      // The bound is checked without subscribing to the size: reading a row is reading that row, as arr[i] is.
+      int size = shape.rt.untrack(() -> shape.rt.storeLength(target));
       if (index < 0 || index >= size) {
+        // Out of range now, and worth knowing when the list grows to it.
+        shape.rt.storeLength(target);
         throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
       }
       return (E) shape.present(shape.rt.storeGet(target, index));

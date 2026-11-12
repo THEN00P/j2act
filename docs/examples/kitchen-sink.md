@@ -104,8 +104,11 @@ todos.update(d -> { d.add(new Todo("write")); d.get(0).setDone(true); });
 var city = user.at(User::getAddress, Address::getCity);
 input().withValue(city.get()).onInput(e -> city.set(e.value()))
 
-// a row component reads its own row and renders alone
-return () -> div(p(user.get().getName()), each(todos.get(), t -> todoRow().withTodo(t)));
+// reading every row here re-renders this view when any row changes
+return () -> div(p(user.get().getName()), each(todos.get(), t -> li(t.getTitle())));
+
+// a row component that reads only its own row, todos.get().get(index.get()), renders alone
+return () -> div(each(range(todos.get().size()), i -> todoRow().withTodos(todos).withIndex(i).withKey(i)));
 ```
 
 ## Rows from a database, merged by key (ADR 0035)
