@@ -57,7 +57,8 @@ final class Verdict {
       || ((el.config & CONFIG_HELD) != 0 && rt.core.bornInto(c, q.txOf(el)))) {
       return false;
     }
-    if (q.running) {
+    // A derived store's derive whose store has no reader is no display: it observes and holds nothing (F-3, D-11).
+    if (q.running && !(c.fam != null && c.fam.live() == 0)) {
       q.joinFuture(null);
       if ((el.config & CONFIG_HELD) == 0) {
         q.queuePendingNode(el);
@@ -297,7 +298,7 @@ final class Verdict {
         && (!uninitialized || (probing && (el.config & CONFIG_STAGED_ERROR) == 0))) {
         pendingVerdict(tracked ? c : null, owner);
       } else if (tracked && q.running) {
-        if (q.flushTransaction != null && el.fn == null && Objects.equals(el.pendingValue, el.value)) {
+        if (q.flushTransaction != null && el.fn == null && rt.core.nets(el)) {
           route(c, q.flushTransaction);
         } else {
           provisionalVerdict(c, !latestActive && !uninitialized);
@@ -346,6 +347,10 @@ final class Verdict {
       node.pendingValue = el.pendingValue;
       node.config |= CONFIG_STAGED_ERROR;
       s().queuePendingNode(node);
+      // A derived store's readers are its family's: they re-derive from the staging (#4189).
+      if (node.fam != null) {
+        node.fam.st(STATUS_ERROR, null);
+      }
       rt.async.settlePendingSource(node, null);
     }
   }

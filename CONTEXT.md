@@ -28,6 +28,14 @@ _Avoid_: Checkpoint (that is the opt-in trigger that saves one while the tab is 
 A class annotated @TabScoped or @BrowserScoped that extends Store: one instance per tab or per browser, a bean of the app's container that components @Inject, or reach with useTabStore(X.class) and useBrowserStore(X.class) without one. A browser store's memos and effects run once per browser and cannot use tab stores. It holds signals, memos and other primitives as fields, never plain values, and its methods are the actions. No middleware (ADR 0030).
 _Avoid_: GlobalState, Context, Singleton, Session, createStore
 
+**Stored**:
+A Stored<T> created with createStore(value) over an object, a list or a map of the application's own classes (ADR 0035): what read one part re-runs when that part changes. get() gives a real instance, or a List or Map whose reads subscribe to an element or a key; update(d -> ...) hands out a draft of the same type and writes what the lambda changed; at(User::getAddress, Address::getCity) is one property. The object it was given is never changed. createOptimisticStore(...) makes one whose updates, from an action's body, are guesses undone when the action ends, and createRetainedStore(...) one that goes into its owner's Snapshot as JSON. Not the scoped Store class below it in name only.
+_Avoid_: Deep signal, Reactive object, Proxy
+
+**Projection**:
+A list its derive answers, created with createProjection(() -> async(...), Row::getId): each answer is merged into the last by key, so a row that came back keeps its place and only what changed in it re-runs its readers. Read like a Stored, written by nobody but its derive, refreshed like an async memo (ADR 0035).
+_Avoid_: Query, Resource, Live list
+
 **LiveComponent**:
 A component mounted at a route. Like every component it overrides setup(), which runs once per slot, creates what it needs with the create* functions of j2act.Reactive and returns its view (ADR 0031).
 _Avoid_: Controller, BackingBean, ViewModel

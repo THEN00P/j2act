@@ -90,6 +90,42 @@ var add = action((String text) -> {
 });
 ```
 
+## A store over your own classes (ADR 0035)
+
+```java
+var user  = createStore(new User("Ada", new Address("London")));
+var todos = createStore(new ArrayList<Todo>());
+
+// a draft is the real class; what the lambda changed is one write
+user.update(d -> d.getAddress().setCity("Wien"));
+todos.update(d -> { d.add(new Todo("write")); d.get(0).setDone(true); });
+
+// one property, bound to a field
+var city = user.at(User::getAddress, Address::getCity);
+input().withValue(city.get()).onInput(e -> city.set(e.value()))
+
+// reading every row here re-renders this view when any row changes
+return () -> div(p(user.get().getName()), each(todos.get(), t -> li(t.getTitle())));
+
+// a row component that reads only its own row, todos.get().get(index.get()), renders alone
+return () -> div(each(range(todos.get().size()), i -> todoRow().withTodos(todos).withIndex(i).withKey(i)));
+```
+
+## Rows from a database, merged by key (ADR 0035)
+
+```java
+var todos = createOptimisticStore(() -> async(() -> repo.list()), Todo::getId);
+
+var add = action((String title) -> {
+  todos.update(d -> d.add(Todo.unsaved(title)));   // shows immediately, undone when the action ends
+  repo.add(title);
+  refresh(todos).join();                           // the saved rows come back: same key, same row
+});
+
+// read only, for rows nobody guesses
+var orders = createProjection(() -> async(() -> orders.findAll()), Order::getId);
+```
+
 ## Data several components show (ADR 0031)
 
 ```java

@@ -47,7 +47,8 @@ public final class Reactive {
    * 0026, 0031). Keyed by the variable it is assigned to, through the processor.
    */
   public static <T> RetainedSignal<T> createRetained(T initial) {
-    return own(new RetainedSignal<>(initial, null, RetainedNames.chain(Reactive.class)));
+    return own(new RetainedSignal<>(initial, null, RetainedNames.chain(Reactive.class),
+      RetainedNames.callSiteType(Reactive.class)));
   }
 
   /** A retained signal with an explicit name instead of its variable's; never required. */
@@ -70,6 +71,136 @@ public final class Reactive {
   /** A retained value with an explicit name instead of its variable's; never required. */
   public static <T> RetainedValue<T> createRetained(String name, Supplier<T> save, Consumer<T> restore) {
     return own(new RetainedValue<>(save, restore, name, null));
+  }
+
+  /**
+   * A store over an object, a list or a map (ADR 0035): what read one part of it re-runs when that part
+   * changes, and a write is a change to a draft of the real type. See {@link Stored}.
+   */
+  public static <T> Stored<T> createStore(T initial) {
+    return own(new Stored<>(initial));
+  }
+
+  /** A store over a list: get() is a List whose reads subscribe to an element or the size. */
+  public static <E> Stored<java.util.List<E>> createStore(java.util.List<E> initial) {
+    return own(new Stored<>(initial));
+  }
+
+  /** A store over a map: get() is a Map whose reads subscribe to a key, its presence or the keys. */
+  public static <K, V> Stored<java.util.Map<K, V>> createStore(java.util.Map<K, V> initial) {
+    return own(new Stored<>(initial));
+  }
+
+  /**
+   * A list a derive answers, merged by key (ADR 0035): the usual shape for rows from a database, whose
+   * objects are new on every load. See {@link Projection}.
+   */
+  @SuppressWarnings("unchecked")
+  public static <E> Projection<E> createProjection(AsyncSupplier<java.util.List<E>> body, Function<? super E, ?> key) {
+    return own(new Projection<>(body::get, row -> key.apply((E) row)));
+  }
+
+  /** A projection over a derived list, for rows computed from other state. */
+  @SuppressWarnings("unchecked")
+  public static <E> Projection<E> createProjection(Supplier<java.util.List<E>> body, Function<? super E, ?> key) {
+    return own(new Projection<>(body::get, row -> key.apply((E) row)));
+  }
+
+  /**
+   * A store that takes optimistic writes (ADR 0035): an update from an action's body shows at once and is
+   * undone when that action ends, like {@link #createOptimistic}, and only the rows and properties it
+   * touched are guessed.
+   */
+  public static <T> Stored<T> createOptimisticStore(T initial) {
+    return own(new Stored<>(initial, null, null, true));
+  }
+
+  /**
+   * An optimistic store over a list a derive answers, the usual shape: an action adds a row, saves it and
+   * refreshes, and the row it guessed keeps its place when the saved one comes back with the same key.
+   */
+  @SuppressWarnings("unchecked")
+  public static <E> Stored<java.util.List<E>> createOptimisticStore(AsyncSupplier<java.util.List<E>> body,
+      Function<? super E, ?> key) {
+    return own(new Stored<>(null, body::get, row -> key.apply((E) row), true));
+  }
+
+  /**
+   * A store whose value goes into its owner's Snapshot (ADR 0026, 0035), so it outlives the in-memory tab:
+   * saved as JSON through the app's JsonBinding and read back as the value's type. The type is the one the
+   * source writes, which the j2act processor records: Stored<Draft> d = ..., or new ArrayList<Todo>() as the
+   * argument. With no processor, or nothing written, it is the class of initial, which for a list or a map
+   * says nothing of what it holds: name that class with createRetainedStore(list, Todo.class).
+   */
+  public static <T> Stored<T> createRetainedStore(T initial) {
+    java.lang.reflect.Type type = RetainedNames.callSiteType(Reactive.class);
+    return retainedStore(initial, type != null ? type : initial.getClass(), RetainedNames.chain(Reactive.class));
+  }
+
+  /** A retained store over a list; the type of its rows as the source writes it, see {@link #createRetainedStore(Object)}. */
+  public static <E> Stored<java.util.List<E>> createRetainedStore(java.util.List<E> initial) {
+    return retainedStore(initial, collectionType(initial, "List<Todo>", "createRetainedStore(list, Todo.class)"),
+      RetainedNames.chain(Reactive.class));
+  }
+
+  /** A retained store over a map; the type of its values as the source writes it. */
+  public static <K, V> Stored<java.util.Map<K, V>> createRetainedStore(java.util.Map<K, V> initial) {
+    return retainedStore(initial, collectionType(initial, "Map<String, Todo>", "createRetainedStore(map, Todo.class)"),
+      RetainedNames.chain(Reactive.class));
+  }
+
+  /** The type the source wrote for a list or map, which reading its JSON back needs. */
+  private static java.lang.reflect.Type collectionType(Object initial, String example, String explicit) {
+    java.lang.reflect.Type type = RetainedNames.callSiteType(Reactive.class);
+    if (type == null) {
+      throw new IllegalArgumentException("a retained " + (initial instanceof java.util.List ? "list" : "map")
+        + " needs the type of what it holds, since its JSON does not say: write it where the store is created, such"
+        + " as Stored<" + example + "> or new " + (initial instanceof java.util.List ? "ArrayList" : "HashMap")
+        + "<...>(), and build with the j2act processor, or name it with " + explicit + " (ADR 0035)");
+    }
+    return type;
+  }
+
+  /** A retained store over a list of rows of one class. */
+  public static <E> Stored<java.util.List<E>> createRetainedStore(java.util.List<E> initial, Class<E> rows) {
+    return retainedStore(initial, parameterized(java.util.List.class, rows), RetainedNames.chain(Reactive.class));
+  }
+
+  /** A retained store over a map from strings to values of one class. */
+  public static <V> Stored<java.util.Map<String, V>> createRetainedStore(java.util.Map<String, V> initial, Class<V> values) {
+    return retainedStore(initial, parameterized(java.util.Map.class, String.class, values), RetainedNames.chain(Reactive.class));
+  }
+
+  private static <T> Stored<T> retainedStore(T initial, java.lang.reflect.Type type, String stackName) {
+    Stored<T> store = own(new Stored<>(initial));
+    String what = stackName != null ? stackName : type.getTypeName();
+    // The snapshot keeps the store's JSON as text: only the store knows the type to read it back as.
+    own(new RetainedValue<String>(() -> store.saved(type, what), json -> store.restore(json, type, what), null, stackName));
+    return store;
+  }
+
+  private static java.lang.reflect.ParameterizedType parameterized(Class<?> raw, java.lang.reflect.Type... arguments) {
+    return new java.lang.reflect.ParameterizedType() {
+      @Override public java.lang.reflect.Type[] getActualTypeArguments() {
+        return arguments.clone();
+      }
+
+      @Override public java.lang.reflect.Type getRawType() {
+        return raw;
+      }
+
+      @Override public java.lang.reflect.Type getOwnerType() {
+        return null;
+      }
+
+      @Override public String getTypeName() {
+        StringBuilder name = new StringBuilder(raw.getName()).append('<');
+        for (int i = 0; i < arguments.length; i++) {
+          name.append(i == 0 ? "" : ", ").append(arguments[i].getTypeName());
+        }
+        return name.append('>').toString();
+      }
+    };
   }
 
   /** A pure derived value, recomputed when what it read changes; readers re-render only when it changes. */
@@ -188,6 +319,9 @@ public final class Reactive {
    */
   @SuppressWarnings("unchecked")
   public static <T> CompletableFuture<T> refresh(Supplier<T> memo) {
+    if (memo instanceof Projection || memo instanceof Stored) {
+      return refreshProjection((Primitive) memo, memo);
+    }
     ValueCell cell = valueOf(memo, "refresh");
     Action.Call call = Action.Call.current();
     CompletableFuture<Object> landed = new CompletableFuture<>();
@@ -207,6 +341,39 @@ public final class Reactive {
       start.run();
     } else {
       cell.tab.host.job(() -> Tracking.in(cell.tab, null, () -> {
+        start.run();
+        return null;
+      }));
+    }
+    return (CompletableFuture<T>) landed;
+  }
+
+  /** A projection's derive runs again; the future finishes with the projection once its answer is merged. */
+  @SuppressWarnings("unchecked")
+  private static <T> CompletableFuture<T> refreshProjection(Primitive projection, Supplier<T> result) {
+    StoreCell cell = (StoreCell) projection.requireCell();
+    if (cell.deriveNode() == null) {
+      throw new IllegalArgumentException("refresh takes an async memo, a projection or an optimistic store over a load");
+    }
+    Tab tab = cell.tab;
+    Action.Call call = Action.Call.current();
+    CompletableFuture<Object> landed = new CompletableFuture<>();
+    Runnable start = () -> tab.rt.refresh(cell.deriveNode()).whenComplete((value, failure) -> {
+      if (failure != null) {
+        landed.completeExceptionally(failure);
+      } else {
+        landed.complete(result.get());
+      }
+    });
+    if (call != null) {
+      call.enter(tab, () -> {
+        start.run();
+        return null;
+      });
+    } else if (tab.lane.isCurrent()) {
+      start.run();
+    } else {
+      tab.host.job(() -> Tracking.in(tab, null, () -> {
         start.run();
         return null;
       }));

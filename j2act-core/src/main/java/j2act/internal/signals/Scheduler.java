@@ -16,7 +16,7 @@ import java.util.function.Supplier;
 /**
  * Port of @solidjs/signals core/scheduler.ts at 9449845, with GlobalQueue as this class: events only mark,
  * one pass recomputes in height order, and settle() is the one place that decides what commits, parks or
- * lands. Hooks stay null until what needs them is installed, as in Solid. Left out: store hooks, attribution,
+ * lands. Hooks stay null until what needs them is installed, as in Solid. Left out: attribution,
  * and dev checks that only warn.
  */
 final class Scheduler {
@@ -97,6 +97,37 @@ final class Scheduler {
   java.util.function.Function<Node, Node> laggingHook;
   Predicate<Node> markedHook;
   Runnable witnessMarkHook;
+
+  // ---- store hooks (store/store.ts, store/optimistic.ts), null until a store is built
+  /** `park`: the flush parked into t, and the store holds the container node of every staging that had none. */
+  Consumer<Transaction> storeParkHook;
+  /** `commit`: fold the pending backings whose container nodes this flush committed. */
+  Runnable storeCommitHook;
+  /** Solid's GlobalQueue._slotFlight: a slot node's truth is in flight, its family's derive. */
+  Predicate<Node> slotFlightHook;
+  /** Solid's GlobalQueue._slotTake; `back` asks for the slot's node now, for a guess that comes back. */
+  SlotTake slotTakeHook;
+  /** Solid's GlobalQueue._slotCovered: the value a slot node's guess covered. */
+  java.util.function.Function<Node, Object> slotCoveredHook;
+  /** Solid's GlobalQueue._echoes: the truth is the guess's echo when reconcile would write nothing into it. */
+  java.util.function.BiPredicate<Object, Object> echoesHook;
+  /** Solid's GlobalQueue._laneRebase: true when the lane stages the truth beneath a keyed arrangement guess. */
+  LaneRebase laneRebaseHook;
+  /** Solid's GlobalQueue._storeNode: a store's node for a key, for affects() on a store. */
+  java.util.function.BiFunction<Object, Object, Node> storeNodeHook;
+  /** Solid's GlobalQueue._storeWrappable. */
+  Predicate<Object> storeWrappableHook;
+
+  @FunctionalInterface
+  interface SlotTake {
+    /** The node (with back) or Boolean.TRUE when the store took the slot; null otherwise. */
+    Object take(Node n, boolean back);
+  }
+
+  @FunctionalInterface
+  interface LaneRebase {
+    boolean rebase(Node el, Object truth, boolean older);
+  }
 
   // ---- state
 
@@ -435,6 +466,9 @@ final class Scheduler {
         }
       }
       pendingNodes.clear();
+      if (storeParkHook != null) {
+        storeParkHook.accept(t);
+      }
       List<Node> zombies = new ArrayList<>(deferredZombies);
       deferredZombies.clear();
       if (observeFlightHook != null) {
@@ -473,6 +507,10 @@ final class Scheduler {
       }
       land(u);
       k = transactions.size();
+    }
+    // The store folds the pending backings whose container nodes committed.
+    if (storeCommitHook != null) {
+      storeCommitHook.run();
     }
     Transaction live = t != null ? liveTx(t) : null;
     if (releaseAmbientMarksHook != null) {

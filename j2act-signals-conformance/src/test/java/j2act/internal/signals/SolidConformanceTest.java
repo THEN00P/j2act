@@ -25,7 +25,11 @@ class SolidConformanceTest {
   /** What a test may fail for reaching, with why it is not ported. docs/spikes/solid-port-tests.md says the same. */
   private static final Set<String> LEFT_OUT = Set.of(
     // JS proxies
-    "createStore", "createOptimisticStore", "createProjection", "reconcile", "snapshot", "deep", "merge", "registerFold",
+    "merge", "seedLoadingValue", "registerFold",
+    // parts of the store with no meaning for Java objects, or not ported yet
+    "shallowStore", "markRaw", "storePath", "omit", "mergeView", "viewOf", "omitView", "storeIsShallow",
+    "isStatic", "hasStaticKeys",
+
     // developer tooling
     "attribution", "OBSERVE", "DEV", "graphSize", "GRAPH_SIZE_WARN_AT", "setSignalIdentities", "setWriteHook",
     "asyncTailFlights", "enforceLoadingBoundary",

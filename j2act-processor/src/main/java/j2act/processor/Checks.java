@@ -36,6 +36,7 @@ final class Checks {
   private static final String UNSAFE_HTML = "j2act.UnsafeHtml";
   private static final String ALLOW_UNSAFE = "j2act.AllowUnsafe";
   private static final String PRIMITIVE = "j2act.Primitive";
+  private static final String STORED = "j2act.Stored";
   private static final String STORE = "j2act.Store";
   private static final String STREAM = "java.util.stream.Stream";
 
@@ -60,6 +61,42 @@ final class Checks {
   }
 
   /** Checks a type from source and the types nested in it. */
+  /**
+   * A type as written in this type's source, with each name resolved as javac would, to binary names:
+   * List<Todo> becomes java.util.List<com.example.Todo>. Null when a name does not resolve.
+   */
+  String resolveGeneric(TypeElement context, String written) {
+    Scope scope = new Scope(context, source.imports(context));
+    StringBuilder out = new StringBuilder();
+    StringBuilder name = new StringBuilder();
+    for (int i = 0; i <= written.length(); i++) {
+      char c = i < written.length() ? written.charAt(i) : '\0';
+      if (c == '<' || c == '>' || c == ',' || c == '[' || c == ']' || c == '\0') {
+        if (name.length() > 0) {
+          String n = name.toString();
+          if (n.equals("?")) {
+            out.append("java.lang.Object");
+          } else if (javax.lang.model.SourceVersion.isKeyword(n)) {
+            out.append(n);
+          } else {
+            TypeElement resolved = scope.typeNamed(n);
+            if (resolved == null) {
+              return null;
+            }
+            out.append(elements.getBinaryName(resolved));
+          }
+          name.setLength(0);
+        }
+        if (c != '\0') {
+          out.append(c);
+        }
+      } else if (!Character.isWhitespace(c)) {
+        name.append(c);
+      }
+    }
+    return out.toString();
+  }
+
   void check(TypeElement type) {
     Scope scope = new Scope(type, source.imports(type));
     boolean typeAllowsUnsafe = allowsUnsafe(type);
@@ -105,6 +142,7 @@ final class Checks {
       retainedChangedInPlace(node, scope);
       readsInAsync(node, scope);
       transactionalSelfCall(node, scope);
+      partGetters(node, scope);
     } else if (node.kind == Node.Kind.REF) {
       transactionalSelfCall(node, scope);
     } else if (node.kind == Node.Kind.NEW && !allowsUnsafe && scope.isType(scope.typeNamed(node.type), UNSAFE_HTML)) {
@@ -224,6 +262,20 @@ final class Checks {
           + "lambda, or say it is meant with untrack(...) (ADR 0031)");
       }
       readOnceInSetup(child, scope);
+    }
+  }
+
+  /** at(...) reads the property off a method reference, and anything else names none (ADR 0035). */
+  private void partGetters(Node call, Scope scope) {
+    if (!call.name.equals("at") || call.receiver == null || call.receiver.kind != Node.Kind.IDENT || call.args.isEmpty()
+        || !scope.isType(scope.typeOf(call.receiver), STORED)) {
+      return;
+    }
+    for (Node arg : call.args) {
+      if (arg.kind != Node.Kind.REF) {
+        report(arg, scope, "at(...) takes a reference to a public getter, such as User::getName: this names no property"
+          + " and fails when it runs (ADR 0035)");
+      }
     }
   }
 

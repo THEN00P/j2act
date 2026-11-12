@@ -38,6 +38,8 @@ final class Constants {
   static final int CONFIG_HELD_FRAME = 1 << 20;
   static final int CONFIG_INPUTS_PUBLISHED = 1 << 10;
   static final int CONFIG_OVERRIDE = 1 << 11;
+  /** A store slot node (`slotSignal`): a leaf, presence, container or deep witness of a store target. */
+  static final int CONFIG_SLOT_NODE = 1 << 12;
   static final int CONFIG_MANUAL_WRITE = 1 << 18;
   static final int CONFIG_STAGED_ERROR = 1 << 21;
   static final int CONFIG_GUESS = 1 << 13;

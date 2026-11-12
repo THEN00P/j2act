@@ -15,7 +15,7 @@ import java.util.function.UnaryOperator;
 
 /**
  * Port of @solidjs/signals core/core.ts at 9449845: recompute, read, and write. Left out: the shadow seat,
- * strict reads and other dev-only checks, attribution, hydration snapshots, store slot nodes and ids.
+ * strict reads and other dev-only checks, attribution, hydration snapshots and ids.
  */
 final class Core {
 
@@ -578,6 +578,23 @@ final class Core {
     return n;
   }
 
+  /**
+   * A store slot node (CONFIG_SLOT_NODE): the target and key as back-refs in place of closures, and the store's
+   * wrap cache and accessor verdict pre-shaped. `ownedWrite` is baked in: the setter carries the owned-scope
+   * guard, and node-level writes are the store's notification machinery.
+   */
+  Node slotSignal(Object v, java.util.function.BiPredicate<Object, Object> equals, Node.Host host, Object key, boolean acc) {
+    Node n = new Node(rt);
+    n.equals = equals;
+    n.config = CONFIG_OWNED_WRITE | CONFIG_SLOT_NODE;
+    n.value = v;
+    n.time = s().clock;
+    n.host = host;
+    n.key = key;
+    n.acc = acc;
+    return n;
+  }
+
   <T> T untrack(Supplier<T> fn) {
     boolean prevTracking = tracking;
     tracking = false;
@@ -619,6 +636,16 @@ final class Core {
     } else if (refresh) {
       updateIfNecessary(comp);
     }
+  }
+
+  /**
+   * A staging equal to the committed value is writes that netted (D-8). Solid asks with `===`; here a value
+   * compares by content, but a store's slot holds backings and rows, which are told apart by identity: two
+   * loads of one row are equal to an equals that compares ids, and are not the same value.
+   */
+  boolean nets(Node el) {
+    return el.pendingValue == el.value
+      || ((el.config & CONFIG_SLOT_NODE) == 0 && java.util.Objects.equals(el.pendingValue, el.value));
   }
 
   boolean readerSeesCommitted(Node el, Node c) {
@@ -723,7 +750,7 @@ final class Core {
       if (c == null || el.pendingValue == NOT_PENDING || (c.config & CONFIG_CHILDREN_FORBIDDEN) != 0) {
         return el.value;
       }
-      boolean netted = el.pendingValue == el.value || java.util.Objects.equals(el.pendingValue, el.value);
+      boolean netted = nets(el);
       if (netted || (((q.observeFlightHook != null && (c.config & CONFIG_VERDICT) != 0)
         || (q.laneStageHook != null && q.passLane != null && q.passLane.folded != null)) && stagedScreen(c, el))) {
         return el.value;

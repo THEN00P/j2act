@@ -301,6 +301,7 @@ final class EcjSource implements Source {
         Node node = positioned(Node.Kind.NEW, ast);
         Object type = get(ast, "type");
         node.type = type == null ? null : typeName(type);
+        node.generic = type == null ? null : writtenType(type);
         node.add(convert(optional(ast, "enclosingInstance")));
         for (Object argument : array(get(ast, "arguments"))) {
           node.args.add(node.add(convert(argument)));
@@ -324,6 +325,7 @@ final class EcjSource implements Source {
         node.name = new String((char[]) get(ast, "name"));
         Object type = get(ast, "type");
         node.type = type == null ? "var" : typeName(type);
+        node.generic = type == null ? null : writtenType(type);
         node.body = node.add(convert(get(ast, "initialization")));
         return node;
       }
@@ -540,6 +542,41 @@ final class EcjSource implements Source {
       }
     }
     return i >= 0 && source[i] == '.' ? i : name;
+  }
+
+  /**
+   * A type as written, with its type arguments: ECJ keeps them on a parameterized reference, per segment on a
+   * qualified one, where the last segment's are the type's. A wildcard is its upper bound, or ? with none.
+   */
+  private String writtenType(Object typeReference) {
+    String kind = typeReference.getClass().getSimpleName();
+    if (kind.equals("Wildcard")) {
+      Object bound = optional(typeReference, "bound");
+      return bound != null && ((Number) get(typeReference, "kind")).intValue() == 1 ? writtenType(bound) : "?";
+    }
+    StringBuilder out = new StringBuilder(dotted((char[][]) call(typeReference, "getTypeName")));
+    Object arguments = optional(typeReference, "typeArguments");
+    Object[] last = null;
+    if (arguments instanceof Object[][]) {
+      for (Object[] segment : (Object[][]) arguments) {
+        if (segment != null) {
+          last = segment;
+        }
+      }
+    } else if (arguments instanceof Object[]) {
+      last = (Object[]) arguments;
+    }
+    if (last != null) {
+      out.append('<');
+      for (int i = 0; i < last.length; i++) {
+        out.append(i == 0 ? "" : ",").append(writtenType(last[i]));
+      }
+      out.append('>');
+    }
+    for (int i = (int) call(typeReference, "dimensions"); i > 0; i--) {
+      out.append("[]");
+    }
+    return out.toString();
   }
 
   private String typeName(Object typeReference) {

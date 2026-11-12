@@ -33,6 +33,7 @@ public final class Runtime {
   final Action action;
   final Signals signals;
   final MapArray mapArray;
+  final Stores stores;
   final Executor microtasks;
   final Executor lane;
   /** What a boundary does with its content's value, Solid's `flatten`. Java's content has nothing to flatten. */
@@ -66,6 +67,7 @@ public final class Runtime {
     this.action = new Action(this);
     this.signals = new Signals(this);
     this.mapArray = new MapArray(this);
+    this.stores = new Stores(this);
   }
 
   private static final java.util.concurrent.ScheduledExecutorService TIMERS =
@@ -306,6 +308,113 @@ public final class Runtime {
   }
 
   // ---- What j2act builds on (ADR 0033): the same functions, by node rather than by accessor.
+
+  // ---- stores (store/store.ts): a view stands for a target, and the traps are calls
+
+  /** The objects this runtime's stores hold; given once, before the first store. */
+  public void storeShape(StoreShape shape) {
+    stores.install(shape);
+  }
+
+  /** Solid's createStore(value): the view of a store over value. */
+  public Object createStore(Object value) {
+    return stores.createStore(value);
+  }
+
+  /** Solid's setStore(fn): fn writes the draft it is given, or returns a value to replace the store's with. */
+  public void setStore(Object view, Function<Object, Object> fn) {
+    stores.storeSetter(view, fn, true);
+  }
+
+  /**
+   * Solid's createProjection(fn, seed, {key}): a store a derive writes or answers, merged by key. With
+   * writable, Solid's createStore(fn, seed): setStore works on it too.
+   */
+  public Object createProjection(Stores.Derive fn, Object seed, Function<Object, Object> key) {
+    return stores.createProjection(fn, seed, key, false);
+  }
+
+  /** Solid's createOptimisticStore(fn, seed, {key}); fn is null for one with no derive. */
+  public Object createOptimisticStore(Stores.Derive fn, Object seed, Function<Object, Object> key) {
+    return stores.createOptimisticStore(fn, seed, key);
+  }
+
+  /** Solid's affects(store): isPending turns true for what reads the record, until it next lands. */
+  public void storeAffects(Object view) {
+    stores.affects(view, null, false);
+  }
+
+  /** Solid's affects(store, key), for one key of a record. */
+  public void storeAffects(Object view, Object key) {
+    stores.affects(view, key, true);
+  }
+
+  /** The node behind a derived store, for refresh, isPending and affects; null for a plain store. */
+  public Node storeDerive(Object view) {
+    return stores.deriveOf(view);
+  }
+
+  /** Whether a setter's draft is open on this target's store: writes land, and reads see them. */
+  public boolean storeWriting(StoreTarget target) {
+    return stores.inDraft(target);
+  }
+
+  /** Replaces a store's value as what holds the store may, with no check on who is writing: a restore. */
+  public void replaceStore(Object view, Object value) {
+    stores.storeSetter(view, draft -> value, false);
+  }
+
+  public Object storeGet(StoreTarget target, Object key) {
+    return stores.get(target, key);
+  }
+
+  public boolean storeHas(StoreTarget target, Object key) {
+    return stores.has(target, key);
+  }
+
+  /** The raw value at key in a one-element array, or null when the key is not there. */
+  public Object[] storeDescriptor(StoreTarget target, Object key) {
+    return stores.descriptor(target, key);
+  }
+
+  public java.util.List<Object> storeKeys(StoreTarget target) {
+    return stores.ownKeys(target);
+  }
+
+  public int storeLength(StoreTarget target) {
+    return stores.length(target);
+  }
+
+  public void storeSet(StoreTarget target, Object key, Object value) {
+    stores.set(target, key, value);
+  }
+
+  public void storeDelete(StoreTarget target, Object key) {
+    stores.delete(target, key);
+  }
+
+  /** Solid's store[$TRACK]: subscribes to a container's membership and order. */
+  public void storeTrack(StoreTarget target) {
+    stores.track(target);
+  }
+
+  /**
+   * Solid's reconcile(value, key), applied to a draft: value becomes the store's by key, and a row that
+   * survives keeps its view. A null key pairs rows by position.
+   */
+  public void reconcile(Object value, Object draft, Function<Object, Object> key) {
+    stores.reconcileState(value, draft, key, false);
+  }
+
+  /** Solid's snapshot(store): the current value without tracking, the source object where nothing was written. */
+  public Object snapshot(Object value) {
+    return stores.snapshot(value);
+  }
+
+  /** Solid's deep(store): a snapshot that subscribes to every record it reaches. */
+  public Object deep(Object value) {
+    return stores.deep(value);
+  }
 
   /** A signal's node. `ownedWrite` lets computations write it, as a component's props need. */
   public Node signalNode(Object value, boolean ownedWrite) {

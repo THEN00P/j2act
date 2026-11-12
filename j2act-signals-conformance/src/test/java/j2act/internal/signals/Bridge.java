@@ -79,6 +79,158 @@ public final class Bridge {
     }, microtask);
   }
 
+  // ---- stores: the proxy's traps, called from solid-shim.js
+
+  public void installStoreOps(Value ops) {
+    rt.storeShape(new JsShape(this, ops));
+  }
+
+  /** An array's index is an Integer and its length the shape's LENGTH; any other key is itself. */
+  private Object storeKey(Value key, boolean array) {
+    if (array && key.isString()) {
+      String s = key.asString();
+      if ("length".equals(s)) {
+        return StoreShape.LENGTH;
+      }
+      if (!s.isEmpty() && s.length() < 10 && s.chars().allMatch(Character::isDigit) && (s.length() == 1 || s.charAt(0) != '0')) {
+        return Integer.valueOf(s);
+      }
+    }
+    return toJava(key);
+  }
+
+  public Object createStore(Value value) {
+    return rt.createStore(value);
+  }
+
+  public Object createProjection(Value fn, Value seed, Value keyFn) {
+    return rt.createProjection(fn == null || !fn.canExecute() ? null : draft -> toJavaResult(call(fn, draft)), seed,
+      keyFn == null || !keyFn.canExecute() ? null : item -> toJava(call(keyFn, item)));
+  }
+
+  public Object createOptimisticStore(Value fn, Value seed, Value keyFn) {
+    return rt.createOptimisticStore(fn == null || !fn.canExecute() ? null : draft -> toJavaResult(call(fn, draft)), seed,
+      keyFn == null || !keyFn.canExecute() ? null : item -> toJava(call(keyFn, item)));
+  }
+
+  public void storeAffects(Value view) {
+    rt.storeAffects(view);
+  }
+
+  public void storeAffectsKey(Value view, Value key, boolean array) {
+    rt.storeAffects(view, storeKey(key, array));
+  }
+
+  public Object storeDerive(Object target) {
+    StoreTarget t = (StoreTarget) target;
+    return t.fam != null && t.fam.node != null ? t.fam.node : undefined;
+  }
+
+  public void setStore(Value view, Value fn) {
+    rt.setStore(view, draft -> {
+      Value result = call(fn, draft);
+      // A thenable is the mark of an async callback, which Java sees as a CompletionStage.
+      if (result != null && !result.isNull() && result.hasMember("then") && result.getMember("then").canExecute()) {
+        return new java.util.concurrent.CompletableFuture<>();
+      }
+      return toJava(result);
+    });
+  }
+
+  public Object storeGet(Object target, Value key, boolean array) {
+    return js(rt.storeGet((StoreTarget) target, storeKey(key, array)));
+  }
+
+  public boolean storeHas(Object target, Value key, boolean array) {
+    return rt.storeHas((StoreTarget) target, storeKey(key, array));
+  }
+
+  /** Whether the current backing has the key itself, asked without tracking. */
+  public boolean storeOwn(Object target, Value key, boolean array) {
+    return rt.stores.shape().has(rawBacking((StoreTarget) target), storeKey(key, array));
+  }
+
+  /**
+   * The object a target's reads end at: its backing, or through a chained backing the inner store's, so asking
+   * it runs no trap. A trap here would be a read, tracked and witnessed, that the code asking never made.
+   */
+  private Object rawBacking(StoreTarget t) {
+    Object raw = t.pb != null ? t.pb : t.v;
+    for (StoreTarget inner = rt.stores.shape().targetOf(raw); inner != null; inner = rt.stores.shape().targetOf(raw)) {
+      raw = inner.pb != null ? inner.pb : inner.v;
+    }
+    return raw;
+  }
+
+  /** The plain store's target for a raw object, undefined when it has none. */
+  public Object plainLookup(Value raw) {
+    StoreTarget t = rt.stores.lookupTarget(toJava(raw), null);
+    return t == null ? undefined : t;
+  }
+
+  /** Whether the store allocated this object: a copy it owns, never what it was given. */
+  public boolean isOwnedRaw(Value raw) {
+    Object o = toJava(raw);
+    return o != null && rt.stores.isOwned(o);
+  }
+
+  /** The target a family's lookup holds for a value, undefined when it holds none. */
+  public Object familyLookup(Object family, Value value) {
+    StoreTarget.StoreFamily fam = (StoreTarget.StoreFamily) family;
+    java.lang.ref.WeakReference<StoreTarget> ref = fam.mapRefs == null ? null : fam.mapRefs.get(toJava(value));
+    StoreTarget t = ref == null ? null : ref.get();
+    return t == null ? undefined : t;
+  }
+
+  /** The backing a target's reads come from now, for what JS asks of the object itself, such as its prototype. */
+  public Object storeBacking(Object target) {
+    return rawBacking((StoreTarget) target);
+  }
+
+  /** [value] for a key that is there, undefined otherwise. */
+  public Object storeDescriptor(Object target, Value key, boolean array) {
+    Object[] d = rt.storeDescriptor((StoreTarget) target, storeKey(key, array));
+    if (d == null) {
+      return undefined;
+    }
+    Value out = context.eval("js", "[]");
+    out.invokeMember("push", js(d[0]));
+    return out;
+  }
+
+  public Value storeKeys(Object target) {
+    Value array = context.eval("js", "[]");
+    for (Object key : rt.storeKeys((StoreTarget) target)) {
+      array.invokeMember("push", key instanceof Integer ? String.valueOf(key) : js(key));
+    }
+    return array;
+  }
+
+  public void storeSet(Object target, Value key, Value value, boolean array) {
+    rt.storeSet((StoreTarget) target, storeKey(key, array), toJava(value));
+  }
+
+  public void storeDelete(Object target, Value key, boolean array) {
+    rt.storeDelete((StoreTarget) target, storeKey(key, array));
+  }
+
+  public void storeTrack(Object target) {
+    rt.storeTrack((StoreTarget) target);
+  }
+
+  public void reconcile(Value value, Value state, Value keyFn) {
+    rt.reconcile(toJava(value), toJava(state),
+      keyFn == null || !keyFn.canExecute() ? null : item -> toJava(call(keyFn, item)));
+  }
+
+  public Object snapshot(Value value) {
+    return js(rt.snapshot(toJava(value)));
+  }
+
+  public Object deep(Value value) {
+    return js(rt.deep(toJava(value)));
+  }
+
   public void setErrorFactory(Value factory) {
     this.errorFactory = factory;
   }
@@ -155,8 +307,20 @@ public final class Bridge {
     return v;
   }
 
-  /** A compute's result: a thenable becomes a future and an async iterable an AsyncIterable, as handleAsync reads them. */
+  /**
+   * A compute's result: a thenable becomes a future and an async iterable an AsyncIterable, as handleAsync reads
+   * them. Asking a store's view reads it through its traps, which may throw what the engine throws, such as a
+   * NotReadyError from a store not loaded yet: that reaches the engine as itself, not wrapped by GraalJS.
+   */
   Object toJavaResult(Value v) {
+    try {
+      return toJavaResultUnwrapped(v);
+    } catch (PolyglotException e) {
+      throw Errors.<RuntimeException>sneak(unwrap(e));
+    }
+  }
+
+  private Object toJavaResultUnwrapped(Value v) {
     if (v == null || v.isNull() || !v.hasMembers() || v.isHostObject()) {
       return toJava(v);
     }

@@ -63,7 +63,7 @@ public final class J2ActProcessor extends AbstractProcessor {
         "j2act: build-time checks skipped, " + env.getClass().getName() + " is neither javac nor ECJ");
     } else {
       checks = new Checks(env, source);
-      names = new NameTable(env.getFiler(), env.getElementUtils(), source);
+      names = new NameTable(env.getFiler(), env.getElementUtils(), source, checks);
     }
     clientTypes = new ClientTypes(env, source);
     this.source = source;

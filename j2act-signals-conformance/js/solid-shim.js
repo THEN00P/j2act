@@ -2,6 +2,13 @@
 // reactive behavior; a function that has no Java counterpart yet is left undefined, so its tests fail.
 (function () {
   const b = globalThis.__bridge;
+  if (typeof globalThis.structuredClone !== "function") {
+    const cloneOf = v =>
+      Array.isArray(v) ? v.map(cloneOf)
+        : v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, cloneOf(x)]))
+          : v;
+    globalThis.structuredClone = cloneOf;
+  }
   const $REFRESH = Symbol("refresh");
   const ROOT_ERROR_HOOK = Symbol("root error hook");
 
@@ -180,7 +187,9 @@
           "Pass the original source target, not a wrapper function or derived property read."
       );
     }
-    const promise = b.refresh(unmirror(node));
+    const landed = b.refresh(unmirror(node));
+    // A store resolves with itself, as it has no one value.
+    const promise = typeof target === "function" ? landed : landed.then(() => target);
     promise.catch(() => {});
     return promise;
   });
@@ -274,6 +283,11 @@
           'with its own affects(record, key) call, or pass the nested record itself: affects(state.user, "name").'
       );
     }
+    if (target && typeof target === "object" && target[$JT] !== undefined) {
+      if (arguments.length > 1 && key !== undefined) b.storeAffectsKey(target, key, Array.isArray(target));
+      else b.storeAffects(target);
+      return;
+    }
     const node = target && target[$REFRESH];
     if (!node) {
       throw new Error(
@@ -336,7 +350,20 @@
       if (rowsMode) return map(accessor(item), indexes ? accessor(index) : undefined);
       return indexes ? map(item, accessor(index)) : map(item);
     };
-    return accessor(b.mapArray(list, wrapped, indexes, keyFn, byIndex, options && options.fallback));
+    // A store's array is read as Solid's map.ts reads it: its container and its length tracked, and its rows
+    // untracked, as map.ts reads them under its own owner, so no row's node gains the list as a reader.
+    const rows = () => {
+      const items = list();
+      if (!items || typeof items !== "object" || items[$JT] === undefined) return items;
+      items[$TRACK];
+      const n = items.length;
+      return untrack(() => {
+        const out = [];
+        for (let i = 0; i < n; i++) out.push(items[i]);
+        return out;
+      });
+    };
+    return accessor(b.mapArray(rows, wrapped, indexes, keyFn, byIndex, options && options.fallback));
   });
   const repeat = guard((count, map, options) =>
     accessor(b.repeat(count, map, options && options.from, options && options.fallback))
@@ -348,7 +375,284 @@
     b.configureClientErrors(config ? config.onError : undefined);
   };
 
+  // ---- stores: the proxy is JavaScript's, and each trap is a call into the port's store
+  const $TRACK = Symbol("STORE_TRACK"), $TARGET = Symbol("STORE_TARGET"), $PROXY = Symbol("STORE_PROXY"),
+    $RECORD = Symbol("VIEW_RECORD");
+  /** The port's target behind a view. $TARGET gives what a test may look inside, with Solid's field names. */
+  const $JT = Symbol("java target");
+  const targetMirrors = new Map();
+  const slotMap = map => {
+    if (map === null || map === undefined) return null;
+    const out = {};
+    for (const [k, v] of b.entriesOf(map)) out[typeof k === "number" || Java.isJavaObject(k) ? String(k) : k] = mirror(v);
+    return out;
+  };
+  const targetMirror = jt => {
+    if (jt === null || jt === undefined) return jt;
+    const id = b.identity(jt);
+    let m = targetMirrors.get(id);
+    if (m === undefined) {
+      m = new Proxy({}, {
+        get(t, prop) {
+          if (prop === "__node") return jt;
+          if (typeof prop !== "string") return undefined;
+          if (prop === "n" || prop === "h") return slotMap(b.fieldOf(jt, prop));
+          if (prop === "k" || prop === "dk") return mirror(b.fieldOf(jt, prop)) ?? null;
+          if (prop === "u") return targetMirror(b.fieldOf(jt, "u")) ?? null;
+          if (prop === "_fam") {
+            const fam = b.fieldOf(jt, "fam");
+            if (fam === null || fam === undefined) return null;
+            return {
+              get live() {
+                return new Set(b.entriesOf(b.fieldOf(fam, "live")).map(targetMirror));
+              },
+              get node() {
+                return mirror(b.fieldOf(fam, "node")) ?? null;
+              },
+              get opt() {
+                return b.fieldOf(fam, "opt");
+              },
+              // The family's raw-to-target lookup, as Solid's WeakMap answers get().
+              get map() {
+                return { get: v => targetMirror(b.familyLookup(fam, v)) ?? undefined };
+              }
+            };
+          }
+          const v = b.fieldOf(jt, prop);
+          return v === undefined ? null : v;
+        }
+      });
+      targetMirrors.set(id, m);
+    }
+    return m;
+  };
+  const hasOwn = Object.prototype.hasOwnProperty;
+  const targets = new WeakMap();
+  // Every proxy the shim makes, for node:util's types.isProxy, which GraalJS has no Node built-ins for.
+  const shimProxies = new WeakSet();
+  globalThis.__nodeUtil = { types: { isProxy: v => typeof v === "object" && v !== null && shimProxies.has(v) } };
+  const wrappableProtos = new WeakMap();
+  function isWrappable(obj) {
+    if (obj == null || typeof obj !== "object" || Object.isFrozen(obj)) return false;
+    const proto = Object.getPrototypeOf(obj);
+    if (proto === Object.prototype || proto === null) return true;
+    if (Array.isArray(obj)) return true;
+    let wrappable = wrappableProtos.get(proto);
+    if (wrappable === undefined) {
+      wrappable = Object.prototype.toString.call(obj) === "[object Object]" &&
+        (typeof Node === "undefined" || !(obj instanceof Node));
+      wrappableProtos.set(proto, wrappable);
+    }
+    return wrappable;
+  }
+  const guardTraps = traps => Object.fromEntries(Object.entries(traps).map(([name, trap]) => [name, guard(trap)]));
+  const storeTraps = guardTraps({
+    get(t, key, receiver) {
+      const jt = targets.get(t);
+      const arr = Array.isArray(t);
+      if (typeof key === "symbol") {
+        if (key === $JT) return jt;
+        if (key === $TARGET) return targetMirror(jt);
+        if (key === $PROXY) return receiver;
+        if (key === $RECORD) return undefined;
+        if (key === $REFRESH) return mirror(b.storeDerive(jt));
+        if (key === $TRACK) {
+          b.storeTrack(jt);
+          return undefined;
+        }
+      }
+      // A key the object does not have itself is its prototype's, as Solid's trap has it: a method is
+      // served untracked, and a getter runs with the view as `this`, so what it reads is tracked.
+      if (!b.storeOwn(jt, key, arr)) {
+        if (key === "constructor" || key === "__proto__" || key === "prototype") return undefined;
+        const proto = Object.getPrototypeOf(b.storeBacking(jt));
+        if (proto !== null && key in proto) {
+          const pv = Reflect.get(proto, key, receiver);
+          if (pv !== undefined) return pv;
+        }
+      }
+      return b.storeGet(jt, key, arr);
+    },
+    has(t, key) {
+      if (key === $TARGET || key === $PROXY || key === $TRACK || key === $JT) return true;
+      if (key === $RECORD) return false;
+      return b.storeHas(targets.get(t), key, Array.isArray(t));
+    },
+    getPrototypeOf(t) {
+      return Object.getPrototypeOf(b.storeBacking(targets.get(t)));
+    },
+    ownKeys(t) {
+      const keys = b.storeKeys(targets.get(t));
+      const out = [];
+      for (let i = 0; i < keys.length; i++) out.push(keys[i]);
+      if (Array.isArray(t)) out.push("length");
+      return out;
+    },
+    getOwnPropertyDescriptor(t, key) {
+      const jt = targets.get(t);
+      const arr = Array.isArray(t);
+      if (arr && key === "length")
+        return { value: b.storeGet(jt, key, true), writable: true, enumerable: false, configurable: false };
+      const d = b.storeDescriptor(jt, key, arr);
+      return d === undefined ? undefined : { value: d[0], writable: true, enumerable: true, configurable: true };
+    },
+    set(t, key, value) {
+      if (key === "__proto__") return true;
+      b.storeSet(targets.get(t), key, value, Array.isArray(t));
+      return true;
+    },
+    defineProperty(t, key, desc) {
+      if (key === "__proto__") return true;
+      if ("value" in desc) b.storeSet(targets.get(t), key, desc.value, Array.isArray(t));
+      return true;
+    },
+    deleteProperty(t, key) {
+      b.storeDelete(targets.get(t), key, Array.isArray(t));
+      return true;
+    }
+  });
+  b.installStoreOps({
+    isWrappable,
+    isObject: v => typeof v === "object" && v !== null,
+    same: (x, y) => x === y,
+    isArray: o => Array.isArray(o),
+    length: o => o.length,
+    sameKind: (x, y) => Object.getPrototypeOf(x) === Object.getPrototypeOf(y),
+    has: (o, k) => hasOwn.call(o, k),
+    get: (o, k) => (hasOwn.call(o, k) ? o[k] : undefined),
+    // Reflect.ownKeys, as Solid walks a record: an array's indices first, then its named and symbol keys.
+    keys: o => {
+      if (!Array.isArray(o)) return Reflect.ownKeys(o);
+      const out = [];
+      for (let i = 0; i < o.length; i++) if (i in o) out.push(i);
+      for (const k of Reflect.ownKeys(o)) {
+        if (k === "length" || (typeof k === "string" && String(k >>> 0) === k && (k >>> 0) !== 4294967295)) continue;
+        out.push(k);
+      }
+      return out;
+    },
+    // Solid's cloneRaw: every own key, named and symbol keys of an array included, with each data property
+    // made writable and configurable, so a frozen or sealed source clones into something the store can write.
+    // A view is copied by reading it, as a spread does, so its children come as views.
+    clone: o => {
+      if (o[$JT] !== undefined) return Array.isArray(o) ? o.slice() : { ...o };
+      const descs = Object.getOwnPropertyDescriptors(o);
+      for (const k of Reflect.ownKeys(descs)) {
+        const d = descs[k];
+        if (k === "length" && Array.isArray(o)) {
+          delete descs[k];
+          continue;
+        }
+        d.configurable = true;
+        if (!d.get && !d.set) d.writable = true;
+      }
+      if (!Array.isArray(o)) return Object.create(Object.getPrototypeOf(o), descs);
+      // The length first, so trailing holes stay holes.
+      const a = [];
+      a.length = o.length;
+      return Object.defineProperties(a, descs);
+    },
+    set: (o, k, v) => {
+      o[k] = v;
+    },
+    delete: (o, k) => {
+      delete o[k];
+    },
+    view: (jt, array) => {
+      const t = array ? [] : {};
+      targets.set(t, jt);
+      const px = new Proxy(t, storeTraps);
+      shimProxies.add(px);
+      return px;
+    },
+    targetOf: v => v[$JT],
+    // Solid's wrapDraft: a proxy over a view whose reads and writes go through the derive's control.
+    draft: function draft(inner, read, mutate, alias) {
+      const px = new Proxy(Array.isArray(inner) ? [] : {}, {
+        get(_, prop) {
+          const value = read(() => inner[prop]);
+          return typeof value === "object" && value !== null && prop !== $TARGET && prop !== $JT && !Java.isJavaObject(value)
+            ? draft(value, read, mutate, alias)
+            : value;
+        },
+        has: (_, prop) => read(() => prop in inner),
+        set: (_, prop, value) =>
+          mutate(() => {
+            inner[prop] = value;
+          }),
+        deleteProperty: (_, prop) =>
+          mutate(() => {
+            delete inner[prop];
+          }),
+        ownKeys: () => read(() => Reflect.ownKeys(inner)),
+        getOwnPropertyDescriptor(_, prop) {
+          const d = read(() => Reflect.getOwnPropertyDescriptor(inner, prop));
+          if (d && !(prop === "length" && Array.isArray(inner))) d.configurable = true;
+          return d;
+        },
+        defineProperty: (_, prop, desc) =>
+          mutate(() => {
+            Reflect.defineProperty(inner, prop, desc);
+          })
+      });
+      if (inner[$JT] !== undefined) alias(px, inner);
+      shimProxies.add(px);
+      return px;
+    }
+  });
+  const keyOf = options => {
+    const key = options && options.key !== undefined ? options.key : "id";
+    return typeof key === "function" ? key : key === null ? null : row => (isWrappable(row) ? row[key] : undefined);
+  };
+  const projectionOptions = options => {
+    if (options && options.shallow) throw new Error("[left out] shallowStore");
+    if (options && options.seedLoadingValue) throw new Error("[left out] seedLoadingValue");
+  };
+  const createProjection = guard((fn, seed, options) => {
+    projectionOptions(options);
+    return b.createProjection(fn, seed || {}, keyOf(options));
+  });
+  const createOptimisticStore = guard((first, second, third) => {
+    const derived = typeof first === "function";
+    const options = derived ? third : second;
+    projectionOptions(options);
+    const store = b.createOptimisticStore(derived ? first : undefined, (derived ? second : first) || {}, keyOf(options));
+    return [store, guard(fn => b.setStore(store, fn))];
+  });
+  const createStore = guard((first, second, third) => {
+    if (typeof first === "function") {
+      projectionOptions(third);
+      const store = b.createProjection(first, second || {}, keyOf(third));
+      return [store, guard(fn => b.setStore(store, fn))];
+    }
+    if (second && second.shallow) throw new Error("[left out] shallowStore");
+    const proxy = b.createStore(first);
+    return [proxy, guard(fn => b.setStore(proxy, fn))];
+  });
+  const reconcile = (value, key = "id") => {
+    const keyFn = key === null ? null : typeof key === "string" ? item => (item == null ? undefined : item[key]) : key;
+    return guard(state => b.reconcile(value, state, keyFn));
+  };
+  const snapshot = guard(value => b.snapshot(value));
+  const deep = guard(value => b.deep(value));
+
   const solid = {
+    // The store's ownership, which tests read by name. The port keeps it in an identity map, not as a stamp on
+    // the object, so $OWNER is a symbol nothing carries.
+    storeLookup: { get: raw => targetMirror(b.plainLookup(raw)) ?? undefined },
+    isOwned: guard(raw => b.isOwnedRaw(raw)),
+    $OWNER: Symbol("STORE_OWNER"),
+    createStore,
+    createOptimisticStore,
+    createProjection,
+    reconcile,
+    snapshot,
+    deep,
+    isWrappable,
+    $TRACK,
+    $TARGET,
+    $PROXY,
+    $RECORD,
     $REFRESH,
     NotReadyError,
     NoOwnerError,
