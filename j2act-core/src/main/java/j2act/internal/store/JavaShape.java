@@ -50,11 +50,12 @@ public final class JavaShape implements StoreShape {
   // ---- the seam
 
   @Override public boolean isWrappable(Object value) {
-    if (value instanceof StoreView) {
+    if (value instanceof StoreView || value instanceof Copy) {
       return true;
     }
     Kinds.Kind kind = Kinds.of(value);
-    return (kind == Kinds.Kind.LIST || kind == Kinds.Kind.MAP || kind == Kinds.Kind.BEAN) && !opaque.test(value)
+    return (kind == Kinds.Kind.LIST || kind == Kinds.Kind.MAP || kind == Kinds.Kind.BEAN || kind == Kinds.Kind.RECORD)
+      && !opaque.test(value)
       && Unloaded.isLoaded(value);
   }
 
@@ -68,7 +69,32 @@ public final class JavaShape implements StoreShape {
   }
 
   @Override public boolean isObject(Object value) {
-    return value != null && Kinds.of(value) != Kinds.Kind.VALUE;
+    return value != null && (value instanceof Copy || Kinds.of(value) != Kinds.Kind.VALUE);
+  }
+
+  /** A bean's or a record's layout, for the object itself or for the store's copy of one; null for anything else. */
+  private static Kinds.Layout layout(Object raw) {
+    if (raw instanceof Copy) {
+      return ((Copy) raw).layout;
+    }
+    return raw == null || raw instanceof List || raw instanceof Map ? null : Kinds.layout(raw.getClass());
+  }
+
+  private static Object fieldValue(Kinds.Layout l, Object raw, Object key) {
+    Integer i = key instanceof String ? l.index.get(key) : null;
+    if (i == null) {
+      return null;
+    }
+    return raw instanceof Copy ? ((Copy) raw).values[i] : Kinds.read(l.fields[i], raw);
+  }
+
+  /** The class a raw stands for: the store's copy of an object stands for its class. */
+  private static Class<?> classOf(Object raw) {
+    return raw instanceof Copy ? ((Copy) raw).layout.type : raw.getClass();
+  }
+
+  @Override public Object seal(Object copy) {
+    return copy instanceof Copy ? ((Copy) copy).layout.build(((Copy) copy).values.clone()) : copy;
   }
 
   @Override public boolean isArray(Object raw) {
@@ -80,15 +106,11 @@ public final class JavaShape implements StoreShape {
   }
 
   @Override public boolean sameKind(Object a, Object b) {
-    return a.getClass() == b.getClass() || (a instanceof List && b instanceof List) || (a instanceof Map && b instanceof Map);
+    return classOf(a) == classOf(b) || (a instanceof List && b instanceof List) || (a instanceof Map && b instanceof Map);
   }
 
   @Override public Object undefined() {
     return null;
-  }
-
-  private static Field field(Object bean, Object key) {
-    return key instanceof String ? Kinds.bean(bean.getClass()).fields.get(key) : null;
   }
 
   @Override public boolean has(Object raw, Object key) {
@@ -98,7 +120,8 @@ public final class JavaShape implements StoreShape {
     if (raw instanceof Map) {
       return ((Map<?, ?>) raw).containsKey(key);
     }
-    return field(raw, key) != null;
+    Kinds.Layout l = layout(raw);
+    return l != null && key instanceof String && l.index.containsKey(key);
   }
 
   @Override public Object get(Object raw, Object key) {
@@ -112,8 +135,8 @@ public final class JavaShape implements StoreShape {
     if (raw instanceof Map) {
       return ((Map<?, ?>) raw).get(key);
     }
-    Field f = field(raw, key);
-    return f == null ? null : Kinds.read(f, raw);
+    Kinds.Layout l = layout(raw);
+    return l == null ? null : fieldValue(l, raw, key);
   }
 
   @Override public List<Object> keys(Object raw) {
@@ -128,24 +151,57 @@ public final class JavaShape implements StoreShape {
     if (raw instanceof Map) {
       return new ArrayList<>(((Map<?, ?>) raw).keySet());
     }
-    return new ArrayList<>(Kinds.bean(raw.getClass()).fields.keySet());
+    return new ArrayList<>(java.util.Arrays.asList((Object[]) layout(raw).names));
   }
 
   @Override public int length(Object array) {
     return ((List<?>) array).size();
   }
 
+  /**
+   * A copy of a list, of its own class when that is a public one with a constructor taking nothing, such as a
+   * LinkedList, so a field declared as that class can take it back; an ArrayList otherwise.
+   */
+  @SuppressWarnings("unchecked")
+  private static List<Object> copyList(List<?> source) {
+    if (!(source instanceof StoreView) && java.lang.reflect.Modifier.isPublic(source.getClass().getModifiers())) {
+      try {
+        List<Object> copy = (List<Object>) source.getClass().getConstructor().newInstance();
+        copy.addAll(source);
+        return copy;
+      } catch (ReflectiveOperationException | RuntimeException e) {
+        // no constructor to use, or a list that refuses adds
+      }
+    }
+    return new ArrayList<>(source);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<Object, Object> copyMap(Map<?, ?> source) {
+    if (!(source instanceof StoreView) && java.lang.reflect.Modifier.isPublic(source.getClass().getModifiers())) {
+      try {
+        Map<Object, Object> copy = (Map<Object, Object>) source.getClass().getConstructor().newInstance();
+        copy.putAll(source);
+        return copy;
+      } catch (ReflectiveOperationException | RuntimeException e) {
+        // no constructor to use, or a map that refuses puts
+      }
+    }
+    return new LinkedHashMap<>(source);
+  }
+
   @Override public Object clone(Object raw) {
     if (raw instanceof List) {
-      return new ArrayList<>((List<?>) raw);
+      return copyList((List<?>) raw);
     }
     if (raw instanceof SortedMap) {
       return new TreeMap<>((SortedMap<?, ?>) raw);
     }
     if (raw instanceof Map) {
-      return new LinkedHashMap<>((Map<?, ?>) raw);
+      return copyMap((Map<?, ?>) raw);
     }
-    return Kinds.copy(raw);
+    Kinds.Layout l = layout(raw);
+    return new Copy(l, raw instanceof Copy ? ((Copy) raw).values.clone() : l.values(raw));
   }
 
   @Override @SuppressWarnings("unchecked") public void set(Object owned, Object key, Object value) {
@@ -173,11 +229,12 @@ public final class JavaShape implements StoreShape {
     } else if (owned instanceof Map) {
       ((Map<Object, Object>) owned).put(key, value);
     } else {
-      Field f = field(owned, key);
-      if (f == null) {
-        throw new IllegalArgumentException(owned.getClass().getName() + " has no field " + key);
+      Copy copy = (Copy) owned;
+      Integer i = key instanceof String ? copy.layout.index.get(key) : null;
+      if (i == null) {
+        throw new IllegalArgumentException(copy.layout.type.getName() + " has no field " + key);
       }
-      Kinds.write(f, owned, value);
+      copy.values[i] = value;
     }
   }
 
@@ -206,7 +263,7 @@ public final class JavaShape implements StoreShape {
     if (raw instanceof Map) {
       return new MapView<>(this, target);
     }
-    return new BeanView(target, raw.getClass());
+    return new BeanView(target, classOf(raw));
   }
 
   @Override public StoreTarget targetOf(Object value) {
@@ -272,7 +329,7 @@ public final class JavaShape implements StoreShape {
     rt.storeShape(this);
     // The engine asks a list for its key too, as Solid asks an array for its id.
     java.util.function.Function<Object, Object> rowKey = key == null ? null
-      : row -> row instanceof List || row instanceof Map || row == null ? null : key.apply(row);
+      : row -> rowKey(key, row);
     return rt.createProjection(derive, new ArrayList<>(), rowKey);
   }
 
@@ -285,8 +342,23 @@ public final class JavaShape implements StoreShape {
       java.util.function.Function<Object, Object> key) {
     rt.storeShape(this);
     java.util.function.Function<Object, Object> rowKey = key == null ? null
-      : row -> row instanceof List || row instanceof Map || row == null ? null : key.apply(row);
+      : row -> rowKey(key, row);
     return rt.createOptimisticStore(derive, derive != null ? new ArrayList<>() : value, rowKey);
+  }
+
+  /**
+   * A row's key. The engine asks it of every object it pairs, as Solid asks `row.id`, and an object below a row,
+   * such as its address, is not a row: a key typed for the row's class has no key for it.
+   */
+  private static Object rowKey(java.util.function.Function<Object, Object> key, Object row) {
+    if (row == null || row instanceof List || row instanceof Map || row instanceof StoreView || row instanceof Copy) {
+      return null;
+    }
+    try {
+      return key.apply(row);
+    } catch (ClassCastException e) {
+      return null;
+    }
   }
 
   /** The node behind a derived store, for refresh. */

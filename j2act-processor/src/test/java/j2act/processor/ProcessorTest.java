@@ -99,6 +99,10 @@ class ProcessorTest {
         notes.getMethod("setup").invoke(notes.getConstructor().newInstance());
         assertEquals(Arrays.asList("notes/draft", "summary/draft", "direct", null, null, null),
           notes.getField("KEYS").get(null), compiler.toString());
+        // The value's type where the source writes it, and nothing where it is inferred (ADR 0035).
+        assertEquals(Arrays.asList("java.util.ArrayList<names.Notes$Note>", "java.util.List<names.Notes$Note>",
+          "java.util.Map<java.lang.String, java.util.List<names.Notes$Note>>", null, null),
+          notes.getField("TYPED").get(null), compiler.toString());
       }
     }
   }

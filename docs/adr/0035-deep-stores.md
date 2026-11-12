@@ -48,7 +48,9 @@ return () -> p(user.get().getAddress().getCity());                    // the usu
 return () -> p(user.at(User::getAddress, Address::getCity).get());    // only the city
 ```
 
-`get()` returns a real `User` and subscribes to the whole object. That is always correct and re-runs the reader on any change to it. An element read from a list, `todos.get().get(0)`, is a real `Todo` and subscribes to that row, so a row component that reads its own row renders alone. Rows that render alone without being components, on the ported `mapArray`, are not built yet.
+`get()` returns a real `User` and subscribes to the whole object, Solid's `deep(store)`. That is always correct and re-runs the reader on any change to it. An element read from a list, `todos.get().get(0)`, is a real `Todo` and subscribes to that row, so a row component that reads its own row renders alone. Reading an element does not subscribe to the list's size.
+
+A whole-object read is also woken when a reload brings the same content in new objects below it, as Solid's `deep` is: a reconcile replaces a nested object by a new one and tells the record's deep readers. A reader that should stay still across reloads reads per property, with `at(...)` now and with plain getters once the enhancer narrows them. Rows that render alone without being components are the enhancer's to give.
 
 `at(...)` reads one property. Its arguments are method references, and the property each names comes from `SerializedLambda`. It gives a value with `get()` and `set(x)`, so it also binds a field:
 
@@ -83,16 +85,20 @@ Decided once per class by reflection:
 | Value | Boxes, `String`, enums, `java.time`, `BigDecimal`, `BigInteger`, `UUID` | Never copied; compared with `equals` |
 | Collection | `List`, `Set`, `Map`, arrays | j2act |
 | Bean | A no-argument constructor of any visibility | The constructor, then its fields |
-| Record | On Java 16 and later | Not copied: one value, compared with `equals` when all it holds are values |
+| Record | On Java 16 and later | Read per component like a bean; built anew through its canonical constructor |
 | Opaque | Anything else | Never copied or looked into |
 
-Fields are copied, not properties: a getter may load a lazy association and a setter may do more than set. An opaque value is one value to the store. Assigning a new one is a change, and what is inside it is not tracked. That is right for an immutable type, and dev mode warns when a mutable class that cannot be copied enters a store.
+Fields are copied, not properties: a getter may load a lazy association and a setter may do more than set. What the store holds of a bean or a record it wrote is its own untyped copy of the fields, since a typed field cannot hold the store's copies of what is below it, and the real object is built from that when it is handed out. A list or a map is copied as its own class when that class has a public constructor taking nothing, so a field declared `LinkedList` takes it back; otherwise as an `ArrayList` or a `LinkedHashMap`.
+
+A record cannot change, so in a draft it is handed out built, and is replaced by assigning a new one; a list it holds is still the store's own, so `d.getProfile().tags().add(x)` works, and `at(Profile::name).set(x)` writes one component without building anything by hand. Reloaded records are merged component by component like beans, which suits DTOs from a query. Records compile to Java 16 bytecode and core's tests to 11, so `RecordStoreTest` compiles its records at run time. An opaque value is one value to the store. Assigning a new one is a change, and what is inside it is not tracked. That is right for an immutable type, and dev mode warns when a mutable class that cannot be copied enters a store.
 
 A hook lets a host say more about a class. `j2act-jakarta` and `j2act-spring` use it to make JPA state that is not loaded opaque, through `PersistenceUtil.isLoaded`, so a store never initializes it. The application's own call still loads it or fails as Hibernate has it, and editing inside one fails with a hint to fetch it in the query.
 
 ## Retained stores
 
-`createRetainedStore(value)` is a store whose value goes into its owner's Snapshot (ADR 0026), keyed like `createRetained` by the variable it is assigned to. It is saved as JSON through the app's `JsonBinding`, from the whole value, and read back as the class of what it was created with. A list or a map names what it holds, `createRetainedStore(new ArrayList<Todo>(), Todo.class)`, since the JSON does not say.
+`createRetainedStore(value)` is a store whose value goes into its owner's Snapshot (ADR 0026), keyed like `createRetained` by the variable it is assigned to. It is saved as JSON through the app's `JsonBinding`, from the whole value, and read back as the value's type.
+
+That type is what the source writes. A list does not carry its type arguments at runtime, a local variable's declared type is not visible to reflection, and an annotation processor sees a method body before javac works out its types. So the processor records the type where it is written, beside the variable's name in its table: the first type argument of the declared type, `Stored<List<Todo>> todos = createRetainedStore(new ArrayList<>())`, or else the type the argument creates, `var todos = createRetainedStore(new ArrayList<Todo>())`. Names resolve as javac resolves them, the same under ECJ. Where nothing is written, `var` with a diamond, or with no processor, a list or a map fails at creation with how to say it, or names it: `createRetainedStore(new ArrayList<>(), Todo.class)`. `createRetained` reads the same table, so a retained list of beans comes back as beans rather than maps.
 
 A value that cannot be written is warned about once, with the binding's own message, and that store is left out of the snapshot. A value that no longer reads as its type is dropped with a warning and the store starts from its initial value.
 
@@ -133,16 +139,22 @@ Not yet:
 - The bean a reader gets is copied on every read of a record that was written. One copy per record and version is the plan above.
 - Rows that render alone without being components are the bytecode enhancer's to give.
 - `createProjection` and the optimistic store over a load answer a list, and a derive answers its value: it does not write a draft. Solid's writable derived store is in the engine and not in the API.
-- A record is one value, replaced whole, and so is a set.
-- A draft cannot stand in for a field declared as `ArrayList` or `HashMap`: it says to declare `List` or `Map`.
+- A set is one value, replaced whole.
+- A draft hands out the store's own list for a list field, so a field declared as a class, such as `ArrayList`, says to declare `List`.
 - `restored()` on a retained store.
-- 44 of Solid's store tests differ on the port for reasons not understood yet. They are listed as open in `known-failures.txt`; most are `mapArray` by index over a chained optimistic store.
 
-Left out of the port with what JavaScript needs them for: the prototype overlay, accessor properties and descriptors, shallow stores, and a seed shown while a first answer loads.
+Solid's own store tests run against the port in `j2act-signals-conformance` with JavaScript objects behind the seam. Every one passes but the listed, and each listed one says what it asserts that the port does not do:
+
+- The prototype overlay, a JavaScript speed-up: the backing's identity, its clone counts and its key counter `kc`. The same files pass with only those assertions removed. Its effect is speed: the port copies a record on its first write in a batch, so 2,000 batches into one 2,000-key record take about 3 s in GraalJS where the test allows 250 ms.
+- JavaScript property semantics a Java field does not have: accessors, `defineProperty`, enumerability, a swapped prototype.
+- That the store's own copy carries a `$OWNER` stamp: the port keeps ownership in an identity map, as a Java object cannot be stamped.
+
+Tests that reach a part of Solid's store that is not ported name it and are counted apart: `merge` and `omit`, which are for JSX props; `shallowStore`; `storePath`, the JavaScript path setter that `at(...)` stands in for; `seedLoadingValue`; and `markRaw`.
 
 ## Open
 
 - The scoped `Store` class shares its name with `createStore`. It is renamed or replaced separately; until then the new types avoid the bare name.
 - "Draft" and "createStore" are on CONTEXT.md's lists of words to avoid, from before this.
 - What building a bean per reader costs on a list of a thousand rows.
+- Whether `shallowStore`, `seedLoadingValue` and `markRaw` are wanted in Java.
 - The port is made at the pinned commit. Moving the pin is separate.

@@ -55,6 +55,14 @@ public interface StoreShape {
 
   void delete(Object owned, Object key);
 
+  /**
+   * What a filled copy is once nothing more is written to it: itself, unless the kind of object cannot be
+   * written in place. A Java record's copy is mutable components until here, where the record is built.
+   */
+  default Object seal(Object copy) {
+    return copy;
+  }
+
   /** A map keyed by a raw's identity that does not keep its keys alive. */
   <V> Map<Object, V> identityMap();
 

@@ -2167,7 +2167,10 @@ public final class Stores {
           }
         }
       }
-      return copy;
+      // An immutable kind of object is built once its copy is filled.
+      Object sealed = shape.seal(copy);
+      seen.put(src, sealed);
+      return sealed;
     }
     seen.put(src, src);
     Object copy = null;
@@ -2185,6 +2188,11 @@ public final class Stores {
         shape.set(copy, key, walked);
       }
     }
-    return copy != null ? copy : src;
+    if (copy == null) {
+      return src;
+    }
+    Object sealed = shape.seal(copy);
+    seen.put(src, sealed);
+    return sealed;
   }
 }

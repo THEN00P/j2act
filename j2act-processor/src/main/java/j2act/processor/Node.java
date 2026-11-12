@@ -53,6 +53,8 @@ final class Node {
   String name;
   /** NEW created type, VAR declared type (dotted, no type arguments; "var" when inferred), or LITERAL's primitive. */
   String type;
+  /** A VAR's declared type or a NEW's type as written, with its type arguments: List<Todo>, ArrayList<>. */
+  String generic;
   /** STRING value. */
   String value;
   /** CALL and REF qualifier or SELECT target; null for an unqualified call. */

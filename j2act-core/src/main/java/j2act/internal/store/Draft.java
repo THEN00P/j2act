@@ -45,6 +45,16 @@ final class Draft {
   }
 
   Object copyOf(BeanView view) {
+    Kinds.Rec rec = Kinds.of(view.type) == Kinds.Kind.RECORD ? Kinds.record(view.type) : null;
+    if (rec != null) {
+      // A record cannot change, so there is nothing to compare at the end: it is built from its components as the
+      // draft hands them out, the store's own list for a list, and replaced whole by assigning another.
+      Object[] values = new Object[rec.names.length];
+      for (int i = 0; i < values.length; i++) {
+        values[i] = shape.present(shape.rt.storeGet(view.target, rec.names[i]));
+      }
+      return rec.build(values);
+    }
     Entry known = byTarget.get(view.target);
     if (known != null) {
       return known.copy;

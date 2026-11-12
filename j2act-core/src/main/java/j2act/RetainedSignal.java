@@ -8,9 +8,17 @@ package j2act;
  */
 public final class RetainedSignal<T> extends Signal<T> {
 
+  /** The value's type as the source wrote it, from the processor's table; null when it wrote none. */
+  final java.lang.reflect.Type declaredType;
+
   RetainedSignal(T initial, String name, String stackName) {
+    this(initial, name, stackName, null);
+  }
+
+  RetainedSignal(T initial, String name, String stackName, java.lang.reflect.Type declaredType) {
     super(initial, true, name);
     this.stackName = stackName;
+    this.declaredType = declaredType;
   }
 
   /** Whether this one came back from a snapshot, for a "your draft came back" message. */

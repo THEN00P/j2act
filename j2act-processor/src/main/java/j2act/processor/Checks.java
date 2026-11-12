@@ -61,6 +61,42 @@ final class Checks {
   }
 
   /** Checks a type from source and the types nested in it. */
+  /**
+   * A type as written in this type's source, with each name resolved as javac would, to binary names:
+   * List<Todo> becomes java.util.List<com.example.Todo>. Null when a name does not resolve.
+   */
+  String resolveGeneric(TypeElement context, String written) {
+    Scope scope = new Scope(context, source.imports(context));
+    StringBuilder out = new StringBuilder();
+    StringBuilder name = new StringBuilder();
+    for (int i = 0; i <= written.length(); i++) {
+      char c = i < written.length() ? written.charAt(i) : '\0';
+      if (c == '<' || c == '>' || c == ',' || c == '[' || c == ']' || c == '\0') {
+        if (name.length() > 0) {
+          String n = name.toString();
+          if (n.equals("?")) {
+            out.append("java.lang.Object");
+          } else if (javax.lang.model.SourceVersion.isKeyword(n)) {
+            out.append(n);
+          } else {
+            TypeElement resolved = scope.typeNamed(n);
+            if (resolved == null) {
+              return null;
+            }
+            out.append(elements.getBinaryName(resolved));
+          }
+          name.setLength(0);
+        }
+        if (c != '\0') {
+          out.append(c);
+        }
+      } else if (!Character.isWhitespace(c)) {
+        name.append(c);
+      }
+    }
+    return out.toString();
+  }
+
   void check(TypeElement type) {
     Scope scope = new Scope(type, source.imports(type));
     boolean typeAllowsUnsafe = allowsUnsafe(type);

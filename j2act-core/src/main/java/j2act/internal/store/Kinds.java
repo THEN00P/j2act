@@ -14,12 +14,53 @@ import java.util.Map;
  * without arguments and then field by field, and anything else is opaque, one value that is replaced whole.
  * Fields, not properties: a getter may load something and a setter may do more than set.
  *
- * A record cannot be written field by field, so it is one value: compared with equals when all it holds are
- * values, and opaque otherwise. A set is opaque too.
+ * A record is read like a bean, a component per key, and written by building a new one through its canonical
+ * constructor: the store holds a mutable copy of its components while it writes, and builds the record when it
+ * hands one out. A set is opaque.
  */
 public final class Kinds {
   /** What a class is to a store. */
-  public enum Kind { VALUE, LIST, MAP, BEAN, OPAQUE }
+  public enum Kind { VALUE, LIST, MAP, BEAN, RECORD, OPAQUE }
+
+  /** A record class as the store reads and builds it. */
+  static final class Rec {
+    final Class<?> type;
+    final Constructor<?> canonical;
+    final String[] names;
+    final Field[] fields;
+    final Map<String, Integer> index = new LinkedHashMap<>();
+
+    Rec(Class<?> type, Constructor<?> canonical, String[] names, Field[] fields) {
+      this.type = type;
+      this.canonical = canonical;
+      this.names = names;
+      this.fields = fields;
+      for (int i = 0; i < names.length; i++) {
+        index.put(names[i], i);
+      }
+    }
+
+    Object[] values(Object record) {
+      Object[] values = new Object[fields.length];
+      for (int i = 0; i < fields.length; i++) {
+        values[i] = read(fields[i], record);
+      }
+      return values;
+    }
+
+    Object build(Object[] values) {
+      try {
+        return canonical.newInstance(values);
+      } catch (IllegalArgumentException e) {
+        throw new IllegalStateException("a store cannot build a " + type.getName() + " from " + java.util.Arrays.toString(values)
+          + ": declare a component that holds a list or a map as List or Map, which the store's own stand in for", e);
+      } catch (java.lang.reflect.InvocationTargetException e) {
+        throw new IllegalStateException("the canonical constructor of " + type.getName() + " refused what the store gave it", e.getCause());
+      } catch (ReflectiveOperationException e) {
+        throw new IllegalStateException("cannot build a " + type.getName(), e);
+      }
+    }
+  }
 
   /** A bean class as the store copies it. */
   static final class Bean {
@@ -39,13 +80,68 @@ public final class Kinds {
     }
   }
 
+  /** A bean's or a record's fields by name, as the store reads them and builds the object back. */
+  static final class Layout {
+    final Class<?> type;
+    final String[] names;
+    final Field[] fields;
+    final Map<String, Integer> index = new LinkedHashMap<>();
+    private final Rec rec;
+    private final Bean bean;
+
+    Layout(Class<?> type, Bean bean, Rec rec) {
+      this.type = type;
+      this.bean = bean;
+      this.rec = rec;
+      this.names = rec != null ? rec.names : bean.fields.keySet().toArray(new String[0]);
+      this.fields = rec != null ? rec.fields : bean.fields.values().toArray(new Field[0]);
+      for (int i = 0; i < names.length; i++) {
+        index.put(names[i], i);
+      }
+    }
+
+    Object[] values(Object o) {
+      Object[] values = new Object[fields.length];
+      for (int i = 0; i < fields.length; i++) {
+        values[i] = read(fields[i], o);
+      }
+      return values;
+    }
+
+    Object build(Object[] values) {
+      if (rec != null) {
+        return rec.build(values);
+      }
+      Object o = bean.newInstance();
+      for (int i = 0; i < fields.length; i++) {
+        Object v = values[i];
+        if (v != null && !fields[i].getType().isPrimitive() && !fields[i].getType().isInstance(v)) {
+          throw new IllegalStateException(type.getName() + "." + names[i] + " is declared as " + fields[i].getType().getName()
+            + " and the store holds a " + v.getClass().getName() + " for it: declare a field that holds a list or a map as"
+            + " List or Map");
+        }
+        write(fields[i], o, v);
+      }
+      return o;
+    }
+  }
+
   private static final class Info {
     final Kind kind;
     final Bean bean;
+    final Rec rec;
+    final Layout layout;
 
     Info(Kind kind, Bean bean) {
+      this(kind, bean, null);
+    }
+
+    Info(Kind kind, Bean bean, Rec rec) {
       this.kind = kind;
       this.bean = bean;
+      this.rec = rec;
+      this.layout = kind == Kind.BEAN ? new Layout(bean.constructor.getDeclaringClass(), bean, null)
+        : kind == Kind.RECORD ? new Layout(rec.type, null, rec) : null;
     }
   }
 
@@ -70,6 +166,15 @@ public final class Kinds {
     return INFO.get(type).bean;
   }
 
+  static Rec record(Class<?> type) {
+    return INFO.get(type).rec;
+  }
+
+  /** A bean's or a record's layout, null for anything else. */
+  static Layout layout(Class<?> type) {
+    return INFO.get(type).layout;
+  }
+
   private static boolean isValue(Class<?> type) {
     if (type.isPrimitive() || type.isEnum() || type == String.class || type == Boolean.class || type == Character.class
       || Number.class.isAssignableFrom(type) || type == java.util.UUID.class || type == Class.class) {
@@ -80,20 +185,36 @@ public final class Kinds {
       || type == java.net.URI.class;
   }
 
-  /** Class.isRecord and getRecordComponents, which Java 11 bytecode cannot name. */
-  private static Class<?>[] recordComponents(Class<?> type) {
+  /** Class.isRecord and getRecordComponents, which Java 11 bytecode cannot name; null when type is no record. */
+  private static Object[] recordComponents(Class<?> type) {
     try {
       if (!Boolean.TRUE.equals(Class.class.getMethod("isRecord").invoke(type))) {
         return null;
       }
-      Object[] components = (Object[]) Class.class.getMethod("getRecordComponents").invoke(type);
-      Class<?>[] types = new Class<?>[components.length];
-      for (int i = 0; i < components.length; i++) {
-        types[i] = (Class<?>) components[i].getClass().getMethod("getType").invoke(components[i]);
-      }
-      return types;
+      return (Object[]) Class.class.getMethod("getRecordComponents").invoke(type);
     } catch (ReflectiveOperationException | RuntimeException e) {
       return null;
+    }
+  }
+
+  /** A record's components, its fields and its canonical constructor; opaque when they cannot be reached. */
+  private static Info classifyRecord(Class<?> type, Object[] components) {
+    try {
+      String[] names = new String[components.length];
+      Class<?>[] types = new Class<?>[components.length];
+      Field[] fields = new Field[components.length];
+      for (int i = 0; i < components.length; i++) {
+        names[i] = (String) components[i].getClass().getMethod("getName").invoke(components[i]);
+        types[i] = (Class<?>) components[i].getClass().getMethod("getType").invoke(components[i]);
+        fields[i] = type.getDeclaredField(names[i]);
+        fields[i].setAccessible(true);
+      }
+      Constructor<?> canonical = type.getDeclaredConstructor(types);
+      canonical.setAccessible(true);
+      return new Info(Kind.RECORD, null, new Rec(type, canonical, names, fields));
+    } catch (ReflectiveOperationException | RuntimeException e) {
+      // A module that does not open the record: one value, replaced whole.
+      return new Info(Kind.OPAQUE, null);
     }
   }
 
@@ -101,14 +222,9 @@ public final class Kinds {
     if (isValue(type)) {
       return new Info(Kind.VALUE, null);
     }
-    Class<?>[] components = recordComponents(type);
+    Object[] components = recordComponents(type);
     if (components != null) {
-      for (Class<?> c : components) {
-        if (INFO.get(c).kind != Kind.VALUE) {
-          return new Info(Kind.OPAQUE, null);
-        }
-      }
-      return new Info(Kind.VALUE, null);
+      return classifyRecord(type, components);
     }
     if (List.class.isAssignableFrom(type)) {
       return new Info(Kind.LIST, null);
@@ -165,13 +281,4 @@ public final class Kinds {
     }
   }
 
-  /** A shallow copy of a bean: its constructor without arguments, then every field. */
-  static Object copy(Object source) {
-    Bean bean = bean(source.getClass());
-    Object copy = bean.newInstance();
-    for (Field f : bean.fields.values()) {
-      write(f, copy, read(f, source));
-    }
-    return copy;
-  }
 }

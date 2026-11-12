@@ -47,7 +47,8 @@ public final class Reactive {
    * 0026, 0031). Keyed by the variable it is assigned to, through the processor.
    */
   public static <T> RetainedSignal<T> createRetained(T initial) {
-    return own(new RetainedSignal<>(initial, null, RetainedNames.chain(Reactive.class)));
+    return own(new RetainedSignal<>(initial, null, RetainedNames.chain(Reactive.class),
+      RetainedNames.callSiteType(Reactive.class)));
   }
 
   /** A retained signal with an explicit name instead of its variable's; never required. */
@@ -126,15 +127,38 @@ public final class Reactive {
 
   /**
    * A store whose value goes into its owner's Snapshot (ADR 0026, 0035), so it outlives the in-memory tab:
-   * saved as JSON through the app's JsonBinding, and read back as the class of initial. For unsaved work
-   * shaped like an object. A list or a map says what it holds: createRetainedStore(list, Row.class).
+   * saved as JSON through the app's JsonBinding and read back as the value's type. The type is the one the
+   * source writes, which the j2act processor records: Stored<Draft> d = ..., or new ArrayList<Todo>() as the
+   * argument. With no processor, or nothing written, it is the class of initial, which for a list or a map
+   * says nothing of what it holds: name that class with createRetainedStore(list, Todo.class).
    */
   public static <T> Stored<T> createRetainedStore(T initial) {
-    if (initial instanceof java.util.List || initial instanceof java.util.Map) {
-      throw new IllegalArgumentException("a retained list or map says what it holds, since the snapshot's JSON does not:"
-        + " createRetainedStore(list, Row.class)");
+    java.lang.reflect.Type type = RetainedNames.callSiteType(Reactive.class);
+    return retainedStore(initial, type != null ? type : initial.getClass(), RetainedNames.chain(Reactive.class));
+  }
+
+  /** A retained store over a list; the type of its rows as the source writes it, see {@link #createRetainedStore(Object)}. */
+  public static <E> Stored<java.util.List<E>> createRetainedStore(java.util.List<E> initial) {
+    return retainedStore(initial, collectionType(initial, "List<Todo>", "createRetainedStore(list, Todo.class)"),
+      RetainedNames.chain(Reactive.class));
+  }
+
+  /** A retained store over a map; the type of its values as the source writes it. */
+  public static <K, V> Stored<java.util.Map<K, V>> createRetainedStore(java.util.Map<K, V> initial) {
+    return retainedStore(initial, collectionType(initial, "Map<String, Todo>", "createRetainedStore(map, Todo.class)"),
+      RetainedNames.chain(Reactive.class));
+  }
+
+  /** The type the source wrote for a list or map, which reading its JSON back needs. */
+  private static java.lang.reflect.Type collectionType(Object initial, String example, String explicit) {
+    java.lang.reflect.Type type = RetainedNames.callSiteType(Reactive.class);
+    if (type == null) {
+      throw new IllegalArgumentException("a retained " + (initial instanceof java.util.List ? "list" : "map")
+        + " needs the type of what it holds, since its JSON does not say: write it where the store is created, such"
+        + " as Stored<" + example + "> or new " + (initial instanceof java.util.List ? "ArrayList" : "HashMap")
+        + "<...>(), and build with the j2act processor, or name it with " + explicit + " (ADR 0035)");
     }
-    return retainedStore(initial, initial.getClass(), RetainedNames.chain(Reactive.class));
+    return type;
   }
 
   /** A retained store over a list of rows of one class. */

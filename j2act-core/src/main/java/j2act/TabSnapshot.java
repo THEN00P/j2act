@@ -94,6 +94,10 @@ final class TabSnapshot {
     }
     warnIfKeyless(scope, component);
     java.lang.reflect.Type type = field == null ? null : Retained.valueType(field);
+    if (type == null && primitive instanceof RetainedSignal) {
+      // A local's type as its source wrote it: the object alone says ArrayList, not what it holds.
+      type = ((RetainedSignal<?>) primitive).declaredType;
+    }
     fill(scope, cell, name, type != null ? type : initial == null ? Object.class : initial.getClass());
   }
 
