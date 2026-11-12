@@ -325,6 +325,16 @@ public final class JavaShape implements StoreShape {
     });
   }
 
+  /** The whole value as real objects, tracked: whoever reads it runs again on any change in it. */
+  public Object deep(Object view) {
+    return at(targetOf(view), () -> rt.deep(view));
+  }
+
+  /** Puts back a value a snapshot kept. */
+  public void restore(Object view, Object value) {
+    rt.replaceStore(view, value);
+  }
+
   /** The committed value with nothing tracked: real objects all the way down, for saving. */
   public Object snapshot(Object view) {
     return rt.snapshot(view);

@@ -359,6 +359,11 @@ public final class Runtime {
     return stores.inDraft(target);
   }
 
+  /** Replaces a store's value as what holds the store may, with no check on who is writing: a restore. */
+  public void replaceStore(Object view, Object value) {
+    stores.storeSetter(view, draft -> value, false);
+  }
+
   public Object storeGet(StoreTarget target, Object key) {
     return stores.get(target, key);
   }

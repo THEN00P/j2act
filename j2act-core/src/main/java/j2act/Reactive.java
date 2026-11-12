@@ -124,6 +124,61 @@ public final class Reactive {
     return own(new Stored<>(null, body::get, row -> key.apply((E) row), true));
   }
 
+  /**
+   * A store whose value goes into its owner's Snapshot (ADR 0026, 0035), so it outlives the in-memory tab:
+   * saved as JSON through the app's JsonBinding, and read back as the class of initial. For unsaved work
+   * shaped like an object. A list or a map says what it holds: createRetainedStore(list, Row.class).
+   */
+  public static <T> Stored<T> createRetainedStore(T initial) {
+    if (initial instanceof java.util.List || initial instanceof java.util.Map) {
+      throw new IllegalArgumentException("a retained list or map says what it holds, since the snapshot's JSON does not:"
+        + " createRetainedStore(list, Row.class)");
+    }
+    return retainedStore(initial, initial.getClass(), RetainedNames.chain(Reactive.class));
+  }
+
+  /** A retained store over a list of rows of one class. */
+  public static <E> Stored<java.util.List<E>> createRetainedStore(java.util.List<E> initial, Class<E> rows) {
+    return retainedStore(initial, parameterized(java.util.List.class, rows), RetainedNames.chain(Reactive.class));
+  }
+
+  /** A retained store over a map from strings to values of one class. */
+  public static <V> Stored<java.util.Map<String, V>> createRetainedStore(java.util.Map<String, V> initial, Class<V> values) {
+    return retainedStore(initial, parameterized(java.util.Map.class, String.class, values), RetainedNames.chain(Reactive.class));
+  }
+
+  private static <T> Stored<T> retainedStore(T initial, java.lang.reflect.Type type, String stackName) {
+    Stored<T> store = own(new Stored<>(initial));
+    String what = stackName != null ? stackName : type.getTypeName();
+    // The snapshot keeps the store's JSON as text: only the store knows the type to read it back as.
+    own(new RetainedValue<String>(() -> store.saved(type, what), json -> store.restore(json, type, what), null, stackName));
+    return store;
+  }
+
+  private static java.lang.reflect.ParameterizedType parameterized(Class<?> raw, java.lang.reflect.Type... arguments) {
+    return new java.lang.reflect.ParameterizedType() {
+      @Override public java.lang.reflect.Type[] getActualTypeArguments() {
+        return arguments.clone();
+      }
+
+      @Override public java.lang.reflect.Type getRawType() {
+        return raw;
+      }
+
+      @Override public java.lang.reflect.Type getOwnerType() {
+        return null;
+      }
+
+      @Override public String getTypeName() {
+        StringBuilder name = new StringBuilder(raw.getName()).append('<');
+        for (int i = 0; i < arguments.length; i++) {
+          name.append(i == 0 ? "" : ", ").append(arguments[i].getTypeName());
+        }
+        return name.append('>').toString();
+      }
+    };
+  }
+
   /** A pure derived value, recomputed when what it read changes; readers re-render only when it changes. */
   public static <T> Memo<T> createMemo(Supplier<T> body) {
     return own(new Memo<>(body));

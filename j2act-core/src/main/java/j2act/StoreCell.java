@@ -80,6 +80,16 @@ final class StoreCell extends Cell {
     write(() -> shape.set(view, value));
   }
 
+  /** The whole value as real objects, tracked. */
+  Object deep() {
+    return shape.deep(view);
+  }
+
+  /** Lane-only: puts back what a snapshot kept, before the first render. */
+  void restore(Object value) {
+    shape.restore(view, value);
+  }
+
   Object readPath(String[] path) {
     return shape.readPath(view, path);
   }

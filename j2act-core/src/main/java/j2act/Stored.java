@@ -71,6 +71,37 @@ public class Stored<T> extends Primitive implements Supplier<T> {
       j2act.internal.store.Getters.property(second), j2act.internal.store.Getters.property(third)});
   }
 
+  /** The JSON of the whole value, for a snapshot: tracked, so a change makes the snapshot due. */
+  String saved(java.lang.reflect.Type type, String what) {
+    StoreCell bound = (StoreCell) requireCell();
+    try {
+      return bound.tab.engine.json.write(bound.deep());
+    } catch (RuntimeException e) {
+      bound.tab.engine.warnOnce("retained store " + what, "the retained store " + what + " cannot be written as JSON, so it is"
+        + " not retained: " + e.getMessage() + " (ADR 0035)");
+      return null;
+    }
+  }
+
+  /** Reads a snapshot's JSON back and makes it the value. What does not read as the type is dropped. */
+  void restore(String json, java.lang.reflect.Type type, String what) {
+    if (json == null) {
+      return;
+    }
+    StoreCell bound = (StoreCell) requireCell();
+    Object value;
+    try {
+      value = bound.tab.engine.json.read(json, type);
+    } catch (RuntimeException e) {
+      bound.tab.engine.log(System.Logger.Level.WARNING, "the retained store " + what + " no longer reads as "
+        + type.getTypeName() + ", so it starts from its initial value (ADR 0035)", e);
+      return;
+    }
+    if (value != null) {
+      bound.restore(value);
+    }
+  }
+
   Object readPath(String[] path) {
     Cell bound = cellOrNull();
     if (bound == null) {
