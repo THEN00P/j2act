@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.function.Consumer;
@@ -54,7 +55,8 @@ public final class JavaShape implements StoreShape {
       return true;
     }
     Kinds.Kind kind = Kinds.of(value);
-    return (kind == Kinds.Kind.LIST || kind == Kinds.Kind.MAP || kind == Kinds.Kind.BEAN || kind == Kinds.Kind.RECORD)
+    return (kind == Kinds.Kind.LIST || kind == Kinds.Kind.MAP || kind == Kinds.Kind.SET || kind == Kinds.Kind.BEAN
+      || kind == Kinds.Kind.RECORD)
       && !opaque.test(value)
       && Unloaded.isLoaded(value);
   }
@@ -77,7 +79,8 @@ public final class JavaShape implements StoreShape {
     if (raw instanceof Copy) {
       return ((Copy) raw).layout;
     }
-    return raw == null || raw instanceof List || raw instanceof Map ? null : Kinds.layout(raw.getClass());
+    return raw == null || raw instanceof List || raw instanceof Map || raw instanceof Set ? null
+      : Kinds.layout(raw.getClass());
   }
 
   private static Object fieldValue(Kinds.Layout l, Object raw, Object key) {
@@ -140,7 +143,8 @@ public final class JavaShape implements StoreShape {
   }
 
   @Override public boolean sameKind(Object a, Object b) {
-    return classOf(a) == classOf(b) || (a instanceof List && b instanceof List) || (a instanceof Map && b instanceof Map);
+    return classOf(a) == classOf(b) || (a instanceof List && b instanceof List) || (a instanceof Map && b instanceof Map)
+      || (a instanceof Set && b instanceof Set);
   }
 
   @Override public Object undefined() {
@@ -153,6 +157,9 @@ public final class JavaShape implements StoreShape {
     }
     if (raw instanceof Map) {
       return ((Map<?, ?>) raw).containsKey(key);
+    }
+    if (raw instanceof Set) {
+      return ((Set<?>) raw).contains(key);
     }
     Kinds.Layout l = layout(raw);
     return l != null && key instanceof String && l.index.containsKey(key);
@@ -169,6 +176,10 @@ public final class JavaShape implements StoreShape {
     if (raw instanceof Map) {
       return ((Map<?, ?>) raw).get(key);
     }
+    if (raw instanceof Set) {
+      // A set is an object whose keys are its elements, each holding true.
+      return ((Set<?>) raw).contains(key) ? Boolean.TRUE : null;
+    }
     Kinds.Layout l = layout(raw);
     return l == null ? null : fieldValue(l, raw, key);
   }
@@ -184,6 +195,9 @@ public final class JavaShape implements StoreShape {
     }
     if (raw instanceof Map) {
       return new ArrayList<>(((Map<?, ?>) raw).keySet());
+    }
+    if (raw instanceof Set) {
+      return new ArrayList<>((Set<?>) raw);
     }
     return new ArrayList<>(java.util.Arrays.asList((Object[]) layout(raw).names));
   }
@@ -224,9 +238,29 @@ public final class JavaShape implements StoreShape {
     return new LinkedHashMap<>(source);
   }
 
+  @SuppressWarnings("unchecked")
+  private static Set<Object> copySet(Set<?> source) {
+    if (source instanceof java.util.SortedSet) {
+      return new java.util.TreeSet<>((java.util.SortedSet<Object>) source);
+    }
+    if (!(source instanceof StoreView) && java.lang.reflect.Modifier.isPublic(source.getClass().getModifiers())) {
+      try {
+        Set<Object> copy = (Set<Object>) source.getClass().getConstructor().newInstance();
+        copy.addAll(source);
+        return copy;
+      } catch (ReflectiveOperationException | RuntimeException e) {
+        // no constructor to use, or a set that refuses adds
+      }
+    }
+    return new java.util.LinkedHashSet<>(source);
+  }
+
   @Override public Object clone(Object raw) {
     if (raw instanceof List) {
       return copyList((List<?>) raw);
+    }
+    if (raw instanceof Set) {
+      return copySet((Set<?>) raw);
     }
     if (raw instanceof SortedMap) {
       return new TreeMap<>((SortedMap<?, ?>) raw);
@@ -262,6 +296,12 @@ public final class JavaShape implements StoreShape {
       }
     } else if (owned instanceof Map) {
       ((Map<Object, Object>) owned).put(key, value);
+    } else if (owned instanceof Set) {
+      if (value == null || Boolean.FALSE.equals(value)) {
+        ((Set<Object>) owned).remove(key);
+      } else {
+        ((Set<Object>) owned).add(key);
+      }
     } else {
       Copy copy = (Copy) owned;
       Integer i = key instanceof String ? copy.layout.index.get(key) : null;
@@ -280,6 +320,8 @@ public final class JavaShape implements StoreShape {
       }
     } else if (owned instanceof Map) {
       ((Map<Object, Object>) owned).remove(key);
+    } else if (owned instanceof Set) {
+      ((Set<Object>) owned).remove(key);
     } else {
       set(owned, key, null);
     }
@@ -296,6 +338,9 @@ public final class JavaShape implements StoreShape {
     }
     if (raw instanceof Map) {
       return new MapView<>(this, target);
+    }
+    if (raw instanceof Set) {
+      return new SetView<>(this, target);
     }
     return new BeanView(this, target, classOf(raw));
   }
@@ -362,6 +407,8 @@ public final class JavaShape implements StoreShape {
       for (Object key : rt.storeKeys(t)) {
         below(rt.storeGet(t, key));
       }
+    } else if (value instanceof SetView) {
+      rt.storeKeys(((SetView<?>) value).target());
     } else if (value instanceof BeanView && !Tracked.class.isAssignableFrom(((BeanView) value).type)) {
       rt.deep(value);
     }
@@ -381,8 +428,16 @@ public final class JavaShape implements StoreShape {
 
   /** A store over value: its view, which for a list or a map is a List or a Map and for a bean a handle. */
   public Object create(Object value) {
+    return create(value, false);
+  }
+
+  /**
+   * With shallow, Solid's createStore(value, {shallow: true}): its keys, size and slots are reactive, and what they
+   * hold is served as it is, by reference, never copied or looked into, so it is replaced and never changed.
+   */
+  public Object create(Object value, boolean shallow) {
     rt.storeShape(this);
-    return rt.createStore(value);
+    return rt.createStore(value, shallow);
   }
 
   /**
@@ -416,7 +471,8 @@ public final class JavaShape implements StoreShape {
    * such as its address, is not a row: a key typed for the row's class has no key for it.
    */
   private static Object rowKey(java.util.function.Function<Object, Object> key, Object row) {
-    if (row == null || row instanceof List || row instanceof Map || row instanceof StoreView || row instanceof Copy) {
+    if (row == null || row instanceof List || row instanceof Map || row instanceof Set || row instanceof StoreView
+        || row instanceof Copy) {
       return null;
     }
     try {
@@ -478,26 +534,43 @@ public final class JavaShape implements StoreShape {
   }
 
   /** Runs change on a draft of the view's value and applies what it changed as one write. */
-  @SuppressWarnings("unchecked")
   public <T> void update(Object view, Consumer<T> change) {
     if (handed != null) {
       handed.check();
     }
     rt.setStore(view, px -> {
-      Draft outer = draft;
-      if (outer == null) {
-        draft = new Draft(this);
-      }
-      try {
-        change.accept((T) present(px));
-        draft.flush();
-      } finally {
-        if (outer == null) {
-          draft = null;
-        }
-      }
+      onDraft(px, change);
       return null;
     });
+  }
+
+  /** Inside a write to px: hands change the draft of its value and writes what it changed. */
+  @SuppressWarnings("unchecked")
+  private <T> void onDraft(Object px, Consumer<T> change) {
+    Draft outer = draft;
+    if (outer == null) {
+      draft = new Draft(this);
+    }
+    try {
+      change.accept((T) present(px));
+      draft.flush();
+    } finally {
+      if (outer == null) {
+        draft = null;
+      }
+    }
+  }
+
+  /**
+   * A writable derived store (Solid's createStore(fn, seed)): starts as seed, and derive writes a draft of it, now
+   * and each time what it read changes. Writes from update(...) or set(...) stand until derive runs again.
+   */
+  public Object createDerived(Consumer<Object> derive, Object seed) {
+    rt.storeShape(this);
+    return rt.createProjection(px -> {
+      onDraft(px, derive);
+      return null;
+    }, seed, null);
   }
 
   /** Replaces the store's value. */

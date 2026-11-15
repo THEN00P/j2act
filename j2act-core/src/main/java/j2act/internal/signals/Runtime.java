@@ -321,6 +321,22 @@ public final class Runtime {
     return stores.createStore(value);
   }
 
+  /** Solid's createStore(value, {shallow}): with shallow, its keys are reactive and its values served by reference. */
+  public Object createStore(Object value, boolean shallow) {
+    return stores.createStore(value, shallow);
+  }
+
+  /** Solid's markRaw: no store ever wraps value. */
+  public Object markRaw(Object value) {
+    return stores.markRaw(value);
+  }
+
+  /** Solid's storeIsShallow. */
+  public boolean storeIsShallow(Object view) {
+    StoreTarget t = view == null ? null : stores.shape().targetOf(view);
+    return t != null && t.s;
+  }
+
   /** Solid's setStore(fn): fn writes the draft it is given, or returns a value to replace the store's with. */
   public void setStore(Object view, Function<Object, Object> fn) {
     stores.storeSetter(view, fn, true);
@@ -334,9 +350,17 @@ public final class Runtime {
     return stores.createProjection(fn, seed, key, false);
   }
 
+  public Object createProjection(Stores.Derive fn, Object seed, Function<Object, Object> key, boolean shallow) {
+    return stores.createProjection(fn, seed, key, false, shallow);
+  }
+
   /** Solid's createOptimisticStore(fn, seed, {key}); fn is null for one with no derive. */
   public Object createOptimisticStore(Stores.Derive fn, Object seed, Function<Object, Object> key) {
     return stores.createOptimisticStore(fn, seed, key);
+  }
+
+  public Object createOptimisticStore(Stores.Derive fn, Object seed, Function<Object, Object> key, boolean shallow) {
+    return stores.createOptimisticStore(fn, seed, key, shallow);
   }
 
   /** Solid's affects(store): isPending turns true for what reads the record, until it next lands. */

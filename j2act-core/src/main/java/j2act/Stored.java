@@ -19,9 +19,31 @@ public class Stored<T> extends Primitive implements Supplier<T> {
   private final java.util.concurrent.Callable<Object> body;
   private final java.util.function.Function<Object, Object> key;
   private final boolean optimistic;
+  /** For a retained store, what keeps its JSON in the snapshot; null otherwise. */
+  RetainedValue<String> retained;
+  /** A writable derived store's derive, which writes a draft of initial. */
+  private final Consumer<T> derive;
 
   Stored(T initial) {
     this(initial, null, null, false);
+  }
+
+  /** A shallow store: what it holds is served by reference. */
+  private boolean shallow;
+
+  /** A writable derived store. */
+  Stored(Consumer<T> derive, T seed) {
+    this.initial = seed;
+    this.body = null;
+    this.key = null;
+    this.optimistic = false;
+    this.derive = derive;
+  }
+
+  static <T> Stored<T> shallow(T initial) {
+    Stored<T> store = new Stored<>(initial);
+    store.shallow = true;
+    return store;
   }
 
   /** An optimistic store: over a value, or over a list a derive answers. */
@@ -31,13 +53,14 @@ public class Stored<T> extends Primitive implements Supplier<T> {
     this.body = body;
     this.key = key;
     this.optimistic = optimistic;
+    this.derive = null;
   }
 
   /** The current value. Tracked. Changing what this returns changes nothing on the page: use update. */
   @Override
   @SuppressWarnings("unchecked")
   public T get() {
-    Cell bound = body != null ? requireCell() : cellOrNull();
+    Cell bound = body != null || derive != null ? requireCell() : cellOrNull();
     return bound == null ? initial : (T) ((StoreCell) bound).value();
   }
 
@@ -69,6 +92,20 @@ public class Stored<T> extends Primitive implements Supplier<T> {
   public <A, B, U> Part<U> at(Getter<T, A> first, Getter<A, B> second, Getter<B, U> third) {
     return new Part<>(this, new String[] {j2act.internal.store.Getters.property(first),
       j2act.internal.store.Getters.property(second), j2act.internal.store.Getters.property(third)});
+  }
+
+  /**
+   * Whether a retained store came back from a snapshot, for a "your draft came back" message: false for one that
+   * started from its initial value, also when what was kept no longer reads as its type, and for a store that is
+   * not retained.
+   */
+  public boolean restored() {
+    if (retained == null) {
+      return false;
+    }
+    // Asking the retained value first is what restores the store, when nothing read it yet.
+    retained.restored();
+    return ((StoreCell) requireCell()).restored;
   }
 
   /** The JSON of the whole value, for a snapshot: tracked, so a change makes the snapshot due. */
@@ -114,12 +151,15 @@ public class Stored<T> extends Primitive implements Supplier<T> {
     ((StoreCell) requireCell()).writePath(path, value);
   }
 
-  @Override Cell createCell(Tab tab, String address) {
-    return optimistic ? new StoreCell(tab, address, body, initial, key, true) : new StoreCell(tab, address, initial);
+  @Override @SuppressWarnings("unchecked") Cell createCell(Tab tab, String address) {
+    if (derive != null) {
+      return new StoreCell(tab, address, (Consumer<Object>) derive, initial);
+    }
+    return optimistic ? new StoreCell(tab, address, body, initial, key, true) : new StoreCell(tab, address, initial, shallow);
   }
 
   @Override boolean accepts(Cell cell) {
-    return cell instanceof StoreCell && (((StoreCell) cell).deriveNode() != null) == (body != null);
+    return cell instanceof StoreCell && (((StoreCell) cell).deriveNode() != null) == (body != null || derive != null);
   }
 
   @Override void attach(Cell cell, boolean created) {

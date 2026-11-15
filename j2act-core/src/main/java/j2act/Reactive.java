@@ -74,7 +74,7 @@ public final class Reactive {
   }
 
   /**
-   * A store over an object, a list or a map (ADR 0035): what read one part of it re-runs when that part
+   * A store over an object, a list, a map or a set (ADR 0035): what read one part of it re-runs when that part
    * changes, and a write is a change to a draft of the real type. See {@link Stored}.
    */
   public static <T> Stored<T> createStore(T initial) {
@@ -88,6 +88,44 @@ public final class Reactive {
 
   /** A store over a map: get() is a Map whose reads subscribe to a key, its presence or the keys. */
   public static <K, V> Stored<java.util.Map<K, V>> createStore(java.util.Map<K, V> initial) {
+    return own(new Stored<>(initial));
+  }
+
+  /**
+   * A writable derived store (Solid's createStore(fn, seed)): it starts as seed, and derive writes a draft of it as
+   * update(...) does, at once and again whenever what it read changes, so only what it changed re-runs readers.
+   * update(...) and set(...) write it too, and stand until derive runs again.
+   *
+   * <pre>{@code
+   * var totals = createStore(d -> d.setOpen((int) todos.get().stream().filter(t -> !t.isDone()).count()), new Totals());
+   * }</pre>
+   */
+  public static <T> Stored<T> createStore(Consumer<T> derive, T seed) {
+    return own(new Stored<>(derive, seed));
+  }
+
+  /** A writable derived store over a list, written as a List. */
+  public static <E> Stored<java.util.List<E>> createStore(Consumer<java.util.List<E>> derive, java.util.List<E> seed) {
+    return own(new Stored<>(derive, seed));
+  }
+
+  /**
+   * A shallow store over a list (Solid's createStore(list, {shallow: true})): its size and each slot are reactive,
+   * and a row is served as it is, by reference, never copied or looked into. A row is replaced, d.set(i, row), and
+   * never changed: for a long list of immutable rows, such as records, that is cheaper and keeps each row the object
+   * it was given. Reconciling compares rows by reference, slot by slot.
+   */
+  public static <E> Stored<java.util.List<E>> createShallowStore(java.util.List<E> initial) {
+    return own(Stored.shallow(initial));
+  }
+
+  /** A shallow store over a map: its keys are reactive, and a value is served as it is and replaced, never changed. */
+  public static <K, V> Stored<java.util.Map<K, V>> createShallowStore(java.util.Map<K, V> initial) {
+    return own(Stored.shallow(initial));
+  }
+
+  /** A store over a set: get() is a Set whose reads subscribe to an element's presence or the elements. */
+  public static <E> Stored<java.util.Set<E>> createStore(java.util.Set<E> initial) {
     return own(new Stored<>(initial));
   }
 
@@ -149,14 +187,22 @@ public final class Reactive {
       RetainedNames.chain(Reactive.class));
   }
 
-  /** The type the source wrote for a list or map, which reading its JSON back needs. */
+  /** A retained store over a set; the type of its elements as the source writes it. */
+  public static <E> Stored<java.util.Set<E>> createRetainedStore(java.util.Set<E> initial) {
+    return retainedStore(initial, collectionType(initial, "Set<String>", "createRetainedStore(set, String.class)"),
+      RetainedNames.chain(Reactive.class));
+  }
+
+  /** The type the source wrote for a list, a map or a set, which reading its JSON back needs. */
   private static java.lang.reflect.Type collectionType(Object initial, String example, String explicit) {
     java.lang.reflect.Type type = RetainedNames.callSiteType(Reactive.class);
     if (type == null) {
-      throw new IllegalArgumentException("a retained " + (initial instanceof java.util.List ? "list" : "map")
-        + " needs the type of what it holds, since its JSON does not say: write it where the store is created, such"
-        + " as Stored<" + example + "> or new " + (initial instanceof java.util.List ? "ArrayList" : "HashMap")
-        + "<...>(), and build with the j2act processor, or name it with " + explicit + " (ADR 0035)");
+      String what = initial instanceof java.util.List ? "list" : initial instanceof java.util.Set ? "set" : "map";
+      String made = initial instanceof java.util.List ? "ArrayList" : initial instanceof java.util.Set ? "LinkedHashSet"
+        : "HashMap";
+      throw new IllegalArgumentException("a retained " + what + " needs the type of what it holds, since its JSON does"
+        + " not say: write it where the store is created, such as Stored<" + example + "> or new " + made + "<...>(),"
+        + " and build with the j2act processor, or name it with " + explicit + " (ADR 0035)");
     }
     return type;
   }
@@ -171,11 +217,17 @@ public final class Reactive {
     return retainedStore(initial, parameterized(java.util.Map.class, String.class, values), RetainedNames.chain(Reactive.class));
   }
 
+  /** A retained store over a set of elements of one class. */
+  public static <E> Stored<java.util.Set<E>> createRetainedStore(java.util.Set<E> initial, Class<E> elements) {
+    return retainedStore(initial, parameterized(java.util.Set.class, elements), RetainedNames.chain(Reactive.class));
+  }
+
   private static <T> Stored<T> retainedStore(T initial, java.lang.reflect.Type type, String stackName) {
     Stored<T> store = own(new Stored<>(initial));
     String what = stackName != null ? stackName : type.getTypeName();
     // The snapshot keeps the store's JSON as text: only the store knows the type to read it back as.
-    own(new RetainedValue<String>(() -> store.saved(type, what), json -> store.restore(json, type, what), null, stackName));
+    store.retained = own(new RetainedValue<String>(() -> store.saved(type, what), json -> store.restore(json, type, what),
+      null, stackName));
     return store;
   }
 

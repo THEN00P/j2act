@@ -211,4 +211,52 @@ class StoredTest {
       assertTrue(next.contains("count:4"), "an action's body writes and reads a store from its own thread: " + next);
     }
   }
+
+  public static class Summary {
+    private int open;
+
+    Summary() {
+    }
+
+    public int getOpen() {
+      return open;
+    }
+
+    public void setOpen(int open) {
+      this.open = open;
+    }
+  }
+
+  static final class Derived extends LiveComponent {
+    @Override protected View setup() {
+      var todos = createStore(new ArrayList<>(List.of(new Todo("a"), new Todo("b"))));
+      var summary = createStore(d -> d.setOpen((int) todos.get().stream().filter(t -> !t.isDone()).count()),
+        new Summary());
+      Stored<List<String>> titles = createStore(d -> {
+        d.clear();
+        todos.get().forEach(t -> d.add(t.getTitle()));
+      }, new ArrayList<>());
+      return () -> T.page("t", T.div(
+        T.span("open:" + summary.at(Summary::getOpen).get() + ";"),
+        T.span("titles:" + String.join(",", titles.get()) + ";"),
+        T.button("finish").onClick(e -> todos.update(d -> d.get(0).setDone(true))),
+        T.button("add").onClick(e -> todos.update(d -> d.add(new Todo("c"))))));
+    }
+  }
+
+  @Test
+  void aDerivedStoreFollowsWhatItRead() {
+    try (Harness h = new Harness(Derived::new)) {
+      String html = h.load();
+      assertTrue(html.contains("open:2;") && html.contains("titles:a,b;"), html);
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "finish"));
+      String next = h.awaitPatch(from, p -> p.contains("open:1;")).get("html");
+      from = h.conn.size();
+      h.click(Harness.clickOn(next, "add"));
+      String last = h.awaitPatch(from, p -> p.contains("titles:a,b,c;")).get("html");
+      assertTrue(last.contains("open:2;"), last);
+    }
+  }
 }

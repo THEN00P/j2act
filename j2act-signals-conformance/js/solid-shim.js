@@ -567,12 +567,13 @@
     },
     targetOf: v => v[$JT],
     // Solid's wrapDraft: a proxy over a view whose reads and writes go through the derive's control.
-    draft: function draft(inner, read, mutate, alias) {
+    draft: function draft(inner, read, mutate, alias, shallow) {
       const px = new Proxy(Array.isArray(inner) ? [] : {}, {
         get(_, prop) {
           const value = read(() => inner[prop]);
-          return typeof value === "object" && value !== null && prop !== $TARGET && prop !== $JT && !Java.isJavaObject(value)
-            ? draft(value, read, mutate, alias)
+          return !shallow && typeof value === "object" && value !== null && prop !== $TARGET && prop !== $JT
+            && !Java.isJavaObject(value)
+            ? draft(value, read, mutate, alias, false)
             : value;
         },
         has: (_, prop) => read(() => prop in inner),
@@ -605,28 +606,28 @@
     return typeof key === "function" ? key : key === null ? null : row => (isWrappable(row) ? row[key] : undefined);
   };
   const projectionOptions = options => {
-    if (options && options.shallow) throw new Error("[left out] shallowStore");
     if (options && options.seedLoadingValue) throw new Error("[left out] seedLoadingValue");
+    return !!(options && options.shallow);
   };
   const createProjection = guard((fn, seed, options) => {
-    projectionOptions(options);
-    return b.createProjection(fn, seed || {}, keyOf(options));
+    const shallow = projectionOptions(options);
+    return b.createProjection(fn, seed || {}, keyOf(options), shallow);
   });
   const createOptimisticStore = guard((first, second, third) => {
     const derived = typeof first === "function";
     const options = derived ? third : second;
-    projectionOptions(options);
-    const store = b.createOptimisticStore(derived ? first : undefined, (derived ? second : first) || {}, keyOf(options));
+    const shallow = projectionOptions(options);
+    const store = b.createOptimisticStore(derived ? first : undefined, (derived ? second : first) || {}, keyOf(options),
+      shallow);
     return [store, guard(fn => b.setStore(store, fn))];
   });
   const createStore = guard((first, second, third) => {
     if (typeof first === "function") {
-      projectionOptions(third);
-      const store = b.createProjection(first, second || {}, keyOf(third));
+      const shallow = projectionOptions(third);
+      const store = b.createProjection(first, second || {}, keyOf(third), shallow);
       return [store, guard(fn => b.setStore(store, fn))];
     }
-    if (second && second.shallow) throw new Error("[left out] shallowStore");
-    const proxy = b.createStore(first);
+    const proxy = b.createStore(first, !!(second && second.shallow));
     return [proxy, guard(fn => b.setStore(proxy, fn))];
   });
   const reconcile = (value, key = "id") => {
@@ -645,6 +646,8 @@
     createStore,
     createOptimisticStore,
     createProjection,
+    markRaw: guard(value => b.markRaw(value)),
+    storeIsShallow: guard(value => b.storeIsShallow(value)),
     reconcile,
     snapshot,
     deep,

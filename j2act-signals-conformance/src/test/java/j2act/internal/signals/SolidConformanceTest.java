@@ -27,7 +27,7 @@ class SolidConformanceTest {
     // JS proxies
     "merge", "seedLoadingValue", "registerFold",
     // parts of the store with no meaning for Java objects, or not ported yet
-    "shallowStore", "markRaw", "storePath", "omit", "mergeView", "viewOf", "omitView", "storeIsShallow",
+    "storePath", "omit", "mergeView", "viewOf", "omitView",
     "isStatic", "hasStaticKeys",
 
     // developer tooling
@@ -68,6 +68,9 @@ class SolidConformanceTest {
         Matcher m = LEFT_OUT_NAME.matcher(String.valueOf(r.message));
         if (m.find()) {
           leftOut++;
+          if (Boolean.getBoolean("solid.why")) {
+            System.out.println("left out: " + m.group(1) + " :: " + r.key());
+          }
           if (!LEFT_OUT.contains(m.group(1))) {
             wrong.add("reaches " + m.group(1) + ", not ported and not listed as left out: " + r.key());
           }

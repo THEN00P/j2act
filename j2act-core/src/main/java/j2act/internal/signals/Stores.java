@@ -28,7 +28,7 @@ import java.util.function.Function;
  *
  * A JS proxy's traps are the methods get, has, ownKeys, set and delete here, and what they ask of an object
  * goes through {@link StoreShape}. Left out with what JavaScript needs them for: the prototype overlay,
- * accessor properties and descriptors, shallow stores, and dev and observe output.
+ * accessor properties and descriptors, the list driver's shallow slot view (a speed-up), and dev and observe output.
  */
 public final class Stores {
   /** The container node's key, Solid's $TRACK. */
@@ -282,7 +282,70 @@ public final class Stores {
     return wrap(value, parent, parentKey, parent != null ? parent.fam : null);
   }
 
+  // ---- raw marking (types.ts, R42 / RUL-12: a value is never both wrapped and raw)
+
+  private Map<Object, Boolean> rawValues;
+  boolean rawValuesUsed;
+
+  boolean isRawValue(Object value) {
+    return rawValuesUsed && value != null && rawValues.containsKey(value);
+  }
+
+  /** Marks a value so no store ever wraps it (sticky; it reads as a leaf). */
+  Object markRaw(Object value) {
+    if (shape.isWrappable(value)) {
+      rawMark(value);
+    }
+    return value;
+  }
+
+  private void rawMark(Object value) {
+    if (rawValues == null) {
+      rawValues = shape.identityMap();
+    }
+    rawValuesUsed = true;
+    rawValues.put(value, Boolean.TRUE);
+  }
+
+  /** A shallow store's ingested record: raw by contract (values served verbatim, slots replaced by reference). */
+  void markRawOne(Object v) {
+    if (shape.isWrappable(v)) {
+      if (shape.targetOf(v) != null) {
+        return;
+      }
+      if (lookupTarget(v, null) != null) {
+        throw new IllegalStateException("shallow store: an ingested record is already tracked as a deep store — one value"
+          + " cannot present both wrapped and raw");
+      }
+      rawMark(v);
+    }
+  }
+
+  void markRawIngest(Object container) {
+    if (shape.isArray(container)) {
+      for (int i = 0, len = shape.length(container); i < len; i++) {
+        markRawOne(shape.get(container, i));
+      }
+    } else {
+      for (Object k : shape.keys(container)) {
+        markRawOne(shape.get(container, k));
+      }
+    }
+  }
+
+  /** A shallow target's value: a store's view joins the draft as any child would; anything else is served raw. */
+  private Object serveShallow(StoreTarget target, Object key, Object v) {
+    if (v != null && shape.isObject(v) && shape.targetOf(v) != null) {
+      return draftServe(target, wrap(v, target, key));
+    }
+    return v;
+  }
+
   Object wrap(Object value, StoreTarget parent, Object parentKey, StoreFamily fam) {
+    // markRaw'd values never wrap through ANY store (R42).
+    if (rawValuesUsed && isRawValue(value)) {
+      return value;
+    }
     StoreTarget existing = lookupTarget(value, fam);
     if (existing != null) {
       return existing.px;
@@ -1076,7 +1139,7 @@ public final class Stores {
     Object ov = shape.get(old, key);
     Object nv = shape.get(pending, key);
     boolean keyed = shape.isArray(old);
-    if ((keyed && target.fam == null) || !sameRow(ov, nv, keyed ? target.fam.key : null)
+    if (target.s || (keyed && target.fam == null) || !sameRow(ov, nv, keyed ? target.fam.key : null)
       || !shape.isWrappable(ov) || !shape.isWrappable(nv) || shape.isArray(ov) != shape.isArray(nv)
       || lookupTarget(ov, target.fam) != null || lookupTarget(nv, target.fam) != null
       || rawsOf(old).containsKey(nv) || rawsOf(pending).containsKey(ov)) {
@@ -1146,6 +1209,9 @@ public final class Stores {
           v = nv;
         }
       }
+    }
+    if (target.s) {
+      return serveShallow(target, key, v);
     }
     if (target.ch && !chained && v != null && shape.isObject(v)) {
       StoreTarget vt = shape.targetOf(v);
@@ -1304,6 +1370,9 @@ public final class Stores {
       if (nv == null || !shape.isObject(nv)) {
         return nv;
       }
+      if (target.s) {
+        return serveShallow(target, key, nv);
+      }
       if (node0.pxv != null && same(node0.pxv, nv)) {
         return node0.px;
       }
@@ -1328,6 +1397,9 @@ public final class Stores {
         Node node = target.n != null ? target.n.get(key) : null;
         if (node != null) {
           Object nv = nodeValue(node, target);
+          if (target.s) {
+            return serveShallow(target, key, nv);
+          }
           return shape.isWrappable(nv) ? draftServe(target, wrap(nv, target, key)) : nv;
         }
       }
@@ -1443,7 +1515,7 @@ public final class Stores {
     if (!draft && !writeOverride) {
       return;
     }
-    Object uv = unwrapValue(value);
+    Object uv = target.s ? value : unwrapValue(value);
     Object pb = ensurePB(target);
     if (userWrite && target.k != null && (target.k.config & CONFIG_HELD) != 0) {
       deferredReleases.add(getNode(target, key));
@@ -1459,6 +1531,9 @@ public final class Stores {
       touch(target, key);
     }
     rawSet(pb, key, uv);
+    if (target.s && uv != null && shape.isObject(uv)) {
+      markRawOne(uv);
+    }
     if (!draft) {
       notifyWrites(target);
     }
@@ -1552,8 +1627,28 @@ public final class Stores {
 
   /** Solid's createStore(initialValue): the view of a store over value. */
   Object createStore(Object value) {
+    return createStore(value, false);
+  }
+
+  /** Solid's createStore(value, {shallow}). */
+  Object createStore(Object value, boolean shallow) {
     shape();
-    return wrap(value, null, null, null);
+    if (shallow) {
+      // Never both deep-wrapped and raw (R41/R44): a value already tracked as a deep store cannot be ingested shallow.
+      StoreTarget existing = lookupTarget(value, null);
+      if (existing != null && !existing.s) {
+        throw new IllegalStateException("createStore({ shallow }): value is already tracked as a deep store");
+      }
+      if (shape.targetOf(value) != null) {
+        throw new IllegalStateException("createStore({ shallow }): value is already a store proxy");
+      }
+    }
+    Object proxy = wrap(value, null, null, null);
+    if (shallow) {
+      shape.targetOf(proxy).s = true;
+      markRawIngest(value);
+    }
+    return proxy;
   }
 
   // ---- reconcile (store/reconcile.ts): the immutable-diff adoption channel
@@ -1617,7 +1712,11 @@ public final class Stores {
     }
     Object prevView = optHooks != null && t.fam != null && t.fam.opt ? optHooks.view(t, old, false) : old;
     boolean nextArr = shape.isArray(incoming);
+    boolean shallow = t.s;
     adoptPB(t, incoming, false);
+    if (shallow) {
+      markRawIngest(incoming);
+    }
     boolean bumped = t.dk == null;
     if (shape.isArray(prevView) != nextArr || isView(old)) {
       notifyFold(t, old, incoming);
@@ -1628,7 +1727,7 @@ public final class Stores {
     if (nextArr) {
       int plen = shape.length(prevView);
       int nlen = shape.length(incoming);
-      if (keyFn != null) {
+      if (keyFn != null && !shallow) {
         int i = 0;
         for (int end = Math.min(plen, nlen); i < end; i++) {
           Object nv = shape.get(incoming, i);
@@ -1695,7 +1794,7 @@ public final class Stores {
         for (int i = 0; i < nlen; i++) {
           Object nvP = shape.get(incoming, i);
           Object pvP = shape.get(prevView, i);
-          if (i < dlen && nvP != null && shape.isObject(nvP)) {
+          if (!shallow && i < dlen && nvP != null && shape.isObject(nvP)) {
             descend(unwrapValue(pvP), nvP, keyFn, proj, t, i);
           }
           if (!bumped && !leafSame(pvP, nvP)) {
@@ -1733,7 +1832,7 @@ public final class Stores {
         }
         continue;
       }
-      if (isObj) {
+      if (isObj && !shallow) {
         descend(unwrapValue(shape.get(prevView, k)), nv, keyFn, proj, t, k);
       }
       if (!bumped && !(isObj ? targetsEqual(ov, nv) : same(ov, nv))) {
@@ -1780,7 +1879,7 @@ public final class Stores {
       }
       lookupMap(fam).remove(nv);
     }
-    if (ct == null || !shape.isWrappable(nv) || shape.isArray(pv) != shape.isArray(nv)) {
+    if (ct == null || !shape.isWrappable(nv) || isRawValue(nv) || shape.isArray(pv) != shape.isArray(nv)) {
       return;
     }
     if (!(k instanceof Integer) && keyFn != null) {
@@ -2016,12 +2115,21 @@ public final class Stores {
 
   /** A derived store's family and root: Solid's createProjectionInternal. fn is null for a plain optimistic store. */
   Object createProjection(Derive fn, Object seed, Function<Object, Object> key, boolean opt) {
+    return createProjection(fn, seed, key, opt, false);
+  }
+
+  Object createProjection(Derive fn, Object seed, Function<Object, Object> key, boolean opt, boolean shallow) {
     shape();
     StoreFamily fam = new StoreFamily();
     fam.opt = opt;
     fam.key = key;
+    fam.shallow = shallow;
     fam.st = (status, error) -> familyStatus(fam, status, error);
     Object store = wrap(seed, null, null, fam);
+    if (shallow) {
+      shape.targetOf(store).s = true;
+      markRawIngest(seed);
+    }
     if (fn != null) {
       Node node = rt.core.computed(prev -> {
         if (fam.node == null) {
@@ -2042,11 +2150,15 @@ public final class Stores {
    * the action that made them ends. With a derive it is a projection too, and a landing confirms a guess.
    */
   Object createOptimisticStore(Derive fn, Object seed, Function<Object, Object> key) {
+    return createOptimisticStore(fn, seed, key, false);
+  }
+
+  Object createOptimisticStore(Derive fn, Object seed, Function<Object, Object> key, boolean shallow) {
     shape();
     if (optHooks == null) {
       optHooks = new StoreOptimistic(rt, this);
     }
-    return createProjection(fn, seed, key, true);
+    return createProjection(fn, seed, key, true, shallow);
   }
 
   /** Solid's affects(store) and affects(store, key): the record, or one key of it, is about to change. */

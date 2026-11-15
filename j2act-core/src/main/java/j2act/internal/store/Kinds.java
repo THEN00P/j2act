@@ -20,7 +20,7 @@ import java.util.Map;
  */
 public final class Kinds {
   /** What a class is to a store. */
-  public enum Kind { VALUE, LIST, MAP, BEAN, RECORD, OPAQUE }
+  public enum Kind { VALUE, LIST, MAP, SET, BEAN, RECORD, OPAQUE }
 
   /** A record class as the store reads and builds it. */
   static final class Rec {
@@ -53,7 +53,7 @@ public final class Kinds {
         return canonical.newInstance(values);
       } catch (IllegalArgumentException e) {
         throw new IllegalStateException("a store cannot build a " + type.getName() + " from " + java.util.Arrays.toString(values)
-          + ": declare a component that holds a list or a map as List or Map, which the store's own stand in for", e);
+          + ": declare a component that holds a list, a map or a set as List, Map or Set, which the store's own stand in for", e);
       } catch (java.lang.reflect.InvocationTargetException e) {
         throw new IllegalStateException("the canonical constructor of " + type.getName() + " refused what the store gave it", e.getCause());
       } catch (ReflectiveOperationException e) {
@@ -133,8 +133,8 @@ public final class Kinds {
         Object v = values[i];
         if (v != null && !fields[i].getType().isPrimitive() && !fields[i].getType().isInstance(v)) {
           throw new IllegalStateException(type.getName() + "." + names[i] + " is declared as " + fields[i].getType().getName()
-            + " and the store holds a " + v.getClass().getName() + " for it: declare a field that holds a list or a map as"
-            + " List or Map");
+            + " and the store holds a " + v.getClass().getName() + " for it: declare a field that holds a list, a map or a set as"
+            + " List, Map or Set");
         }
         write(fields[i], o, v);
       }
@@ -247,6 +247,9 @@ public final class Kinds {
     }
     if (Map.class.isAssignableFrom(type)) {
       return new Info(Kind.MAP, null);
+    }
+    if (java.util.Set.class.isAssignableFrom(type)) {
+      return new Info(Kind.SET, null);
     }
     String name = type.getName();
     if (type.isArray() || type.isInterface() || Modifier.isAbstract(type.getModifiers()) || type.isSynthetic()

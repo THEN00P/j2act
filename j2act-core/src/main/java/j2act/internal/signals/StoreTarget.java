@@ -11,8 +11,8 @@ import java.util.function.BiPredicate;
  * a raw the application gave or a copy the store owns, and `pb` the pending backing of the current batch,
  * which is also what the container node `k` stages. Nodes are made when something subscribes.
  *
- * Left out, with what they serve in JavaScript: the prototype overlay (`ovl`, `del`), accessor properties
- * (`a`, `sc`, `kc`) and shallow stores (`s`).
+ * Left out, with what they serve in JavaScript: the prototype overlay (`ovl`, `del`) and accessor properties
+ * (`a`, `sc`, `kc`).
  */
 public final class StoreTarget implements Node.Host {
   /** Committed backing: the source object, shared, or an owned copy. */
@@ -43,6 +43,8 @@ public final class StoreTarget implements Node.Host {
   boolean d;
   /** Projection family, null for plain stores. */
   StoreFamily fam;
+  /** A shallow store: its keys are reactive and its values are served raw, by reference. */
+  boolean s;
   BiPredicate<Object, Object> slotEquals;
   BiPredicate<Object, Object> containerEquals;
 
@@ -101,6 +103,8 @@ public final class StoreTarget implements Node.Host {
     java.util.function.BiConsumer<Integer, Throwable> st;
     int run;
     boolean woke;
+    /** Created shallow (projection.ts `_shallow`). */
+    boolean shallow;
     int w;
     /** Targets carrying a lane value on one of their nodes; dropped once none is. */
     Set<StoreTarget> overlaid;

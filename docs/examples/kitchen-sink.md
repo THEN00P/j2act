@@ -126,6 +126,25 @@ var add = action((String title) -> {
 var orders = createProjection(() -> async(() -> orders.findAll()), Order::getId);
 ```
 
+## Derived, shallow and kept stores (ADR 0035)
+
+```java
+// written again whenever what it read changes; only what it changed re-runs readers
+var totals = createStore(d -> d.setOpen((int) todos.get().stream().filter(t -> !t.isDone()).count()), new Totals());
+
+// immutable rows served as they are, replaced and never changed
+var prices = createShallowStore(new ArrayList<Price>());
+prices.update(d -> d.set(0, new Price("EUR", 12)));
+
+// a set tracks each element's presence
+var picked = createStore(new LinkedHashSet<Long>());
+return () -> span(picked.get().contains(row.getId()) ? "picked" : "");
+
+// kept in the snapshot as JSON, typed from the source
+Stored<List<Todo>> drafts = createRetainedStore(new ArrayList<>());
+return () -> drafts.restored() ? p("Your drafts came back") : null;
+```
+
 ## Data several components show (ADR 0031)
 
 ```java

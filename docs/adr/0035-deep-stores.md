@@ -37,7 +37,11 @@ They are Solid's, with Solid's division of work:
 | `createStore(fn, seed)` | A projection that also takes writes | With `update` |
 | `createOptimisticStore(...)` | Writes from an action, undone when it ends | In an action |
 
-`createStore` is one name and `Stored<T>` one type: `createStore(new ArrayList<Todo>())` is a `Stored<List<Todo>>`. What a store hands out for a list or a map is a `List` or a `Map` itself, whose reads subscribe to an element, a key, a key's presence or the size, so a store of a list needs no type of its own. The store keeps the collection's contract, not its class: `List` or `Map`, and its order, which is insertion order or a `SortedMap`'s comparator. It owns versioned storage, so a `LinkedList` does not stay one.
+`createShallowStore(list)` is Solid's `createStore(list, { shallow: true })`, and `createRetainedStore(value)` is a store kept in the snapshot, both below.
+
+`createStore` is one name and `Stored<T>` one type: `createStore(new ArrayList<Todo>())` is a `Stored<List<Todo>>`. What a store hands out for a list, a map or a set is a `List`, a `Map` or a `Set` itself, whose reads subscribe to an element, a key, a key's presence or the size, so a store of a list needs no type of its own. To the engine a set is an object whose keys are its elements, so `contains` subscribes to that element's presence and walking it to membership. An element is a key, held as given and compared as the set compares it, so an object in a set is one value. The store keeps the collection's contract, not its class: `List`, `Map` or `Set`, and its order, which is insertion order or a `SortedMap`'s or `SortedSet`'s comparator. It owns versioned storage, so a `LinkedList` does not stay one.
+
+`createStore(fn, seed)` starts as `seed`, and `fn` writes a draft of it as `update` does, at once and again whenever what it read changes, so only what it changed re-runs readers. `update` and `set` write it too, and stand until `fn` runs again. Its derive writes and does not answer: a value to merge by key is a projection's.
 
 A local store has no keys. A row's identity is the store's own. A key function appears where fresh objects stand for rows already on the page, on a projection or `reconcile`, and is always given explicitly. Without one, rows pair by position.
 
@@ -59,15 +63,19 @@ var city = user.at(User::getAddress, Address::getCity);
 input().withValue(city.get()).onInput(e -> city.set(e.value()));
 ```
 
-Getter chains are what the bytecode enhancer will narrow on its own: `user.get().getAddress().getCity()` in a view becomes the `at(...)` read, within one method. `at(...)` is that written by hand, for a field binding or a small component over a large object. Passing the bean to another method keeps the coarse read.
+The bean `get()` returns is built for the reader. Inside a pending or optimistic lane it holds that lane's values, as Solid's `snapshot` does: records that changed are copied, and those that did not are the objects the store was given. The engine keeps what it built for a record until a write to it or a change below it, so reading a row twice gives one object and a row nobody wrote keeps its object, where Solid builds a new one each time: a Java reader keys rows and stops memos by identity. A record in a cycle is built anew each time, since a kept one would point at the cycle's older version; and a record over an optimistic guess is built per read while the guess stands. On a warm JVM, reading 1,000 written rows that hold an object each takes about 1.5 ms when they are built and about 1 ms after: the walk that subscribes the reader to each record costs more than building.
 
-The bean `get()` returns is built for the reader. Inside a pending or optimistic lane it holds that lane's values, as Solid's `snapshot` does: records that changed are copied, and those that did not are the objects the store was given. One copy is kept per record and version, so a memo comparing by identity still stops.
+### What the enhancer compiles to
+
+The bytecode enhancer narrows reads by class, not by call site: it makes an application's bean or record a `Tracked` one, whose every read of its own fields first calls `StoreReads.field(this, "city")`, and gives it a `j2act$` field for the record a store built it from. A store hands out a tracked object built as `get()` builds it, stamped with its record, and subscribing to nothing, so whoever reads it subscribes to the fields it reads, from any caller, getter or method. Below a field, what cannot track itself is subscribed whole: a list's or a map's size and slots, a set's membership, and the whole of an object of a class that is not tracked, such as one from a library. A tracked object is always a copy, never the object the store was given, so one object stands for one record.
+
+Without the enhancer no class is tracked and every reader reads whole objects. Both show the same values; the built app runs readers less often. `TrackedStoreTest` holds that, running one random app over plain classes and over the same classes tracked by hand, and wanting equal values after every step and no more runs. Where the record an object came from cannot be told exactly, the store reads deep instead: a chained backing, which serves another store's records, or an object whose record is gone. A tracked object read by reflection, as a JSON binding may read it, reads untracked; a reader handing one to such code reads `deep` first. `at(...)` stays for a field binding and for apps built without the enhancer.
 
 ## Writing
 
 `update` hands its lambda a draft of the real type.
 
-- A list, set or map in a draft is j2act's own implementation of the interface. Nothing is copied until it is touched.
+- A list, set or map in a draft is j2act's own implementation of the interface. Nothing is copied until it is touched. A field that holds one is declared as `List`, `Set` or `Map`.
 - A bean is copied when the draft hands it out, down to the next collection.
 - Each object is copied once per draft, by identity. Two rows sharing one `Address` share one copy, and a change through either reaches both, as Solid keeps one target per object.
 - When the lambda returns, each copy is compared with what it was copied from, property by property, and each difference is one write to that property's node. Solid also notifies at the outermost setter's exit.
@@ -100,7 +108,13 @@ A hook lets a host say more about a class. `j2act-jakarta` and `j2act-spring` us
 
 That type is what the source writes. A list does not carry its type arguments at runtime, a local variable's declared type is not visible to reflection, and an annotation processor sees a method body before javac works out its types. So the processor records the type where it is written, beside the variable's name in its table: the first type argument of the declared type, `Stored<List<Todo>> todos = createRetainedStore(new ArrayList<>())`, or else the type the argument creates, `var todos = createRetainedStore(new ArrayList<Todo>())`. Names resolve as javac resolves them, the same under ECJ. Where nothing is written, `var` with a diamond, or with no processor, a list or a map fails at creation with how to say it, or names it: `createRetainedStore(new ArrayList<>(), Todo.class)`. `createRetained` reads the same table, so a retained list of beans comes back as beans rather than maps.
 
+`restored()` says whether the store came back from a snapshot, for a "your draft came back" message: it is false for a store that started from its initial value, also when what was kept no longer reads as its type.
+
 A value that cannot be written is warned about once, with the binding's own message, and that store is left out of the snapshot. A value that no longer reads as its type is dropped with a warning and the store starts from its initial value.
+
+## Shallow stores
+
+`createShallowStore(list)` and its map form are Solid's shallow stores: the size, each slot and each key are reactive, and what a slot holds is served as it is, by reference, never copied, wrapped or looked into. A row is replaced, `d.set(i, row)`, and never changed in place: a change inside one tells nobody. That suits a long list of immutable rows, records above all, which then cost no copy and stay the objects they were given. Reconciling compares rows by reference, slot by slot, so the key is not needed. A row a deep store already tracks cannot go into a shallow one: one object is never both wrapped and raw, and the store says so at creation. A store's own view in a shallow store is still served as a view. The engine has Solid's `markRaw` for this and for its tests; Java needs no per-object marker, since what a store looks into is decided per class.
 
 ## Equality
 
@@ -111,6 +125,7 @@ That matters for entities whose `equals` compares ids. Today a refreshed list of
 ## What an application can get wrong
 
 - Changing a bean that `get()` returned. Untouched parts are the store's own objects, so this changes committed state with no update. Solid takes no responsibility for it. With mutable beans it is easier to do, so dev mode fingerprints what it handed out and reports a difference at the next commit.
+- Changing a row of a shallow store in place, inside `update` or out. The row is the object it was given, so the change reaches whoever else holds it and tells no reader.
 - Passing `at(...)` anything but a method reference of a public getter. A lambda, or a reference the compiler compiles into one, names no property. It fails when it first runs, and the processor reports it at build time.
 
 ## Checked
@@ -132,16 +147,12 @@ Two other models were asked to design this from the constraints alone and then t
 
 ## Built, and not yet
 
-Built: the engine with `reconcile`, projections, optimistic stores, chained backings and `affects()` on a store, running Solid's store tests; and over lists, maps and beans `createStore`, `update`, `set`, `at(...)` with the processor's check, `createProjection`, `createOptimisticStore` and `createRetainedStore`, the dev-mode report of a bean changed outside `update`, and unloaded JPA state kept whole.
+Built: the engine with `reconcile`, projections, optimistic stores, shallow stores, chained backings and `affects()` on a store, running Solid's store tests; and over lists, maps, sets, beans and records `createStore` with its derived form, `update`, `set`, `at(...)` with the processor's check, `createProjection`, `createOptimisticStore`, `createShallowStore` and `createRetainedStore` with `restored()`, one object per record and version, the read path the enhancer compiles to, the dev-mode report of a bean changed outside `update`, and unloaded JPA state kept whole.
 
 Not yet:
 
-- The bean a reader gets is copied on every read of a record that was written. One copy per record and version is the plan above.
-- Rows that render alone without being components are the bytecode enhancer's to give.
-- `createProjection` and the optimistic store over a load answer a list, and a derive answers its value: it does not write a draft. Solid's writable derived store is in the engine and not in the API.
-- A set is one value, replaced whole.
-- A draft hands out the store's own list for a list field, so a field declared as a class, such as `ArrayList`, says to declare `List`.
-- `restored()` on a retained store.
+- The enhancer itself: tracked classes, and rows that render alone without being components.
+- A draft hands out the store's own collection for a collection field, so a field declared as a class, such as `ArrayList`, says to declare `List`.
 
 Solid's own store tests run against the port in `j2act-signals-conformance` with JavaScript objects behind the seam. Every one passes but the listed, and each listed one says what it asserts that the port does not do:
 
@@ -149,12 +160,11 @@ Solid's own store tests run against the port in `j2act-signals-conformance` with
 - JavaScript property semantics a Java field does not have: accessors, `defineProperty`, enumerability, a swapped prototype.
 - That the store's own copy carries a `$OWNER` stamp: the port keeps ownership in an identity map, as a Java object cannot be stamped.
 
-Tests that reach a part of Solid's store that is not ported name it and are counted apart: `merge` and `omit`, which are for JSX props; `shallowStore`; `storePath`, the JavaScript path setter that `at(...)` stands in for; `seedLoadingValue`; and `markRaw`.
+Tests that reach a part of Solid's store that is not ported name it and are counted apart: `merge` and `omit`, which are for JSX props; `storePath`, the JavaScript path setter that `at(...)` stands in for; and `seedLoadingValue`.
 
 ## Open
 
 - The scoped `Store` class shares its name with `createStore`. It is renamed or replaced separately; until then the new types avoid the bare name.
 - "Draft" and "createStore" are on CONTEXT.md's lists of words to avoid, from before this.
-- What building a bean per reader costs on a list of a thousand rows.
-- Whether `shallowStore`, `seedLoadingValue` and `markRaw` are wanted in Java.
+- `seedLoadingValue`, a projection's seed shown as its first answer while that loads, together with a memo's `loadingValue`, which `Reactive` does not offer either.
 - The port is made at the pinned commit. Moving the pin is separate.

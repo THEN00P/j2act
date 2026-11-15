@@ -107,7 +107,8 @@ final class JsShape implements StoreShape {
       control.alias(args[0], args[1]);
       return true;
     };
-    return ops.invokeMember("draft", view, read, mutate, alias);
+    StoreTarget t = targetOf(view);
+    return ops.invokeMember("draft", view, read, mutate, alias, t != null && t.s);
   }
 
   @Override public StoreTarget targetOf(Object value) {

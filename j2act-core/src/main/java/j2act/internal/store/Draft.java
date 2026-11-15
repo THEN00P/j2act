@@ -70,7 +70,7 @@ final class Draft {
       Object value = shape.present(shape.rt.storeGet(view.target, f.getName()));
       if (value instanceof StoreView && !f.getType().isInstance(value)) {
         throw new IllegalStateException(view.type.getName() + "." + f.getName() + " is declared as " + f.getType().getName()
-          + ", which a store cannot stand in for: declare it as List or Map");
+          + ", which a store cannot stand in for: declare it as List, Map or Set");
       }
       Kinds.write(f, e.copy, value);
       e.handed[i] = value;

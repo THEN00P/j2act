@@ -460,4 +460,191 @@ class JavaStoreTest {
     User now = (User) shape.value(store);
     assertEquals("Wien", now.getAddress().getCity());
   }
+
+  public static class Card {
+    private String title;
+    private java.util.Set<String> labels = new java.util.LinkedHashSet<>();
+
+    Card() {
+    }
+
+    Card(String title) {
+      this.title = title;
+    }
+
+    public String getTitle() {
+      return title;
+    }
+
+    public java.util.Set<String> getLabels() {
+      return labels;
+    }
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void aSetTracksEachElementsPresence() {
+    Object store = shape.create(new java.util.LinkedHashSet<>(List.of("a", "b")));
+    java.util.Set<String> set = (java.util.Set<String>) store;
+    Reader<Boolean> hasA = new Reader<>(() -> set.contains("a"));
+    Reader<Boolean> hasC = new Reader<>(() -> set.contains("c"));
+    Reader<Integer> size = new Reader<>(set::size);
+    Reader<String> all = new Reader<>(() -> String.join(",", set));
+
+    shape.<java.util.Set<String>>update(store, d -> d.add("c"));
+    rt.flush();
+    assertEquals(true, hasC.last);
+    assertEquals(2, hasC.runs);
+    assertEquals(1, hasA.runs, "an element nobody added or removed is not read again");
+    assertEquals(3, size.last);
+    assertEquals("a,b,c", all.last);
+
+    shape.<java.util.Set<String>>update(store, d -> d.add("a"));
+    rt.flush();
+    assertEquals(2, size.runs, "adding what is there changes nothing");
+    assertEquals(2, all.runs);
+
+    shape.<java.util.Set<String>>update(store, d -> d.removeIf("a"::equals));
+    rt.flush();
+    assertEquals(false, hasA.last);
+    assertEquals(2, hasC.runs);
+    assertEquals("b,c", all.last);
+    assertThrows(UnsupportedOperationException.class, () -> set.add("d"), "a set is written inside update(...)");
+  }
+
+  @Test
+  void aSetInABeanIsTheStoresOwn() {
+    Card given = new Card("todo");
+    given.getLabels().add("red");
+    Object store = shape.create(given);
+    Reader<Boolean> red = new Reader<>(() -> ((Card) shape.value(store)).getLabels().contains("red"));
+    shape.<Card>update(store, d -> {
+      d.getLabels().add("blue");
+      d.getLabels().remove("red");
+    });
+    rt.flush();
+    assertEquals(false, red.last);
+    assertEquals(java.util.Set.of("red"), given.getLabels(), "the object the store was given is the application's");
+    assertEquals(List.of("blue"), new ArrayList<>(((Card) shape.value(store)).getLabels()));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void aReloadedSetIsMergedByElement() {
+    List<java.util.Set<String>> answers = new ArrayList<>(List.of(java.util.Set.of("a", "b")));
+    List<Card>[] view = new List[1];
+    rt.createRoot(owner -> {
+      view[0] = (List<Card>) shape.createProjection(draft -> {
+        Card c = new Card("one");
+        c.getLabels().addAll(answers.get(answers.size() - 1));
+        return List.of(c);
+      }, row -> ((Card) row).getTitle());
+      return null;
+    });
+    drain();
+    // The row's labels as the store holds them: what a tracked Card's getter reads.
+    Supplier<java.util.Set<String>> labels = () -> (java.util.Set<String>) rt.storeGet(
+      ((StoreView) rt.storeGet(shape.targetOf(view[0]), 0)).target(), "labels");
+    Reader<Boolean> hasA = new Reader<>(() -> labels.get().contains("a"));
+    Reader<Boolean> hasB = new Reader<>(() -> labels.get().contains("b"));
+    Reader<Boolean> hasC = new Reader<>(() -> labels.get().contains("c"));
+    answers.add(java.util.Set.of("a", "c"));
+    rt.refresh(shape.derive(view[0]));
+    drain();
+    assertEquals(new java.util.TreeSet<>(List.of("a", "c")), new java.util.TreeSet<>(view[0].get(0).getLabels()));
+    assertEquals(1, hasA.runs, "an element in both answers is not read again");
+    assertEquals(false, hasB.last);
+    assertEquals(true, hasC.last);
+  }
+
+  public static class Totals {
+    private int open;
+    private String label = "totals";
+
+    Totals() {
+    }
+
+    public int getOpen() {
+      return open;
+    }
+
+    public void setOpen(int open) {
+      this.open = open;
+    }
+
+    public String getLabel() {
+      return label;
+    }
+
+    public void setLabel(String label) {
+      this.label = label;
+    }
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void aDerivedStoreWritesADraftOfItsSeed() {
+    Object source = shape.create(new ArrayList<>(List.of("a", "b")));
+    List<String> names = (List<String>) source;
+    int[] derives = {0};
+    Object[] totals = new Object[1];
+    rt.createRoot(owner -> {
+      totals[0] = shape.createDerived(d -> {
+        derives[0]++;
+        ((Totals) d).setOpen(names.size());
+      }, new Totals());
+      return null;
+    });
+    drain();
+    Reader<Object> open = new Reader<>(() -> shape.readPath(totals[0], new String[] {"open"}));
+    Reader<Object> label = new Reader<>(() -> shape.readPath(totals[0], new String[] {"label"}));
+    assertEquals(2, open.last);
+
+    shape.<List<String>>update(source, d -> d.add("c"));
+    drain();
+    assertEquals(3, open.last);
+    assertEquals(1, label.runs, "the derive wrote one property, so only its readers run");
+
+    shape.<Totals>update(totals[0], d -> d.setLabel("mine"));
+    drain();
+    assertEquals("mine", label.last, "a write from outside stands");
+    int before = derives[0];
+    shape.<Totals>update(totals[0], d -> d.setOpen(99));
+    drain();
+    assertEquals(99, open.last);
+    assertEquals(before, derives[0], "a write to the store does not run its derive");
+
+    shape.<List<String>>update(source, d -> d.remove(0));
+    drain();
+    assertEquals(2, open.last, "until the derive runs again");
+    assertEquals("mine", label.last);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void aShallowStoreServesItsRowsByReference() {
+    Row one = new Row(1, "one");
+    Row two = new Row(2, "two");
+    Object store = shape.create(new ArrayList<>(List.of(one, two)), true);
+    List<Row> rows = (List<Row>) store;
+    Reader<String> first = new Reader<>(() -> rows.get(0).getLabel());
+    Reader<String> second = new Reader<>(() -> rows.get(1).getLabel());
+    Reader<Integer> size = new Reader<>(rows::size);
+    assertSame(one, rows.get(0), "a row is the object it was given");
+
+    Row twoAgain = new Row(2, "two v2");
+    shape.<List<Row>>update(store, d -> d.set(1, twoAgain));
+    rt.flush();
+    assertEquals("two v2", second.last, "a row whose equals compares ids is still another row");
+    assertEquals(1, first.runs);
+    assertEquals(1, size.runs);
+    assertSame(twoAgain, rows.get(1));
+    assertSame(one, rows.get(0));
+
+    shape.<List<Row>>update(store, d -> d.add(new Row(3, "three")));
+    rt.flush();
+    assertEquals(3, size.last);
+    assertEquals(1, first.runs);
+    assertEquals("two", two.getLabel(), "what was given is never written");
+  }
 }

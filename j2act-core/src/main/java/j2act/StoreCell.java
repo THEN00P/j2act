@@ -12,9 +12,13 @@ final class StoreCell extends Cell {
   private boolean optimistic;
 
   StoreCell(Tab tab, String address, Object initial) {
+    this(tab, address, initial, false);
+  }
+
+  StoreCell(Tab tab, String address, Object initial, boolean shallow) {
     super(tab, address);
     this.shape = tab.host.stores();
-    this.view = onLane(() -> shape.create(initial));
+    this.view = onLane(() -> shape.create(initial, shallow));
     tab.host.storeTabs.put(shape.targetOf(view), tab);
   }
 
@@ -39,6 +43,25 @@ final class StoreCell extends Cell {
       }
     };
     this.view = onLane(() -> optimistic ? shape.createOptimistic(derive, initial, key) : shape.createProjection(derive, key));
+    tab.host.storeTabs.put(shape.targetOf(view), tab);
+  }
+
+  /** A writable derived store: derive writes a draft of seed, with its creator around it, as an update does. */
+  StoreCell(Tab tab, String address, Consumer<Object> derive, Object seed) {
+    super(tab, address);
+    this.shape = tab.host.stores();
+    Scope creator = Tracking.scope();
+    Consumer<Object> write = draft -> {
+      Scope previous = Tracking.swapScope(creator);
+      Tab previousTab = Tab.swapCurrent(tab);
+      try {
+        derive.accept(draft);
+      } finally {
+        Tab.swapCurrent(previousTab);
+        Tracking.swapScope(previous);
+      }
+    };
+    this.view = onLane(() -> shape.createDerived(write, seed));
     tab.host.storeTabs.put(shape.targetOf(view), tab);
   }
 
@@ -85,9 +108,13 @@ final class StoreCell extends Cell {
     return shape.deep(view);
   }
 
+  /** Whether a snapshot's value was put back. */
+  volatile boolean restored;
+
   /** Lane-only: puts back what a snapshot kept, before the first render. */
   void restore(Object value) {
     shape.restore(view, value);
+    restored = true;
   }
 
   Object readPath(String[] path) {
