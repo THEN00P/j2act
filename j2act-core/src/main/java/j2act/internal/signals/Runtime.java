@@ -411,6 +411,11 @@ public final class Runtime {
     return stores.snapshot(value);
   }
 
+  /** deep's value subscribing to nothing, its objects stamped with their records; Stores.NOT_FINE when it cannot be. */
+  public Object handOut(Object value) {
+    return stores.handOut(value);
+  }
+
   /** Solid's deep(store): a snapshot that subscribes to every record it reaches. */
   public Object deep(Object value) {
     return stores.deep(value);

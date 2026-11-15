@@ -121,6 +121,27 @@ public final class Stores {
   /** A projection's draft writes carry it: the derive is the author (store/types.ts). */
   boolean writeOverride;
 
+  /**
+   * What the last snapshot built for a raw, when the shape keeps snapshots: the object, then what each object
+   * key of the raw walked to. A write to the raw drops it; a key that walks to something else rebuilds it.
+   */
+  private Map<Object, Object[]> snapshots;
+
+  /** Writes a backing: every write to one goes here, so a kept snapshot of it is dropped. */
+  private void rawSet(Object raw, Object key, Object value) {
+    if (snapshots != null) {
+      snapshots.remove(raw);
+    }
+    shape.set(raw, key, value);
+  }
+
+  private void rawDelete(Object raw, Object key) {
+    if (snapshots != null) {
+      snapshots.remove(raw);
+    }
+    shape.delete(raw, key);
+  }
+
   /** Slot nodes whose last subscriber left while they still held a staging. */
   private final Set<Node> deferredReleases = new LinkedHashSet<>();
   private List<StoreTarget> foldList = new ArrayList<>();
@@ -153,6 +174,7 @@ public final class Stores {
     this.shape = shape;
     this.storeLookup = shape.identityMap();
     this.owned = shape.identityMap();
+    this.snapshots = shape.keepsSnapshots() ? shape.identityMap() : null;
     Scheduler q = s();
     rt.graph.slotUnobservedHook = node -> {
       if (slotKept(node)) {
@@ -532,7 +554,7 @@ public final class Stores {
       Object pv = target.u.v;
       Object slot = parentSlotKey(target, before);
       if (same(shape.get(pv, slot), before)) {
-        shape.set(pv, slot, target.v);
+        rawSet(pv, slot, target.v);
       }
     }
   }
@@ -654,7 +676,7 @@ public final class Stores {
 
   private void copyKeys(Object to, Object from, Collection<Object> keys) {
     for (Object key : keys) {
-      shape.set(to, key, shape.get(from, key));
+      rawSet(to, key, shape.get(from, key));
     }
   }
 
@@ -673,20 +695,20 @@ public final class Stores {
           for (WrittenKeys w = wk; w != null; w = w.u) {
             for (Object key : w) {
               if (shape.has(pb, key)) {
-                shape.set(v, key, shape.get(pb, key));
+                rawSet(v, key, shape.get(pb, key));
               } else {
-                shape.delete(v, key);
+                rawDelete(v, key);
               }
             }
           }
         } else {
           copyKeys(v, pb, shape.keys(pb));
           if (shape.isArray(pb)) {
-            shape.set(v, StoreShape.LENGTH, shape.length(pb));
+            rawSet(v, StoreShape.LENGTH, shape.length(pb));
           } else {
             for (Object key : shape.keys(old)) {
               if (!shape.has(pb, key)) {
-                shape.delete(v, key);
+                rawDelete(v, key);
               }
             }
           }
@@ -711,7 +733,7 @@ public final class Stores {
       Object slot = parentSlotKey(t, old);
       if (same(shape.get(t.u.v, slot), old)) {
         privatizeCommitted(t.u);
-        shape.set(t.u.v, slot, t.v);
+        rawSet(t.u.v, slot, t.v);
       }
     }
   }
@@ -1436,7 +1458,7 @@ public final class Stores {
     } else {
       touch(target, key);
     }
-    shape.set(pb, key, uv);
+    rawSet(pb, key, uv);
     if (!draft) {
       notifyWrites(target);
     }
@@ -1451,7 +1473,7 @@ public final class Stores {
     Object pb = ensurePB(target);
     touch(target, key);
     if (shape.has(pb, key)) {
-      shape.delete(pb, key);
+      rawDelete(pb, key);
     }
     if (!draft) {
       notifyWrites(target);
@@ -2051,7 +2073,7 @@ public final class Stores {
       return value;
     }
     walkDeep(t0, shape.identityMap());
-    return snapshotWalk(value, shape.identityMap(), t0.fam);
+    return snapshotWalk(value, t0.fam);
   }
 
   private void walkDeep(StoreTarget t, Map<Object, Boolean> visited) {
@@ -2097,7 +2119,7 @@ public final class Stores {
   /** Non-tracking snapshot of a store's current value: the source object for what was not written. */
   Object snapshot(Object value) {
     StoreTarget t = value != null && shape.isObject(value) ? shape.targetOf(value) : null;
-    return snapshotWalk(value, shape.identityMap(), t != null ? t.fam : null);
+    return snapshotWalk(value, t != null ? t.fam : null);
   }
 
   private Object snapshotBacking(StoreTarget t) {
@@ -2114,11 +2136,61 @@ public final class Stores {
     return optHooks != null && optRead(t) ? optHooks.view(t, backing, false) : backing;
   }
 
-  private Object snapshotWalk(Object value, Map<Object, Object> seen, StoreFamily fam) {
+  /**
+   * One snapshot's walk: what each raw became, so an object reached twice is one object, and the raws whose
+   * record is being built. A raw reached again while it is being built is a cycle, and a cycle is built anew:
+   * a kept snapshot inside one would point at the record's last version.
+   */
+  private final class SnapshotRun {
+    final Map<Object, Object> seen = shape.identityMap();
+    final Map<Object, Boolean> building = shape.identityMap();
+    final boolean keep;
+    boolean cycle;
+    /** A backing chained to another store's was crossed, or a record that must say where it came from could not. */
+    boolean coarse;
+
+    SnapshotRun(boolean keep) {
+      this.keep = keep;
+    }
+  }
+
+  /**
+   * A store's value for a reader whose objects track their own fields (the bytecode enhancer's): built as deep
+   * builds it, subscribing to nothing, with each object stamped with the record it was built from. NOT_FINE when
+   * that cannot be said exactly, where a chained backing serves another store's records, and deep is read instead.
+   */
+  Object handOut(Object value) {
+    StoreTarget t0 = value != null && shape.isObject(value) ? shape.targetOf(value) : null;
+    if (t0 == null || !same(t0.px, value) || snapshots == null) {
+      return NOT_FINE;
+    }
+    rt.core.untrack(() -> {
+      walkDeep(t0, shape.identityMap());
+      return null;
+    });
+    SnapshotRun run = new SnapshotRun(true);
+    Object result = rt.core.untrack(() -> snapshotWalk(value, run, t0.fam));
+    return run.cycle || run.coarse ? NOT_FINE : result;
+  }
+
+  /** What handOut answers when a reader has to read deep. */
+  public static final Object NOT_FINE = new Object();
+
+  private Object snapshotWalk(Object value, StoreFamily fam) {
+    if (snapshots == null || value == null || !shape.isObject(value)) {
+      return snapshotWalk(value, new SnapshotRun(false), fam);
+    }
+    SnapshotRun run = new SnapshotRun(true);
+    Object result = snapshotWalk(value, run, fam);
+    return run.cycle ? snapshotWalk(value, new SnapshotRun(false), fam) : result;
+  }
+
+  private Object snapshotWalk(Object value, SnapshotRun run, StoreFamily fam) {
     if (value == null || !shape.isObject(value)) {
       return value;
     }
     Object src = value;
+    StoreTarget found = null;
     for (boolean entry = true;; entry = false) {
       StoreTarget viaView = shape.targetOf(src);
       boolean viaProxy = viaView != null && viaView.v != null;
@@ -2141,6 +2213,10 @@ public final class Stores {
       if (t.fam != null) {
         fam = t.fam;
       }
+      found = t;
+      if (t.ch) {
+        run.coarse = true;
+      }
       Object backing = snapshotBacking(t);
       if (same(backing, src)) {
         break;
@@ -2150,48 +2226,117 @@ public final class Stores {
     if (!shape.isWrappable(src)) {
       return src;
     }
-    Object cached = seen.get(src);
-    return cached != null ? cached : snapshotRecord(src, seen, fam);
+    Object cached = run.seen.get(src);
+    if (cached != null) {
+      if (run.building.containsKey(src)) {
+        run.cycle = true;
+      }
+      return cached;
+    }
+    run.building.put(src, Boolean.TRUE);
+    try {
+      Object result = snapshotRecord(src, run, fam, found);
+      if (!shape.handedFor(result, found)) {
+        run.coarse = true;
+      }
+      return result;
+    } finally {
+      run.building.remove(src);
+    }
   }
 
-  private Object snapshotRecord(Object src, Map<Object, Object> seen, StoreFamily fam) {
+  private Object snapshotRecord(Object src, SnapshotRun run, StoreFamily fam, StoreTarget found) {
+    Map<Object, Object> seen = run.seen;
+    Object[] kept = run.keep ? snapshots.get(src) : null;
+    if (kept != null && kept[1] != found) {
+      // Kept for another store's record over the same object: an object says which record it came from.
+      kept = null;
+    }
+    if (kept != null) {
+      // The record did not change since the last snapshot: it is that snapshot's object if nothing below it did.
+      seen.put(src, kept[0]);
+      int i = 2;
+      boolean same = true;
+      for (Object key : shape.keys(src)) {
+        Object cv = shape.get(src, key);
+        if (cv == null || !shape.isObject(cv)) {
+          continue;
+        }
+        Object walked = snapshotWalk(cv, run, fam);
+        if (i >= kept.length || !same(walked, kept[i++])) {
+          same = false;
+          break;
+        }
+      }
+      if (same && i == kept.length) {
+        return kept[0];
+      }
+      snapshots.remove(src);
+      seen.remove(src);
+    }
+    List<Object> children = run.keep ? new ArrayList<>() : null;
+    Object built = buildRecord(src, run, fam, children);
+    if (run.keep && built != src) {
+      children.add(0, found);
+      children.add(0, built);
+      snapshots.put(src, children.toArray());
+    }
+    return built;
+  }
+
+  private Object buildRecord(Object src, SnapshotRun run, StoreFamily fam, List<Object> children) {
+    Map<Object, Object> seen = run.seen;
     if (isOwned(src)) {
       Object copy = shape.clone(src);
-      seen.put(src, copy);
+      Object shell = shape.shell(copy);
+      seen.put(src, shell);
       for (Object key : shape.keys(src)) {
         Object cv = shape.get(src, key);
         if (cv != null && shape.isObject(cv)) {
-          Object walked = snapshotWalk(cv, seen, fam);
+          Object walked = snapshotWalk(cv, run, fam);
+          if (children != null) {
+            children.add(walked);
+          }
           if (!same(walked, cv)) {
             shape.set(copy, key, walked);
           }
         }
       }
       // An immutable kind of object is built once its copy is filled.
-      Object sealed = shape.seal(copy);
+      Object sealed = shape.seal(copy, shell);
       seen.put(src, sealed);
       return sealed;
     }
     seen.put(src, src);
     Object copy = null;
+    Object shell = null;
     for (Object key : shape.keys(src)) {
       Object cv = shape.get(src, key);
       if (cv == null || !shape.isObject(cv)) {
         continue;
       }
-      Object walked = snapshotWalk(cv, seen, fam);
+      Object walked = snapshotWalk(cv, run, fam);
+      if (children != null) {
+        children.add(walked);
+      }
       if (!same(walked, cv)) {
         if (copy == null) {
           copy = shape.clone(src);
-          seen.put(src, copy);
+          shell = shape.shell(copy);
+          seen.put(src, shell);
         }
         shape.set(copy, key, walked);
       }
     }
     if (copy == null) {
-      return src;
+      if (!shape.copiesWhenHanded(src)) {
+        return src;
+      }
+      // An object stamped with its record is the store's, never the one it was given.
+      copy = shape.clone(src);
+      shell = shape.shell(copy);
     }
-    Object sealed = shape.seal(copy);
+    Object sealed = shape.seal(copy, shell);
     seen.put(src, sealed);
     return sealed;
   }

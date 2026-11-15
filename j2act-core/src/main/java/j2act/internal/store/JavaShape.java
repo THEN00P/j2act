@@ -93,8 +93,42 @@ public final class JavaShape implements StoreShape {
     return raw instanceof Copy ? ((Copy) raw).layout.type : raw.getClass();
   }
 
-  @Override public Object seal(Object copy) {
-    return copy instanceof Copy ? ((Copy) copy).layout.build(((Copy) copy).values.clone()) : copy;
+  /** A bean's instance exists before its fields are filled, so a bean below it that points back finds it. */
+  @Override public Object shell(Object copy) {
+    Object shell = copy instanceof Copy ? ((Copy) copy).layout.shell() : null;
+    return shell != null ? shell : copy;
+  }
+
+  @Override public Object seal(Object copy, Object shell) {
+    if (!(copy instanceof Copy)) {
+      return copy;
+    }
+    Kinds.Layout l = ((Copy) copy).layout;
+    Object[] values = ((Copy) copy).values.clone();
+    return shell != copy ? l.fill(shell, values) : l.build(values);
+  }
+
+  /** A reader compares rows by identity, so a record that did not change is the object it was. */
+  @Override public boolean keepsSnapshots() {
+    return true;
+  }
+
+  /**
+   * A tracked object is stamped with its record, so it is never the object the store was given. And the store's own
+   * copy of an object is always built into one: its record may be gone, as a record nobody reads is let go while
+   * its copy stays in its parent, so the copy is the only sign of whose it is.
+   */
+  @Override public boolean copiesWhenHanded(Object raw) {
+    return raw instanceof Copy || Tracked.class.isAssignableFrom(classOf(raw));
+  }
+
+  @Override public boolean handedFor(Object built, StoreTarget target) {
+    if (!(built instanceof Tracked)) {
+      return true;
+    }
+    Object view = target != null ? target.view() : null;
+    ((Tracked) built).j2act$record(view instanceof BeanView ? view : null);
+    return view instanceof BeanView;
   }
 
   @Override public boolean isArray(Object raw) {
@@ -263,7 +297,7 @@ public final class JavaShape implements StoreShape {
     if (raw instanceof Map) {
       return new MapView<>(this, target);
     }
-    return new BeanView(target, classOf(raw));
+    return new BeanView(this, target, classOf(raw));
   }
 
   @Override public StoreTarget targetOf(Object value) {
@@ -292,7 +326,10 @@ public final class JavaShape implements StoreShape {
       if (draft != null && rt.storeWriting(bean.target)) {
         return draft.copyOf(bean);
       }
-      Object given = rt.deep(bean);
+      Object given = Tracked.class.isAssignableFrom(bean.type) ? rt.handOut(bean) : j2act.internal.signals.Stores.NOT_FINE;
+      if (given == j2act.internal.signals.Stores.NOT_FINE) {
+        given = rt.deep(bean);
+      }
       if (handed != null) {
         handed.check();
         handed.handOut(given);
@@ -300,6 +337,34 @@ public final class JavaShape implements StoreShape {
       return given;
     }
     return value;
+  }
+
+  /** A tracked object read its field name: the reader subscribes to it, and below it to what cannot track itself. */
+  void trackField(BeanView owner, String name) {
+    if (draft != null) {
+      return;
+    }
+    at(owner.target, () -> {
+      below(rt.storeGet(owner.target, name));
+      return null;
+    });
+  }
+
+  private void below(Object value) {
+    if (value instanceof ListView) {
+      StoreTarget t = ((ListView<?>) value).target();
+      int n = rt.storeLength(t);
+      for (int i = 0; i < n; i++) {
+        below(rt.storeGet(t, i));
+      }
+    } else if (value instanceof MapView) {
+      StoreTarget t = ((MapView<?, ?>) value).target();
+      for (Object key : rt.storeKeys(t)) {
+        below(rt.storeGet(t, key));
+      }
+    } else if (value instanceof BeanView && !Tracked.class.isAssignableFrom(((BeanView) value).type)) {
+      rt.deep(value);
+    }
   }
 
   /** What application code gave back, as the store takes it: a draft's copy stands for the row it was copied from. */

@@ -371,4 +371,93 @@ class JavaStoreTest {
     assertEquals(1, second.runs);
     assertEquals("Grace", grace.getName());
   }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void aRecordThatDidNotChangeIsTheObjectItWas() {
+    Object store = shape.create(new ArrayList<>(List.of(new User("Ada", new Address("London", "N1")),
+      new User("Grace", new Address("Arlington", "22201")))));
+    List<User> users = (List<User>) store;
+    shape.<List<User>>update(store, d -> {
+      d.get(0).setName("Ada L.");
+      d.get(1).getAddress().setCity("New York");
+    });
+    rt.flush();
+    User ada = users.get(0);
+    User grace = users.get(1);
+    assertSame(ada, users.get(0), "a written row read twice is one object");
+    assertSame(grace.getAddress(), users.get(1).getAddress());
+
+    shape.<List<User>>update(store, d -> d.get(1).setName("Grace H."));
+    rt.flush();
+    assertSame(ada, users.get(0), "a row nobody wrote since keeps its object");
+    assertNotSame(grace, users.get(1), "a written row is a new object");
+    assertSame(grace.getAddress(), users.get(1).getAddress(), "and what below it did not change stays");
+    assertEquals("Grace H.", users.get(1).getName());
+
+    shape.<List<User>>update(store, d -> d.get(0).getAddress().setCity("Paris"));
+    rt.flush();
+    assertNotSame(ada, users.get(0), "a row whose address changed is a new object");
+    assertEquals("Paris", users.get(0).getAddress().getCity());
+  }
+
+  public static class Node {
+    private String label;
+    private Node next;
+
+    Node() {
+    }
+
+    public String getLabel() {
+      return label;
+    }
+
+    public void setLabel(String label) {
+      this.label = label;
+    }
+
+    public Node getNext() {
+      return next;
+    }
+
+    public void setNext(Node next) {
+      this.next = next;
+    }
+  }
+
+  @Test
+  void aCycleIsBuiltAnewAndPointsAtItself() {
+    Node a = new Node();
+    Node b = new Node();
+    a.setLabel("a");
+    b.setLabel("b");
+    a.setNext(b);
+    b.setNext(a);
+    Object store = shape.create(a);
+    shape.<Node>update(store, d -> d.getNext().setLabel("b2"));
+    rt.flush();
+    Node now = (Node) shape.value(store);
+    assertSame(now, now.getNext().getNext(), "the cycle closes on the object handed out");
+    assertEquals("b2", now.getNext().getLabel());
+    shape.<Node>update(store, d -> d.setLabel("a2"));
+    rt.flush();
+    Node later = (Node) shape.value(store);
+    assertEquals("a2", later.getLabel());
+    assertSame(later, later.getNext().getNext(), "a kept snapshot never points at an older version of the cycle");
+  }
+
+  @Test
+  void aCopyWhoseRecordWasLetGoIsStillBuilt() {
+    Object store = shape.create(new User("Ada", new Address("London", "N1")));
+    shape.<User>update(store, d -> d.getAddress().setCity("Wien"));
+    rt.flush();
+    // Nobody reads the address, so its record goes, and the store's copy of it stays in the user's.
+    java.lang.ref.WeakReference<Object> record = new java.lang.ref.WeakReference<>(rt.storeGet(shape.targetOf(store), "address"));
+    for (int i = 0; i < 50 && record.get() != null; i++) {
+      System.gc();
+    }
+    org.junit.jupiter.api.Assumptions.assumeTrue(record.get() == null, "the collector let it go");
+    User now = (User) shape.value(store);
+    assertEquals("Wien", now.getAddress().getCity());
+  }
 }

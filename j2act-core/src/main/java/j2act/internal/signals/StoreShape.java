@@ -56,11 +56,41 @@ public interface StoreShape {
   void delete(Object owned, Object key);
 
   /**
-   * What a filled copy is once nothing more is written to it: itself, unless the kind of object cannot be
-   * written in place. A Java record's copy is mutable components until here, where the record is built.
+   * What stands for a copy while it is filled, so an object below it that points back at it points at what the
+   * reader gets: the copy itself, unless the kind of object cannot be written in place.
    */
-  default Object seal(Object copy) {
+  default Object shell(Object copy) {
     return copy;
+  }
+
+  /**
+   * What a filled copy is once nothing more is written to it, given its shell: the copy itself, unless the kind of
+   * object cannot be written in place. A Java bean's copy is written into its shell here; a record is built.
+   */
+  default Object seal(Object copy, Object shell) {
+    return copy;
+  }
+
+  /**
+   * Whether a snapshot of a record that did not change since the last one is the object that one built. Solid
+   * builds a new one each time; a Java reader compares rows by identity and keys them by it, so the Java seam
+   * keeps them: one object per record and version.
+   */
+  default boolean keepsSnapshots() {
+    return false;
+  }
+
+  /** Whether a snapshot copies raw even when nothing in it changed: an object that will be stamped with its record. */
+  default boolean copiesWhenHanded(Object raw) {
+    return false;
+  }
+
+  /**
+   * Tells a snapshot's object which record it was built from, target, null when it has none. False when the object
+   * needed to know and there was none to say.
+   */
+  default boolean handedFor(Object built, StoreTarget target) {
+    return true;
   }
 
   /** A map keyed by a raw's identity that does not keep its keys alive. */

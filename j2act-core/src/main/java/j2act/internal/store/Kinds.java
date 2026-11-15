@@ -108,11 +108,27 @@ public final class Kinds {
       return values;
     }
 
+    /** A bean's instance before its fields are written; null for a record, which exists only once built. */
+    Object shell() {
+      return bean != null && rec == null ? bean.newInstance() : null;
+    }
+
     Object build(Object[] values) {
-      if (rec != null) {
-        return rec.build(values);
+      return rec != null ? buildRecord(values) : fill(bean.newInstance(), values);
+    }
+
+    private Object buildRecord(Object[] values) {
+      for (int i = 0; i < values.length; i++) {
+        if (values[i] instanceof Copy) {
+          throw new IllegalStateException(type.getName() + "." + names[i] + " leads back to the record holding it, and a"
+            + " record exists only once its components do: a cycle has to go through a class with setters");
+        }
       }
-      Object o = bean.newInstance();
+      return rec.build(values);
+    }
+
+    /** Writes a bean's fields into o. */
+    Object fill(Object o, Object[] values) {
       for (int i = 0; i < fields.length; i++) {
         Object v = values[i];
         if (v != null && !fields[i].getType().isPrimitive() && !fields[i].getType().isInstance(v)) {
@@ -248,7 +264,7 @@ public final class Kinds {
       }
       for (Class<?> c : chain) {
         for (Field f : c.getDeclaredFields()) {
-          if (Modifier.isStatic(f.getModifiers()) || f.isSynthetic()) {
+          if (Modifier.isStatic(f.getModifiers()) || f.isSynthetic() || f.getName().startsWith(Tracked.PREFIX)) {
             continue;
           }
           f.setAccessible(true);
