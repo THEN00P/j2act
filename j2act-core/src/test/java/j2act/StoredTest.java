@@ -141,6 +141,47 @@ class StoredTest {
     }
   }
 
+  static final java.util.concurrent.CompletableFuture<Void>[] HELD = new java.util.concurrent.CompletableFuture[1];
+
+  static final class GuessedCollections extends LiveComponent {
+    @Override protected View setup() {
+      // var infers what the overload returns: a List, a Map and a Set, which is what the store hands out.
+      var tags = Reactive.createOptimisticStore(new ArrayList<String>());
+      var counts = Reactive.createOptimisticStore(new java.util.HashMap<String, Integer>());
+      var picked = Reactive.createOptimisticStore(new java.util.HashSet<Long>());
+      var guess = action((String tag) -> {
+        tags.update(d -> d.add(tag));
+        counts.update(d -> d.put(tag, 1));
+        picked.update(d -> d.add(7L));
+        HELD[0].join();
+        return null;
+      });
+      return () -> T.page("t", T.div(
+        T.span("tags:" + String.join(",", tags.get()) + ";counts:" + counts.get() + ";picked:" + picked.get() + ";"),
+        T.button("guess").onClick(e -> guess.run("x"))));
+    }
+  }
+
+  @Test
+  void anOptimisticStoreOverACollectionIsThatCollectionsInterface() {
+    HELD[0] = new java.util.concurrent.CompletableFuture<>();
+    try (Harness h = new Harness(GuessedCollections::new)) {
+      String html = h.load();
+      assertTrue(html.contains("tags:;counts:{};picked:[];"), html);
+      h.connect();
+
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "guess"));
+      String guessed = h.awaitPatch(from, p -> p.contains("tags:x;counts:{x=1};picked:[7];")).get("html");
+      assertTrue(guessed.contains("tags:x;counts:{x=1};picked:[7];"), guessed);
+
+      from = h.conn.size();
+      HELD[0].complete(null);
+      String undone = h.awaitPatch(from, p -> p.contains("tags:;")).get("html");
+      assertTrue(undone.contains("tags:;counts:{};picked:[];"), "the guesses go when the action ends: " + undone);
+    }
+  }
+
   static final List<Row> SAVED = new java.util.concurrent.CopyOnWriteArrayList<>();
   static final java.util.concurrent.CompletableFuture<Void>[] GATE = new java.util.concurrent.CompletableFuture[1];
 

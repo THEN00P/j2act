@@ -123,10 +123,35 @@ public final class Reactive {
     return own(seedLoadingValue ? store.seedLoadingValue() : store);
   }
 
+  /** A writable derived store over a map, written as a Map. */
+  public static <K, V> Stored<java.util.Map<K, V>> createStore(Consumer<java.util.Map<K, V>> derive,
+      java.util.Map<K, V> seed) {
+    return own(new Stored<>(derive, seed));
+  }
+
+  /** A writable derived store over a set, written as a Set. */
+  public static <E> Stored<java.util.Set<E>> createStore(Consumer<java.util.Set<E>> derive, java.util.Set<E> seed) {
+    return own(new Stored<>(derive, seed));
+  }
+
   /** A writable derived store over a list, with Solid's { seedLoadingValue }. */
   public static <E> Stored<java.util.List<E>> createStore(Consumer<java.util.List<E>> derive, java.util.List<E> seed,
       boolean seedLoadingValue) {
     Stored<java.util.List<E>> store = new Stored<>(derive, seed);
+    return own(seedLoadingValue ? store.seedLoadingValue() : store);
+  }
+
+  /** A writable derived store over a map, with Solid's { seedLoadingValue }. */
+  public static <K, V> Stored<java.util.Map<K, V>> createStore(Consumer<java.util.Map<K, V>> derive,
+      java.util.Map<K, V> seed, boolean seedLoadingValue) {
+    Stored<java.util.Map<K, V>> store = new Stored<>(derive, seed);
+    return own(seedLoadingValue ? store.seedLoadingValue() : store);
+  }
+
+  /** A writable derived store over a set, with Solid's { seedLoadingValue }. */
+  public static <E> Stored<java.util.Set<E>> createStore(Consumer<java.util.Set<E>> derive, java.util.Set<E> seed,
+      boolean seedLoadingValue) {
+    Stored<java.util.Set<E>> store = new Stored<>(derive, seed);
     return own(seedLoadingValue ? store.seedLoadingValue() : store);
   }
 
@@ -189,6 +214,21 @@ public final class Reactive {
    * touched are guessed.
    */
   public static <T> Stored<T> createOptimisticStore(T initial) {
+    return own(new Stored<>(initial, null, null, true));
+  }
+
+  /** An optimistic store over a list: get() is a List, as for {@link #createStore(java.util.List)}. */
+  public static <E> Stored<java.util.List<E>> createOptimisticStore(java.util.List<E> initial) {
+    return own(new Stored<>(initial, null, null, true));
+  }
+
+  /** An optimistic store over a map: get() is a Map. */
+  public static <K, V> Stored<java.util.Map<K, V>> createOptimisticStore(java.util.Map<K, V> initial) {
+    return own(new Stored<>(initial, null, null, true));
+  }
+
+  /** An optimistic store over a set: get() is a Set. */
+  public static <E> Stored<java.util.Set<E>> createOptimisticStore(java.util.Set<E> initial) {
     return own(new Stored<>(initial, null, null, true));
   }
 
