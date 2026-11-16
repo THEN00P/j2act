@@ -18,7 +18,8 @@ import java.util.function.Supplier;
 
 /**
  * Port of @solidjs/signals map.ts at 9449845: mapArray and repeat, which keep a row's owner across re-runs
- * and dispose only rows that left. Solid's `===` on items is equals here, as it is for signals.
+ * and dispose only rows that left. Item/key matching keeps Java equals consistently with the
+ * HashMap/HashSet indexes below. This selects row ownership; row signal writes use ValueEquality.
  */
 final class MapArray {
   private static final Core.NodeOptions PURE = pureOptions();
