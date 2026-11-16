@@ -309,26 +309,39 @@ public final class Stores {
 
   /** A shallow store's ingested record: raw by contract (values served verbatim, slots replaced by reference). */
   void markRawOne(Object v) {
+    markRawOne(v, null);
+  }
+
+  /** key: where v sits in the shallow store, for the message; null when not known. */
+  private void markRawOne(Object v, Object key) {
     if (shape.isWrappable(v)) {
       if (shape.targetOf(v) != null) {
         return;
       }
       if (lookupTarget(v, null) != null) {
-        throw new IllegalStateException("shallow store: an ingested record is already tracked as a deep store — one value"
-          + " cannot present both wrapped and raw");
+        throw new IllegalStateException(sharedRow(v, key));
       }
       rawMark(v);
     }
   }
 
+  /** Why a row cannot go into a shallow store (R41/R44: one value is never both wrapped and raw), and what to do. */
+  private static String sharedRow(Object row, Object key) {
+    return "A shallow store holds its rows as they are, by reference, and the " + (key != null ? "row at " + key : "row")
+      + " (a " + row.getClass().getSimpleName() + ") is an object another store already tracks field by field. One"
+      + " object cannot be both, since that store would stop seeing changes to it. This happens when the rows come"
+      + " from another store's get() before anything wrote them: those are that store's own objects. Give the shallow"
+      + " store objects of its own: copies of the rows, or the rows as they were loaded (ADR 0035).";
+  }
+
   void markRawIngest(Object container) {
     if (shape.isArray(container)) {
       for (int i = 0, len = shape.length(container); i < len; i++) {
-        markRawOne(shape.get(container, i));
+        markRawOne(shape.get(container, i), i);
       }
     } else {
       for (Object k : shape.keys(container)) {
-        markRawOne(shape.get(container, k));
+        markRawOne(shape.get(container, k), k);
       }
     }
   }
@@ -1532,7 +1545,7 @@ public final class Stores {
     }
     rawSet(pb, key, uv);
     if (target.s && uv != null && shape.isObject(uv)) {
-      markRawOne(uv);
+      markRawOne(uv, key);
     }
     if (!draft) {
       notifyWrites(target);
@@ -1636,11 +1649,16 @@ public final class Stores {
     if (shallow) {
       // Never both deep-wrapped and raw (R41/R44): a value already tracked as a deep store cannot be ingested shallow.
       StoreTarget existing = lookupTarget(value, null);
+      String what = shape.isArray(value) ? "list" : "map";
       if (existing != null && !existing.s) {
-        throw new IllegalStateException("createStore({ shallow }): value is already tracked as a deep store");
+        throw new IllegalStateException("A shallow store was given a " + what + " another store already tracks field by"
+          + " field, and one object cannot be both, since that store would stop seeing changes to it. Give the shallow"
+          + " store a new " + what + " holding objects of its own, such as copies of the rows (ADR 0035).");
       }
       if (shape.targetOf(value) != null) {
-        throw new IllegalStateException("createStore({ shallow }): value is already a store proxy");
+        throw new IllegalStateException("A shallow store was given another store's " + what + " itself, as its get()"
+          + " hands it out. Give the shallow store a new " + what + " holding objects of its own, such as copies of"
+          + " the rows: the rows another store hands out before anything wrote them are its own objects too (ADR 0035).");
       }
     }
     Object proxy = wrap(value, null, null, null);

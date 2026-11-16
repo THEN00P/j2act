@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import j2act.internal.signals.Runtime;
 import java.util.ArrayList;
@@ -646,5 +647,30 @@ class JavaStoreTest {
     assertEquals(3, size.last);
     assertEquals(1, first.runs);
     assertEquals("two", two.getLabel(), "what was given is never written");
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void aShallowStoreRefusesAnotherStoresRowsAndSaysWhatToDo() {
+    Object deep = shape.create(new ArrayList<>(List.of(new Row(1, "one"), new Row(2, "two"))));
+    List<Row> rows = (List<Row>) deep;
+    new Reader<>(() -> rows.get(0).getLabel() + rows.get(1).getLabel());
+
+    IllegalStateException list = assertThrows(IllegalStateException.class, () -> shape.create(rows, true));
+    assertTrue(list.getMessage().contains("another store's list itself"), list.getMessage());
+
+    IllegalStateException row = assertThrows(IllegalStateException.class,
+      () -> shape.create(new ArrayList<>(rows), true));
+    assertTrue(row.getMessage().contains("row at 0 (a Row)") && row.getMessage().contains("copies of the rows"),
+      row.getMessage());
+
+    List<Row> copies = new ArrayList<>();
+    for (Row r : rows) {
+      copies.add(new Row(r.getId(), r.getLabel()));
+    }
+    Object shallow = shape.create(copies, true);
+    IllegalStateException written = assertThrows(IllegalStateException.class,
+      () -> shape.<List<Row>>update(shallow, d -> d.set(1, rows.get(0))));
+    assertTrue(written.getMessage().contains("row at 1"), written.getMessage());
   }
 }
