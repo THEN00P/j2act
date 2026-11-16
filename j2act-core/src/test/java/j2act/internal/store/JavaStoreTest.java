@@ -507,6 +507,37 @@ class JavaStoreTest {
     return new java.lang.ref.WeakReference<>(store);
   }
 
+  @Test
+  void aMapsEntrySetKeySetAndValuesStayLive() {
+    Map<String, Integer> given = new LinkedHashMap<>();
+    given.put("a", 1);
+    Object store = shape.create(given);
+    @SuppressWarnings("unchecked")
+    Map<String, Integer> map = (Map<String, Integer>) shape.value(store);
+    java.util.Set<Map.Entry<String, Integer>> entries = map.entrySet();
+    java.util.Set<String> keys = map.keySet();
+    java.util.Collection<Integer> values = map.values();
+    Reader<String> walked = new Reader<>(() -> keys.toString());
+
+    shape.<Map<String, Integer>>update(store, d -> d.put("b", 2));
+    rt.flush();
+    assertEquals(2, entries.size());
+    assertEquals("[a, b]", keys.toString());
+    assertEquals("[1, 2]", values.toString());
+    assertEquals("[a, b]", walked.last, "a key set taken before the write subscribes when it is walked");
+  }
+
+  /** A getter declared by an interface the stored bean implements. */
+  public interface Named {
+    String getName();
+  }
+
+  @Test
+  void aGetterAnInterfaceDeclaresNamesTheFieldOfItsName() {
+    j2act.Getter<Named, String> getter = Named::getName;
+    assertEquals("name", Getters.property(getter));
+  }
+
   public static class Card {
     private String title;
     private java.util.Set<String> labels = new java.util.LinkedHashSet<>();

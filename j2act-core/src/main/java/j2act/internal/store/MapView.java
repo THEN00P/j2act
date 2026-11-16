@@ -65,14 +65,15 @@ public final class MapView<K, V> extends AbstractMap<K, V> implements StoreView 
     });
   }
 
+  /** Live, as a map's entry set is: each size() and walk reads the keys then, and subscribes to them. */
   @Override public Set<Entry<K, V>> entrySet() {
-    List<Object> keys = shape.at(target, () -> shape.rt.storeKeys(target));
     return new AbstractSet<>() {
       @Override public int size() {
-        return keys.size();
+        return MapView.this.size();
       }
 
       @Override public Iterator<Entry<K, V>> iterator() {
+        List<Object> keys = shape.at(target, () -> shape.rt.storeKeys(target));
         Iterator<Object> it = keys.iterator();
         return new Iterator<>() {
           private Object last;

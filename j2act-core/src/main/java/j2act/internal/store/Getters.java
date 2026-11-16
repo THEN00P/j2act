@@ -42,6 +42,11 @@ public final class Getters {
   private static String field(Class<?> type, String method) {
     String bare = method.startsWith("get") && method.length() > 3 ? decapitalize(method.substring(3))
       : method.startsWith("is") && method.length() > 2 ? decapitalize(method.substring(2)) : method;
+    if (type.isInterface()) {
+      // A getter an interface declares, Named::getName: the bean that implements it is not known here, so the field
+      // is the one the getter's name says.
+      return bare;
+    }
     for (Class<?> c = type; c != null && c != Object.class; c = c.getSuperclass()) {
       for (String candidate : new String[] {bare, method}) {
         try {
