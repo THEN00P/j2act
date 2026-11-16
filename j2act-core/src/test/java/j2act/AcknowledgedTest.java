@@ -596,6 +596,10 @@ class AcknowledgedTest {
       next.await(0, m -> "patch".equals(m.get("type")) && m.get("html").contains("count:1;"));
       h.engine.onMessage(next, "{\"type\":\"seen\",\"n\":" + lastNumber(next) + "}");
       next.await(0, m -> "patch".equals(m.get("type")) && m.get("html").contains("count:6;"));
+      // The lane counts a patch just after sending it, so the count is read once the lane has moved on.
+      CompletableFuture<Void> counted = new CompletableFuture<>();
+      h.engine.liveTab(h.token).post(() -> counted.complete(null));
+      Harness.eventually(counted::isDone, "the lane moved on");
       assertEquals(afterFirst + 1, h.engine.stats.patches.get(), "one more patch for all five");
     }
   }
