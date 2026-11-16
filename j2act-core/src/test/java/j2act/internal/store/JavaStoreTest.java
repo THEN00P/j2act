@@ -538,6 +538,20 @@ class JavaStoreTest {
     assertEquals("name", Getters.property(getter));
   }
 
+  public static class Base {
+    String name;
+  }
+
+  public static class Hiding extends Base {
+    String name;
+  }
+
+  @Test
+  void aBeanWhoseFieldHidesAnotherOfItsNameIsRefused() {
+    IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> shape.create(new Hiding()));
+    assertTrue(e.getMessage().contains("Hiding.name hides") && e.getMessage().contains("Rename one"), e.getMessage());
+  }
+
   public static class Card {
     private String title;
     private java.util.Set<String> labels = new java.util.LinkedHashSet<>();

@@ -257,6 +257,7 @@ public final class Kinds {
       || name.startsWith("sun.") || java.util.Collection.class.isAssignableFrom(type)) {
       return new Info(Kind.OPAQUE, null);
     }
+    String shadowed = null;
     try {
       Constructor<?> constructor = type.getDeclaredConstructor();
       constructor.setAccessible(true);
@@ -271,14 +272,22 @@ public final class Kinds {
             continue;
           }
           f.setAccessible(true);
-          bean.fields.putIfAbsent(f.getName(), f);
+          Field hidden = bean.fields.putIfAbsent(f.getName(), f);
+          if (hidden != null && shadowed == null) {
+            shadowed = c.getName() + "." + f.getName() + " hides " + hidden.getDeclaringClass().getName() + "."
+              + f.getName() + ": a store keys a bean's fields by name, so it cannot hold " + type.getName()
+              + ". Rename one of them (ADR 0035)";
+          }
         }
       }
-      return new Info(Kind.BEAN, bean);
+      if (shadowed == null) {
+        return new Info(Kind.BEAN, bean);
+      }
     } catch (NoSuchMethodException | RuntimeException e) {
       // No constructor without arguments, or a module that does not open the class: one value, replaced whole.
       return new Info(Kind.OPAQUE, null);
     }
+    throw new IllegalArgumentException(shadowed);
   }
 
   static Object read(Field field, Object bean) {
