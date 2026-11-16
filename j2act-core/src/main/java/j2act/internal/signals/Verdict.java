@@ -5,7 +5,6 @@ import static j2act.internal.signals.Constants.*;
 
 import j2act.internal.signals.Errors.NotReadyError;
 import j2act.internal.signals.Scheduler.Transaction;
-import java.util.Objects;
 import java.util.function.Supplier;
 
 /**

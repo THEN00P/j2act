@@ -118,9 +118,9 @@ A value that cannot be written is warned about once, with the binding's own mess
 
 ## Equality
 
-Nodes keep comparing with `Objects.equals` (ADR 0033). Inside a store and in `reconcile`, beans and records are compared by identity and matched by key, and only values by `equals`. That reaches into the engine in one place: a staged value equal to the committed one counts as writes that netted, which Solid asks with `===`, and for a store's slot nodes the port asks it by identity too. With `equals` there, a reader held with a reload of rows that compare by id was served the old rows and never ran again.
+Nodes compare values as ADR 0033 says, by `equals` and all of their state. Inside a store and in `reconcile`, beans and records are compared by identity and matched by key, and only values by `equals`. That reaches into the engine in one place: a staged value equal to the committed one counts as writes that netted, which Solid asks with `===`, and for a store's slot nodes the port asks it by identity too. With `equals` there, a reader held with a reload of rows that compare by id was served the old rows and never ran again.
 
-That matters for entities whose `equals` compares ids. Today a refreshed list of them equals the old list and the page does not update. A check with the harness showed it: the reload ran and no patch went out, while the same page without that `equals` got its patch. A projection does not have this problem. Whether signals and memos should is its own decision.
+That matters for entities whose `equals` compares ids: a refreshed list of them equalled the old list and the page did not update. Signals and memos now compare by `equals` and all of an object's state (ADR 0033, `ValueEquality`); a store's slot nodes keep comparing by identity.
 
 ## What an application can get wrong
 
