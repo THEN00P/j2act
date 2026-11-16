@@ -20,6 +20,9 @@ public final class Notes extends ComponentTag {
   public static final class Box<T> {
   }
 
+  /** A field's declared type, which a diamond leaves to it (ADR 0035). */
+  final Box<List<Note>> field = Keys.createTyped(new ArrayList<>());
+
   @Override public View setup() {
     var notes = createDraft();
     var summary = createDraft();

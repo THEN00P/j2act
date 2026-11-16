@@ -490,6 +490,23 @@ class JavaStoreTest {
     assertEquals("Wien", now.getAddress().getCity());
   }
 
+  @Test
+  void aStoreThatWasReadAfterAWriteIsCollectedOnceDropped() {
+    java.lang.ref.WeakReference<Object> dropped = readAndDrop();
+    for (int i = 0; i < 50 && dropped.get() != null; i++) {
+      System.gc();
+    }
+    assertEquals(null, dropped.get(), "the kept snapshot holds neither the store nor the object it was built from");
+  }
+
+  private java.lang.ref.WeakReference<Object> readAndDrop() {
+    Object store = shape.create(new User("Ada", new Address("London", "N1")));
+    shape.<User>update(store, d -> d.getAddress().setCity("Wien"));
+    rt.flush();
+    assertEquals("Wien", ((User) shape.value(store)).getAddress().getCity());
+    return new java.lang.ref.WeakReference<>(store);
+  }
+
   public static class Card {
     private String title;
     private java.util.Set<String> labels = new java.util.LinkedHashSet<>();

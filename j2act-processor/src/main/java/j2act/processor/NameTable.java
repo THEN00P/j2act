@@ -11,6 +11,10 @@ import javax.annotation.processing.Filer;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.ArrayType;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.Elements;
 import javax.tools.FileObject;
 import javax.tools.StandardLocation;
@@ -75,8 +79,9 @@ final class NameTable {
           continue;
         }
         if (kind == ElementKind.FIELD) {
+          String declared = fieldValueType(member.asType());
           for (Node child : node.children) {
-            record(binary, member.getSimpleName().toString(), null, child, type, entries, repeated);
+            record(binary, member.getSimpleName().toString(), null, declared, child, type, entries, repeated);
           }
         } else {
           scan(binary, node, type, entries, repeated);
@@ -91,14 +96,14 @@ final class NameTable {
         continue;
       }
       if (child.kind == Node.Kind.VAR && child.body != null) {
-        record(binary, child.name, child.generic, child.body, type, entries, repeated);
+        record(binary, child.name, child.generic, null, child.body, type, entries, repeated);
       }
       scan(binary, child, type, entries, repeated);
     }
   }
 
   /** Finds the create* call of a value, under any builder calls on it. */
-  private void record(String binary, String name, String declared, Node value, TypeElement type,
+  private void record(String binary, String name, String declared, String resolved, Node value, TypeElement type,
       Map<String, String> entries, Set<String> repeated) {
     for (Node at = value; at != null && at.kind == Node.Kind.CALL; at = at.receiver) {
       if (at.name.startsWith("create")) {
@@ -106,11 +111,61 @@ final class NameTable {
         if (entries.containsKey(key)) {
           repeated.add(key);
         }
-        String valueType = valueType(declared, at, type);
+        String valueType = resolved != null ? resolved : valueType(declared, at, type);
         entries.put(key, valueType == null ? name : name + " " + valueType);
         return;
       }
     }
+  }
+
+  /**
+   * A field's value type, the first type argument of its declared type, Stored<List<Todo>> giving List<Todo>: javac
+   * has worked out a field's type by now, so it comes from the field, in the form valueType gives. Null for none.
+   */
+  private String fieldValueType(TypeMirror declared) {
+    if (!(declared instanceof DeclaredType) || ((DeclaredType) declared).getTypeArguments().size() != 1) {
+      return null;
+    }
+    StringBuilder out = new StringBuilder();
+    return binary(((DeclaredType) declared).getTypeArguments().get(0), out) ? out.toString() : null;
+  }
+
+  private boolean binary(TypeMirror type, StringBuilder out) {
+    if (type instanceof WildcardType) {
+      TypeMirror bound = ((WildcardType) type).getExtendsBound();
+      if (bound == null) {
+        out.append("java.lang.Object");
+        return true;
+      }
+      return binary(bound, out);
+    }
+    if (type instanceof ArrayType) {
+      boolean ok = binary(((ArrayType) type).getComponentType(), out);
+      out.append("[]");
+      return ok;
+    }
+    if (type.getKind().isPrimitive()) {
+      out.append(type);
+      return true;
+    }
+    if (!(type instanceof DeclaredType)) {
+      return false;
+    }
+    DeclaredType declared = (DeclaredType) type;
+    out.append(elements.getBinaryName((TypeElement) declared.asElement()));
+    if (!declared.getTypeArguments().isEmpty()) {
+      out.append('<');
+      for (int i = 0; i < declared.getTypeArguments().size(); i++) {
+        if (i > 0) {
+          out.append(',');
+        }
+        if (!binary(declared.getTypeArguments().get(i), out)) {
+          return false;
+        }
+      }
+      out.append('>');
+    }
+    return true;
   }
 
   /** The value's type as written, resolved to binary names, or null when the source does not write it. */

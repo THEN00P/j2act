@@ -123,7 +123,9 @@ public final class Stores {
 
   /**
    * What the last snapshot built for a raw, when the shape keeps snapshots: the object, then what each object
-   * key of the raw walked to. A write to the raw drops it; a key that walks to something else rebuilds it.
+   * key of the raw walked to. A write to the raw drops it; a key that walks to something else rebuilds it. Each is
+   * held weakly: the target holds the raw, and so would keep its own key, and an object nobody holds any more has
+   * no identity left to keep, so it is built again.
    */
   private Map<Object, Object[]> snapshots;
 
@@ -2404,13 +2406,14 @@ public final class Stores {
   private Object snapshotRecord(Object src, SnapshotRun run, StoreFamily fam, StoreTarget found) {
     Map<Object, Object> seen = run.seen;
     Object[] kept = run.keep ? snapshots.get(src) : null;
-    if (kept != null && kept[1] != found) {
-      // Kept for another store's record over the same object: an object says which record it came from.
+    Object keptBuilt = kept != null ? held(kept[0]) : null;
+    if (kept != null && (keptBuilt == null || held(kept[1]) != found)) {
+      // Collected, or kept for another store's record over the same object: an object says which record it came from.
       kept = null;
     }
     if (kept != null) {
       // The record did not change since the last snapshot: it is that snapshot's object if nothing below it did.
-      seen.put(src, kept[0]);
+      seen.put(src, keptBuilt);
       int i = 2;
       boolean same = true;
       for (Object key : shape.keys(src)) {
@@ -2419,13 +2422,13 @@ public final class Stores {
           continue;
         }
         Object walked = snapshotWalk(cv, run, fam);
-        if (i >= kept.length || !same(walked, kept[i++])) {
+        if (i >= kept.length || !same(walked, held(kept[i++]))) {
           same = false;
           break;
         }
       }
       if (same && i == kept.length) {
-        return kept[0];
+        return keptBuilt;
       }
       snapshots.remove(src);
       seen.remove(src);
@@ -2435,9 +2438,17 @@ public final class Stores {
     if (run.keep && built != src) {
       children.add(0, found);
       children.add(0, built);
-      snapshots.put(src, children.toArray());
+      Object[] entry = new Object[children.size()];
+      for (int i = 0; i < entry.length; i++) {
+        entry[i] = new java.lang.ref.WeakReference<>(children.get(i));
+      }
+      snapshots.put(src, entry);
     }
     return built;
+  }
+
+  private static Object held(Object ref) {
+    return ((java.lang.ref.WeakReference<?>) ref).get();
   }
 
   private Object buildRecord(Object src, SnapshotRun run, StoreFamily fam, List<Object> children) {
