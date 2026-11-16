@@ -234,6 +234,34 @@ class JavaStoreTest {
   }
 
   @Test
+  void devModeReadsBeansWithNullFields() {
+    List<String> reports = new ArrayList<>();
+    shape.checkMutations(reports::add);
+    User nobody = new User(null, null);
+    nobody.getTags().add(null);
+    Object store = shape.create(nobody);
+    assertEquals(null, ((User) shape.value(store)).getName());
+    shape.<User>update(store, d -> d.setName("Ada"));
+    assertEquals("Ada", ((User) shape.value(store)).getName());
+    assertEquals(List.of(), reports);
+  }
+
+  @Test
+  void anUpdateInsideAnotherStoresUpdateKeepsTheOuterStoresChanges() {
+    Object one = shape.create(new User("one", new Address("London", "N1")));
+    Object two = shape.create(new User("two", new Address("Wien", "1010")));
+    shape.<User>update(one, d -> {
+      d.setName("ONE");
+      d.getAddress().setCity("Paris");
+      shape.<User>update(two, e -> e.setName("TWO"));
+    });
+    rt.flush();
+    assertEquals("ONE", ((User) shape.value(one)).getName());
+    assertEquals("Paris", ((User) shape.value(one)).getAddress().getCity());
+    assertEquals("TWO", ((User) shape.value(two)).getName());
+  }
+
+  @Test
   void devModeReportsABeanChangedOutsideUpdate() {
     List<String> reports = new ArrayList<>();
     shape.checkMutations(reports::add);

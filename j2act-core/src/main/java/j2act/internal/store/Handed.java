@@ -50,15 +50,19 @@ final class Handed {
   void handOut(Object root) {
     Map<Object, Boolean> walked = new IdentityHashMap<>();
     ArrayDeque<Object> todo = new ArrayDeque<>();
-    todo.add(root);
+    if (root != null) {
+      todo.add(root);
+    }
     while (!todo.isEmpty() && walked.size() < WALKED) {
       Object o = todo.poll();
-      if (o == null || walked.put(o, Boolean.TRUE) != null) {
+      if (walked.put(o, Boolean.TRUE) != null) {
         continue;
       }
       if (o instanceof List && !(o instanceof StoreView)) {
         for (Object e : (List<?>) o) {
-          todo.add(e);
+          if (e != null) {
+            todo.add(e);
+          }
         }
       } else if (Kinds.of(o) == Kinds.Kind.BEAN && !opaque.test(o)) {
         Field[] fields = Kinds.bean(o.getClass()).fields.values().toArray(new Field[0]);
@@ -73,7 +77,10 @@ final class Handed {
           }
         }
         for (Field f : fields) {
-          todo.add(Kinds.read(f, o));
+          Object value = Kinds.read(f, o);
+          if (value != null) {
+            todo.add(value);
+          }
         }
       }
     }

@@ -78,10 +78,17 @@ final class Draft {
     return e.copy;
   }
 
-  /** Writes what the lambda changed. A write may hand out more copies, so the list is walked as it grows. */
+  /**
+   * Writes what the lambda changed. A write may hand out more copies, so the list is walked as it grows. An update
+   * inside another store's update shares this draft, and writes only its own store: the outer store's copies are
+   * left as they are, to be written when the outer update returns.
+   */
   void flush() {
     for (int n = 0; n < entries.size(); n++) {
       Entry e = entries.get(n);
+      if (!shape.rt.storeWriting(e.view.target)) {
+        continue;
+      }
       for (int i = 0; i < e.fields.length; i++) {
         Object now = Kinds.read(e.fields[i], e.copy);
         Object was = e.handed[i];
