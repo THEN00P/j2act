@@ -288,6 +288,9 @@ class TrackedStoreTest {
   // ---- the same app twice: plain classes (dev) and tracked ones (built)
 
   /** One app: a list of items, its readers, and writes, over one kind of item. */
+  /** What dev mode's check of handed-out objects reported: a draft is always what changes, so nothing. */
+  private final List<String> reports = new ArrayList<>();
+
   private final class App<I> {
     final Object store;
     final List<Reader<String>> readers = new ArrayList<>();
@@ -323,6 +326,7 @@ class TrackedStoreTest {
   private long trackedRuns;
 
   private void runSeed(int seed) {
+    shape.checkMutations(reports::add);
     Random r = new Random(seed);
     int rows = 1 + r.nextInt(4);
     // A reader reads one part of one row, or the size, or every row's label.
@@ -354,12 +358,44 @@ class TrackedStoreTest {
     App<TItem> tracked = new App<>(i -> new TItem("l" + i, i, new Tag("t" + i)), rows, trackedReads);
     String steps = "";
     for (int step = 0; step < 25; step++) {
-      int op = r.nextInt(8);
+      int op = r.nextInt(11);
       int at = r.nextInt(4);
-      String value = "v" + r.nextInt(3);
-      steps += op + "@" + at + "=" + value + " ";
-      shape.<List<Item>>update(plain.store, d -> plainOp(d, op, at, value));
-      shape.<List<TItem>>update(tracked.store, d -> trackedOp(d, op, at, value));
+      String value = r.nextInt(5) == 0 ? null : "v" + r.nextInt(3);
+      // One app's update inside the other's, before or after its own change, or the two one after the other.
+      int nest = r.nextInt(5);
+      steps += op + "@" + at + "=" + value + (nest < 4 ? "/n" + nest : "") + " ";
+      Runnable inPlain = () -> shape.<List<Item>>update(plain.store, d -> plainOp(d, op, at, value));
+      Runnable inTracked = () -> shape.<List<TItem>>update(tracked.store, d -> trackedOp(d, op, at, value));
+      switch (nest) {
+        case 0:
+          shape.<List<Item>>update(plain.store, d -> {
+            plainOp(d, op, at, value);
+            inTracked.run();
+          });
+          break;
+        case 1:
+          shape.<List<Item>>update(plain.store, d -> {
+            inTracked.run();
+            plainOp(d, op, at, value);
+          });
+          break;
+        case 2:
+          shape.<List<TItem>>update(tracked.store, d -> {
+            trackedOp(d, op, at, value);
+            inPlain.run();
+          });
+          break;
+        case 3:
+          shape.<List<TItem>>update(tracked.store, d -> {
+            inPlain.run();
+            trackedOp(d, op, at, value);
+          });
+          break;
+        default:
+          inPlain.run();
+          inTracked.run();
+          break;
+      }
       rt.flush();
       if (Boolean.getBoolean("tracked.gc")) {
         System.gc();
@@ -371,6 +407,7 @@ class TrackedStoreTest {
         assertEquals(p.last, t.last, where);
         assertTrue(t.runs <= p.runs, "tracked ran " + t.runs + " times, plain " + p.runs + ": " + where);
       }
+      assertEquals(List.of(), reports, "seed " + seed + ", steps " + steps);
     }
     for (int n = 0; n < plain.readers.size(); n++) {
       plainRuns += plain.readers.get(n).runs;
@@ -410,7 +447,14 @@ class TrackedStoreTest {
     switch (op) {
       case 0: i.setLabel(value); break;
       case 1: i.setCount(i.getCount() + 1); break;
-      case 2: i.getTag().setName(value); break;
+      case 2:
+        if (i.getTag() != null) {
+          i.getTag().setName(value);
+        }
+        break;
+      case 8: i.setTag(null); break;
+      case 9: i.setLabel(null); break;
+      case 10: i.getNotes().add(null); break;
       case 3: i.getNotes().add(value); break;
       case 4: i.setTag(new Tag(value)); break;
       case 5: d.remove(at % d.size()); break;
@@ -430,7 +474,14 @@ class TrackedStoreTest {
     switch (op) {
       case 0: i.setLabel(value); break;
       case 1: i.setCount(i.getCount() + 1); break;
-      case 2: i.getTag().setName(value); break;
+      case 2:
+        if (i.getTag() != null) {
+          i.getTag().setName(value);
+        }
+        break;
+      case 8: i.setTag(null); break;
+      case 9: i.setLabel(null); break;
+      case 10: i.getNotes().add(null); break;
       case 3: i.getNotes().add(value); break;
       case 4: i.setTag(new Tag(value)); break;
       case 5: d.remove(at % d.size()); break;
