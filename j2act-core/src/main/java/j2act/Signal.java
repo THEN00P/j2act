@@ -17,6 +17,13 @@ public class Signal<T> extends Primitive implements Supplier<T> {
   final String retainedName;
   /** The variable names the processor recorded for this call, or null without them (ADR 0031). */
   String stackName;
+  /** For createSignal(fn, loadingValue): what it shows until its source's first value lands. */
+  private Object[] loading;
+
+  Signal<T> loadingValue(T value) {
+    loading = new Object[] {value};
+    return this;
+  }
 
   Signal(T initial) {
     this(initial, false, null);
@@ -51,7 +58,7 @@ public class Signal<T> extends Primitive implements Supplier<T> {
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    return source != null ? ValueCell.derived(tab, address, source) : new ValueCell(tab, address, initial);
+    return source != null ? ValueCell.derived(tab, address, source, loading) : new ValueCell(tab, address, initial);
   }
 
   T initial() {

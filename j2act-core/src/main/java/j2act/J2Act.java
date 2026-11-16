@@ -94,6 +94,10 @@ public final class J2Act implements AutoCloseable {
   final Preload defaultPreload;
   final long preloadHoldMillis;
   final JsonBinding json;
+  /** Classes a store holds as one value (ADR 0035), asked once per class. */
+  private final java.util.function.Predicate<Class<?>> storeOpaque;
+  private final java.util.concurrent.ConcurrentHashMap<Class<?>, Boolean> storeOpaqueSeen =
+    new java.util.concurrent.ConcurrentHashMap<>();
   final Function<Exchange, String> cspNonce;
   /** Retained State (ADR 0026): where snapshots go, how long they live, and per-type codecs. */
   final Snapshots snapshots;
@@ -584,6 +588,7 @@ public final class J2Act implements AutoCloseable {
     this.defaultPreload = b.defaultPreload;
     this.preloadHoldMillis = b.preloadHold.toMillis();
     this.json = b.json;
+    this.storeOpaque = b.storeOpaque;
     this.cspNonce = b.cspNonce;
     Duration retention = b.retainedRetention != null ? b.retainedRetention
       : b.retainedStorage != null ? Duration.ofHours(8) : Duration.ofHours(2);
@@ -678,6 +683,11 @@ public final class J2Act implements AutoCloseable {
     } catch (RuntimeException e) {
       log(System.Logger.Level.WARNING, "j2act dev: reading the new build failed", e);
     }
+  }
+
+  /** Whether a store holds objects of type as one value, as withStoreOpaque says. */
+  boolean storeOpaque(Class<?> type) {
+    return storeOpaqueSeen.computeIfAbsent(type, storeOpaque::test);
   }
 
   public static Builder builder(PageResolver resolver) {
@@ -1353,6 +1363,11 @@ public final class J2Act implements AutoCloseable {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
   }
 
+  /** Running from a project on this machine (ADR 0024): checks that cost something are on. */
+  boolean devMode() {
+    return dev != null;
+  }
+
   void log(System.Logger.Level level, String message, Throwable error) {
     if (error == null) {
       LOG.log(level, message);
@@ -1435,6 +1450,7 @@ public final class J2Act implements AutoCloseable {
     private Preload defaultPreload = Preload.NONE;
     private Duration preloadHold = Duration.ofSeconds(10);
     private JsonBinding json = JsonBinding.basic();
+    private java.util.function.Predicate<Class<?>> storeOpaque = type -> false;
     private Function<Exchange, String> cspNonce;
     private RetainedStateStorage retainedStorage;
     private Duration retainedRetention;
@@ -1627,6 +1643,32 @@ public final class J2Act implements AutoCloseable {
      */
     public Builder withJson(JsonBinding json) {
       this.json = java.util.Objects.requireNonNull(json);
+      return this;
+    }
+
+    /**
+     * Classes a store holds as one value (ADR 0035): never copied, never looked into, compared by identity, and
+     * replaced by assigning another. A store copies any class with a constructor taking nothing as data, so a
+     * class of that shape that is not data, such as a cache or a client an object holds, is named here. Their
+     * subclasses are included. Called again, it adds to the classes named before.
+     */
+    public Builder withStoreOpaque(Class<?>... types) {
+      Class<?>[] named = types.clone();
+      return withStoreOpaque(type -> {
+        for (Class<?> t : named) {
+          if (t.isAssignableFrom(type)) {
+            return true;
+          }
+        }
+        return false;
+      });
+    }
+
+    /** Classes a store holds as one value, by a test asked once per class; adds to those named before. */
+    public Builder withStoreOpaque(java.util.function.Predicate<Class<?>> test) {
+      java.util.Objects.requireNonNull(test);
+      java.util.function.Predicate<Class<?>> before = storeOpaque;
+      storeOpaque = type -> before.test(type) || test.test(type);
       return this;
     }
 

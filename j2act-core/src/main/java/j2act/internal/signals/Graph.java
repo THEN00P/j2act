@@ -2,6 +2,7 @@ package j2act.internal.signals;
 // Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.CONFIG_AUTO_DISPOSE;
+import static j2act.internal.signals.Constants.CONFIG_SLOT_NODE;
 import static j2act.internal.signals.Constants.REACTIVE_DISPOSED;
 import static j2act.internal.signals.Constants.REACTIVE_RECOMPUTING_DEPS;
 import static j2act.internal.signals.Constants.REACTIVE_ZOMBIE;
@@ -12,13 +13,15 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Port of @solidjs/signals core/graph.ts at 9449845, without store slot nodes. */
+/** Port of @solidjs/signals core/graph.ts at 9449845. */
 final class Graph {
   private final Runtime rt;
   /** Last-one-out releases held back while a pass tears down an earlier pass's frame (#4142). */
   List<Node> deferredReleases;
   /** Deferred dormancy for never-observed auto-dispose computeds (#3078). */
   final Set<Node> dormantNodes = new LinkedHashSet<>();
+  /** The store's shared slot-node release handler (store/store.ts installs it once). */
+  java.util.function.Consumer<Node> slotUnobservedHook;
 
   Graph(Runtime rt) {
     this.rt = rt;
@@ -40,7 +43,9 @@ final class Graph {
       dep.subs = nextSub;
       if (nextSub == null) {
         // A user hook that throws is collected like a cleanup: the unlink and the teardown carry on.
-        if (dep.x != null && dep.x.unobserved != null) {
+        if ((dep.config & CONFIG_SLOT_NODE) != 0) {
+          slotUnobservedHook.accept(dep);
+        } else if (dep.x != null && dep.x.unobserved != null) {
           rt.owners.runCleanup(dep.x.unobserved);
         }
         // A pending node is exempt: its in-flight async work is an observer.

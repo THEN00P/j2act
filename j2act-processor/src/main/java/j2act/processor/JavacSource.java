@@ -211,6 +211,7 @@ final class JavacSource implements Source {
         NewClassTree create = (NewClassTree) tree;
         Node node = new Node(Node.Kind.NEW, tree);
         node.type = typeName(create.getIdentifier());
+        node.generic = generic(create.getIdentifier());
         node.add(convert(create.getEnclosingExpression()));
         for (Tree argument : create.getArguments()) {
           node.args.add(node.add(convert(argument)));
@@ -234,6 +235,7 @@ final class JavacSource implements Source {
         Node node = new Node(Node.Kind.VAR, tree);
         node.name = variable.getName().toString();
         node.type = typeName(variable.getType());
+        node.generic = generic(variable.getType());
         node.body = node.add(convert(variable.getInitializer()));
         return node;
       }
@@ -361,6 +363,34 @@ final class JavacSource implements Source {
       }
     }, null);
     return out;
+  }
+
+  /** A type as written, with its type arguments; a wildcard's upper bound, or ? when it has none. */
+  private static String generic(Tree tree) {
+    if (tree == null) {
+      return null;
+    }
+    switch (tree.getKind()) {
+      case PARAMETERIZED_TYPE: {
+        ParameterizedTypeTree p = (ParameterizedTypeTree) tree;
+        StringBuilder out = new StringBuilder(typeName(p.getType())).append('<');
+        for (int i = 0; i < p.getTypeArguments().size(); i++) {
+          out.append(i == 0 ? "" : ",").append(generic(p.getTypeArguments().get(i)));
+        }
+        return out.append('>').toString();
+      }
+      case ANNOTATED_TYPE:
+        return generic(((AnnotatedTypeTree) tree).getUnderlyingType());
+      case ARRAY_TYPE:
+        return generic(((ArrayTypeTree) tree).getType()) + "[]";
+      case EXTENDS_WILDCARD:
+        return generic(((com.sun.source.tree.WildcardTree) tree).getBound());
+      case UNBOUNDED_WILDCARD:
+      case SUPER_WILDCARD:
+        return "?";
+      default:
+        return typeName(tree);
+    }
   }
 
   private static String typeName(Tree tree) {

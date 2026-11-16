@@ -65,8 +65,38 @@ public final class Node extends Owner {
   /** A tracked effect's run. */
   Runnable run;
 
+  // ---- store slot node (CONFIG_SLOT_NODE, core.ts `slotSignal`): the target and key as back-refs
+  Host host;
+  Object key;
+  boolean acc;
+  /** The store's wrap cache: the view last served for this key and the raw it wrapped. */
+  Object px;
+  Object pxv;
+  /** A derived store's family, on its derive (store/projection.ts). */
+  Family fam;
+
   Node(Runtime rt) {
     super(rt);
+  }
+
+  /** What the core asks of a store target behind a slot node: Solid's `_host._fam`. */
+  interface Host {
+    Family fam();
+  }
+
+  /** A derived store's family as the core sees it: Solid's StoreFamily `node`, `st` and `live`. */
+  interface Family {
+    /** The projection computed. */
+    Node node();
+
+    /** A source's status reaching the derive by propagation; status 0 is Solid's call with none. */
+    void st(int status, Throwable error);
+
+    /** How many targets of the family carry nodes. */
+    int live();
+
+    /** Every property, presence and keys node of the live targets. */
+    void eachLiveNode(java.util.function.Consumer<Node> each);
   }
 
   /** Link is Solid's `{_dep, _sub, ...}`. */

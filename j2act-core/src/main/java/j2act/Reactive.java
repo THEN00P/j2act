@@ -42,12 +42,18 @@ public final class Reactive {
     return own(source == null ? new Signal<T>((T) null) : new Signal<T>(source, true));
   }
 
+  /** A signal that follows its source, showing loadingValue until the source's first value lands. */
+  public static <T> Signal<T> createSignal(Supplier<T> source, T loadingValue) {
+    return own(new Signal<T>(source, true).loadingValue(loadingValue));
+  }
+
   /**
    * A signal whose value goes into its owner's Snapshot, so it outlives the in-memory tab (ADR
    * 0026, 0031). Keyed by the variable it is assigned to, through the processor.
    */
   public static <T> RetainedSignal<T> createRetained(T initial) {
-    return own(new RetainedSignal<>(initial, null, RetainedNames.chain(Reactive.class)));
+    return own(new RetainedSignal<>(initial, null, RetainedNames.chain(Reactive.class),
+      RetainedNames.callSiteType(Reactive.class)));
   }
 
   /** A retained signal with an explicit name instead of its variable's; never required. */
@@ -72,9 +78,282 @@ public final class Reactive {
     return own(new RetainedValue<>(save, restore, name, null));
   }
 
+  /**
+   * A store over an object, a list, a map or a set (ADR 0035): what read one part of it re-runs when that part
+   * changes, and a write is a change to a draft of the real type. See {@link Stored}.
+   */
+  public static <T> Stored<T> createStore(T initial) {
+    return own(new Stored<>(initial));
+  }
+
+  /** A store over a list: get() is a List whose reads subscribe to an element or the size. */
+  public static <E> Stored<java.util.List<E>> createStore(java.util.List<E> initial) {
+    return own(new Stored<>(initial));
+  }
+
+  /** A store over a map: get() is a Map whose reads subscribe to a key, its presence or the keys. */
+  public static <K, V> Stored<java.util.Map<K, V>> createStore(java.util.Map<K, V> initial) {
+    return own(new Stored<>(initial));
+  }
+
+  /**
+   * A writable derived store (Solid's createStore(fn, seed)): it starts as seed, and derive writes a draft of it as
+   * update(...) does, at once and again whenever what it read changes, so only what it changed re-runs readers.
+   * update(...) and set(...) write it too, and stand until derive runs again.
+   *
+   * <pre>{@code
+   * var totals = createStore(d -> d.setOpen((int) todos.get().stream().filter(t -> !t.isDone()).count()), new Totals());
+   * }</pre>
+   */
+  public static <T> Stored<T> createStore(Consumer<T> derive, T seed) {
+    return own(new Stored<>(derive, seed));
+  }
+
+  /** A writable derived store over a list, written as a List. */
+  public static <E> Stored<java.util.List<E>> createStore(Consumer<java.util.List<E>> derive, java.util.List<E> seed) {
+    return own(new Stored<>(derive, seed));
+  }
+
+  /**
+   * A writable derived store with Solid's { seedLoadingValue }: while derive's first run waits for something it
+   * reads, readers see seed, with nothing stopping at loading(...), and derive works a copy of it meanwhile.
+   */
+  public static <T> Stored<T> createStore(Consumer<T> derive, T seed, boolean seedLoadingValue) {
+    Stored<T> store = new Stored<>(derive, seed);
+    return own(seedLoadingValue ? store.seedLoadingValue() : store);
+  }
+
+  /** A writable derived store over a map, written as a Map. */
+  public static <K, V> Stored<java.util.Map<K, V>> createStore(Consumer<java.util.Map<K, V>> derive,
+      java.util.Map<K, V> seed) {
+    return own(new Stored<>(derive, seed));
+  }
+
+  /** A writable derived store over a set, written as a Set. */
+  public static <E> Stored<java.util.Set<E>> createStore(Consumer<java.util.Set<E>> derive, java.util.Set<E> seed) {
+    return own(new Stored<>(derive, seed));
+  }
+
+  /** A writable derived store over a list, with Solid's { seedLoadingValue }. */
+  public static <E> Stored<java.util.List<E>> createStore(Consumer<java.util.List<E>> derive, java.util.List<E> seed,
+      boolean seedLoadingValue) {
+    Stored<java.util.List<E>> store = new Stored<>(derive, seed);
+    return own(seedLoadingValue ? store.seedLoadingValue() : store);
+  }
+
+  /** A writable derived store over a map, with Solid's { seedLoadingValue }. */
+  public static <K, V> Stored<java.util.Map<K, V>> createStore(Consumer<java.util.Map<K, V>> derive,
+      java.util.Map<K, V> seed, boolean seedLoadingValue) {
+    Stored<java.util.Map<K, V>> store = new Stored<>(derive, seed);
+    return own(seedLoadingValue ? store.seedLoadingValue() : store);
+  }
+
+  /** A writable derived store over a set, with Solid's { seedLoadingValue }. */
+  public static <E> Stored<java.util.Set<E>> createStore(Consumer<java.util.Set<E>> derive, java.util.Set<E> seed,
+      boolean seedLoadingValue) {
+    Stored<java.util.Set<E>> store = new Stored<>(derive, seed);
+    return own(seedLoadingValue ? store.seedLoadingValue() : store);
+  }
+
+  /**
+   * A shallow store over a list (Solid's createStore(list, {shallow: true})): its size and each slot are reactive,
+   * and a row is served as it is, by reference, never copied or looked into. A row is replaced, d.set(i, row), and
+   * never changed: for a long list of immutable rows, such as records, that is cheaper and keeps each row the object
+   * it was given. Reconciling compares rows by reference, slot by slot.
+   */
+  public static <E> Stored<java.util.List<E>> createShallowStore(java.util.List<E> initial) {
+    return own(Stored.shallow(initial));
+  }
+
+  /** A shallow store over a map: its keys are reactive, and a value is served as it is and replaced, never changed. */
+  public static <K, V> Stored<java.util.Map<K, V>> createShallowStore(java.util.Map<K, V> initial) {
+    return own(Stored.shallow(initial));
+  }
+
+  /** A store over a set: get() is a Set whose reads subscribe to an element's presence or the elements. */
+  public static <E> Stored<java.util.Set<E>> createStore(java.util.Set<E> initial) {
+    return own(new Stored<>(initial));
+  }
+
+  /**
+   * A list a derive answers, merged by key (ADR 0035): the usual shape for rows from a database, whose
+   * objects are new on every load. See {@link Projection}.
+   */
+  @SuppressWarnings("unchecked")
+  public static <E> Projection<E> createProjection(AsyncSupplier<java.util.List<E>> body, Function<? super E, ?> key) {
+    return own(new Projection<>(body::get, row -> key.apply((E) row)));
+  }
+
+  /** A projection over a derived list, for rows computed from other state. */
+  @SuppressWarnings("unchecked")
+  public static <E> Projection<E> createProjection(Supplier<java.util.List<E>> body, Function<? super E, ?> key) {
+    return own(new Projection<>(body::get, row -> key.apply((E) row)));
+  }
+
+  /**
+   * A projection that starts as loadingRows (Solid's seed with { seedLoadingValue: true }): readers see them while
+   * the first answer loads, with nothing stopping at loading(...), and the answer is merged into them by key.
+   * Placeholder rows, such as skeletons, are data: a field like skeleton=true says what they are.
+   */
+  @SuppressWarnings("unchecked")
+  public static <E> Projection<E> createProjection(AsyncSupplier<java.util.List<E>> body, Function<? super E, ?> key,
+      java.util.List<E> loadingRows) {
+    return own(new Projection<>(body::get, row -> key.apply((E) row), java.util.Objects.requireNonNull(loadingRows)));
+  }
+
+  /** A projection over a derived list that starts as loadingRows. */
+  @SuppressWarnings("unchecked")
+  public static <E> Projection<E> createProjection(Supplier<java.util.List<E>> body, Function<? super E, ?> key,
+      java.util.List<E> loadingRows) {
+    return own(new Projection<>(body::get, row -> key.apply((E) row), java.util.Objects.requireNonNull(loadingRows)));
+  }
+
+  /**
+   * A store that takes optimistic writes (ADR 0035): an update from an action's body shows at once and is
+   * undone when that action ends, like {@link #createOptimistic}, and only the rows and properties it
+   * touched are guessed.
+   */
+  public static <T> Stored<T> createOptimisticStore(T initial) {
+    return own(new Stored<>(initial, null, null, true));
+  }
+
+  /** An optimistic store over a list: get() is a List, as for {@link #createStore(java.util.List)}. */
+  public static <E> Stored<java.util.List<E>> createOptimisticStore(java.util.List<E> initial) {
+    return own(new Stored<>(initial, null, null, true));
+  }
+
+  /** An optimistic store over a map: get() is a Map. */
+  public static <K, V> Stored<java.util.Map<K, V>> createOptimisticStore(java.util.Map<K, V> initial) {
+    return own(new Stored<>(initial, null, null, true));
+  }
+
+  /** An optimistic store over a set: get() is a Set. */
+  public static <E> Stored<java.util.Set<E>> createOptimisticStore(java.util.Set<E> initial) {
+    return own(new Stored<>(initial, null, null, true));
+  }
+
+  /**
+   * An optimistic store over a list a derive answers, the usual shape: an action adds a row, saves it and
+   * refreshes, and the row it guessed keeps its place when the saved one comes back with the same key.
+   */
+  @SuppressWarnings("unchecked")
+  public static <E> Stored<java.util.List<E>> createOptimisticStore(AsyncSupplier<java.util.List<E>> body,
+      Function<? super E, ?> key) {
+    return own(new Stored<>(null, body::get, row -> key.apply((E) row), true));
+  }
+
+  /** An optimistic store over a load that starts as loadingRows, shown while the first answer loads. */
+  @SuppressWarnings("unchecked")
+  public static <E> Stored<java.util.List<E>> createOptimisticStore(AsyncSupplier<java.util.List<E>> body,
+      Function<? super E, ?> key, java.util.List<E> loadingRows) {
+    return own(new Stored<java.util.List<E>>(null, body::get, row -> key.apply((E) row), true)
+      .loadingRows(java.util.Objects.requireNonNull(loadingRows)));
+  }
+
+  /**
+   * A store whose value goes into its owner's Snapshot (ADR 0026, 0035), so it outlives the in-memory tab:
+   * saved as JSON through the app's JsonBinding and read back as the value's type. The type is the one the
+   * source writes, which the j2act processor records: Stored<Draft> d = ..., or new ArrayList<Todo>() as the
+   * argument. With no processor, or nothing written, it is the class of initial, which for a list or a map
+   * says nothing of what it holds: name that class with createRetainedStore(list, Todo.class).
+   */
+  public static <T> Stored<T> createRetainedStore(T initial) {
+    java.lang.reflect.Type type = RetainedNames.callSiteType(Reactive.class);
+    return retainedStore(initial, type != null ? type : initial.getClass(), RetainedNames.chain(Reactive.class));
+  }
+
+  /** A retained store over a list; the type of its rows as the source writes it, see {@link #createRetainedStore(Object)}. */
+  public static <E> Stored<java.util.List<E>> createRetainedStore(java.util.List<E> initial) {
+    return retainedStore(initial, collectionType(initial, "List<Todo>", "createRetainedStore(list, Todo.class)"),
+      RetainedNames.chain(Reactive.class));
+  }
+
+  /** A retained store over a map; the type of its values as the source writes it. */
+  public static <K, V> Stored<java.util.Map<K, V>> createRetainedStore(java.util.Map<K, V> initial) {
+    return retainedStore(initial, collectionType(initial, "Map<String, Todo>", "createRetainedStore(map, Todo.class)"),
+      RetainedNames.chain(Reactive.class));
+  }
+
+  /** A retained store over a set; the type of its elements as the source writes it. */
+  public static <E> Stored<java.util.Set<E>> createRetainedStore(java.util.Set<E> initial) {
+    return retainedStore(initial, collectionType(initial, "Set<String>", "createRetainedStore(set, String.class)"),
+      RetainedNames.chain(Reactive.class));
+  }
+
+  /** The type the source wrote for a list, a map or a set, which reading its JSON back needs. */
+  private static java.lang.reflect.Type collectionType(Object initial, String example, String explicit) {
+    java.lang.reflect.Type type = RetainedNames.callSiteType(Reactive.class);
+    if (type == null) {
+      String what = initial instanceof java.util.List ? "list" : initial instanceof java.util.Set ? "set" : "map";
+      String made = initial instanceof java.util.List ? "ArrayList" : initial instanceof java.util.Set ? "LinkedHashSet"
+        : "HashMap";
+      throw new IllegalArgumentException("a retained " + what + " needs the type of what it holds, since its JSON does"
+        + " not say: write it where the store is created, such as Stored<" + example + "> or new " + made + "<...>(),"
+        + " and build with the j2act processor, or name it with " + explicit + " (ADR 0035)");
+    }
+    return type;
+  }
+
+  /** A retained store over a list of rows of one class. */
+  public static <E> Stored<java.util.List<E>> createRetainedStore(java.util.List<E> initial, Class<E> rows) {
+    return retainedStore(initial, parameterized(java.util.List.class, rows), RetainedNames.chain(Reactive.class));
+  }
+
+  /** A retained store over a map from strings to values of one class. */
+  public static <V> Stored<java.util.Map<String, V>> createRetainedStore(java.util.Map<String, V> initial, Class<V> values) {
+    return retainedStore(initial, parameterized(java.util.Map.class, String.class, values), RetainedNames.chain(Reactive.class));
+  }
+
+  /** A retained store over a set of elements of one class. */
+  public static <E> Stored<java.util.Set<E>> createRetainedStore(java.util.Set<E> initial, Class<E> elements) {
+    return retainedStore(initial, parameterized(java.util.Set.class, elements), RetainedNames.chain(Reactive.class));
+  }
+
+  private static <T> Stored<T> retainedStore(T initial, java.lang.reflect.Type type, String stackName) {
+    Stored<T> store = own(new Stored<>(initial));
+    String what = stackName != null ? stackName : type.getTypeName();
+    // The snapshot keeps the store's JSON as text: only the store knows the type to read it back as.
+    store.retained = own(new RetainedValue<String>(() -> store.saved(type, what), json -> store.restore(json, type, what),
+      null, stackName));
+    return store;
+  }
+
+  private static java.lang.reflect.ParameterizedType parameterized(Class<?> raw, java.lang.reflect.Type... arguments) {
+    return new java.lang.reflect.ParameterizedType() {
+      @Override public java.lang.reflect.Type[] getActualTypeArguments() {
+        return arguments.clone();
+      }
+
+      @Override public java.lang.reflect.Type getRawType() {
+        return raw;
+      }
+
+      @Override public java.lang.reflect.Type getOwnerType() {
+        return null;
+      }
+
+      @Override public String getTypeName() {
+        StringBuilder name = new StringBuilder(raw.getName()).append('<');
+        for (int i = 0; i < arguments.length; i++) {
+          name.append(i == 0 ? "" : ", ").append(arguments[i].getTypeName());
+        }
+        return name.append('>').toString();
+      }
+    };
+  }
+
   /** A pure derived value, recomputed when what it read changes; readers re-render only when it changes. */
   public static <T> Memo<T> createMemo(Supplier<T> body) {
     return own(new Memo<>(body));
+  }
+
+  /**
+   * A memo that shows loadingValue until its first value lands (Solid's { loadingValue }): reading it then gives
+   * loadingValue and stops at no loading(...), and it is not pending. Later loads keep the last value meanwhile,
+   * as any memo does.
+   */
+  public static <T> Memo<T> createMemo(Supplier<T> body, T loadingValue) {
+    return own(new Memo<>(body).loadingValue(loadingValue));
   }
 
   /**
@@ -114,6 +393,11 @@ public final class Reactive {
    */
   public static <T> Memo<T> createMemo(AsyncSupplier<T> body) {
     return own(new Memo<>(body));
+  }
+
+  /** An async memo that shows loadingValue until its first value lands, with nothing stopping at loading(...). */
+  public static <T> Memo<T> createMemo(AsyncSupplier<T> body, T loadingValue) {
+    return own(new Memo<>(body).loadingValue(loadingValue));
   }
 
   /**
@@ -188,6 +472,9 @@ public final class Reactive {
    */
   @SuppressWarnings("unchecked")
   public static <T> CompletableFuture<T> refresh(Supplier<T> memo) {
+    if (memo instanceof Projection || memo instanceof Stored) {
+      return refreshProjection((Primitive) memo, memo);
+    }
     ValueCell cell = valueOf(memo, "refresh");
     Action.Call call = Action.Call.current();
     CompletableFuture<Object> landed = new CompletableFuture<>();
@@ -207,6 +494,39 @@ public final class Reactive {
       start.run();
     } else {
       cell.tab.host.job(() -> Tracking.in(cell.tab, null, () -> {
+        start.run();
+        return null;
+      }));
+    }
+    return (CompletableFuture<T>) landed;
+  }
+
+  /** A projection's derive runs again; the future finishes with the projection once its answer is merged. */
+  @SuppressWarnings("unchecked")
+  private static <T> CompletableFuture<T> refreshProjection(Primitive projection, Supplier<T> result) {
+    StoreCell cell = (StoreCell) projection.requireCell();
+    if (cell.deriveNode() == null) {
+      throw new IllegalArgumentException("refresh takes an async memo, a projection or an optimistic store over a load");
+    }
+    Tab tab = cell.tab;
+    Action.Call call = Action.Call.current();
+    CompletableFuture<Object> landed = new CompletableFuture<>();
+    Runnable start = () -> tab.rt.refresh(cell.deriveNode()).whenComplete((value, failure) -> {
+      if (failure != null) {
+        landed.completeExceptionally(failure);
+      } else {
+        landed.complete(result.get());
+      }
+    });
+    if (call != null) {
+      call.enter(tab, () -> {
+        start.run();
+        return null;
+      });
+    } else if (tab.lane.isCurrent()) {
+      start.run();
+    } else {
+      tab.host.job(() -> Tracking.in(tab, null, () -> {
         start.run();
         return null;
       }));
@@ -399,6 +719,16 @@ public final class Reactive {
   /** An optimistic value over a load, the usual shape: createOptimistic(() -> async(() -> service.list())). */
   public static <T> Optimistic<T> createOptimistic(AsyncSupplier<T> body) {
     return own(new Optimistic<>(new Memo<>(body)));
+  }
+
+  /** An optimistic value over a derived value, showing loadingValue until its first value lands. */
+  public static <T> Optimistic<T> createOptimistic(Supplier<T> body, T loadingValue) {
+    return own(new Optimistic<>(new Memo<>(body).loadingValue(loadingValue)));
+  }
+
+  /** An optimistic value over a load, showing loadingValue until the first one lands. */
+  public static <T> Optimistic<T> createOptimistic(AsyncSupplier<T> body, T loadingValue) {
+    return own(new Optimistic<>(new Memo<>(body).loadingValue(loadingValue)));
   }
 
   /**

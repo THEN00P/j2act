@@ -18,7 +18,7 @@ _Avoid_: Session, Device, Visitor, User
 
 **Retained State**:
 A value created with createRetained() that goes into its owner's Snapshot, so it outlives the in-memory tab or browser: grace expiry, pause, restart, redeploy, another node, and a closed tab reopened within 15 minutes. Keyed by its component's slot path and the variable it is assigned to, through the processor (ADR 0031), or by its store's class and field name. createRetained(save, restore) holds live data that needs converting. A reload still starts empty. Unsaved work only; anything worth keeping still belongs in the app's database (ADR 0026).
-_Avoid_: Persisted State, PersistentState, Saved State, Draft
+_Avoid_: Persisted State, PersistentState, Saved State, and Draft for it (a Draft is what a store's update hands out)
 
 **Snapshot**:
 The Retained State of one tab or one browser, saved to retained state storage with an absolute expiry and used at most once to restore it.
@@ -26,7 +26,19 @@ _Avoid_: Checkpoint (that is the opt-in trigger that saves one while the tab is 
 
 **Store**:
 A class annotated @TabScoped or @BrowserScoped that extends Store: one instance per tab or per browser, a bean of the app's container that components @Inject, or reach with useTabStore(X.class) and useBrowserStore(X.class) without one. A browser store's memos and effects run once per browser and cannot use tab stores. It holds signals, memos and other primitives as fields, never plain values, and its methods are the actions. No middleware (ADR 0030).
-_Avoid_: GlobalState, Context, Singleton, Session, createStore
+_Avoid_: GlobalState, Context, Singleton, Session, and createStore for it (that makes a Stored)
+
+**Stored**:
+A Stored<T> created with createStore(value) over an object, a list, a map or a set of the application's own classes (ADR 0035): what read one part re-runs when that part changes. get() gives a real instance, one per record and version, or a List, Map or Set whose reads subscribe to an element or a key; update(d -> ...) hands out a draft of the same type and writes what the lambda changed; at(User::getAddress, Address::getCity) is one property. The object it was given is never changed. createStore(d -> ..., seed) makes one its lambda writes again whenever what it read changes, createOptimisticStore(...) one whose updates, from an action's body, are guesses undone when the action ends, createShallowStore(list) one whose rows are served by reference and replaced, never changed, J2Act.builder().withStoreOpaque(...) names classes a store holds as one value, and createRetainedStore(...) one that goes into its owner's Snapshot as JSON, with restored() saying whether it came back. Not the scoped Store class below it in name only.
+
+**Draft**:
+What Stored.update(d -> ...) hands its lambda (ADR 0035): an instance of the store's own type, a real bean or record, and the store's own List, Map or Set, whose reads see what the lambda wrote. When the lambda returns, it is compared with what it was copied from field by field, and each difference is one write. It is not kept: an object taken from get() is no draft, and a draft used after its lambda returned fails.
+_Avoid_: Copy, Proxy, Working copy, and Draft for Retained State or an optimistic guess
+_Avoid_: Deep signal, Reactive object, Proxy
+
+**Projection**:
+A list its derive answers, created with createProjection(() -> async(...), Row::getId): each answer is merged into the last by key, so a row that came back keeps its place and only what changed in it re-runs its readers. Read like a Stored, written by nobody but its derive, refreshed like an async memo (ADR 0035).
+_Avoid_: Query, Resource, Live list
 
 **LiveComponent**:
 A component mounted at a route. Like every component it overrides setup(), which runs once per slot, creates what it needs with the create* functions of j2act.Reactive and returns its view (ADR 0031).
@@ -73,7 +85,7 @@ A server message a tab has not heard the client applied. Each is numbered and ke
 
 **Optimistic value**:
 createOptimistic(...), a value, memo or load that takes writes from an action's body, which show at once and are undone when that action ends; if what derives from one hits a load, it waits for that so it never shows beside an old derived value. They do not make isPending true (ADR 0031).
-_Avoid_: Draft, Overlay
+_Avoid_: Overlay, and Draft for it (a Draft is what a store's update hands out)
 
 **Upload**:
 createUpload(), an Upload (Transfer<UploadFile, UploadRef>) with progress() and status reads: chunked resumable transport, server-enforced restrictions, UploadCtx naming, temp cleanup owned by the framework.

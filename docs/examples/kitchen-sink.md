@@ -90,6 +90,68 @@ var add = action((String text) -> {
 });
 ```
 
+## A store over your own classes (ADR 0035)
+
+```java
+var user  = createStore(new User("Ada", new Address("London")));
+var todos = createStore(new ArrayList<Todo>());
+
+// a draft is the real class; what the lambda changed is one write
+user.update(d -> d.getAddress().setCity("Wien"));
+todos.update(d -> { d.add(new Todo("write")); d.get(0).setDone(true); });
+
+// one property, bound to a field
+var city = user.at(User::getAddress, Address::getCity);
+input().withValue(city.get()).onInput(e -> city.set(e.value()))
+
+// reading every row here re-renders this view when any row changes
+return () -> div(p(user.get().getName()), each(todos.get(), t -> li(t.getTitle())));
+
+// a row component that reads only its own row, todos.get().get(index.get()), renders alone
+return () -> div(each(range(todos.get().size()), i -> todoRow().withTodos(todos).withIndex(i).withKey(i)));
+```
+
+## Rows from a database, merged by key (ADR 0035)
+
+```java
+var todos = createOptimisticStore(() -> async(() -> repo.list()), Todo::getId);
+
+var add = action((String title) -> {
+  todos.update(d -> d.add(Todo.unsaved(title)));   // shows immediately, undone when the action ends
+  repo.add(title);
+  refresh(todos).join();                           // the saved rows come back: same key, same row
+});
+
+// read only, for rows nobody guesses
+var orders = createProjection(() -> async(() -> orders.findAll()), Order::getId);
+```
+
+## Derived, shallow and kept stores (ADR 0035)
+
+```java
+// written again whenever what it read changes; only what it changed re-runs readers
+var totals = createStore(d -> d.setOpen((int) todos.get().stream().filter(t -> !t.isDone()).count()), new Totals());
+
+// immutable rows served as they are, replaced and never changed
+var prices = createShallowStore(new ArrayList<Price>());
+prices.update(d -> d.set(0, new Price("EUR", 12)));
+
+// a set tracks each element's presence
+var picked = createStore(new LinkedHashSet<Long>());
+return () -> span(picked.get().contains(row.getId()) ? "picked" : "");
+
+// shown until the first answer lands, with nothing stopping at loading(...)
+var user = createMemo(() -> async(() -> users.find(id)), User.placeholder());
+var rows = createProjection(() -> async(() -> repo.list()), Todo::getId, List.of(Todo.skeleton()));
+
+// a class that is not data, though it has a constructor taking nothing
+J2Act.builder(pages).withStoreOpaque(PriceCache.class);
+
+// kept in the snapshot as JSON, typed from the source
+Stored<List<Todo>> drafts = createRetainedStore(new ArrayList<>());
+return () -> drafts.restored() ? p("Your drafts came back") : null;
+```
+
 ## Data several components show (ADR 0031)
 
 ```java

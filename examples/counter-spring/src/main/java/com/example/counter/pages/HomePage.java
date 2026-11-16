@@ -1,6 +1,7 @@
 package com.example.counter.pages;
 
 import static j2act.Reactive.*;
+import static com.example.counter.components.Packing.packing;
 import static com.example.counter.components.RewriteBox.rewriteBox;
 import static com.example.counter.components.BrowserApis.browserApis;
 import static com.example.counter.components.ClockFeed.clockFeed;
@@ -93,6 +94,10 @@ public class HomePage extends LiveComponent {
         section(
           h2("Fields the server edits"),
           rewriteBox()
+        ),
+        section(
+          h2("A store over plain classes"),
+          packing()
         ),
         section(
           h2("Pending UI"),

@@ -29,7 +29,7 @@ Deferred until core is solid (avoid rewrite hell). Signals plus button callbacks
 
 - **Shared stores across a cluster**: the keyed form of `@BrowserScoped`, one reactive owner per key, such as a chat room, on one server of a cluster. Comes after the Solid engine port, in its own ADR. The spike and its open questions are in `docs/spikes/shared-scope.md`, on the engine branch until it merges. Then Solid's `broadcast(fn)`, which renders once per key and writes the same bytes to every viewer.
 
-- **Deep stores**: Solid 2's nested reactivity (`createStore`, `createProjection`, `reconcile`, `createOptimisticStore`, `packages/signals/src/store`): changing `user.address.city` re-renders only what read that path, and a setter edits a draft (`setStore(s => { s.list.push(x); })`). JS builds this on proxies, which Java has only for interfaces, so it needs its own design: generated accessors, bytecode, or a lens API over records. Until then a signal holds a whole value.
+- **Deep stores**: designed in ADR 0035, not built. Solid 2's nested reactivity (`createStore`, `createProjection`, `reconcile`, `createOptimisticStore`, `packages/signals/src/store`) over the application's own classes: changing `user.address.city` re-renders only what read that path, and a write mutates a draft of the real type. First the store slot nodes the port left out of `Core`, then the port against Solid's store tests, then drafts, `at(...)` and rows as stores.
 
 - **Optimistic onMutate helpers**: snapshot/rollback conventions on Mutation, TanStack-style.
 - **S3-direct upload SPI**: StorageBackend behind the locked granular upload() shape (presigned chunks, no server bytes). Shape already covers it.

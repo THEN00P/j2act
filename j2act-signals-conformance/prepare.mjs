@@ -30,13 +30,17 @@ if (!existsSync(join(cache, "packages", "signals", "tests"))) {
 
 const { build } = await import("esbuild");
 const tests = join(cache, "packages", "signals", "tests");
-const entries = readdirSync(tests).filter(f => f.endsWith(".test.ts")).map(f => join(tests, f));
+// The store's tests sit in their own folder, and no name there is also a name above it.
+const entries = [tests, join(tests, "store")]
+  .flatMap(dir => readdirSync(dir).filter(f => f.endsWith(".test.ts")).map(f => join(dir, f)));
 
 const global = (name, expr) => ({ path: name, namespace: "shim", pluginData: expr });
 const shims = {
   name: "shims",
   setup(b) {
     b.onResolve({ filter: /^vitest$/ }, () => global("vitest", "globalThis.__vitest"));
+    // The one Node built-in a store test asks for, types.isProxy: solid-shim.js answers it for its own proxies.
+    b.onResolve({ filter: /^node:util$/ }, () => global("node:util", "globalThis.__nodeUtil"));
     b.onResolve({ filter: /(^|\/)src\// }, args => global(args.path, "globalThis.__solid"));
     b.onLoad({ filter: /.*/, namespace: "shim" }, args => ({
       contents: `module.exports = ${args.pluginData};`,

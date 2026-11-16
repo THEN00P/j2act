@@ -16,8 +16,8 @@ import java.util.function.UnaryOperator;
 
 /**
  * Port of @solidjs/signals core/lanes.ts and core/truth.ts at 9449845: a guess or a held read shows ahead of
- * the truth, in its own transaction, the lane. Store slot nodes are left out, so everything keyed on
- * CONFIG_SLOT_NODE is gone with them.
+ * the truth, in its own transaction, the lane. What is keyed on CONFIG_SLOT_NODE asks the store through the
+ * scheduler's store hooks.
  */
 final class Lanes {
   private static final long LEFT_SHOWN = -2;
@@ -201,7 +201,13 @@ final class Lanes {
   }
 
   private boolean inFlight(Node n) {
-    return (n.statusFlags & STATUS_PENDING) != 0;
+    return (n.statusFlags & STATUS_PENDING) != 0
+      || ((n.config & CONFIG_SLOT_NODE) != 0 && s().slotFlightHook != null && s().slotFlightHook.test(n));
+  }
+
+  /** The value a guess covered: the node's committed value, a store slot's asked of the store. */
+  private Object covered(Node n) {
+    return (n.config & CONFIG_SLOT_NODE) != 0 && s().slotCoveredHook != null ? s().slotCoveredHook.apply(n) : n.value;
   }
 
   private void applyGuesses(Transaction parent) {
@@ -401,6 +407,10 @@ final class Lanes {
     Scheduler q = s();
     Transaction l = q.txOf(n);
     Transaction parent = Scheduler.resolveTx(l.parent != null ? l.parent : l);
+    // A store row answered by a new object the store would reconcile into the guessed one unchanged is an echo (#3898).
+    if (changed && (n.config & CONFIG_SLOT_NODE) != 0 && q.echoesHook != null && q.echoesHook.test(n.x.lane, value)) {
+      changed = false;
+    }
     if (changed) {
       dissolveLane(l, parent, n);
       if (guessed && reverting) {
@@ -475,7 +485,7 @@ final class Lanes {
         }
       } else if (guess) {
         if (n.pendingValue == NOT_PENDING) {
-          n.pendingValue = n.value;
+          n.pendingValue = covered(n);
         }
         if (l.shown) {
           n.value = slot;
@@ -613,7 +623,7 @@ final class Lanes {
       for (int i = 0; i < l.nodes.size() && lanes.contains(l); i++) {
         Node n = l.nodes.get(i);
         if ((n.config & CONFIG_GUESS) != 0 && n.x.transaction == l) {
-          Object truth = n.pendingValue != NOT_PENDING ? n.pendingValue : n.value;
+          Object truth = n.pendingValue != NOT_PENDING ? n.pendingValue : covered(n);
           reverting = n.pendingValue == NOT_PENDING;
           supersede(n, truth, n.equals == null || !n.equals.test(n.x.lane, truth));
           reverting = false;
@@ -660,6 +670,11 @@ final class Lanes {
     return live != null ? live : fallback;
   }
 
+  private Node slotBack(Node n) {
+    Object back = s().slotTakeHook.take(n, true);
+    return back instanceof Node ? (Node) back : null;
+  }
+
   private void endLanes(Transaction u) {
     Scheduler q = s();
     if (guessed) {
@@ -667,15 +682,18 @@ final class Lanes {
         Kept k = kept.get(i);
         if (Scheduler.resolveTx(k.taker.parent) == u) {
           kept.remove(i);
-          if (reverted.contains(k.taker) && lanes.contains(k.transaction)) {
-            NodeExtension x = rt.core.ext(k.node);
-            if (x.transaction == null || q.txOf(k.node) == u) {
-              q.commitPendingNode(k.node);
+          // (A store slot's node now: the one taken, or a read's since.)
+          Node n = k.node;
+          if (reverted.contains(k.taker) && lanes.contains(k.transaction)
+            && ((n.config & CONFIG_SLOT_NODE) == 0 || (n = slotBack(n)) != null)) {
+            NodeExtension x = rt.core.ext(n);
+            if (x.transaction == null || q.txOf(n) == u) {
+              q.commitPendingNode(n);
               x.lane = k.lane;
               x.q = k.q;
-              k.node.config |= CONFIG_OVERRIDE | CONFIG_GUESS;
-              q.list(k.node, k.transaction);
-              rerun(k.node, u);
+              n.config |= CONFIG_OVERRIDE | CONFIG_GUESS;
+              q.list(n, k.transaction);
+              rerun(n, u);
             }
           }
         }
@@ -716,9 +734,10 @@ final class Lanes {
 
   private Object laneWrite(Node el, Object v) {
     Scheduler q = s();
-    if ((el.config & CONFIG_GUESS) != 0) {
+    if ((el.config & CONFIG_GUESS) != 0
+      && !(guessed && q.slotTakeHook != null && q.slotTakeHook.take(el, false) != null)) {
       boolean older = stale(el, q.question);
-      if (older) {
+      if ((q.laneRebaseHook != null && q.laneRebaseHook.rebase(el, v, older)) || older) {
         el.pendingValue = v;
         el.config |= CONFIG_HELD;
         q.schedule();

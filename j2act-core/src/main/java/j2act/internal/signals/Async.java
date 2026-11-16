@@ -214,7 +214,7 @@ final class Async {
   }
 
   boolean stageError(Node el, Throwable error, boolean inPass) {
-    if (!((el.config & CONFIG_HELD) != 0 || (inPass && (el.flags & REACTIVE_STAGED_READ) != 0 && rt.scheduler.running))
+    if (!((el.config & CONFIG_HELD) != 0 || (inPass && (el.flags & REACTIVE_STAGED_READ) != 0 && rt.scheduler.running && el.fam == null))
       || rt.scheduler.passLane != null) {
       return false;
     }
@@ -282,6 +282,9 @@ final class Async {
         if (node.x != null && node.x.blocked) {
           q.dirtyQueue.enqueueSub(node);
           scheduled[0] = true;
+        } else if (q.storeParkHook != null && node.fam != null) {
+          // A derived store's derive pending by propagation: its readers wait on the derive itself (F-9, A9).
+          node.fam.st(0, null);
         }
         if (node.x != null) {
           node.x.blocked = false;
@@ -751,6 +754,10 @@ final class Async {
           }
         }
         notifyStatus(sub, status, error);
+        // A derived store's derive: marked, not re-run, so the family walks its leaves' readers.
+        if (sub.fam != null) {
+          sub.fam.st(status, error);
+        }
       }
     }
   }

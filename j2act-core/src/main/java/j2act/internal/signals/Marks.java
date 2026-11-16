@@ -10,7 +10,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Port of @solidjs/signals affects.ts and affects-marks.ts at 9449845, without the store targets. */
+/** Port of @solidjs/signals affects.ts and affects-marks.ts at 9449845; store/affects.ts registers a store's targets. */
 final class Marks {
   private final Runtime rt;
   private int active;
@@ -53,13 +53,19 @@ final class Marks {
     };
   }
 
-  private static boolean inFlight(Node n) {
-    return (n.statusFlags & STATUS_PENDING) != 0;
+  private boolean inFlight(Node n) {
+    return (n.statusFlags & STATUS_PENDING) != 0
+      || ((n.config & CONFIG_SLOT_NODE) != 0 && rt.scheduler.slotFlightHook != null && rt.scheduler.slotFlightHook.test(n));
   }
 
+  /** store/affects.ts releaseMarkScope: a store's mark that ended lets go of what inherited it. */
+  java.util.function.Consumer<Node> releaseScopeHook;
+
   private void release(List<Node> nodes) {
-    for (Node n : nodes) {
-      unmark(n);
+    for (Node n : new ArrayList<>(nodes)) {
+      if (unmark(n) && releaseScopeHook != null) {
+        releaseScopeHook.accept(n);
+      }
     }
     nodes.clear();
   }
@@ -84,6 +90,14 @@ final class Marks {
     rt.scheduler.schedule();
   }
 
+  /** affects(store) and affects(store, key): the marks land on the store's nodes. */
+  void affects(List<Node> nodes) {
+    for (Node node : nodes) {
+      register(node);
+    }
+    rt.scheduler.schedule();
+  }
+
   void repoll(Node node) {
     repoll(node, new HashSet<>(), CONFIG_VERDICT | CONFIG_AUTHORITATIVE);
   }
@@ -100,6 +114,10 @@ final class Marks {
       if (sub.type == 0) {
         repoll(sub, seen, readers);
       }
+      // A derived store's derive: its leaves' readers derive from it too (store/projection.ts).
+      if (sub.fam != null) {
+        sub.fam.eachLiveNode(n -> repoll(n, seen, CONFIG_VERDICT));
+      }
     }
   }
 
@@ -109,6 +127,11 @@ final class Marks {
     }
     if ((el.statusFlags & STATUS_ERROR) != 0 || !seen.add(el)) {
       return false;
+    }
+    // A store slot derives from its family's derive, so coverage hops there.
+    if ((el.config & CONFIG_SLOT_NODE) != 0) {
+      Node derive = el.host != null && el.host.fam() != null ? el.host.fam().node() : null;
+      return derive != null && marked(derive, seen);
     }
     boolean running = (el.flags & REACTIVE_RECOMPUTING_DEPS) != 0;
     if (!running || el.depsTail != null) {

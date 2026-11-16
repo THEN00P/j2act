@@ -26,6 +26,10 @@ final class Deferred {
     if (!seen.add(c)) {
       return null;
     }
+    if ((c.config & CONFIG_SLOT_NODE) != 0) {
+      Node derive = c.host != null && c.host.fam() != null ? c.host.fam().node() : null;
+      return lagOf(derive != null ? derive : c, seen);
+    }
     boolean running = (c.flags & REACTIVE_RECOMPUTING_DEPS) != 0;
     if (!running || c.depsTail != null) {
       for (Link d = c.deps; d != null; d = d.nextDep) {
