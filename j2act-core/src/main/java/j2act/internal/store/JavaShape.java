@@ -611,10 +611,30 @@ public final class JavaShape implements StoreShape {
     if (handed != null) {
       handed.check();
     }
-    rt.setStore(view, px -> {
-      onDraft(px, change);
-      return null;
-    });
+    try {
+      rt.setStore(view, px -> {
+        onDraft(px, change);
+        return null;
+      });
+    } catch (RuntimeException e) {
+      throw unloaded(e);
+    }
+  }
+
+  /**
+   * A draft reaching state its entity's query did not load fails as the JPA provider has it, which says what but
+   * not why here: a store holds such state as it was given and never loads it. Said with the provider's own error
+   * as the cause.
+   */
+  private static RuntimeException unloaded(RuntimeException e) {
+    for (Throwable t = e; t != null; t = t.getCause()) {
+      if (t.getClass().getSimpleName().contains("LazyInitialization")) {
+        return new IllegalStateException("update(...) reached state the entity's query did not load, and a store never"
+          + " loads it, since it holds what it was given: fetch it in the query (join fetch or an entity graph), or"
+          + " load it before the entity goes into the store (ADR 0035). " + t.getMessage(), e);
+      }
+    }
+    return e;
   }
 
   /** Inside a write to px: hands change the draft of its value and writes what it changed. */

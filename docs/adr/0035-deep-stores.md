@@ -102,7 +102,7 @@ A record cannot change, so in a draft it is handed out built, and is replaced by
 
 A store takes any class with a constructor taking nothing as data, so a class of that shape that is not data, such as a cache or a client an object holds, is named opaque by the application: `J2Act.builder().withStoreOpaque(PriceCache.class)`, or a test per class, from Spring through a `J2ActCustomizer`. Subclasses are included, and it is asked once per class. Per class rather than per object, as Solid's `markRaw` is: what one object of a class does, all do, and it is written where the app is configured rather than wherever an object was made.
 
-A hook lets a host say more about a class. JPA state that is not loaded is opaque, through `PersistenceUtil.isLoaded`, so a store never initializes it. The application's own call still loads it or fails as Hibernate has it, and editing inside one fails with a hint to fetch it in the query.
+A hook lets a host say more about a class. JPA state that is not loaded is opaque, through `PersistenceUtil.isLoaded`, so a store never initializes it: a detached entity whose lazy associations were not fetched goes into a store, is read, snapshotted and written without a session. The application's own call still loads it or fails as the provider has it, and editing inside one in `update` fails saying to fetch it in the query, with the provider's error as the cause. `UnloadedStateTest` in `j2act-jakarta` holds that with Hibernate over H2 in memory.
 
 ## Retained stores
 
@@ -177,5 +177,4 @@ Tests that reach a part of Solid's store that is not ported name it and are coun
 ## Open
 
 - The scoped `Store` class shares its name with `createStore`. It is renamed or replaced separately; until then the new types avoid the bare name.
-- "Draft" and "createStore" are on CONTEXT.md's lists of words to avoid, from before this.
 - The port is made at the pinned commit. Moving the pin is separate.
