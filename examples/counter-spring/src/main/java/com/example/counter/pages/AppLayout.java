@@ -52,6 +52,7 @@ public class AppLayout extends Layout {
           a("Missing").withHref("/items/404"),
           a("Report").withHref("/report").withPreload(Preload.INTENT),
           a("Slow").withHref("/slow"),
+          a("Stores").withHref("/stores"),
           a("Slow, no layout").withHref("/slow-alone"),
           button("layout clicks " + clicks.get())
             .withId("layout-clicks")
