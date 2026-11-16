@@ -55,15 +55,19 @@ class ValueCell extends Cell {
 
   /** A derived value of the tab's own. */
   ValueCell(Tab tab, String address, Supplier<?> body) {
-    this(tab, address, body, null, Kind.MEMO, false, null);
+    this(tab, address, body, null, Kind.MEMO, false, null, null);
   }
 
   private ValueCell(Tab tab, String address, Supplier<?> body, AsyncSupplier<?> asyncBody, boolean writable) {
-    this(tab, address, body, asyncBody, writable ? Kind.DERIVED : Kind.MEMO, false, null);
+    this(tab, address, body, asyncBody, writable ? Kind.DERIVED : Kind.MEMO, false, null, null);
   }
 
+  /**
+   * loading, when it is not null, holds what the node shows until its first value lands (Solid's loadingValue):
+   * a read gets it and nothing stops at loading(...).
+   */
   private ValueCell(Tab tab, String address, Supplier<?> body, AsyncSupplier<?> asyncBody, Kind kind,
-      boolean staleOnError, Reactive.From<Object> source) {
+      boolean staleOnError, Reactive.From<Object> source, Object[] loading) {
     super(tab, address);
     this.rt = tab.rt;
     this.body = body;
@@ -71,27 +75,45 @@ class ValueCell extends Cell {
     this.staleOnError = staleOnError;
     this.source = source;
     Node.Compute compute = this::compute;
-    this.node = kind == Kind.DERIVED ? rt.derivedNode(compute) : kind == Kind.DEFERRED ? rt.deferredNode(compute) : rt.memoNode(compute);
+    j2act.internal.signals.Runtime.Options<Object> options = null;
+    if (loading != null) {
+      options = new j2act.internal.signals.Runtime.Options<Object>().loadingValue(loading[0]);
+    }
+    this.node = kind == Kind.DERIVED ? rt.derivedNode(compute, options)
+      : kind == Kind.DEFERRED ? rt.deferredNode(compute, options) : rt.memoNode(compute, options);
   }
 
   static ValueCell memo(Tab tab, String address, Supplier<?> body) {
-    return new ValueCell(tab, address, body, null, false);
+    return memo(tab, address, body, null);
+  }
+
+  static ValueCell memo(Tab tab, String address, Supplier<?> body, Object[] loading) {
+    return new ValueCell(tab, address, body, null, Kind.MEMO, false, null, loading);
   }
 
   static ValueCell async(Tab tab, String address, AsyncSupplier<?> body, boolean staleOnError, boolean deferred) {
-    return new ValueCell(tab, address, null, body, deferred ? Kind.DEFERRED : Kind.MEMO, staleOnError, null);
+    return async(tab, address, body, staleOnError, deferred, null);
+  }
+
+  static ValueCell async(Tab tab, String address, AsyncSupplier<?> body, boolean staleOnError, boolean deferred,
+      Object[] loading) {
+    return new ValueCell(tab, address, null, body, deferred ? Kind.DEFERRED : Kind.MEMO, staleOnError, null, loading);
   }
 
   /** createFrom: subscribes under this node, so a dispose stops it. */
   @SuppressWarnings("unchecked")
   static <T> ValueCell from(Tab tab, String address, Reactive.From<T> source) {
-    return new ValueCell(tab, address, null, null, Kind.MEMO, false, (Reactive.From<Object>) source);
+    return new ValueCell(tab, address, null, null, Kind.MEMO, false, (Reactive.From<Object>) source, null);
   }
 
   private enum Kind { MEMO, DERIVED, DEFERRED }
 
   static ValueCell derived(Tab tab, String address, Supplier<?> source) {
-    return new ValueCell(tab, address, source, null, true);
+    return derived(tab, address, source, null);
+  }
+
+  static ValueCell derived(Tab tab, String address, Supplier<?> source, Object[] loading) {
+    return new ValueCell(tab, address, source, null, Kind.DERIVED, false, null, loading);
   }
 
   @SuppressWarnings("unchecked")

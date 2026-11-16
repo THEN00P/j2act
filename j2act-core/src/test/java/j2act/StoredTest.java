@@ -259,4 +259,79 @@ class StoredTest {
       assertTrue(last.contains("open:2;"), last);
     }
   }
+
+  /** Not data, though a store would copy it as a bean: it has a constructor taking nothing. */
+  public static class PriceCache {
+    final java.util.Map<String, Integer> prices = new java.util.HashMap<>();
+
+    public PriceCache() {
+    }
+  }
+
+  public static class Basket {
+    private String name;
+    private PriceCache cache;
+
+    Basket() {
+    }
+
+    Basket(String name, PriceCache cache) {
+      this.name = name;
+      this.cache = cache;
+    }
+
+    public String getName() {
+      return name;
+    }
+
+    public void setName(String name) {
+      this.name = name;
+    }
+
+    public PriceCache getCache() {
+      return cache;
+    }
+  }
+
+  static final PriceCache CACHE = new PriceCache();
+  static final java.util.List<Boolean> SAME_CACHE = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+  static final class Baskets extends LiveComponent {
+    @Override protected View setup() {
+      var basket = createStore(new Basket("one", CACHE));
+      return () -> {
+        Basket b = basket.get();
+        SAME_CACHE.add(b.getCache() == CACHE);
+        return T.page("t", T.div(
+          T.span("name:" + b.getName() + ";"),
+          T.button("rename").onClick(e -> basket.update(d -> {
+            SAME_CACHE.add(d.getCache() == CACHE);
+            d.setName("two");
+          }))));
+      };
+    }
+  }
+
+  @Test
+  void aClassNamedOpaqueIsHeldAsOneValue() {
+    SAME_CACHE.clear();
+    try (Harness h = new Harness(Baskets::new, b -> b.withStoreOpaque(PriceCache.class))) {
+      String html = h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "rename"));
+      h.awaitPatch(from, p -> p.contains("name:two;"));
+      assertTrue(!SAME_CACHE.isEmpty() && SAME_CACHE.stream().allMatch(x -> x),
+        "the cache is the object it was given, in a read and in a draft: " + SAME_CACHE);
+    }
+    SAME_CACHE.clear();
+    try (Harness h = new Harness(Baskets::new)) {
+      String html = h.load();
+      h.connect();
+      int from = h.conn.size();
+      h.click(Harness.clickOn(html, "rename"));
+      h.awaitPatch(from, p -> p.contains("name:two;"));
+      assertTrue(SAME_CACHE.contains(false), "without it, a draft copies it as data: " + SAME_CACHE);
+    }
+  }
 }

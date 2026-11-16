@@ -18,9 +18,17 @@ public final class Projection<E> extends Primitive implements Supplier<List<E>> 
   private final java.util.concurrent.Callable<Object> body;
   private final Function<Object, Object> key;
 
+  /** The rows shown while the first answer loads, or null. */
+  private final List<E> loading;
+
   Projection(java.util.concurrent.Callable<Object> body, Function<Object, Object> key) {
+    this(body, key, null);
+  }
+
+  Projection(java.util.concurrent.Callable<Object> body, Function<Object, Object> key, List<E> loading) {
     this.body = body;
     this.key = key;
+    this.loading = loading;
   }
 
   /** The rows: a List whose reads subscribe to a row or the size. While the first answer loads, a read stops at loading(...). */
@@ -31,7 +39,7 @@ public final class Projection<E> extends Primitive implements Supplier<List<E>> 
   }
 
   @Override Cell createCell(Tab tab, String address) {
-    return new StoreCell(tab, address, body, null, key, false);
+    return new StoreCell(tab, address, body, null, key, false, loading);
   }
 
   @Override boolean accepts(Cell cell) {

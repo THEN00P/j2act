@@ -140,6 +140,13 @@ prices.update(d -> d.set(0, new Price("EUR", 12)));
 var picked = createStore(new LinkedHashSet<Long>());
 return () -> span(picked.get().contains(row.getId()) ? "picked" : "");
 
+// shown until the first answer lands, with nothing stopping at loading(...)
+var user = createMemo(() -> async(() -> users.find(id)), User.placeholder());
+var rows = createProjection(() -> async(() -> repo.list()), Todo::getId, List.of(Todo.skeleton()));
+
+// a class that is not data, though it has a constructor taking nothing
+J2Act.builder(pages).withStoreOpaque(PriceCache.class);
+
 // kept in the snapshot as JSON, typed from the source
 Stored<List<Todo>> drafts = createRetainedStore(new ArrayList<>());
 return () -> drafts.restored() ? p("Your drafts came back") : null;

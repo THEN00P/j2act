@@ -134,6 +134,62 @@ public final class JavaShape implements StoreShape {
     return view instanceof BeanView;
   }
 
+  /**
+   * Real objects that share nothing with raw, for a derive to work while its seed shows: a list, a map and a set as
+   * plain ones, a bean or a record built anew, and what they hold the same way unless shallow.
+   */
+  @Override public Object detach(Object raw, boolean shallow) {
+    return detach(raw, shallow, new java.util.IdentityHashMap<>());
+  }
+
+  @SuppressWarnings("unchecked")
+  private Object detach(Object raw, boolean shallow, Map<Object, Object> done) {
+    if (raw instanceof StoreView) {
+      raw = rt.snapshot(raw);
+    }
+    if (raw == null || !isWrappable(raw)) {
+      return raw;
+    }
+    Object known = done.get(raw);
+    if (known != null) {
+      return known;
+    }
+    if (raw instanceof List) {
+      List<Object> copy = new ArrayList<>();
+      done.put(raw, copy);
+      for (Object e : (List<?>) raw) {
+        copy.add(shallow ? e : detach(e, false, done));
+      }
+      return copy;
+    }
+    if (raw instanceof Map) {
+      Map<Object, Object> copy = raw instanceof SortedMap ? new TreeMap<>(((SortedMap<Object, ?>) raw).comparator())
+        : new LinkedHashMap<>();
+      done.put(raw, copy);
+      for (Map.Entry<?, ?> e : ((Map<?, ?>) raw).entrySet()) {
+        copy.put(e.getKey(), shallow ? e.getValue() : detach(e.getValue(), false, done));
+      }
+      return copy;
+    }
+    if (raw instanceof Set) {
+      Set<Object> copy = copySet((Set<?>) raw);
+      done.put(raw, copy);
+      return copy;
+    }
+    Kinds.Layout l = layout(raw);
+    Object[] values = raw instanceof Copy ? ((Copy) raw).values.clone() : l.values(raw);
+    Object shell = l.shell();
+    if (shell != null) {
+      done.put(raw, shell);
+    }
+    if (!shallow) {
+      for (int i = 0; i < values.length; i++) {
+        values[i] = detach(values[i], false, done);
+      }
+    }
+    return shell != null ? l.fill(shell, values) : l.build(values);
+  }
+
   @Override public boolean isArray(Object raw) {
     return raw instanceof List;
   }
@@ -361,7 +417,7 @@ public final class JavaShape implements StoreShape {
 
   /** Turns on the check for a bean changed outside update(...), which dev mode reports through report. */
   public void checkMutations(java.util.function.Consumer<String> report) {
-    handed = new Handed(report);
+    handed = new Handed(report, value -> opaque.test(value));
   }
 
   /** A store's view as application code gets it: a bean view becomes a real instance of its class. */
@@ -446,11 +502,21 @@ public final class JavaShape implements StoreShape {
    * and only what changed in it is told. A null key pairs rows by position.
    */
   public Object createProjection(j2act.internal.signals.Stores.Derive derive, java.util.function.Function<Object, Object> key) {
+    return createProjection(derive, key, null);
+  }
+
+  /**
+   * With loading rows, Solid's seedLoadingValue: the store starts as those rows, which readers see while the first
+   * answer loads, with nothing stopping at loading(...); the answer is merged into them.
+   */
+  public Object createProjection(j2act.internal.signals.Stores.Derive derive, java.util.function.Function<Object, Object> key,
+      List<?> loading) {
     rt.storeShape(this);
     // The engine asks a list for its key too, as Solid asks an array for its id.
     java.util.function.Function<Object, Object> rowKey = key == null ? null
       : row -> rowKey(key, row);
-    return rt.createProjection(derive, new ArrayList<>(), rowKey);
+    return rt.createProjection(derive, loading != null ? new ArrayList<>(loading) : new ArrayList<>(), rowKey, false,
+      loading != null);
   }
 
   /**
@@ -460,10 +526,17 @@ public final class JavaShape implements StoreShape {
    */
   public Object createOptimistic(j2act.internal.signals.Stores.Derive derive, Object value,
       java.util.function.Function<Object, Object> key) {
+    return createOptimistic(derive, value, key, null);
+  }
+
+  /** With loading rows, as createProjection has them. */
+  public Object createOptimistic(j2act.internal.signals.Stores.Derive derive, Object value,
+      java.util.function.Function<Object, Object> key, List<?> loading) {
     rt.storeShape(this);
     java.util.function.Function<Object, Object> rowKey = key == null ? null
       : row -> rowKey(key, row);
-    return rt.createOptimisticStore(derive, derive != null ? new ArrayList<>() : value, rowKey);
+    Object seed = derive == null ? value : loading != null ? new ArrayList<>(loading) : new ArrayList<>();
+    return rt.createOptimisticStore(derive, seed, rowKey, false, derive != null && loading != null);
   }
 
   /**
@@ -566,11 +639,19 @@ public final class JavaShape implements StoreShape {
    * and each time what it read changes. Writes from update(...) or set(...) stand until derive runs again.
    */
   public Object createDerived(Consumer<Object> derive, Object seed) {
+    return createDerived(derive, seed, false);
+  }
+
+  /**
+   * With seedLoadingValue, Solid's option: readers see seed while the derive's first run waits for what it reads,
+   * with nothing stopping at loading(...); the derive works a copy of it meanwhile.
+   */
+  public Object createDerived(Consumer<Object> derive, Object seed, boolean seedLoadingValue) {
     rt.storeShape(this);
     return rt.createProjection(px -> {
       onDraft(px, derive);
       return null;
-    }, seed, null);
+    }, seed, null, false, seedLoadingValue);
   }
 
   /** Replaces the store's value. */

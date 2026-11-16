@@ -25,7 +25,7 @@ class SolidConformanceTest {
   /** What a test may fail for reaching, with why it is not ported. docs/spikes/solid-port-tests.md says the same. */
   private static final Set<String> LEFT_OUT = Set.of(
     // JS proxies
-    "merge", "seedLoadingValue", "registerFold",
+    "merge", "registerFold",
     // parts of the store with no meaning for Java objects, or not ported yet
     "storePath", "omit", "mergeView", "viewOf", "omitView",
     "isStatic", "hasStaticKeys",

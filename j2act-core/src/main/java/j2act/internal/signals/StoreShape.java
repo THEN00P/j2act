@@ -93,6 +93,28 @@ public interface StoreShape {
     return true;
   }
 
+  /**
+   * A copy of raw that shares nothing with it, projection.ts's cloneState: what a derive works while its seed shows
+   * (seedLoadingValue). Shallow, only raw itself is copied. Solid's is JSON's copy, of plain data; this one copies
+   * what the shape copies, every level down.
+   */
+  default Object detach(Object raw, boolean shallow) {
+    if (raw == null || !isWrappable(raw)) {
+      return raw;
+    }
+    Object copy = clone(raw);
+    if (!shallow) {
+      for (Object key : keys(raw)) {
+        Object child = get(raw, key);
+        Object detached = detach(child, false);
+        if (detached != child) {
+          set(copy, key, detached);
+        }
+      }
+    }
+    return copy;
+  }
+
   /** A map keyed by a raw's identity that does not keep its keys alive. */
   <V> Map<Object, V> identityMap();
 

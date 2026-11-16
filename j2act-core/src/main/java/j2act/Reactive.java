@@ -42,6 +42,11 @@ public final class Reactive {
     return own(source == null ? new Signal<T>((T) null) : new Signal<T>(source, true));
   }
 
+  /** A signal that follows its source, showing loadingValue until the source's first value lands. */
+  public static <T> Signal<T> createSignal(Supplier<T> source, T loadingValue) {
+    return own(new Signal<T>(source, true).loadingValue(loadingValue));
+  }
+
   /**
    * A signal whose value goes into its owner's Snapshot, so it outlives the in-memory tab (ADR
    * 0026, 0031). Keyed by the variable it is assigned to, through the processor.
@@ -110,6 +115,22 @@ public final class Reactive {
   }
 
   /**
+   * A writable derived store with Solid's { seedLoadingValue }: while derive's first run waits for something it
+   * reads, readers see seed, with nothing stopping at loading(...), and derive works a copy of it meanwhile.
+   */
+  public static <T> Stored<T> createStore(Consumer<T> derive, T seed, boolean seedLoadingValue) {
+    Stored<T> store = new Stored<>(derive, seed);
+    return own(seedLoadingValue ? store.seedLoadingValue() : store);
+  }
+
+  /** A writable derived store over a list, with Solid's { seedLoadingValue }. */
+  public static <E> Stored<java.util.List<E>> createStore(Consumer<java.util.List<E>> derive, java.util.List<E> seed,
+      boolean seedLoadingValue) {
+    Stored<java.util.List<E>> store = new Stored<>(derive, seed);
+    return own(seedLoadingValue ? store.seedLoadingValue() : store);
+  }
+
+  /**
    * A shallow store over a list (Solid's createStore(list, {shallow: true})): its size and each slot are reactive,
    * and a row is served as it is, by reference, never copied or looked into. A row is replaced, d.set(i, row), and
    * never changed: for a long list of immutable rows, such as records, that is cheaper and keeps each row the object
@@ -145,6 +166,24 @@ public final class Reactive {
   }
 
   /**
+   * A projection that starts as loadingRows (Solid's seed with { seedLoadingValue: true }): readers see them while
+   * the first answer loads, with nothing stopping at loading(...), and the answer is merged into them by key.
+   * Placeholder rows, such as skeletons, are data: a field like skeleton=true says what they are.
+   */
+  @SuppressWarnings("unchecked")
+  public static <E> Projection<E> createProjection(AsyncSupplier<java.util.List<E>> body, Function<? super E, ?> key,
+      java.util.List<E> loadingRows) {
+    return own(new Projection<>(body::get, row -> key.apply((E) row), java.util.Objects.requireNonNull(loadingRows)));
+  }
+
+  /** A projection over a derived list that starts as loadingRows. */
+  @SuppressWarnings("unchecked")
+  public static <E> Projection<E> createProjection(Supplier<java.util.List<E>> body, Function<? super E, ?> key,
+      java.util.List<E> loadingRows) {
+    return own(new Projection<>(body::get, row -> key.apply((E) row), java.util.Objects.requireNonNull(loadingRows)));
+  }
+
+  /**
    * A store that takes optimistic writes (ADR 0035): an update from an action's body shows at once and is
    * undone when that action ends, like {@link #createOptimistic}, and only the rows and properties it
    * touched are guessed.
@@ -161,6 +200,14 @@ public final class Reactive {
   public static <E> Stored<java.util.List<E>> createOptimisticStore(AsyncSupplier<java.util.List<E>> body,
       Function<? super E, ?> key) {
     return own(new Stored<>(null, body::get, row -> key.apply((E) row), true));
+  }
+
+  /** An optimistic store over a load that starts as loadingRows, shown while the first answer loads. */
+  @SuppressWarnings("unchecked")
+  public static <E> Stored<java.util.List<E>> createOptimisticStore(AsyncSupplier<java.util.List<E>> body,
+      Function<? super E, ?> key, java.util.List<E> loadingRows) {
+    return own(new Stored<java.util.List<E>>(null, body::get, row -> key.apply((E) row), true)
+      .loadingRows(java.util.Objects.requireNonNull(loadingRows)));
   }
 
   /**
@@ -261,6 +308,15 @@ public final class Reactive {
   }
 
   /**
+   * A memo that shows loadingValue until its first value lands (Solid's { loadingValue }): reading it then gives
+   * loadingValue and stops at no loading(...), and it is not pending. Later loads keep the last value meanwhile,
+   * as any memo does.
+   */
+  public static <T> Memo<T> createMemo(Supplier<T> body, T loadingValue) {
+    return own(new Memo<>(body).loadingValue(loadingValue));
+  }
+
+  /**
    * Watches what track reads and acts with its value when that changes, starting once the tab's
    * socket connects (ADR 0031). Only track is tracked. act returns its cleanup or null, which runs
    * before it acts again and on unmount.
@@ -297,6 +353,11 @@ public final class Reactive {
    */
   public static <T> Memo<T> createMemo(AsyncSupplier<T> body) {
     return own(new Memo<>(body));
+  }
+
+  /** An async memo that shows loadingValue until its first value lands, with nothing stopping at loading(...). */
+  public static <T> Memo<T> createMemo(AsyncSupplier<T> body, T loadingValue) {
+    return own(new Memo<>(body).loadingValue(loadingValue));
   }
 
   /**
@@ -618,6 +679,16 @@ public final class Reactive {
   /** An optimistic value over a load, the usual shape: createOptimistic(() -> async(() -> service.list())). */
   public static <T> Optimistic<T> createOptimistic(AsyncSupplier<T> body) {
     return own(new Optimistic<>(new Memo<>(body)));
+  }
+
+  /** An optimistic value over a derived value, showing loadingValue until its first value lands. */
+  public static <T> Optimistic<T> createOptimistic(Supplier<T> body, T loadingValue) {
+    return own(new Optimistic<>(new Memo<>(body).loadingValue(loadingValue)));
+  }
+
+  /** An optimistic value over a load, showing loadingValue until the first one lands. */
+  public static <T> Optimistic<T> createOptimistic(AsyncSupplier<T> body, T loadingValue) {
+    return own(new Optimistic<>(new Memo<>(body).loadingValue(loadingValue)));
   }
 
   /**

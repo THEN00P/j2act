@@ -15,6 +15,14 @@ public final class Memo<T> extends Primitive implements Supplier<T> {
   private final Reactive.From<T> source;
   private boolean staleOnError;
   private boolean deferred;
+  /** What it shows until its first value lands, in a one-element array; null for none. */
+  private Object[] loading;
+
+  /** Solid's { loadingValue }. */
+  Memo<T> loadingValue(T value) {
+    loading = new Object[] {value};
+    return this;
+  }
 
   Memo(Supplier<T> body) {
     this.body = body;
@@ -69,7 +77,8 @@ public final class Memo<T> extends Primitive implements Supplier<T> {
     if (source != null) {
       return ValueCell.from(tab, address, source);
     }
-    return asyncBody != null ? ValueCell.async(tab, address, asyncBody, staleOnError, deferred) : ValueCell.memo(tab, address, body);
+    return asyncBody != null ? ValueCell.async(tab, address, asyncBody, staleOnError, deferred, loading)
+      : ValueCell.memo(tab, address, body, loading);
   }
 
   @Override boolean accepts(Cell cell) {

@@ -100,7 +100,9 @@ Fields are copied, not properties: a getter may load a lazy association and a se
 
 A record cannot change, so in a draft it is handed out built, and is replaced by assigning a new one; a list it holds is still the store's own, so `d.getProfile().tags().add(x)` works, and `at(Profile::name).set(x)` writes one component without building anything by hand. Reloaded records are merged component by component like beans, which suits DTOs from a query. Records compile to Java 16 bytecode and core's tests to 11, so `RecordStoreTest` compiles its records at run time. An opaque value is one value to the store. Assigning a new one is a change, and what is inside it is not tracked. That is right for an immutable type, and dev mode warns when a mutable class that cannot be copied enters a store.
 
-A hook lets a host say more about a class. `j2act-jakarta` and `j2act-spring` use it to make JPA state that is not loaded opaque, through `PersistenceUtil.isLoaded`, so a store never initializes it. The application's own call still loads it or fails as Hibernate has it, and editing inside one fails with a hint to fetch it in the query.
+A store takes any class with a constructor taking nothing as data, so a class of that shape that is not data, such as a cache or a client an object holds, is named opaque by the application: `J2Act.builder().withStoreOpaque(PriceCache.class)`, or a test per class, from Spring through a `J2ActCustomizer`. Subclasses are included, and it is asked once per class. Per class rather than per object, as Solid's `markRaw` is: what one object of a class does, all do, and it is written where the app is configured rather than wherever an object was made.
+
+A hook lets a host say more about a class. JPA state that is not loaded is opaque, through `PersistenceUtil.isLoaded`, so a store never initializes it. The application's own call still loads it or fails as Hibernate has it, and editing inside one fails with a hint to fetch it in the query.
 
 ## Retained stores
 
@@ -114,7 +116,17 @@ A value that cannot be written is warned about once, with the binding's own mess
 
 ## Shallow stores
 
-`createShallowStore(list)` and its map form are Solid's shallow stores: the size, each slot and each key are reactive, and what a slot holds is served as it is, by reference, never copied, wrapped or looked into. A row is replaced, `d.set(i, row)`, and never changed in place: a change inside one tells nobody. That suits a long list of immutable rows, records above all, which then cost no copy and stay the objects they were given. Reconciling compares rows by reference, slot by slot, so the key is not needed. A row a deep store already tracks cannot go into a shallow one: one object is never both wrapped and raw, and the store says so at creation. A store's own view in a shallow store is still served as a view. The engine has Solid's `markRaw` for this and for its tests; Java needs no per-object marker, since what a store looks into is decided per class.
+`createShallowStore(list)` and its map form are Solid's shallow stores: the size, each slot and each key are reactive, and what a slot holds is served as it is, by reference, never copied, wrapped or looked into. A row is replaced, `d.set(i, row)`, and never changed in place: a change inside one tells nobody. That suits a long list of immutable rows, records above all, which then cost no copy and stay the objects they were given. Reconciling compares rows by reference, slot by slot, so the key is not needed. A row a deep store already tracks cannot go into a shallow one: one object is never both wrapped and raw, and the store says so at creation. A store's own view in a shallow store is still served as a view. The engine has Solid's `markRaw` for this and for its tests; Java has no per-object marker, since what a store looks into is decided per class, above.
+
+## Shown while the first answer loads
+
+Solid's `loadingValue` and `seedLoadingValue`, the same in Java: a value or a store shows what it was given until its first answer lands, and nothing stops at `loading(...)` meanwhile, nor is it pending. Later loads behave as without it, keeping the last answer.
+
+- `createMemo(body, loadingValue)`, `createSignal(source, loadingValue)` and `createOptimistic(body, loadingValue)`: a memo over it reads the loading value too.
+- `createProjection(body, key, loadingRows)` and `createOptimisticStore(body, key, loadingRows)`: the store starts as those rows, and the first answer is merged into them by key. Placeholder rows are data; a field such as `skeleton` says what they are, as Solid has it.
+- `createStore(fn, seed, true)`: while `fn`'s first run waits for what it reads, readers see the seed, and `fn` writes a detached copy of it meanwhile, so its writes do not show before its answer does.
+
+The engine's detached copy is Solid's `cloneState`; where Solid copies plain data through JSON, the Java seam builds real objects every level down.
 
 ## Equality
 
@@ -147,7 +159,7 @@ Two other models were asked to design this from the constraints alone and then t
 
 ## Built, and not yet
 
-Built: the engine with `reconcile`, projections, optimistic stores, shallow stores, chained backings and `affects()` on a store, running Solid's store tests; and over lists, maps, sets, beans and records `createStore` with its derived form, `update`, `set`, `at(...)` with the processor's check, `createProjection`, `createOptimisticStore`, `createShallowStore` and `createRetainedStore` with `restored()`, one object per record and version, the read path the enhancer compiles to, the dev-mode report of a bean changed outside `update`, and unloaded JPA state kept whole.
+Built: the engine with `reconcile`, projections, optimistic stores, shallow stores, chained backings and `affects()` on a store, running Solid's store tests; and over lists, maps, sets, beans and records `createStore` with its derived form, `update`, `set`, `at(...)` with the processor's check, `createProjection`, `createOptimisticStore`, `createShallowStore` and `createRetainedStore` with `restored()`, what shows while a first answer loads, opaque classes named by the app, one object per record and version, the read path the enhancer compiles to, the dev-mode report of a bean changed outside `update`, and unloaded JPA state kept whole.
 
 Not yet:
 
@@ -160,11 +172,10 @@ Solid's own store tests run against the port in `j2act-signals-conformance` with
 - JavaScript property semantics a Java field does not have: accessors, `defineProperty`, enumerability, a swapped prototype.
 - That the store's own copy carries a `$OWNER` stamp: the port keeps ownership in an identity map, as a Java object cannot be stamped.
 
-Tests that reach a part of Solid's store that is not ported name it and are counted apart: `merge` and `omit`, which are for JSX props; `storePath`, the JavaScript path setter that `at(...)` stands in for; and `seedLoadingValue`.
+Tests that reach a part of Solid's store that is not ported name it and are counted apart: `merge` and `omit`, which are for JSX props, and `storePath`, the JavaScript path setter that `at(...)` stands in for.
 
 ## Open
 
 - The scoped `Store` class shares its name with `createStore`. It is renamed or replaced separately; until then the new types avoid the bare name.
 - "Draft" and "createStore" are on CONTEXT.md's lists of words to avoid, from before this.
-- `seedLoadingValue`, a projection's seed shown as its first answer while that loads, together with a memo's `loadingValue`, which `Reactive` does not offer either.
 - The port is made at the pinned commit. Moving the pin is separate.

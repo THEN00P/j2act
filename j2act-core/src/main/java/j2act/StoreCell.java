@@ -28,6 +28,12 @@ final class StoreCell extends Cell {
    */
   StoreCell(Tab tab, String address, java.util.concurrent.Callable<Object> body, Object initial,
       java.util.function.Function<Object, Object> key, boolean optimistic) {
+    this(tab, address, body, initial, key, optimistic, null);
+  }
+
+  /** loading: the rows readers see while the first answer loads, or null to stop at loading(...) meanwhile. */
+  StoreCell(Tab tab, String address, java.util.concurrent.Callable<Object> body, Object initial,
+      java.util.function.Function<Object, Object> key, boolean optimistic, java.util.List<?> loading) {
     super(tab, address);
     this.shape = tab.host.stores();
     this.optimistic = optimistic;
@@ -42,12 +48,13 @@ final class StoreCell extends Cell {
         Tracking.swapScope(previous);
       }
     };
-    this.view = onLane(() -> optimistic ? shape.createOptimistic(derive, initial, key) : shape.createProjection(derive, key));
+    this.view = onLane(() -> optimistic ? shape.createOptimistic(derive, initial, key, loading)
+      : shape.createProjection(derive, key, loading));
     tab.host.storeTabs.put(shape.targetOf(view), tab);
   }
 
   /** A writable derived store: derive writes a draft of seed, with its creator around it, as an update does. */
-  StoreCell(Tab tab, String address, Consumer<Object> derive, Object seed) {
+  StoreCell(Tab tab, String address, Consumer<Object> derive, Object seed, boolean seedLoadingValue) {
     super(tab, address);
     this.shape = tab.host.stores();
     Scope creator = Tracking.scope();
@@ -61,7 +68,7 @@ final class StoreCell extends Cell {
         Tracking.swapScope(previous);
       }
     };
-    this.view = onLane(() -> shape.createDerived(write, seed));
+    this.view = onLane(() -> shape.createDerived(write, seed, seedLoadingValue));
     tab.host.storeTabs.put(shape.targetOf(view), tab);
   }
 

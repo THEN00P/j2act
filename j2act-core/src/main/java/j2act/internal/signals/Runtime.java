@@ -354,6 +354,12 @@ public final class Runtime {
     return stores.createProjection(fn, seed, key, false, shallow);
   }
 
+  /** With seedLoadingValue, Solid's option: the seed shows while the first answer loads, nothing suspends. */
+  public Object createProjection(Stores.Derive fn, Object seed, Function<Object, Object> key, boolean shallow,
+      boolean seedLoadingValue) {
+    return stores.createProjection(fn, seed, key, false, shallow, seedLoadingValue);
+  }
+
   /** Solid's createOptimisticStore(fn, seed, {key}); fn is null for one with no derive. */
   public Object createOptimisticStore(Stores.Derive fn, Object seed, Function<Object, Object> key) {
     return stores.createOptimisticStore(fn, seed, key);
@@ -361,6 +367,11 @@ public final class Runtime {
 
   public Object createOptimisticStore(Stores.Derive fn, Object seed, Function<Object, Object> key, boolean shallow) {
     return stores.createOptimisticStore(fn, seed, key, shallow);
+  }
+
+  public Object createOptimisticStore(Stores.Derive fn, Object seed, Function<Object, Object> key, boolean shallow,
+      boolean seedLoadingValue) {
+    return stores.createOptimisticStore(fn, seed, key, shallow, seedLoadingValue);
   }
 
   /** Solid's affects(store): isPending turns true for what reads the record, until it next lands. */
@@ -453,18 +464,31 @@ public final class Runtime {
   }
 
   public Node memoNode(Node.Compute compute) {
-    return core.computed(compute, null);
+    return memoNode(compute, null);
+  }
+
+  /** With options, Solid's MemoOptions: loadingValue is what it shows until its first value lands. */
+  public Node memoNode(Node.Compute compute, Options<?> options) {
+    return core.computed(compute, options != null ? options.node : null);
   }
 
   /** createSignal(fn): writable, and following compute until that gives something new. */
   public Node derivedNode(Node.Compute compute) {
-    Node node = core.computed(compute, null);
+    return derivedNode(compute, null);
+  }
+
+  public Node derivedNode(Node.Compute compute, Options<?> options) {
+    Node node = core.computed(compute, options != null ? options.node : null);
     node.config &= ~Constants.CONFIG_AUTO_DISPOSE;
     return node;
   }
 
   public Node deferredNode(Node.Compute compute) {
-    return deferred.createDeferred(compute, null);
+    return deferredNode(compute, null);
+  }
+
+  public Node deferredNode(Node.Compute compute, Options<?> options) {
+    return deferred.createDeferred(compute, options != null ? options.node : null);
   }
 
   public Object read(Node node) {

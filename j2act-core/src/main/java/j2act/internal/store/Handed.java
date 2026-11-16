@@ -38,8 +38,12 @@ final class Handed {
   private final ArrayDeque<Seen> seen = new ArrayDeque<>();
   private final Map<Object, Boolean> known = new WeakIdentityMap<>();
 
-  Handed(Consumer<String> report) {
+  /** What the store holds as one value, which is the application's to change. */
+  private final java.util.function.Predicate<Object> opaque;
+
+  Handed(Consumer<String> report, java.util.function.Predicate<Object> opaque) {
     this.report = report;
+    this.opaque = opaque;
   }
 
   /** Remembers a bean a reader was given, and the beans it holds, a few levels down. */
@@ -56,7 +60,7 @@ final class Handed {
         for (Object e : (List<?>) o) {
           todo.add(e);
         }
-      } else if (Kinds.of(o) == Kinds.Kind.BEAN) {
+      } else if (Kinds.of(o) == Kinds.Kind.BEAN && !opaque.test(o)) {
         Field[] fields = Kinds.bean(o.getClass()).fields.values().toArray(new Field[0]);
         if (known.put(o, Boolean.TRUE) == null) {
           seen.add(new Seen(o, fields));

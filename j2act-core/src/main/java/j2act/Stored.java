@@ -30,6 +30,19 @@ public class Stored<T> extends Primitive implements Supplier<T> {
 
   /** A shallow store: what it holds is served by reference. */
   private boolean shallow;
+  /** A derived store's seedLoadingValue, or an optimistic store's rows shown while the first answer loads. */
+  private boolean seedLoadingValue;
+  private java.util.List<?> loading;
+
+  Stored<T> seedLoadingValue() {
+    seedLoadingValue = true;
+    return this;
+  }
+
+  Stored<T> loadingRows(java.util.List<?> rows) {
+    loading = rows;
+    return this;
+  }
 
   /** A writable derived store. */
   Stored(Consumer<T> derive, T seed) {
@@ -153,9 +166,10 @@ public class Stored<T> extends Primitive implements Supplier<T> {
 
   @Override @SuppressWarnings("unchecked") Cell createCell(Tab tab, String address) {
     if (derive != null) {
-      return new StoreCell(tab, address, (Consumer<Object>) derive, initial);
+      return new StoreCell(tab, address, (Consumer<Object>) derive, initial, seedLoadingValue);
     }
-    return optimistic ? new StoreCell(tab, address, body, initial, key, true) : new StoreCell(tab, address, initial, shallow);
+    return optimistic ? new StoreCell(tab, address, body, initial, key, true, loading)
+      : new StoreCell(tab, address, initial, shallow);
   }
 
   @Override boolean accepts(Cell cell) {

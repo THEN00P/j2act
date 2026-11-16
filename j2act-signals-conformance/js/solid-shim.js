@@ -605,26 +605,20 @@
     const key = options && options.key !== undefined ? options.key : "id";
     return typeof key === "function" ? key : key === null ? null : row => (isWrappable(row) ? row[key] : undefined);
   };
-  const projectionOptions = options => {
-    if (options && options.seedLoadingValue) throw new Error("[left out] seedLoadingValue");
-    return !!(options && options.shallow);
-  };
-  const createProjection = guard((fn, seed, options) => {
-    const shallow = projectionOptions(options);
-    return b.createProjection(fn, seed || {}, keyOf(options), shallow);
-  });
+  const shallowOf = options => !!(options && options.shallow);
+  const seedLoadingOf = options => !!(options && options.seedLoadingValue);
+  const createProjection = guard((fn, seed, options) =>
+    b.createProjection(fn, seed || {}, keyOf(options), shallowOf(options), seedLoadingOf(options)));
   const createOptimisticStore = guard((first, second, third) => {
     const derived = typeof first === "function";
     const options = derived ? third : second;
-    const shallow = projectionOptions(options);
     const store = b.createOptimisticStore(derived ? first : undefined, (derived ? second : first) || {}, keyOf(options),
-      shallow);
+      shallowOf(options), seedLoadingOf(options));
     return [store, guard(fn => b.setStore(store, fn))];
   });
   const createStore = guard((first, second, third) => {
     if (typeof first === "function") {
-      const shallow = projectionOptions(third);
-      const store = b.createProjection(first, second || {}, keyOf(third), shallow);
+      const store = b.createProjection(first, second || {}, keyOf(third), shallowOf(third), seedLoadingOf(third));
       return [store, guard(fn => b.setStore(store, fn))];
     }
     const proxy = b.createStore(first, !!(second && second.shallow));

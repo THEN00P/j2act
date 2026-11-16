@@ -103,14 +103,14 @@ public final class Bridge {
     return rt.createStore(value, shallow);
   }
 
-  public Object createProjection(Value fn, Value seed, Value keyFn, boolean shallow) {
+  public Object createProjection(Value fn, Value seed, Value keyFn, boolean shallow, boolean seedLoadingValue) {
     return rt.createProjection(fn == null || !fn.canExecute() ? null : draft -> toJavaResult(call(fn, draft)), seed,
-      keyFn == null || !keyFn.canExecute() ? null : item -> toJava(call(keyFn, item)), shallow);
+      keyFn == null || !keyFn.canExecute() ? null : item -> toJava(call(keyFn, item)), shallow, seedLoadingValue);
   }
 
-  public Object createOptimisticStore(Value fn, Value seed, Value keyFn, boolean shallow) {
+  public Object createOptimisticStore(Value fn, Value seed, Value keyFn, boolean shallow, boolean seedLoadingValue) {
     return rt.createOptimisticStore(fn == null || !fn.canExecute() ? null : draft -> toJavaResult(call(fn, draft)), seed,
-      keyFn == null || !keyFn.canExecute() ? null : item -> toJava(call(keyFn, item)), shallow);
+      keyFn == null || !keyFn.canExecute() ? null : item -> toJava(call(keyFn, item)), shallow, seedLoadingValue);
   }
 
   public Object markRaw(Value value) {

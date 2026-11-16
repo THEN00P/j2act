@@ -2021,6 +2021,10 @@ public final class Stores {
       fam.w = 0;
       owner.config &= ~CONFIG_VERDICT;
     }
+    // Open loading window (seedLoadingValue): the observable store is commit #0 for the whole first flight, so
+    // the derive works a detached shadow of the seed and draft writes cannot tear through to readers (#2988).
+    // Every commit point reconciles the shadow through the normal commit path.
+    Object shadow = owner.loading ? shape.detach(target.v, target.s) : null;
     java.util.function.IntSupplier asking = () ->
       q.question != 0 ? q.question : owner.x != null && owner.x.inFlight != null ? owner.x.q : 0;
     Object draft = wrapDraft(wrappedStore, () -> fam.run == run && !rt.owners.isDisposed(owner), aroundDraftWrite, () -> {
@@ -2032,11 +2036,14 @@ public final class Stores {
     Runnable pass = () -> storeSetter(draft, st -> {
       Object result;
       try {
-        result = fn.apply(st);
+        result = fn.apply(shadow != null ? shadow : st);
       } catch (Exception e) {
         throw Errors.<RuntimeException>sneak(e);
       }
-      java.util.function.BiConsumer<Object, Boolean> commit = (v, wake) -> {
+      java.util.function.BiConsumer<Object, Boolean> commit = (answer, wake) -> {
+        // A shadow run commits a detached copy, never the shadow itself: adoption takes the value by identity, and
+        // the live shadow would fuse the draft to the observable store.
+        Object v = shadow != null && (answer == null || same(answer, shadow)) ? shape.detach(shadow, target.s) : answer;
         if (v != null && !same(v, st)) {
           Runnable write = () -> {
             int prevQ = q.question;
@@ -2119,6 +2126,12 @@ public final class Stores {
   }
 
   Object createProjection(Derive fn, Object seed, Function<Object, Object> key, boolean opt, boolean shallow) {
+    return createProjection(fn, seed, key, opt, shallow, false);
+  }
+
+  /** With seedLoadingValue, the seed is commit #0 and shows while the first answer loads. */
+  Object createProjection(Derive fn, Object seed, Function<Object, Object> key, boolean opt, boolean shallow,
+      boolean seedLoadingValue) {
     shape();
     StoreFamily fam = new StoreFamily();
     fam.opt = opt;
@@ -2137,7 +2150,7 @@ public final class Stores {
         }
         runProjectionComputed(store, fn, key, null, null);
         return null;
-      }, null);
+      }, seedLoadingValue ? loadingWindow() : null);
       node.config &= ~CONFIG_AUTO_DISPOSE;
       fam.node = node;
       node.fam = fam;
@@ -2154,11 +2167,24 @@ public final class Stores {
   }
 
   Object createOptimisticStore(Derive fn, Object seed, Function<Object, Object> key, boolean shallow) {
+    return createOptimisticStore(fn, seed, key, shallow, false);
+  }
+
+  Object createOptimisticStore(Derive fn, Object seed, Function<Object, Object> key, boolean shallow,
+      boolean seedLoadingValue) {
     shape();
     if (optHooks == null) {
       optHooks = new StoreOptimistic(rt, this);
     }
-    return createProjection(fn, seed, key, true, shallow);
+    return createProjection(fn, seed, key, true, shallow, seedLoadingValue);
+  }
+
+  /** projection.ts's `{ loadingValue: undefined }`: the derive's node opens in its loading window. */
+  private static Core.NodeOptions loadingWindow() {
+    Core.NodeOptions options = new Core.NodeOptions();
+    options.hasLoadingValue = true;
+    options.loadingValue = null;
+    return options;
   }
 
   /** Solid's affects(store) and affects(store, key): the record, or one key of it, is about to change. */

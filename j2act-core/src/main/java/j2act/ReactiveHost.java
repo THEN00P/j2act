@@ -58,6 +58,7 @@ final class ReactiveHost {
   j2act.internal.store.JavaShape stores() {
     if (stores == null) {
       stores = new j2act.internal.store.JavaShape(rt);
+      stores.opaque(value -> engine.storeOpaque(value.getClass()));
       if (engine.devMode()) {
         stores.checkMutations(message -> engine.log(System.Logger.Level.WARNING, message, null));
       }
