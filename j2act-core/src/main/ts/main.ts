@@ -1,7 +1,7 @@
 import { createClients } from "./clients.ts";
 import { createConnection } from "./connection.ts";
 import { listenForEvents } from "./events.ts";
-import { createMorpher } from "./morph.ts";
+import { createMorpher, type ListOp } from "./morph.ts";
 import { createNavigation } from "./navigation.ts";
 import { createFields } from "./fields.ts";
 import { createPending } from "./pending.ts";
@@ -78,6 +78,13 @@ function start(): void {
       }
       if (m.root === true) {
         repair.arrived();
+      }
+      clients.scan();
+      fields.flush();
+    },
+    list: (m) => {
+      if (!morpher.list(m.anchor, JSON.parse(m.ops) as ListOp[], m.handled)) {
+        repair.ask();
       }
       clients.scan();
       fields.flush();

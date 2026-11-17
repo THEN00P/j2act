@@ -14,6 +14,7 @@ import java.util.function.Supplier;
 public final class Regions {
 
   private static volatile Function<Supplier<? extends DomContent>, DomContent> factory;
+  private static volatile Function<Supplier<? extends DomContent>, DomContent> rows;
   private static volatile Attribute attributes;
 
   /** The engine's side of attr(...). */
@@ -34,9 +35,19 @@ public final class Regions {
   }
 
   /** Called once by the engine. */
-  public static void install(Function<Supplier<? extends DomContent>, DomContent> make, Attribute attribute) {
+  public static void install(Function<Supplier<? extends DomContent>, DomContent> make,
+      Function<Supplier<? extends DomContent>, DomContent> row, Attribute attribute) {
     factory = make;
+    rows = row;
     attributes = attribute;
+  }
+
+  /**
+   * A row of each(...) in the running view (ADR 0036): a region as of(...) makes, but one that stays a region when it
+   * reads nothing, so that a list of rows changes by moving, inserting and removing them, not by sending them all.
+   */
+  public static DomContent row(Supplier<? extends DomContent> content) {
+    return rows.apply(content);
   }
 
   /**

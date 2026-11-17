@@ -53,21 +53,17 @@ class StubTest {
   }
 
   @Test
-  void theFirstPatchAfterLoadSendsEverythingAndLaterOnesStubWhatThePageHas() {
+  void aPatchStubsWhatTheServedPageAlreadyHas() {
     try (Harness h = new Harness(Parent::new)) {
       String html = h.load();
       h.connect();
       String big = anchorOf(html, "big");
-      List<Map<String, String>> patches = h.click(Harness.clickOn(html, "outer 0"));
-      String first = Harness.last(patches, "patch");
-      // What the served page has is not counted, so this one carries the child.
-      assertTrue(first.contains("xxxx"), first);
-
-      patches = h.click(Harness.clickOn(first, "outer 1"));
-      String second = Harness.last(patches, "patch");
-      assertTrue(second.contains("outer 2"), second);
-      assertTrue(second.contains("<!--j2=" + big + "-->"), second);
-      assertFalse(second.contains("xxxx"), second);
+      // The served page counts: the first patch after it already sends a stub.
+      String first = Harness.last(h.click(Harness.clickOn(html, "outer 0")), "patch");
+      assertTrue(first.contains("outer 1"), first);
+      assertTrue(first.contains("<!--j2=" + big + "-->"), first);
+      assertFalse(first.contains("xxxx"), first);
+      assertTrue(h.page().contains("big xxxx"), h.page());
     }
   }
 
@@ -77,14 +73,14 @@ class StubTest {
       String html = h.load();
       h.connect();
       String big = anchorOf(html, "big");
-      String page = Harness.last(h.click(Harness.clickOn(html, "outer 0")), "patch");
-      String own = Harness.last(h.click(Harness.clickOn(page, "inner 0")), "patch");
+      String own = Harness.last(h.click(Harness.clickOn(h.page(), "inner 0")), "patch");
       assertTrue(own.contains("inner 1"), own);
-      // Its own patch told the page, so a stub still holds.
-      String next = Harness.last(h.click(Harness.clickOn(page, "outer 1")), "patch");
+      // Its own patch told the page, and what is around it, so a stub still holds.
+      String next = Harness.last(h.click(Harness.clickOn(h.page(), "outer 0")), "patch");
       assertTrue(next.contains("<!--j2=" + big + "-->"), next);
+      assertTrue(h.page().contains("inner 1"), h.page());
       // A new prop renders it again inside the parent's pass: no stub for that.
-      String relabeled = Harness.last(h.click(Harness.clickOn(page, "relabel")), "patch");
+      String relabeled = Harness.last(h.click(Harness.clickOn(h.page(), "relabel")), "patch");
       assertTrue(relabeled.contains("renamed xxxx"), relabeled);
       assertFalse(relabeled.contains("<!--j2=" + big + "-->"), relabeled);
     }

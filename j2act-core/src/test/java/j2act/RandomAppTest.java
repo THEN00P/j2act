@@ -426,8 +426,9 @@ class RandomAppTest {
           ra(ra(T.span("[attr" + me.id + "]"), () -> String.valueOf(shared.n.get()), "data-n"),
             () -> queryParam("q"), "data-q"),
           // Keyed rows, each its own region with regions on, as the enhancer leaves each(...)'s rows.
-          T.tag("ul", T.each(Arrays.asList(1, 2, 3), k -> r(() -> T.span("[row" + me.id + "." + k + "="
-            + (shared.n.get() + k) + "]").withKey(k)))),
+          // The rows turn and grow and shrink with n, so a list's operations move, insert and remove them.
+          T.tag("ul", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.span("[row" + me.id + "." + k + "="
+            + (shared.n.get() + k) + "]").withKey(k))))),
           T.div().withId("meter" + me.id).withClient(meter),
           T.button("read" + me.id).onClick(e -> world.results.add(meter.read().toCompletableFuture())),
           T.button("reset" + me.id).onClick(e -> meter.reset(() -> me.running("a client's callback"))),
@@ -530,6 +531,13 @@ class RandomAppTest {
   private static final String[] URLS = {"/a/1", "/a/2", "/a/3", "/b/1", "/b/2", "/d/1", "/d/2", "/c", "/a/nf", "/a/rd", "/d/nf",
     "/a/1?q=2", "/a/1?q=3", "/b/1?q=2"};
 
+  /** Rows that turn by n and number between one and five. */
+  static List<Integer> rowsFor(int n) {
+    List<Integer> rows = new ArrayList<>(Arrays.asList(1, 2, 3, 4, 5));
+    Collections.rotate(rows, n);
+    return rows.subList(0, 1 + Math.floorMod(n * 3, 5));
+  }
+
   private static String queryIn(String url) {
     int at = url.indexOf("?q=");
     return at < 0 ? "null" : url.substring(at + 3);
@@ -591,7 +599,15 @@ class RandomAppTest {
           }
           applied = number;
         }
-        if ("attrs".equals(type)) {
+        if ("list".equals(type)) {
+          // As a patch whose place is not on the page: not applied.
+          String next = Harness.scopeSpan(doc, m.get("anchor")) == null ? doc : Harness.applyList(doc, m.get("anchor"), m.get("ops"));
+          if (next == null) {
+            problems.add("a list's operations do not fit the page: " + m.get("ops"));
+          } else {
+            doc = next;
+          }
+        } else if ("attrs".equals(type)) {
           // As a patch whose place is not on the page, which the hold brings along with what is around it.
           String next = Harness.applyAttrs(doc, m.get("anchor"), m.get("values"));
           if (next != null) {
@@ -1082,9 +1098,17 @@ class RandomAppTest {
           && (queryIn(tab.wanted).equals("null") ? !attrs.group(1).contains(" data-q=")
             : attrs.group(1).contains(" data-q=\"" + queryIn(tab.wanted) + "\"")),
           at + ": wanted data-n=" + n + " and its query on [attr" + pageId + "]");
-        for (int k = 1; k <= 3; k++) {
-          expect(tab, tab.doc.contains("[row" + pageId + "." + k + "=" + (n + k) + "]"), at + ": wanted row " + k + " at " + (n + k));
+        StringBuilder rows = new StringBuilder();
+        Matcher row = Pattern.compile("\\[row" + pageId + "\\.(\\d+)=(\\d+)\\]").matcher(tab.doc);
+        while (row.find()) {
+          rows.append(row.group(1)).append(',');
+          expect(tab, Integer.parseInt(row.group(2)) == n + Integer.parseInt(row.group(1)), at + ": row " + row.group());
         }
+        StringBuilder wantedRows = new StringBuilder();
+        for (int k : rowsFor(n)) {
+          wantedRows.append(k).append(',');
+        }
+        expect(tab, rows.toString().equals(wantedRows.toString()), at + ": rows " + rows + " for n=" + n);
         Integer locals = clicks.get("local" + pageId);
         expect(tab, rest.contains(" local=" + (locals == null ? 0 : locals) + "]") || rest.endsWith(" local=" + (locals == null ? 0 : locals)),
           at + ": wanted " + locals + " local clicks in " + rest);

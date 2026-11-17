@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-6e0a2c64ddf82486aad6a92b04ad4e0b50893106170a12f6a2ab3c43dce38a5b */
+* sources: sha256-f422963387c92896133dfce83d11b1e1c125f462750425c01c1969c5fbaead4c */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -2058,6 +2058,53 @@
 				return true;
 			},
 			/**
+			* A list region's rows, changed in place (ADR 0036): rows that stay are not touched, a moved row's nodes move with
+			* their state (moveBefore where the browser has it, keeping focus where it has not), and a changed row is morphed
+			* as its own patch. False when the list or a row it names is not on the page, which has then drifted.
+			*/
+			list(anchor, ops, eventsHandled) {
+				if (eventsHandled !== void 0) handled = eventsHandled;
+				const list = region(anchor);
+				if (!list) return false;
+				/** The node before which what goes after `after`, or at the list's start, is put; false if that row is gone. */
+				const place = (after) => {
+					if (after === null) return list[0].nextSibling;
+					const row = region(after);
+					return row ? row[1].nextSibling : false;
+				};
+				for (const op of ops) if ("r" in op) {
+					const row = region(op.r);
+					if (!row) return false;
+					for (let node = row[0]; node;) {
+						const next = node === row[1] ? null : node.nextSibling;
+						node.parentNode.removeChild(node);
+						node = next;
+					}
+				} else if ("i" in op) {
+					const at = place(op.a);
+					if (at === false) return false;
+					const parsed = document.createElement("template");
+					parsed.innerHTML = op.h;
+					if (op.h.indexOf("<!--j2=") >= 0 && !expandStubs(parsed.content)) return false;
+					list[0].parentNode.insertBefore(parsed.content, at);
+				} else if ("m" in op) {
+					const row = region(op.m);
+					const at = place(op.a);
+					if (!row || at === false) return false;
+					const parent = list[0].parentNode;
+					const focused = document.activeElement;
+					const nodes = [];
+					for (let node = row[0];; node = node.nextSibling) {
+						nodes.push(node);
+						if (node === row[1]) break;
+					}
+					for (const node of nodes) if (typeof parent.moveBefore === "function") parent.moveBefore(node, at);
+					else parent.insertBefore(node, at);
+					if (focused instanceof HTMLElement && focused !== document.activeElement && focused.isConnected) focused.focus();
+				} else if (!this.patch(op.p, op.h, false)) return false;
+				return true;
+			},
+			/**
 			* An attribute region's patch (ADR 0036): only the attributes it sets, each asked of the same callback a morph asks,
 			* so what the browser keeps in a morph it keeps here. False when its element is not on the page.
 			*/
@@ -2655,6 +2702,11 @@
 			patch: (m) => {
 				if (!morpher.patch(m.anchor, m.html, m.root === true, m.handled) && !clients.anchorGone(m.anchor)) repair.ask();
 				if (m.root === true) repair.arrived();
+				clients.scan();
+				fields.flush();
+			},
+			list: (m) => {
+				if (!morpher.list(m.anchor, JSON.parse(m.ops), m.handled)) repair.ask();
 				clients.scan();
 				fields.flush();
 			},

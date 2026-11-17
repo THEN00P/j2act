@@ -5,6 +5,10 @@ import type { Pending } from "./pending.ts";
 
 export type Morpher = ReturnType<typeof createMorpher>;
 
+/** One operation on a list region's rows (ADR 0036): remove, insert after, move after, or patch. */
+export type ListOp = { r: string } | { i: string; a: string | null; h: string } | { m: string; a: string | null }
+  | { p: string; h: string };
+
 /** Added to Idiomorph by vite.config.ts: morph() of what lies between two nodes of one parent (ADR 0036). */
 const morphRange = (Idiomorph as unknown as {
   morphRange(start: Node, end: Node, content: Node, config: Config): void;
@@ -209,6 +213,81 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
         return false;
       }
       Idiomorph.morph(el, parsed.content.firstElementChild!, config);
+      return true;
+    },
+
+    /**
+     * A list region's rows, changed in place (ADR 0036): rows that stay are not touched, a moved row's nodes move with
+     * their state (moveBefore where the browser has it, keeping focus where it has not), and a changed row is morphed
+     * as its own patch. False when the list or a row it names is not on the page, which has then drifted.
+     */
+    list(anchor: string, ops: ListOp[], eventsHandled?: number): boolean {
+      if (eventsHandled !== undefined) {
+        handled = eventsHandled;
+      }
+      const list = region(anchor);
+      if (!list) {
+        return false;
+      }
+      /** The node before which what goes after `after`, or at the list's start, is put; false if that row is gone. */
+      const place = (after: string | null): Node | null | false => {
+        if (after === null) {
+          return list[0].nextSibling;
+        }
+        const row = region(after);
+        return row ? row[1].nextSibling : false;
+      };
+      for (const op of ops) {
+        if ("r" in op) {
+          const row = region(op.r);
+          if (!row) {
+            return false;
+          }
+          for (let node: Node | null = row[0]; node;) {
+            const next: Node | null = node === row[1] ? null : node.nextSibling;
+            node.parentNode!.removeChild(node);
+            node = next;
+          }
+        } else if ("i" in op) {
+          const at = place(op.a);
+          if (at === false) {
+            return false;
+          }
+          const parsed = document.createElement("template");
+          parsed.innerHTML = op.h;
+          if (op.h.indexOf("<!--j2=") >= 0 && !expandStubs(parsed.content)) {
+            return false;
+          }
+          list[0].parentNode!.insertBefore(parsed.content, at);
+        } else if ("m" in op) {
+          const row = region(op.m);
+          const at = place(op.a);
+          if (!row || at === false) {
+            return false;
+          }
+          const parent = list[0].parentNode as Element & { moveBefore?: (node: Node, child: Node | null) => void };
+          const focused = document.activeElement;
+          const nodes: Node[] = [];
+          for (let node: Node = row[0]; ; node = node.nextSibling!) {
+            nodes.push(node);
+            if (node === row[1]) {
+              break;
+            }
+          }
+          for (const node of nodes) {
+            if (typeof parent.moveBefore === "function") {
+              parent.moveBefore(node, at);
+            } else {
+              parent.insertBefore(node, at);
+            }
+          }
+          if (focused instanceof HTMLElement && focused !== document.activeElement && focused.isConnected) {
+            focused.focus();
+          }
+        } else if (!this.patch(op.p, op.h, false)) {
+          return false;
+        }
+      }
       return true;
     },
 

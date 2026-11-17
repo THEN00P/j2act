@@ -12,10 +12,18 @@ import java.util.Deque;
  */
 final class PageStream {
 
-  /** Swaps a template in for the element with its anchor. Defined once, right after the shell. */
+  /**
+   * Swaps a template in for the element with its anchor, or for a region between its markers (ADR 0036), and sets an
+   * attribute region's attributes. Defined once, right after the shell.
+   */
   private static final String HELPER = "function j2s(a){var t=document.getElementById(\"j2t-\"+a),"
-    + "e=document.querySelector('[data-j2-scope=\"'+a+'\"]');if(t){if(e&&t.content.firstElementChild)"
-    + "e.replaceWith(t.content.firstElementChild);t.remove()}document.currentScript.remove()}"
+    + "e=document.querySelector('[data-j2-scope=\"'+a+'\"]');if(t){if(e){if(t.content.firstElementChild)"
+    + "e.replaceWith(t.content.firstElementChild)}else{var w=document.createTreeWalker(document.body,128),s=null,n;"
+    + "while(n=w.nextNode()){if(n.data===\"j2:\"+a)s=n;else if(s&&n.data===\"/j2:\"+a){var r=document.createRange();"
+    + "r.setStartBefore(s);r.setEndAfter(n);r.deleteContents();r.insertNode(t.content);break}}}t.remove()}"
+    + "document.currentScript.remove()}"
+    + "function j2a(a,v){var e=document.querySelector(\"[data-j2-a-\"+a+\"]\");if(e)for(var k in v)"
+    + "v[k]===null?e.removeAttribute(k):e.setAttribute(k,v[k]);document.currentScript.remove()}"
     + "document.currentScript.remove()";
 
   private final Tab tab;
@@ -38,6 +46,12 @@ final class PageStream {
   /** Lane-only. A boundary's HTML, ready to swap in. */
   void patch(String anchor, String html) {
     emit("<template id=\"j2t-" + anchor + "\">" + html + "</template>" + scriptTag + "j2s(\"" + anchor + "\")</script>");
+  }
+
+  /** Lane-only. An attribute region's attributes, as JSON (ADR 0036). */
+  void patchAttributes(String anchor, String values) {
+    // Inside a script, so no "</" may end it early.
+    emit(scriptTag + "j2a(\"" + anchor + "\"," + values.replace("</", "<\\/") + ")</script>");
   }
 
   /** Lane-only. The closing tags go last; nothing is written after them. */

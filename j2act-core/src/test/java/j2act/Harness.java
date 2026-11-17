@@ -142,6 +142,15 @@ final class Harness implements AutoCloseable {
     List<Map<String, String>> messages = conn.since(pageRead, m -> true);
     pageRead += messages.size();
     for (Map<String, String> m : messages) {
+      if ("list".equals(m.get("type"))) {
+        if (scopeSpan(pageDoc, m.get("anchor")) == null) {
+          continue; // As a patch whose place is not on the page: not applied.
+        }
+        String next = applyList(pageDoc, m.get("anchor"), m.get("ops"));
+        assertTrue(next != null, "a list's operations do not fit the page: " + m + "\non\n" + pageDoc);
+        pageDoc = next;
+        continue;
+      }
       if ("attrs".equals(m.get("type"))) {
         // As a patch whose place is not on the page: not applied.
         String next = applyAttrs(pageDoc, m.get("anchor"), m.get("values"));
@@ -268,6 +277,62 @@ final class Harness implements AutoCloseable {
 
   private static final Pattern TAG = Pattern.compile("<(/?)([a-zA-Z0-9]+)([^>]*?)(/?)>");
   private static final Pattern STUB = Pattern.compile("<!--j2=([^>]+?)-->");
+
+  /**
+   * A list region's operations, as runtime.js applies them (ADR 0036): rows removed, inserted after a row or at the
+   * start, moved, patched. Null when the list or a row it names is not in doc.
+   */
+  @SuppressWarnings("unchecked")
+  static String applyList(String doc, String anchor, String opsJson) {
+    if (scopeSpan(doc, anchor) == null) {
+      return null;
+    }
+    for (Object item : (List<Object>) j2act.internal.json.Json.parse(opsJson)) {
+      Map<String, Object> op = (Map<String, Object>) item;
+      if (op.containsKey("r")) {
+        int[] row = scopeSpan(doc, (String) op.get("r"));
+        if (row == null) {
+          return null;
+        }
+        doc = doc.substring(0, row[0]) + doc.substring(row[1]);
+      } else if (op.containsKey("i") || op.containsKey("m")) {
+        String moved;
+        if (op.containsKey("i")) {
+          moved = expandStubs(doc, (String) op.get("h"));
+        } else {
+          int[] row = scopeSpan(doc, (String) op.get("m"));
+          if (row == null) {
+            return null;
+          }
+          moved = doc.substring(row[0], row[1]);
+          doc = doc.substring(0, row[0]) + doc.substring(row[1]);
+        }
+        if (moved == null) {
+          return null;
+        }
+        String after = (String) op.get("a");
+        int at;
+        if (after == null) {
+          at = doc.indexOf("<!--j2:" + anchor + "-->") + ("<!--j2:" + anchor + "-->").length();
+        } else {
+          int[] row = scopeSpan(doc, after);
+          if (row == null) {
+            return null;
+          }
+          at = row[1];
+        }
+        doc = doc.substring(0, at) + moved + doc.substring(at);
+      } else {
+        String html = expandStubs(doc, (String) op.get("h"));
+        String next = html == null ? null : replaceScope(doc, (String) op.get("p"), html);
+        if (next == null) {
+          return null;
+        }
+        doc = next;
+      }
+    }
+    return doc;
+  }
 
   /**
    * An attribute region's patch, as runtime.js applies it (ADR 0036): on the element carrying its anchor, each attribute

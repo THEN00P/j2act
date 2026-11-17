@@ -58,6 +58,8 @@ final class Scope {
    * that has none, as a child's ahead of its parent's during a hold, is not applied, so it tells nothing.
    */
   boolean placed;
+  /** A region's children, in order, as the page has them: what a list's operations start from (ADR 0036). */
+  List<Scope> pageRows;
   private boolean inParent;
   /** The element its parent's pass is inside at this scope's place. */
   String placedInside;

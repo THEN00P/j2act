@@ -231,3 +231,52 @@ describe("attribute regions (ADR 0036)", () => {
     expect(morpher().attrs("s9", { class: "x" })).toBe(false);
   });
 });
+
+describe("keyed list operations (ADR 0036)", () => {
+  const morpher = () => createMorpher(createPending(), () => {}, createFields());
+  const row = (anchor: string, text: string) => "<!--j2:" + anchor + "--><li>" + text + "</li><!--/j2:" + anchor + "-->";
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  function list(...rows: string[]): void {
+    document.body.innerHTML = '<ul data-j2-scope="s1"><!--j2:s2-->' + rows.join("") + "<!--/j2:s2--></ul><p>after</p>";
+  }
+
+  const texts = () => [...document.querySelectorAll("li")].map((li) => li.textContent);
+
+  it("moves rows with their nodes, inserts, removes and patches, leaving the rest alone", () => {
+    list(row("s3", "a"), row("s4", "b"), row("s5", "c"));
+    const [a, b, c] = [...document.querySelectorAll("li")];
+    b.setAttribute("data-mine", "yes");
+    expect(morpher().list("s2", [
+      { r: "s5" },
+      { i: "s6", a: null, h: row("s6", "d") },
+      { m: "s4", a: "s6" },
+      { p: "s3", h: row("s3", "a!") }
+    ])).toBe(true);
+    expect(texts()).toEqual(["d", "b", "a!"]);
+    const now = [...document.querySelectorAll("li")];
+    expect(now[1]).toBe(b);
+    expect(b.getAttribute("data-mine")).toBe("yes");
+    expect(now[2]).toBe(a);
+    expect(c.isConnected).toBe(false);
+    expect(document.querySelector("p")!.textContent).toBe("after");
+  });
+
+  it("keeps a focused field in a row that moves", () => {
+    list("<!--j2:s3--><li><input id=\"f\"></li><!--/j2:s3-->", row("s4", "b"));
+    const input = document.getElementById("f") as HTMLInputElement;
+    input.focus();
+    morpher().list("s2", [{ m: "s4", a: null }]);
+    expect(texts()).toEqual(["b", ""]);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("reports a row it names that is not on the page", () => {
+    list(row("s3", "a"));
+    expect(morpher().list("s2", [{ m: "s9", a: null }])).toBe(false);
+    expect(morpher().list("s7", [{ r: "s3" }])).toBe(false);
+  });
+});

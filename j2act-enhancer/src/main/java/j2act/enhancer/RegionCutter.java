@@ -300,7 +300,7 @@ final class RegionCutter {
     r.add(new InvokeDynamicInsnNode("get", Type.getMethodDescriptor(Type.getType("Ljava/util/function/Supplier;"), params),
       METAFACTORY, Type.getType("()Ljava/lang/Object;"), new Handle(Opcodes.H_INVOKESTATIC, owner.name, body.name, desc, itf),
       Type.getType("()L" + DOM_CONTENT + ";")));
-    r.add(new MethodInsnNode(Opcodes.INVOKESTATIC, REGIONS, "of",
+    r.add(new MethodInsnNode(Opcodes.INVOKESTATIC, REGIONS, "row",
       "(Ljava/util/function/Supplier;)L" + DOM_CONTENT + ";", false));
     r.add(new InsnNode(Opcodes.ARETURN));
     bridge.maxLocals = slot;

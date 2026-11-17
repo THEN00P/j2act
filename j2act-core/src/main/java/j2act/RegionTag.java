@@ -12,7 +12,7 @@ import java.util.function.Supplier;
 final class RegionTag extends CutTag {
 
   static {
-    Regions.install(RegionTag::of, AttrTag::of);
+    Regions.install(content -> of(content, false), content -> of(content, true), AttrTag::of);
   }
 
   /** Where the regions a running region's supplier makes are listed, while it runs. */
@@ -34,7 +34,8 @@ final class RegionTag extends CutTag {
     return creator != null && creator.rendering ? creator.regionsMade : null;
   }
 
-  static DomContent of(Supplier<? extends DomContent> content) {
+  /** row: it stays a region even when it read nothing, as a row of a list does. */
+  static DomContent of(Supplier<? extends DomContent> content, boolean row) {
     Scope creator = Tracking.scope();
     Tab tab = Tab.current();
     List<CutTag> into = listFor(creator);
@@ -57,7 +58,7 @@ final class RegionTag extends CutTag {
       }
     }, into);
     Object value = region.current();
-    if (region.static_()) {
+    if (region.static_() && !row) {
       // It read nothing, so nothing will run it again: it is part of the view around it.
       tab.rt.disposeNode(region.node);
       into.addAll(region.made);
