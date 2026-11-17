@@ -48,12 +48,15 @@ public final class Enhancer {
   public static final class Report {
     public int classes;
     public int rewritten;
+    /** Enhanced by an earlier run, and unchanged since. */
+    public int upToDate;
     public int regions;
     /** Child expressions that would be worth a region but cannot be moved safely; their views run whole for them. */
     public int uncut;
 
     @Override public String toString() {
-      return rewritten + " of " + classes + " classes enhanced, " + regions + " regions"
+      return rewritten + " of " + classes + " classes enhanced" + (upToDate > 0 ? " (" + upToDate + " were already)" : "")
+        + ", " + regions + " regions"
         + (uncut > 0 ? ", " + uncut + " child expressions left in their views" : "");
     }
   }
@@ -97,6 +100,7 @@ public final class Enhancer {
     reader.accept(node, ClassReader.SKIP_FRAMES);
     for (FieldNode field : node.fields) {
       if (STAMP.equals(field.name)) {
+        report.upToDate++;
         return null;
       }
     }

@@ -12,6 +12,8 @@ A view re-runs as a whole (ADR 0031), and a parent's patch carries the full HTML
 
 The enhancer rewrites the jar, the war and the exploded deployments (`target/exploded`, `build/exploded`), not `target/classes` or `build/classes`. An IDE's hot code replace swaps in classes from javac or ECJ, which standard HotSwap refuses over an enhanced class of another shape and JetBrains Runtime accepts while silently dropping its regions. So dev mode and IDE runs stay plain, and they exercise the "same pages without the enhancer" rule every day. A plugin flag enhances class folders too, for profiling.
 
+In Maven the `enhance` goal, at `prepare-package`, keeps a copy of the classes in `target/j2act-classes`, copying what is newer, enhances it, and makes it the build's output directory for the goals after it: Maven reads `${project.build.outputDirectory}` for a goal's parameters only when the goal runs, so the jar and war plugins package the copy without being configured, and tests, a phase earlier, ran on the plain classes. Exploded deployments stay plain for now: they are dev mode's other way to run (exploded-hotswap syncs class folders into them), which is to stay plain. `-Dj2act.enhance.skip` builds the plain app.
+
 Enhanced classes call core internals (`Regions.of`, `StoreReads.field`), so the plugin fails the build when the core on the compile classpath is not its own version, and each enhanced class carries a `j2act$enhanced` stamp that the runtime checks at startup, refusing to start on a version it does not support. There is no tolerant call protocol between versions.
 
 ## Regions
