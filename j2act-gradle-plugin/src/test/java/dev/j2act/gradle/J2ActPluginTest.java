@@ -178,4 +178,16 @@ class J2ActPluginTest {
       StandardCharsets.ISO_8859_1);
     assertFalse(plain.contains("j2act$enhanced"), "plain again without the flag");
   }
+
+  /** The same setting kept in the build script: j2act { enhance { classFolders = true } }. */
+  @ParameterizedTest @MethodSource("gradleVersions")
+  void theBuildScriptKeepsTheSetting(String gradle) throws IOException {
+    theJarCarriesEnhancedClassesAndTheClassFoldersStayPlain(gradle);
+    Files.write(project.resolve("build.gradle"), "\nj2act {\n  enhance {\n    classFolders = true\n  }\n}\n"
+      .getBytes(StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.APPEND);
+    run(gradle, "--configuration-cache", "classes");
+    String enhanced = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
+      StandardCharsets.ISO_8859_1);
+    assertTrue(enhanced.contains("j2act$enhanced"), "the class folder is enhanced");
+  }
 }

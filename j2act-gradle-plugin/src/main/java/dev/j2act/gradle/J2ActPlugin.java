@@ -81,26 +81,27 @@ public class J2ActPlugin implements Plugin<Project> {
     SourceSet main = project.getExtensions().getByType(JavaPluginExtension.class)
       .getSourceSets().getByName(SourceSet.MAIN_SOURCE_SET_NAME);
     FileCollection classesDirs = main.getOutput().getClassesDirs();
+    J2ActExtension.Enhance settings = project.getExtensions().create("j2act", J2ActExtension.class).getEnhance();
+    settings.getClassFolders().convention(project.getProviders().gradleProperty("j2act.enhance.classFolders")
+      .map(Boolean::parseBoolean).orElse(false));
+    settings.getSkip().convention(project.getProviders().gradleProperty("j2act.enhance.skip")
+      .map(Boolean::parseBoolean).orElse(false));
     TaskProvider<EnhanceTask> enhance = project.getTasks().register("j2actEnhance", EnhanceTask.class, task -> {
       task.setGroup("build");
       task.setDescription("Copies the main classes for packaging and cuts their views into regions.");
       task.getClasses().from(classesDirs);
       task.getClasspath().from(main.getCompileClasspath());
       task.getOutput().convention(project.getLayout().getBuildDirectory().dir("j2act-classes"));
-      task.getSkip().convention(project.getProviders().gradleProperty("j2act.enhance.skip")
-        .map(Boolean::parseBoolean).orElse(false));
+      task.getSkip().convention(settings.getSkip());
     });
     // Opt-in: the class folders themselves, so what runs from them runs enhanced too (run, test, an exploded WAR of
-    // the build's classes). What an IDE compiles into its own folders stays plain.
-    boolean classFolders = project.getProviders().gradleProperty("j2act.enhance.classFolders")
-      .map(Boolean::parseBoolean).getOrElse(false);
-    if (classFolders) {
-      FileCollection compileClasspath = main.getCompileClasspath();
-      project.getTasks().named(main.getCompileJavaTaskName(), JavaCompile.class, compile -> {
-        compile.getInputs().property("j2act.enhance.classFolders", true);
-        compile.doLast("j2actEnhanceClassFolder", new EnhanceInPlace(compile.getDestinationDirectory(), compileClasspath));
-      });
-    }
+    // the build's classes). An input of the compile, so turning it off compiles plain classes again.
+    FileCollection compileClasspath = main.getCompileClasspath();
+    project.getTasks().named(main.getCompileJavaTaskName(), JavaCompile.class, compile -> {
+      compile.getInputs().property("j2act.enhance.classFolders", settings.getClassFolders());
+      compile.doLast("j2actEnhanceClassFolder", new EnhanceInPlace(compile.getDestinationDirectory(), compileClasspath,
+        settings.getClassFolders(), settings.getSkip()));
+    });
     project.getTasks().named(JavaPlugin.JAR_TASK_NAME, Jar.class, jar -> {
       Set<File> dirs = classesDirs.getFiles();
       jar.from(enhance);
@@ -128,13 +129,21 @@ public class J2ActPlugin implements Plugin<Project> {
   static final class EnhanceInPlace implements org.gradle.api.Action<Task> {
     private final org.gradle.api.file.DirectoryProperty classes;
     private final FileCollection classpath;
+    private final org.gradle.api.provider.Provider<Boolean> enabled;
+    private final org.gradle.api.provider.Provider<Boolean> skip;
 
-    EnhanceInPlace(org.gradle.api.file.DirectoryProperty classes, FileCollection classpath) {
+    EnhanceInPlace(org.gradle.api.file.DirectoryProperty classes, FileCollection classpath,
+        org.gradle.api.provider.Provider<Boolean> enabled, org.gradle.api.provider.Provider<Boolean> skip) {
       this.classes = classes;
       this.classpath = classpath;
+      this.enabled = enabled;
+      this.skip = skip;
     }
 
     @Override public void execute(Task task) {
+      if (!enabled.get() || skip.get()) {
+        return;
+      }
       java.util.List<java.nio.file.Path> paths = new java.util.ArrayList<>();
       for (File file : classpath.getFiles()) {
         paths.add(file.toPath());
