@@ -128,6 +128,41 @@ final class Harness implements AutoCloseable {
     return conn.await(from, m -> "patch".equals(m.get("type")) && htmlMatches.test(m.get("html")));
   }
 
+  private int pageRead;
+  private String pageDoc;
+
+  /**
+   * The page as runtime.js would have it now: the served HTML with every patch so far applied, each stub standing
+   * for what the page had (ADR 0036). One patch's HTML only shows what changed.
+   */
+  String page() {
+    if (pageDoc == null) {
+      pageDoc = html;
+    }
+    List<Map<String, String>> messages = conn.since(pageRead, m -> true);
+    pageRead += messages.size();
+    for (Map<String, String> m : messages) {
+      if (!"patch".equals(m.get("type"))) {
+        continue;
+      }
+      boolean root = "true".equals(m.get("root"));
+      if (!root && scopeSpan(pageDoc, m.get("anchor")) == null) {
+        continue; // As runtime.js: its place is not on the page, so it is not applied.
+      }
+      String patch = expandStubs(pageDoc, m.get("html"));
+      assertTrue(patch != null, "a patch stands for something the page does not have: " + m.get("html"));
+      if (root) {
+        pageDoc = patch;
+      } else {
+        String next = replaceScope(pageDoc, m.get("anchor"), patch);
+        if (next != null) {
+          pageDoc = next;
+        }
+      }
+    }
+    return pageDoc;
+  }
+
   /** The click handler id on the element whose text starts with {@code label}. */
   static String clickOn(String html, String label) {
     return find(html, "data-j2-click=\"([^\"]+)\"[^>]*>" + Pattern.quote(label));
@@ -222,4 +257,53 @@ final class Harness implements AutoCloseable {
       }
     }
   }
+
+  private static final Pattern TAG = Pattern.compile("<(/?)([a-zA-Z0-9]+)([^>]*?)(/?)>");
+  private static final Pattern STUB = Pattern.compile("<!--j2=([^>]+?)-->");
+
+  /** A patch's HTML with each stub replaced by what the page has for it, as runtime.js does; null if it has none. */
+  static String expandStubs(String doc, String html) {
+    Matcher stub = STUB.matcher(html);
+    StringBuilder out = new StringBuilder();
+    int at = 0;
+    while (stub.find()) {
+      int[] span = scopeSpan(doc, stub.group(1));
+      if (span == null) {
+        return null;
+      }
+      out.append(html, at, stub.start()).append(doc, span[0], span[1]);
+      at = stub.end();
+    }
+    return out.append(html, at, html.length()).toString();
+  }
+
+  /** Puts html where the element carrying this anchor is; null if there is none. */
+  static String replaceScope(String doc, String anchor, String html) {
+    int[] span = scopeSpan(doc, anchor);
+    return span == null ? null : doc.substring(0, span[0]) + html + doc.substring(span[1]);
+  }
+
+  /** Where the element carrying this anchor starts and ends in doc; null if there is none. */
+  static int[] scopeSpan(String doc, String anchor) {
+    Matcher open = Pattern.compile("<([a-zA-Z0-9]+)[^>]*data-j2-scope=\"" + Pattern.quote(anchor) + "\"[^>]*>").matcher(doc);
+    if (!open.find()) {
+      return null;
+    }
+    String name = open.group(1);
+    int depth = 1;
+    Matcher tags = TAG.matcher(doc);
+    int at = open.end();
+    while (tags.find(at)) {
+      at = tags.end();
+      if (!tags.group(2).equals(name) || !tags.group(4).isEmpty()) {
+        continue;
+      }
+      depth += tags.group(1).isEmpty() ? 1 : -1;
+      if (depth == 0) {
+        return new int[] {open.start(), tags.end()};
+      }
+    }
+    return null;
+  }
+
 }

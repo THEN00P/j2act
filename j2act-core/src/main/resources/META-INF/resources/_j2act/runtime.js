@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-ed24d12a6c7b136be6ddec8d2a450dde3b02a631945268f388afd783d9ff1e8b */
+* sources: sha256-658e77bb1996f475835a7171c1a76f1861710c5976cd8c8509e38959ff17ab7a */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1913,6 +1913,25 @@
 	function createMorpher(pending, syncClient, fields) {
 		/** The last event the server had handled, from the patch being applied. */
 		let handled = 0;
+		/** Copies of what the page already has, standing in for a patch's stubs: the morph leaves their originals alone. */
+		const kept = /* @__PURE__ */ new WeakSet();
+		/**
+		* Puts in a copy of the live element for each stub in a patch, a scope the server knows the page has as it renders
+		* now (ADR 0036). False when one is not on the page, which has then drifted from the server.
+		*/
+		function expandStubs(root) {
+			const walker = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT);
+			const stubs = [];
+			for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.data.startsWith("j2=")) stubs.push(node);
+			for (const stub of stubs) {
+				const live = document.querySelector("[data-j2-scope=\"" + stub.data.slice(3) + "\"]");
+				if (!live) return false;
+				const copy = live.cloneNode(true);
+				kept.add(copy);
+				stub.replaceWith(copy);
+			}
+			return true;
+		}
 		const callbacks = {
 			beforeAttributeUpdated: (name, el) => {
 				if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) return false;
@@ -1922,6 +1941,7 @@
 				return true;
 			},
 			beforeNodeMorphed: (oldNode, newNode) => {
+				if (kept.has(newNode) && oldNode.nodeType === 1 && oldNode.getAttribute("data-j2-scope") === newNode.getAttribute("data-j2-scope")) return false;
 				if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.hasAttribute("data-j2-client") && oldNode.getAttribute("data-j2-client") === newNode.getAttribute("data-j2-client")) {
 					syncClient(oldNode, newNode);
 					return false;
@@ -1964,8 +1984,10 @@
 			*/
 			patch(anchor, html, isRoot, eventsHandled) {
 				if (eventsHandled !== void 0) handled = eventsHandled;
+				const stubs = html.indexOf("<!--j2=") >= 0;
 				if (isRoot) {
 					const doc = new DOMParser().parseFromString(html, "text/html");
+					if (stubs && !expandStubs(doc.body)) return false;
 					document.documentElement.setAttribute("data-j2-scope", anchor);
 					head(doc.head.innerHTML);
 					body(doc.body);
@@ -1973,7 +1995,14 @@
 				}
 				const el = document.querySelector("[data-j2-scope=\"" + anchor + "\"]");
 				if (!el) return false;
-				Idiomorph.morph(el, html, config);
+				if (!stubs) {
+					Idiomorph.morph(el, html, config);
+					return true;
+				}
+				const parsed = document.createElement("template");
+				parsed.innerHTML = html;
+				if (!expandStubs(parsed.content)) return false;
+				Idiomorph.morph(el, parsed.content.firstElementChild, config);
 				return true;
 			},
 			slot(live, html) {

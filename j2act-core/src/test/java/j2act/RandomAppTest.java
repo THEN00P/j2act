@@ -566,7 +566,7 @@ class RandomAppTest {
     synchronized void stream(String chunk) {
       Matcher m = STREAMED.matcher(chunk);
       while (m.find()) {
-        String next = replaceScope(doc, m.group(1), m.group(2));
+        String next = Harness.replaceScope(doc, m.group(1), m.group(2));
         if (next != null) {
           doc = next;
         }
@@ -596,10 +596,18 @@ class RandomAppTest {
           if (recent.size() > 8) {
             recent.remove(0);
           }
-          if ("true".equals(m.get("root"))) {
-            doc = m.get("html");
+          boolean root = "true".equals(m.get("root"));
+          // As runtime.js: a patch whose place is not on the page is not applied, so its stubs are not looked at.
+          String html = root || Harness.scopeSpan(doc, m.get("anchor")) != null ? Harness.expandStubs(doc, m.get("html")) : "";
+          if (html == null) {
+            problems.add("a patch of " + m.get("anchor") + " stands for something the page does not have: "
+              + m.get("html") + "\non\n" + doc);
+            continue;
+          }
+          if (root) {
+            doc = html;
           } else {
-            String next = replaceScope(doc, m.get("anchor"), m.get("html"));
+            String next = Harness.replaceScope(doc, m.get("anchor"), html);
             // During a hold a child's patch can get ahead of its parent's, whose own patch brings it along. The
             // runtime ignores it, and what the page ends up showing is checked at rest.
             if (next != null) {
@@ -624,30 +632,6 @@ class RandomAppTest {
   }
 
   private static final Pattern STREAMED = Pattern.compile("<template id=\"j2t-([^\"]+)\">(.*?)</template>", Pattern.DOTALL);
-  private static final Pattern TAG = Pattern.compile("<(/?)([a-zA-Z0-9]+)([^>]*?)(/?)>");
-
-  /** Puts html where the element carrying this anchor is; null if there is none. */
-  static String replaceScope(String doc, String anchor, String html) {
-    Matcher open = Pattern.compile("<([a-zA-Z0-9]+)[^>]*data-j2-scope=\"" + Pattern.quote(anchor) + "\"[^>]*>").matcher(doc);
-    if (!open.find()) {
-      return null;
-    }
-    String name = open.group(1);
-    int depth = 1;
-    Matcher tags = TAG.matcher(doc);
-    int at = open.end();
-    while (tags.find(at)) {
-      at = tags.end();
-      if (!tags.group(2).equals(name) || !tags.group(4).isEmpty()) {
-        continue;
-      }
-      depth += tags.group(1).isEmpty() ? 1 : -1;
-      if (depth == 0) {
-        return doc.substring(0, open.start()) + html + doc.substring(tags.end());
-      }
-    }
-    return null;
-  }
 
   private static final class Driver implements AutoCloseable {
     final World w = new World();

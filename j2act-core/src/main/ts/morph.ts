@@ -13,6 +13,32 @@ export type Morpher = ReturnType<typeof createMorpher>;
 export function createMorpher(pending: Pending, syncClient: (el: Element, fresh: Element) => void, fields: Fields) {
   /** The last event the server had handled, from the patch being applied. */
   let handled = 0;
+  /** Copies of what the page already has, standing in for a patch's stubs: the morph leaves their originals alone. */
+  const kept = new WeakSet<Node>();
+
+  /**
+   * Puts in a copy of the live element for each stub in a patch, a scope the server knows the page has as it renders
+   * now (ADR 0036). False when one is not on the page, which has then drifted from the server.
+   */
+  function expandStubs(root: Node): boolean {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT);
+    const stubs: Comment[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if ((node as Comment).data.startsWith("j2=")) {
+        stubs.push(node as Comment);
+      }
+    }
+    for (const stub of stubs) {
+      const live = document.querySelector('[data-j2-scope="' + stub.data.slice(3) + '"]');
+      if (!live) {
+        return false;
+      }
+      const copy = live.cloneNode(true);
+      kept.add(copy);
+      stub.replaceWith(copy);
+    }
+    return true;
+  }
 
   const callbacks: Config["callbacks"] = {
     beforeAttributeUpdated: (name, el) => {
@@ -35,6 +61,11 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
     },
     // A client element keeps its node; its children are the client's (ADR 0022).
     beforeNodeMorphed: (oldNode, newNode) => {
+      // A stub's original: the page has it as the server renders it, and anything since is the browser's.
+      if (kept.has(newNode) && oldNode.nodeType === 1
+        && oldNode.getAttribute("data-j2-scope") === (newNode as Element).getAttribute("data-j2-scope")) {
+        return false;
+      }
       if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.hasAttribute("data-j2-client")
         && oldNode.getAttribute("data-j2-client") === (newNode as Element).getAttribute("data-j2-client")) {
         syncClient(oldNode, newNode as Element);
@@ -84,8 +115,12 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
       if (eventsHandled !== undefined) {
         handled = eventsHandled;
       }
+      const stubs = html.indexOf("<!--j2=") >= 0;
       if (isRoot) {
         const doc = new DOMParser().parseFromString(html, "text/html");
+        if (stubs && !expandStubs(doc.body)) {
+          return false;
+        }
         document.documentElement.setAttribute("data-j2-scope", anchor);
         head(doc.head.innerHTML);
         body(doc.body);
@@ -95,7 +130,16 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
       if (!el) {
         return false;
       }
-      Idiomorph.morph(el, html, config);
+      if (!stubs) {
+        Idiomorph.morph(el, html, config);
+        return true;
+      }
+      const parsed = document.createElement("template");
+      parsed.innerHTML = html;
+      if (!expandStubs(parsed.content)) {
+        return false;
+      }
+      Idiomorph.morph(el, parsed.content.firstElementChild!, config);
       return true;
     },
 

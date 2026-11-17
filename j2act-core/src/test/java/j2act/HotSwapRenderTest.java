@@ -78,7 +78,7 @@ class HotSwapRenderTest {
       int from = h.conn.size();
       h.engine.hotSwapped();
       Map<String, String> patch = h.awaitPatch(from, html -> html.contains("new:1"));
-      assertTrue(patch.get("html").contains("child:1"), patch.get("html"));
+      assertTrue(h.page().contains("child:1"), h.page());
       // The handlers are the new render's: they work.
       List<Map<String, String>> after = h.click(Harness.clickOn(patch.get("html"), "new:1"));
       assertTrue(Harness.last(after, "patch").contains("new:2"));

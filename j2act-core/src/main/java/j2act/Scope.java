@@ -46,6 +46,16 @@ final class Scope {
   String embedded;
   /** What the page has, so a pass that changed nothing sends nothing. */
   String sent;
+  /**
+   * What the client is known to have for this scope, from the socket patches that brought it: a patch around it
+   * sends a stub instead when this is still its html (ADR 0036). Null when in doubt.
+   */
+  String onPage;
+  /**
+   * Whether the client has an element for this scope, from the socket patches that brought one. A patch of a scope
+   * that has none, as a child's ahead of its parent's during a hold, is not applied, so it tells nothing.
+   */
+  boolean placed;
   private boolean inParent;
   /** The element its parent's pass is inside at this scope's place. */
   String placedInside;

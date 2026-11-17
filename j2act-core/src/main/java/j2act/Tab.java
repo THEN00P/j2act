@@ -1192,12 +1192,70 @@ public final class Tab {
         for (Scope s = scope.parent; s != null; s = s.parent) {
           s.sent = null;
         }
+        long handled = handledFor(scope);
+        String html = scope.html;
+        for (Scope child : scope.children.values()) {
+          html = stubbed(child, html);
+        }
         send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope.parent == null ? true : null,
-          "handled", handledFor(scope), "html", scope.html));
+          "handled", handled, "html", html));
         engine.stats.patches.incrementAndGet();
+        if (scope.parent == null || scope.placed) {
+          for (Scope s = scope.parent; s != null; s = s.parent) {
+            s.onPage = null;
+          }
+          onPage(scope, scope.html);
+        }
         scope.pageHas(scope.html);
         behindThisPatch(scope, scope.html, scopes, i + 1);
       }
+    }
+  }
+
+  /** Elements whose text the parser does not read as markup, so a stub there would show as text. */
+  private static final java.util.Set<String> RAW_TEXT = new java.util.HashSet<>(java.util.Arrays.asList(
+    "textarea", "title", "script", "style"));
+
+  /**
+   * A patch's HTML with each scope below that the page already has, exactly as it renders now, sent as a stub the
+   * client keeps (ADR 0036). A controlled field's patch is always sent, since the client merges the user's typing
+   * with every answer the server gives it (ADR 0034).
+   */
+  private static String stubbed(Scope scope, String html) {
+    if (scope.disposed || scope.detached || scope.html == null) {
+      return html;
+    }
+    int at;
+    if (scope.html.equals(scope.onPage) && !scope.html.contains("data-j2-controlled=\"")
+      && !RAW_TEXT.contains(scope.placedInside) && (at = html.indexOf(scope.html)) >= 0) {
+      return html.substring(0, at) + "<!--j2=" + scope.anchor + "-->" + html.substring(at + scope.html.length());
+    }
+    for (Scope child : scope.children.values()) {
+      html = stubbed(child, html);
+    }
+    return html;
+  }
+
+  /** A patch with this html went: what is in it, the page has once the client applied it. */
+  private static void onPage(Scope scope, String html) {
+    scope.onPage = html;
+    scope.placed = true;
+    for (Scope child : scope.children.values()) {
+      if (child.html != null && !child.detached && html.contains(child.html)) {
+        onPage(child, child.html);
+      } else {
+        // As it was before a hold, perhaps: the page has its element, but not what is in it now.
+        forgetOnPage(child);
+        child.placed = !child.detached && html.contains("data-j2-scope=\"" + child.anchor + "\"");
+      }
+    }
+  }
+
+  private static void forgetOnPage(Scope scope) {
+    scope.onPage = null;
+    scope.placed = false;
+    for (Scope child : scope.children.values()) {
+      forgetOnPage(child);
     }
   }
 
@@ -1728,6 +1786,7 @@ public final class Tab {
     if (page != null) {
       // The same HTML goes out again: what the page has is what is in doubt.
       page.sent = null;
+      forgetOnPage(page);
       markDirty(page);
     }
   }

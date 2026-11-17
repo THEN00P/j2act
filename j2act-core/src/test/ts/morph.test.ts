@@ -99,3 +99,52 @@ describe("morph and focus (ADR 0013)", () => {
     expect(editable.className).toBe("b");
   });
 });
+
+describe("stubs for what the page has (ADR 0036)", () => {
+  const morpher = () => createMorpher(createPending(), () => {}, createFields());
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("keeps the child a stub stands for, node and all, and patches around it", () => {
+    document.body.innerHTML = '<div data-j2-scope="s1"><p>0</p><section data-j2-scope="s2"><b>big</b></section></div>';
+    const child = document.querySelector("section")!;
+    // What the browser did to it since stays.
+    child.setAttribute("data-mine", "yes");
+    expect(morpher().patch("s1", '<div data-j2-scope="s1"><p>1</p><!--j2=s2--></div>', false)).toBe(true);
+    expect(document.querySelector("p")!.textContent).toBe("1");
+    expect(document.querySelector("section")).toBe(child);
+    expect(child.getAttribute("data-mine")).toBe("yes");
+    expect(document.body.innerHTML).not.toContain("j2=");
+  });
+
+  it("keeps stubbed rows inside a table, where an element would be moved out", () => {
+    document.body.innerHTML = '<table><tbody data-j2-scope="s1"><tr data-j2-scope="s2"><td>a</td></tr>'
+      + '<tr data-j2-scope="s3"><td>b</td></tr></tbody></table>';
+    const first = document.querySelector('[data-j2-scope="s2"]')!;
+    const second = document.querySelector('[data-j2-scope="s3"]')!;
+    morpher().patch("s1", '<tbody data-j2-scope="s1"><!--j2=s2--><tr data-j2-scope="s3"><td>c</td></tr>'
+      + '<tr data-j2-scope="s4"><td>d</td></tr></tbody>', false);
+    const rows = document.querySelectorAll("tr");
+    expect(rows.length).toBe(3);
+    expect(rows[0]).toBe(first);
+    expect(rows[1]).toBe(second);
+    expect(rows[1].textContent).toBe("c");
+    expect(rows[2].textContent).toBe("d");
+  });
+
+  it("moves a stubbed child along when what is before it goes", () => {
+    document.body.innerHTML = '<div data-j2-scope="s1"><p>gone</p><section data-j2-scope="s2">x</section></div>';
+    const child = document.querySelector("section")!;
+    morpher().patch("s1", '<div data-j2-scope="s1"><!--j2=s2--></div>', false);
+    expect(document.querySelector("p")).toBeNull();
+    expect(document.querySelector("section")).toBe(child);
+  });
+
+  it("reports a stub whose element is not on the page, which has drifted", () => {
+    document.body.innerHTML = '<div data-j2-scope="s1"><p>0</p></div>';
+    expect(morpher().patch("s1", '<div data-j2-scope="s1"><p>1</p><!--j2=s9--></div>', false)).toBe(false);
+    expect(document.querySelector("p")!.textContent).toBe("0");
+  });
+});
