@@ -1,17 +1,20 @@
 // Drives headless Chrome over CDP against the running demo and checks the client runtime.
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { removeProfile } from "./cdp.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const CHROME = process.env.CHROME || "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const URL = process.argv[2] || "http://localhost:8089/";
-const PORT = 9333;
-
+// As tools/cdp.mjs: this launch's own endpoint, read from its fresh profile, never a fixed port that an old
+// Chrome may still hold (killing a Flatpak launcher leaves Chrome itself running).
+const profile = mkdtempSync(join(tmpdir(), "j2act-cdp-"));
 const chrome = spawn(CHROME, [
-  "--headless=new", `--remote-debugging-port=${PORT}`, "--no-first-run", "--no-default-browser-check",
-  `--user-data-dir=${mkdtempSync(join(tmpdir(), "j2act-cdp-"))}`, "about:blank",
+  "--headless=new", "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check",
+  `--user-data-dir=${profile}`, "about:blank",
 ], { stdio: "ignore" });
+let ws;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let results = [];
@@ -22,11 +25,17 @@ function check(name, ok, detail = "") {
 
 async function main() {
   let targets;
-  for (let i = 0; i < 50; i++) {
-    try { targets = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json(); break; } catch { await sleep(100); }
+  for (let i = 0; i < 50 && !targets; i++) {
+    try {
+      const port = Number(readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0]);
+      targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+    } catch { await sleep(100); }
+  }
+  if (!targets) {
+    throw new Error("Chrome did not publish a DevTools endpoint for " + profile);
   }
   const page = targets.find((t) => t.type === "page");
-  const ws = new WebSocket(page.webSocketDebuggerUrl);
+  ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((r) => (ws.onopen = r));
   let id = 0; const pending = new Map(); const consoleErrors = [];
   ws.onmessage = (e) => {
@@ -532,13 +541,21 @@ async function main() {
   check("and the page carries on with the next number", await until(`${btn("A:")}.textContent === 'A: ${before + 2}'`, 3000));
 
   check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
-  ws.close();
 }
 
 main()
   .catch((e) => { console.log("FAIL  driver error — " + e.message); results.push({ ok: false }); })
-  .finally(() => {
+  .finally(async () => {
+    // Close Chrome over CDP: the spawned process may only be a Flatpak launcher.
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      await Promise.race([new Promise((r) => {
+        ws.onmessage = (e) => { if (JSON.parse(e.data).id === -1) r(); };
+        ws.send(JSON.stringify({ id: -1, method: "Browser.close" }));
+      }), sleep(1000)]);
+      ws.close();
+    }
     chrome.kill();
+    await removeProfile(profile);
     const failed = results.filter((r) => !r.ok).length;
     console.log(`\n${results.length - failed}/${results.length} browser checks passed`);
     process.exit(failed ? 1 : 0);

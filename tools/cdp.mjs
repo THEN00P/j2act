@@ -1,12 +1,37 @@
 // Headless Chrome over the DevTools protocol, no dependencies (Node 22+ has WebSocket).
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const CHROME = process.env.CHROME || "C:/Program Files/Google/Chrome/Application/chrome.exe";
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Removes a launch's profile once its Chrome has let go of it: each is some 170 MB, and in a tmpfs /tmp the
+ * profiles of many runs fill the memory it lives in.
+ */
+export async function removeProfile(profile) {
+  // Chrome removes its SingletonLock as it exits; removed before that, the profile comes back as it shuts down.
+  for (let i = 0; i < 50; i++) {
+    try {
+      lstatSync(join(profile, "SingletonLock"));
+      await sleep(100);
+    } catch {
+      break;
+    }
+  }
+  for (let i = 0; i < 20; i++) {
+    try {
+      rmSync(profile, { recursive: true, force: true });
+      return;
+    } catch {
+      await sleep(250);
+    }
+  }
+  console.log("note: could not remove the Chrome profile " + profile);
+}
 
 /** Opens a page and returns helpers; call run(main) to report and exit. */
 export async function openBrowser() {
@@ -84,6 +109,7 @@ export async function openBrowser() {
     await Promise.race([cdp("Browser.close"), sleep(1000)]);
     ws.close();
     chrome.kill();
+    await removeProfile(profile);
   };
   const run = (main) => main()
     .catch((e) => { console.log("FAIL  driver error — " + e.message); results.push(false); })
