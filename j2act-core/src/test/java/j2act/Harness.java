@@ -142,6 +142,14 @@ final class Harness implements AutoCloseable {
     List<Map<String, String>> messages = conn.since(pageRead, m -> true);
     pageRead += messages.size();
     for (Map<String, String> m : messages) {
+      if ("attrs".equals(m.get("type"))) {
+        // As a patch whose place is not on the page: not applied.
+        String next = applyAttrs(pageDoc, m.get("anchor"), m.get("values"));
+        if (next != null) {
+          pageDoc = next;
+        }
+        continue;
+      }
       if (!"patch".equals(m.get("type"))) {
         continue;
       }
@@ -260,6 +268,37 @@ final class Harness implements AutoCloseable {
 
   private static final Pattern TAG = Pattern.compile("<(/?)([a-zA-Z0-9]+)([^>]*?)(/?)>");
   private static final Pattern STUB = Pattern.compile("<!--j2=([^>]+?)-->");
+
+  /**
+   * An attribute region's patch, as runtime.js applies it (ADR 0036): on the element carrying its anchor, each attribute
+   * set in place or added at the end, or removed. Null when no element carries it.
+   */
+  static String applyAttrs(String doc, String anchor, String values) {
+    Matcher open = Pattern.compile("<[a-zA-Z0-9]+[^>]* data-j2-a-" + Pattern.quote(anchor) + "=\"\"[^>]*>").matcher(doc);
+    if (!open.find()) {
+      return null;
+    }
+    String tag = open.group();
+    boolean selfClosing = tag.endsWith("/>");
+    String body = tag.substring(0, tag.length() - (selfClosing ? 2 : 1));
+    for (Map.Entry<String, String> attr : j2act.internal.json.Json.parseFlat(values).entrySet()) {
+      Pattern existing = Pattern.compile(" " + Pattern.quote(attr.getKey()) + "(=\"[^\"]*\")?(?=[ />]|$)");
+      StringBuilder escaped = new StringBuilder();
+      if (attr.getValue() != null) {
+        Html.escape(attr.getValue(), escaped);
+      }
+      // Written as the renderer writes it: an empty value as the bare name.
+      String value = attr.getValue() == null ? null
+        : attr.getValue().isEmpty() ? " " + attr.getKey() : " " + attr.getKey() + "=\"" + escaped + "\"";
+      Matcher m = existing.matcher(body);
+      if (m.find()) {
+        body = body.substring(0, m.start()) + (value == null ? "" : value) + body.substring(m.end());
+      } else if (value != null) {
+        body = body + value;
+      }
+    }
+    return doc.substring(0, open.start()) + body + (selfClosing ? "/>" : ">") + doc.substring(open.end());
+  }
 
   /** A patch's HTML with each stub replaced by what the page has for it, as runtime.js does; null if it has none. */
   static String expandStubs(String doc, String html) {

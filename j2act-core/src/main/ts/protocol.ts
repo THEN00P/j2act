@@ -36,6 +36,8 @@ export type BoundCall = { window: WebCall } | { window?: undefined; client: stri
 export type ServerMessage =
   | { type: "ready"; maxFrame: number }
   | { type: "patch"; anchor: string; html: string; root?: true; handled?: number }
+  /** An attribute region's attributes, as JSON: a value, or null to remove it (ADR 0036). */
+  | { type: "attrs"; anchor: string; values: string }
   | { type: "head"; html: string }
   | { type: "url"; url: string; mode: NavMode }
   | { type: "load"; url: string }

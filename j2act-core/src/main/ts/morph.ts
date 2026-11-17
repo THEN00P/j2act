@@ -212,6 +212,28 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
       return true;
     },
 
+    /**
+     * An attribute region's patch (ADR 0036): only the attributes it sets, each asked of the same callback a morph asks,
+     * so what the browser keeps in a morph it keeps here. False when its element is not on the page.
+     */
+    attrs(anchor: string, values: Record<string, string | null>): boolean {
+      const el = document.querySelector("[data-j2-a-" + anchor + "]");
+      if (!el) {
+        return false;
+      }
+      for (const name of Object.keys(values)) {
+        const value = values[name];
+        if (value === null) {
+          if (el.hasAttribute(name) && callbacks.beforeAttributeUpdated!(name, el, "remove") !== false) {
+            el.removeAttribute(name);
+          }
+        } else if (el.getAttribute(name) !== value && callbacks.beforeAttributeUpdated!(name, el, "update") !== false) {
+          el.setAttribute(name, value);
+        }
+      }
+      return true;
+    },
+
     slot(live: Element, html: string): void {
       Idiomorph.morph(live, html, slotConfig);
     }

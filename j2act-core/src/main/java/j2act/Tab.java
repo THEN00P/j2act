@@ -1192,13 +1192,18 @@ public final class Tab {
         for (Scope s = scope.parent; s != null; s = s.parent) {
           s.sent = null;
         }
-        long handled = handledFor(scope);
-        String html = scope.html;
-        for (Scope child : scope.children.values()) {
-          html = stubbed(child, html);
+        if (scope.instance instanceof AttrTag) {
+          // An attribute region: only the attributes it sets (ADR 0036).
+          send(Json.object("type", "attrs", "anchor", scope.anchor, "values", scope.html));
+        } else {
+          long handled = handledFor(scope);
+          String html = scope.html;
+          for (Scope child : scope.children.values()) {
+            html = stubbed(child, html);
+          }
+          send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope.parent == null ? true : null,
+            "handled", handled, "html", html));
         }
-        send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope.parent == null ? true : null,
-          "handled", handled, "html", html));
         engine.stats.patches.incrementAndGet();
         if (scope.parent == null || scope.placed) {
           for (Scope s = scope.parent; s != null; s = s.parent) {
@@ -1222,7 +1227,7 @@ public final class Tab {
    * with every answer the server gives it (ADR 0034).
    */
   private static String stubbed(Scope scope, String html) {
-    if (scope.disposed || scope.detached || scope.html == null) {
+    if (scope.disposed || scope.detached || scope.html == null || scope.instance instanceof AttrTag) {
       return html;
     }
     int at;
@@ -1241,7 +1246,7 @@ public final class Tab {
     scope.onPage = html;
     scope.placed = true;
     for (Scope child : scope.children.values()) {
-      if (child.html != null && !child.detached && html.contains(child.html)) {
+      if (!child.detached && child.broughtBy(html)) {
         onPage(child, child.html);
       } else {
         // As it was before a hold, perhaps: the page has its element, but not what is in it now.
@@ -1268,7 +1273,7 @@ public final class Tab {
       if (child.disposed || child.html == null || child.detached || !sent.contains(child.mark())) {
         continue;
       }
-      if (sent.contains(child.html)) {
+      if (child.broughtBy(sent)) {
         behindThisPatch(child, child.html, scopes, next);
       } else {
         // Next, even if it already went: this patch replaced it.

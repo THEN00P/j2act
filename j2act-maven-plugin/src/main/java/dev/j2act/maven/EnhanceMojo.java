@@ -88,7 +88,16 @@ public class EnhanceMojo extends AbstractMojo {
     Path target = classFolders ? classes : output.toPath();
     if (!classFolders) {
       try {
+        // Made by another enhancer, as a snapshot rebuilt at the same version: start the copy over.
+        // Beside the copy, not in it, which is packaged.
+        Path made = target.resolveSibling(target.getFileName() + ".enhancer");
+        String enhancer = enhancerIdentity();
+        if (Files.isDirectory(target) && !(Files.isRegularFile(made)
+          && new String(Files.readAllBytes(made), java.nio.charset.StandardCharsets.UTF_8).equals(enhancer))) {
+          clear(target);
+        }
         copy(classes, target);
+        Files.write(made, enhancer.getBytes(java.nio.charset.StandardCharsets.UTF_8));
       } catch (IOException | UncheckedIOException e) {
         throw new MojoExecutionException("could not copy " + classes + " to " + output, e);
       }
@@ -115,6 +124,37 @@ public class EnhanceMojo extends AbstractMojo {
     getLog().info("j2act: " + report + (classFolders ? ", in " + classes : ""));
     if (!classFolders) {
       project.getBuild().setOutputDirectory(output.getAbsolutePath());
+    }
+  }
+
+  /** The enhancer's version and the bytes of its jar, so a rebuilt snapshot counts as another enhancer. */
+  static String enhancerIdentity() {
+    try {
+      java.net.URL source = Enhancer.class.getProtectionDomain().getCodeSource().getLocation();
+      Path jar = Path.of(source.toURI());
+      if (Files.isRegularFile(jar)) {
+        java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+        StringBuilder hex = new StringBuilder();
+        for (byte b : digest.digest(Files.readAllBytes(jar))) {
+          hex.append(String.format("%02x", b));
+        }
+        return Enhancer.VERSION + " " + hex;
+      }
+    } catch (Exception e) {
+      // Only the version, then.
+    }
+    return Enhancer.VERSION;
+  }
+
+  private static void clear(Path dir) throws IOException {
+    List<Path> all;
+    try (Stream<Path> walk = Files.walk(dir)) {
+      all = walk.sorted(java.util.Comparator.reverseOrder()).collect(Collectors.toList());
+    }
+    for (Path p : all) {
+      if (!p.equals(dir)) {
+        Files.delete(p);
+      }
     }
   }
 

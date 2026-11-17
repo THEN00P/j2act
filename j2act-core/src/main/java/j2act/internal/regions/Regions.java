@@ -1,6 +1,7 @@
 package j2act.internal.regions;
 
 import j2act.DomContent;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -13,6 +14,12 @@ import java.util.function.Supplier;
 public final class Regions {
 
   private static volatile Function<Supplier<? extends DomContent>, DomContent> factory;
+  private static volatile Attribute attributes;
+
+  /** The engine's side of attr(...). */
+  public interface Attribute {
+    Object set(Object tag, Supplier<?> value, BiFunction<Object, Object, Object> setter);
+  }
 
   static {
     try {
@@ -27,8 +34,18 @@ public final class Regions {
   }
 
   /** Called once by the engine. */
-  public static void install(Function<Supplier<? extends DomContent>, DomContent> make) {
+  public static void install(Function<Supplier<? extends DomContent>, DomContent> make, Attribute attribute) {
     factory = make;
+    attributes = attribute;
+  }
+
+  /**
+   * An attribute's value in the running view (ADR 0036): `setter` is the call the view made with it, the tag's own
+   * withX(...), which this makes now as the plain build did and again on its own whenever what the value read changes,
+   * patching only the attributes it sets. Returns what that call returned.
+   */
+  public static Object attr(Object tag, Supplier<?> value, BiFunction<Object, Object, Object> setter) {
+    return attributes.set(tag, value, setter);
   }
 
   /** This core's version, which an enhanced class must have been enhanced for. */

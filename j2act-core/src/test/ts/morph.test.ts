@@ -196,3 +196,38 @@ describe("regions between markers (ADR 0036)", () => {
     expect(morpher().patch("s5", "<!--j2:s5-->x<!--/j2:s5-->", false)).toBe(false);
   });
 });
+
+describe("attribute regions (ADR 0036)", () => {
+  const morpher = (pending = createPending()) => createMorpher(pending, () => {}, createFields());
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("sets and removes only the attributes it names, on the element that carries its anchor", () => {
+    document.body.innerHTML = '<div data-j2-scope="s1"><p class="a" title="t" data-j2-a-s7="">text</p></div>';
+    const p = document.querySelector("p")!;
+    expect(morpher().attrs("s7", { class: "b", hidden: "" })).toBe(true);
+    expect(p.className).toBe("b");
+    expect(p.hasAttribute("hidden")).toBe(true);
+    expect(p.getAttribute("title")).toBe("t");
+    expect(p.textContent).toBe("text");
+    morpher().attrs("s7", { class: null, hidden: null });
+    expect(p.hasAttribute("class")).toBe(false);
+    expect(p.hasAttribute("hidden")).toBe(false);
+  });
+
+  it("asks what a morph asks: a pending element keeps its pending state", () => {
+    document.body.innerHTML = '<button data-pending="" data-j2-a-s3="">go</button>';
+    const button = document.querySelector("button")!;
+    const pending = createPending();
+    pending.has = (el: Element) => el === button;
+    morpher(pending).attrs("s3", { "data-pending": null, class: "x" });
+    expect(button.hasAttribute("data-pending")).toBe(true);
+    expect(button.className).toBe("x");
+  });
+
+  it("reports an element that is not on the page", () => {
+    expect(morpher().attrs("s9", { class: "x" })).toBe(false);
+  });
+});

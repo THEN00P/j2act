@@ -55,6 +55,10 @@ final class StaticRenderer {
   }
 
   private void tag(Tag<?> tag, int depth) throws IOException {
+    // Rendered whole, as the head is: what its attribute regions read, the view around them reads (ADR 0036).
+    for (AttrTag attr : tag.attrRegions) {
+      attr.tab.rt.read(attr.node);
+    }
     StringBuilder open = new StringBuilder("<").append(tag.name);
     for (Map.Entry<String, String> attr : tag.attributes.entrySet()) {
       if (Html.isTextareaText(tag, attr.getKey())) {

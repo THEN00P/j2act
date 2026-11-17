@@ -423,6 +423,8 @@ class RandomAppTest {
           r(() -> T.span("[draft" + me.id + "=" + draft.get() + "]")),
           r(() -> T.span("[q=" + queryParam("q") + "]")),
           r(() -> T.span("[kept=" + shared.kept.get() + "]")),
+          ra(ra(T.span("[attr" + me.id + "]"), () -> String.valueOf(shared.n.get()), "data-n"),
+            () -> queryParam("q"), "data-q"),
           T.div().withId("meter" + me.id).withClient(meter),
           T.button("read" + me.id).onClick(e -> world.results.add(meter.read().toCompletableFuture())),
           T.button("reset" + me.id).onClick(e -> meter.reset(() -> me.running("a client's callback"))),
@@ -586,7 +588,13 @@ class RandomAppTest {
           }
           applied = number;
         }
-        if ("callSeen".equals(type)) {
+        if ("attrs".equals(type)) {
+          // As a patch whose place is not on the page, which the hold brings along with what is around it.
+          String next = Harness.applyAttrs(doc, m.get("anchor"), m.get("values"));
+          if (next != null) {
+            doc = next;
+          }
+        } else if ("callSeen".equals(type)) {
           unseen.remove(m.get("id"));
         } else if ("patch".equals(type)) {
           String shown = m.get("html").replaceAll("<button[^>]*>[^<]*</button>", "");
@@ -1066,6 +1074,11 @@ class RandomAppTest {
         expect(tab, tab.doc.contains("[q=" + queryIn(tab.wanted) + "]"), at + ": wanted its query");
         expect(tab, tab.doc.contains("[kept=" + w.kept + "]"), at + ": wanted kept " + w.kept);
         String pageId = page.group(1);
+        Matcher attrs = Pattern.compile("<span([^>]*)>\\[attr" + pageId + "\\]").matcher(tab.doc);
+        expect(tab, attrs.find() && attrs.group(1).contains(" data-n=\"" + n + "\"")
+          && (queryIn(tab.wanted).equals("null") ? !attrs.group(1).contains(" data-q=")
+            : attrs.group(1).contains(" data-q=\"" + queryIn(tab.wanted) + "\"")),
+          at + ": wanted data-n=" + n + " and its query on [attr" + pageId + "]");
         Integer locals = clicks.get("local" + pageId);
         expect(tab, rest.contains(" local=" + (locals == null ? 0 : locals) + "]") || rest.endsWith(" local=" + (locals == null ? 0 : locals)),
           at + ": wanted " + locals + " local clicks in " + rest);
@@ -1376,6 +1389,13 @@ class RandomAppTest {
 
   static DomContent r(java.util.function.Supplier<? extends DomContent> content) {
     return regions ? j2act.internal.regions.Regions.of(content) : content.get();
+  }
+
+  /** An attribute set as the enhancer leaves it, with regions on: its value a supplier, its call a setter. */
+  @SuppressWarnings("unchecked")
+  static <T extends Tag<T>> T ra(T tag, java.util.function.Supplier<?> value, String name) {
+    return regions ? (T) j2act.internal.regions.Regions.attr(tag, value, (t, v) -> ((Tag<?>) t).attr(name, v))
+      : tag.attr(name, value.get());
   }
 
   @Test

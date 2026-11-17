@@ -30,6 +30,8 @@ final class Renderer {
     try {
       if (scope.instance instanceof RegionTag) {
         renderRegion(scope);
+      } else if (scope.instance instanceof AttrTag) {
+        renderAttr(scope);
       } else if (scope.instance instanceof Reveal) {
         renderReveal(scope);
       } else if (scope.instance instanceof Boundary) {
@@ -121,7 +123,7 @@ final class Renderer {
     Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
-      RegionTag.dropUnplaced(tab, scope.regionsMade);
+      CutTag.dropUnplaced(tab, scope.regionsMade);
       inner.renderChildren(scope, "/0", latest((Boundary<?>) scope.instance).children(), false);
       inner.finish(scope);
     } catch (NotReadyError | StatusError e) {
@@ -263,7 +265,7 @@ final class Renderer {
     Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
-      RegionTag.dropUnplaced(tab, scope.regionsMade);
+      CutTag.dropUnplaced(tab, scope.regionsMade);
       scope.refreshView();
       if (scope.shapeChanged(scope.instance.getClass())) {
         // Only a page or a layout reaches here: any other starts over when its next description
@@ -308,6 +310,21 @@ final class Renderer {
     }
     out.append("<!--/j2:").append(scope.anchor).append("-->");
     finish(scope);
+  }
+
+  /** An attribute region (ADR 0036): its value set on its tag, and the attributes that gives, for its patch. */
+  private void renderAttr(Scope scope) {
+    if (scope.renderedEpoch == epoch) {
+      throw new IllegalStateException("one attribute region was rendered twice in the same pass");
+    }
+    scope.renderedEpoch = epoch;
+    tab.clearDirty(scope);
+    Scope previousScope = Tracking.swapScope(scope);
+    try {
+      out.append(((AttrTag) scope.instance).render());
+    } finally {
+      Tracking.swapScope(previousScope);
+    }
   }
 
   /** The scope rendered: handlers no element uses go, and so do children it did not place again. */
@@ -394,6 +411,14 @@ final class Renderer {
   }
 
   private void renderTag(Scope scope, String path, Tag<?> tag, String anchor) {
+    // Its attribute regions run first, inside this pass, setting what the tag's attributes are now.
+    List<Scope> attrs = null;
+    for (int i = 0; i < tag.attrRegions.size(); i++) {
+      if (attrs == null) {
+        attrs = new java.util.ArrayList<>();
+      }
+      attrs.add(place(scope, path + "/@" + i, tag.attrRegions.get(i), false));
+    }
     out.append('<').append(tag.name);
     if (anchor != null) {
       attribute("data-j2-scope", anchor);
@@ -405,6 +430,12 @@ final class Renderer {
     for (Map.Entry<String, String> attr : tag.attributes.entrySet()) {
       if (!Html.isTextareaText(tag, attr.getKey())) {
         attribute(attr.getKey(), attr.getValue());
+      }
+    }
+    if (attrs != null) {
+      for (Scope attr : attrs) {
+        // With its empty value written out, so data-j2-a-s2 never reads as the start of data-j2-a-s21.
+        out.append(' ').append(Scope.attrMark(attr.anchor));
       }
     }
     for (Map.Entry<String, Handler<?>> event : tag.events.entrySet()) {
@@ -526,6 +557,11 @@ final class Renderer {
 
   /** Finds or creates the child's scope: a route's frame is its own, anything else matches by slot (ADR 0031). */
   private void place(Scope parent, String path, ComponentTag component) {
+    place(parent, path, component, true);
+  }
+
+  /** emit: what it renders goes into this pass's HTML; an attribute region's goes only into its own patches. */
+  private Scope place(Scope parent, String path, ComponentTag component, boolean emit) {
     Scope child;
     String local = path + "@" + component.getClass().getName();
     if (component.scope != null) {
@@ -561,7 +597,7 @@ final class Renderer {
         }
       }
       if (child == null || child.disposed) {
-        child = component instanceof RegionTag ? new Scope(tab, parent, address, (RegionTag) component)
+        child = component instanceof CutTag ? new Scope(tab, parent, address, (CutTag) component)
           : new Scope(tab, parent, address);
       }
       child.localPath = local;
@@ -569,7 +605,11 @@ final class Renderer {
     }
     parent.children.put(child.address, child);
     child.placedInside = enclosing;
-    out.append(child.renderInParent());
+    String rendered = child.renderInParent();
+    if (emit) {
+      out.append(rendered);
+    }
+    return child;
   }
 
   private static Object keyOf(DomContent node) {

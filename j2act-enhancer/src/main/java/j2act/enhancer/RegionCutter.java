@@ -19,6 +19,7 @@ import org.objectweb.asm.tree.InsnList;
 import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.InvokeDynamicInsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
+import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LineNumberNode;
 import org.objectweb.asm.tree.LookupSwitchInsnNode;
@@ -41,6 +42,10 @@ import org.objectweb.asm.tree.analysis.SourceValue;
  * boundary. Its instructions move into a static synthetic method of the class, and in their place a supplier of that
  * method goes to Regions.of, so the value comes from a region where it came from the expression.
  *
+ * <p>An attribute's value is cut the same way: the arguments of a tag's with*(...) or attr(...) that may read state
+ * move into a supplier of them, the call into a setter, and Regions.attr(tag, supplier, setter) sets the attribute now,
+ * as the call did, and again on its own whenever what the value read changes.
+ *
  * <p>An argument's instructions are the range that ends where its value is complete and starts at the closest earlier
  * instruction that every path to that end passes, with the stack as it was before the value: a ternary's condition,
  * not its second branch. The range is cut only when that is safe to move: nothing jumps into it or out of it but to
@@ -61,6 +66,8 @@ final class RegionCutter {
   int uncut;
 
   private final ClassNode owner;
+  /** The setters of attribute values, which join the class without being cut themselves. */
+  private final List<MethodNode> setters = new ArrayList<>();
   private final ClassHierarchy hierarchy;
   private int next;
 
@@ -85,16 +92,26 @@ final class RegionCutter {
       owner.methods.addAll(made);
       queue.addAll(made);
     }
-    return changed;
+    // A setter only repeats its call, so nothing in it is cut again.
+    owner.methods.addAll(setters);
+    return changed || !setters.isEmpty();
   }
 
   private static final class Site {
     final int start;
     final int end;
+    /** For an attribute's value: the call setting it, which ends the site and moves into the setter. */
+    final MethodInsnNode setter;
 
-    Site(int start, int end) {
+    Site(int start, int end, MethodInsnNode setter) {
       this.start = start;
       this.end = end;
+      this.setter = setter;
+    }
+
+    /** The first instruction after it. */
+    int after() {
+      return setter != null ? end + 1 : end;
     }
   }
 
@@ -127,6 +144,10 @@ final class RegionCutter {
       if (!call.owner.startsWith("j2act/") || call.owner.startsWith("j2act/internal/")) {
         continue;
       }
+      if (attributeSetter(call)) {
+        attribute(method, types, flow, c, call, sites);
+        continue;
+      }
       Type[] args = Type.getArgumentTypes(call.desc);
       if (!takesContent(args)) {
         continue;
@@ -148,11 +169,11 @@ final class RegionCutter {
       }
     }
     // Outermost first: what a cut site holds is cut again in the method it moves to.
-    sites.sort((a, b) -> a.start != b.start ? Integer.compare(a.start, b.start) : Integer.compare(b.end, a.end));
+    sites.sort((a, b) -> a.start != b.start ? Integer.compare(a.start, b.start) : Integer.compare(b.after(), a.after()));
     List<Site> outermost = new ArrayList<>();
     for (Site site : sites) {
       Site last = outermost.isEmpty() ? null : outermost.get(outermost.size() - 1);
-      if (last == null || site.start >= last.end) {
+      if (last == null || site.start >= last.after()) {
         outermost.add(site);
       }
     }
@@ -160,10 +181,61 @@ final class RegionCutter {
     AbstractInsnNode[] at = insns.toArray();
     for (int i = outermost.size() - 1; i >= 0; i--) {
       Site site = outermost.get(i);
-      made.add(extract(method, types[site.start], at, site.start, site.end));
+      if (site.setter == null) {
+        made.add(extract(method, types[site.start], at, site.start, site.end));
+      } else {
+        made.addAll(extractAttribute(method, types[site.start], types[site.end], at, site));
+      }
       cut++;
     }
     return made;
+  }
+
+  /** Classes whose with*(...) and attr(...) set attributes: core's tags and the generated ones. */
+  private static boolean tagClass(String owner) {
+    return owner.equals("j2act/Tag") || owner.equals("j2act/ContainerTag") || owner.equals("j2act/EmptyTag")
+      || owner.equals("j2act/CustomTag") || owner.equals("j2act/CustomEmptyTag") || owner.equals("j2act/GlobalAttributes")
+      || owner.startsWith("j2act/html/tags/");
+  }
+
+  /** Calls of tag methods that do something other than set attributes. */
+  private static final java.util.Set<String> NOT_ATTRIBUTES = new java.util.HashSet<>(java.util.Arrays.asList(
+    "withText", "withKey", "withClient", "withDebounce", "withThrottle", "withPreload", "withPending", "withKeyFilter",
+    "withClasses"));
+
+  /** A with*(...) or attr(...) of a tag, taking only strings, booleans or an attr's Object, and returning the tag. */
+  private static boolean attributeSetter(MethodInsnNode call) {
+    if (call.getOpcode() == Opcodes.INVOKESTATIC || !tagClass(call.owner)
+      || !(call.name.startsWith("with") || call.name.equals("attr")) || NOT_ATTRIBUTES.contains(call.name)
+      || Type.getReturnType(call.desc).getSort() != Type.OBJECT) {
+      return false;
+    }
+    Type[] args = Type.getArgumentTypes(call.desc);
+    if (args.length == 0) {
+      return false;
+    }
+    for (Type arg : args) {
+      String d = arg.getDescriptor();
+      if (!d.equals("Ljava/lang/String;") && !d.equals("Z") && !(call.name.equals("attr") && d.equals("Ljava/lang/Object;"))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** An attribute's value: every argument of its setter, from the first one's start to the call. */
+  private void attribute(MethodNode method, Frame<BasicValue>[] types, Flow flow, int call, MethodInsnNode setter,
+      List<Site> sites) {
+    int base = types[call].getStackSize() - Type.getArgumentTypes(setter.desc).length;
+    int start = start(types, flow, call, base);
+    if (start < 0 || !worthARegion(method.instructions, start, call)) {
+      return;
+    }
+    if (!movable(method, types, flow, start, call)) {
+      uncut++;
+      return;
+    }
+    sites.add(new Site(start, call, setter));
   }
 
   private static boolean takesContent(Type[] args) {
@@ -240,7 +312,7 @@ final class RegionCutter {
       uncut++;
       return;
     }
-    sites.add(new Site(start, end));
+    sites.add(new Site(start, end, null));
   }
 
   /** Whether the expression calls anything that may read state; tag factories and builders over its values do not. */
@@ -310,6 +382,16 @@ final class RegionCutter {
 
   /** Moves [start, end) into a new static method and puts a region of it in its place. */
   private MethodNode extract(MethodNode method, Frame<BasicValue> frame, AbstractInsnNode[] at, int start, int end) {
+    return extract(method, frame, at, start, end, null);
+  }
+
+  /**
+   * Moves [start, end) into a new static method. Without `values`, the range leaves one DomContent and a region of the
+   * method takes its place; with them, it leaves values of those types, which the method returns as an Object[], and a
+   * supplier of the method takes their place.
+   */
+  private MethodNode extract(MethodNode method, Frame<BasicValue> frame, AbstractInsnNode[] at, int start, int end,
+      Type[] values) {
     TreeSet<Integer> captured = new TreeSet<>();
     for (int k = start; k < end; k++) {
       if (at[k] instanceof VarInsnNode) {
@@ -325,8 +407,10 @@ final class RegionCutter {
       slots.put(var, slot);
       slot += type.getSize();
     }
-    String desc = Type.getMethodDescriptor(Type.getObjectType(DOM_CONTENT), params.toArray(new Type[0]));
-    String name = "j2act$region$" + method.name.replaceAll("[^A-Za-z0-9_]", "_") + "$" + next++;
+    Type returns = values == null ? Type.getObjectType(DOM_CONTENT) : Type.getType("[Ljava/lang/Object;");
+    String desc = Type.getMethodDescriptor(returns, params.toArray(new Type[0]));
+    String name = (values == null ? "j2act$region$" : "j2act$value$") + method.name.replaceAll("[^A-Za-z0-9_]", "_")
+      + "$" + next++;
     MethodNode region = new MethodNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC, name, desc,
       null, null);
 
@@ -369,10 +453,31 @@ final class RegionCutter {
       body.add(insn.clone(labels));
     }
     body.add(endLabel);
+    int locals = slot;
+    if (values != null) {
+      // The values are on the stack, last on top: into locals, then into an array, boxed.
+      int[] stored = new int[values.length];
+      for (int i = values.length - 1; i >= 0; i--) {
+        stored[i] = locals;
+        body.add(new VarInsnNode(values[i].getOpcode(Opcodes.ISTORE), locals));
+        locals += values[i].getSize();
+      }
+      body.add(new LdcInsnNode(values.length));
+      body.add(new TypeInsnNode(Opcodes.ANEWARRAY, "java/lang/Object"));
+      for (int i = 0; i < values.length; i++) {
+        body.add(new InsnNode(Opcodes.DUP));
+        body.add(new LdcInsnNode(i));
+        body.add(new VarInsnNode(values[i].getOpcode(Opcodes.ILOAD), stored[i]));
+        if (values[i].getSort() == Type.BOOLEAN) {
+          body.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;", false));
+        }
+        body.add(new InsnNode(Opcodes.AASTORE));
+      }
+    }
     body.add(new InsnNode(Opcodes.ARETURN));
     // For its own analysis, before the writer computes them.
-    region.maxLocals = slot;
-    region.maxStack = method.maxStack;
+    region.maxLocals = locals;
+    region.maxStack = method.maxStack + 4;
 
     // In the method: the captured values, a supplier of the new method, and the region of it.
     InsnList call = new InsnList();
@@ -383,9 +488,11 @@ final class RegionCutter {
     call.add(new InvokeDynamicInsnNode("get",
       Type.getMethodDescriptor(Type.getType("Ljava/util/function/Supplier;"), params.toArray(new Type[0])),
       METAFACTORY, Type.getType("()Ljava/lang/Object;"), new Handle(Opcodes.H_INVOKESTATIC, owner.name, name, desc, itf),
-      Type.getType("()L" + DOM_CONTENT + ";")));
-    call.add(new MethodInsnNode(Opcodes.INVOKESTATIC, REGIONS, "of",
-      "(Ljava/util/function/Supplier;)L" + DOM_CONTENT + ";", false));
+      Type.getMethodType(returns)));
+    if (values == null) {
+      call.add(new MethodInsnNode(Opcodes.INVOKESTATIC, REGIONS, "of",
+        "(Ljava/util/function/Supplier;)L" + DOM_CONTENT + ";", false));
+    }
     InsnList insns = method.instructions;
     insns.insertBefore(at[end], call);
     for (int k = start; k < end; k++) {
@@ -395,6 +502,57 @@ final class RegionCutter {
       }
     }
     return region;
+  }
+
+  /**
+   * An attribute's value: its arguments move into a supplier of them as an Object[], its call into a setter taking the
+   * tag and that array, and Regions.attr(tag, supplier, setter) takes their place, cast back to what the call returned.
+   */
+  private List<MethodNode> extractAttribute(MethodNode method, Frame<BasicValue> frame, Frame<BasicValue> atCall,
+      AbstractInsnNode[] at, Site site) {
+    MethodInsnNode call = site.setter;
+    Type[] args = Type.getArgumentTypes(call.desc);
+    MethodNode values = extract(method, frame, at, site.start, site.end, args);
+    String base = "j2act$attr$" + method.name.replaceAll("[^A-Za-z0-9_]", "_") + "$" + next++;
+    MethodNode setter = new MethodNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC, base,
+      "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", null, null);
+    InsnList body = setter.instructions;
+    body.add(new VarInsnNode(Opcodes.ALOAD, 0));
+    body.add(new TypeInsnNode(Opcodes.CHECKCAST, call.owner));
+    for (int i = 0; i < args.length; i++) {
+      body.add(new VarInsnNode(Opcodes.ALOAD, 1));
+      body.add(new TypeInsnNode(Opcodes.CHECKCAST, "[Ljava/lang/Object;"));
+      body.add(new LdcInsnNode(i));
+      body.add(new InsnNode(Opcodes.AALOAD));
+      if (args[i].getSort() == Type.BOOLEAN) {
+        body.add(new TypeInsnNode(Opcodes.CHECKCAST, "java/lang/Boolean"));
+        body.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, "java/lang/Boolean", "booleanValue", "()Z", false));
+      } else if (!args[i].getInternalName().equals("java/lang/Object")) {
+        body.add(new TypeInsnNode(Opcodes.CHECKCAST, args[i].getInternalName()));
+      }
+    }
+    body.add(new MethodInsnNode(call.getOpcode(), call.owner, call.name, call.desc, call.itf));
+    body.add(new InsnNode(Opcodes.ARETURN));
+    setter.maxLocals = 2;
+    setter.maxStack = args.length + 3;
+
+    // extract() put a supplier of the values where they were; now the setter, and the call that takes all three.
+    InsnList insns = method.instructions;
+    boolean itf = (owner.access & Opcodes.ACC_INTERFACE) != 0;
+    InsnList replace = new InsnList();
+    replace.add(new InvokeDynamicInsnNode("apply", "()Ljava/util/function/BiFunction;", METAFACTORY,
+      Type.getType("(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"),
+      new Handle(Opcodes.H_INVOKESTATIC, owner.name, setter.name, setter.desc, itf),
+      Type.getType("(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;")));
+    replace.add(new MethodInsnNode(Opcodes.INVOKESTATIC, REGIONS, "attr",
+      "(Ljava/lang/Object;Ljava/util/function/Supplier;Ljava/util/function/BiFunction;)Ljava/lang/Object;", false));
+    replace.add(new TypeInsnNode(Opcodes.CHECKCAST, Type.getReturnType(call.desc).getInternalName()));
+    insns.insert(call, replace);
+    insns.remove(call);
+    setters.add(setter);
+    List<MethodNode> made = new ArrayList<>();
+    made.add(values);
+    return made;
   }
 
   /** The method's control flow, for which instruction every path to another passes. */

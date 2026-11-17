@@ -82,6 +82,11 @@ function start(): void {
       clients.scan();
       fields.flush();
     },
+    attrs: (m) => {
+      if (!morpher.attrs(m.anchor, JSON.parse(m.values) as Record<string, string | null>)) {
+        repair.ask();
+      }
+    },
     head: (m) => morpher.head(m.html),
     url: (m) => navigation.landed(m.url, m.mode),
     load: (m) => location.assign(m.url),

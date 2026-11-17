@@ -56,7 +56,12 @@ public final class Board extends LiveComponent {
           p(guarded(count.get())),
           // Writes a local of the view: left in it, which runs again for it.
           p(span("seen " + (seen = count.get()) + " " + seen)),
-          p(span(String.valueOf(count.get() * base)), span("static"))));
+          p(span(String.valueOf(count.get() * base)), span("static")),
+          // Attribute values: one, a condition with a constant, attr(...) with an object, and two on one tag.
+          p("classy").withClass(show.get() ? "on" : "off"),
+          span("maybe hidden").withCondHidden(!show.get()),
+          div("counted").attr("data-count", count.get()),
+          span("both").withTitle("t " + name.get()).withLang(show.get() ? "en" : "de")));
     };
   }
 

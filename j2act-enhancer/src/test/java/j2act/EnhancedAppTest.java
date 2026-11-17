@@ -115,10 +115,27 @@ class EnhancedAppTest {
    * ends its stream with and a whole-page patch brings, so only the plain run's page model has them.
    */
   private static String normalized(String page) {
-    return page.replace("<!DOCTYPE html>", "").replace("</body></html>", "").replaceAll("<!--/?j2:[^>]*-->", "")
-      .replaceAll(" data-j2-[a-z-]+=\"[^\"]*\"", "")
-      .replaceAll(" data-j2-[a-z-]+(?=[ >])", "")
-      .replaceAll("<meta name=\"j2-[a-z]+\" content=\"[^\"]*\">", "");
+    return sortedAttributes(page.replace("<!DOCTYPE html>", "").replace("</body></html>", "").replaceAll("<!--/?j2:[^>]*-->", "")
+      .replaceAll(" data-j2-[a-z0-9-]+=\"[^\"]*\"", "")
+      .replaceAll(" data-j2-[a-z0-9-]+(?=[ >])", "")
+      .replaceAll("<meta name=\"j2-[a-z]+\" content=\"[^\"]*\">", ""));
+  }
+
+  /** An attribute region's patch adds an attribute at the end, a whole render where the call put it: same element. */
+  private static String sortedAttributes(String page) {
+    java.util.regex.Matcher tag = java.util.regex.Pattern.compile("<([a-zA-Z0-9]+)((?: [^ >=]+(?:=\"[^\"]*\")?)+)>").matcher(page);
+    StringBuffer out = new StringBuffer();
+    while (tag.find()) {
+      List<String> attrs = new ArrayList<>();
+      java.util.regex.Matcher attr = java.util.regex.Pattern.compile(" ([^ >=]+(?:=\"[^\"]*\")?)").matcher(tag.group(2));
+      while (attr.find()) {
+        attrs.add(attr.group(1));
+      }
+      java.util.Collections.sort(attrs);
+      tag.appendReplacement(out, java.util.regex.Matcher.quoteReplacement("<" + tag.group(1) + " " + String.join(" ", attrs) + ">"));
+    }
+    tag.appendTail(out);
+    return out.toString();
   }
 
   private static void compile(JavaCompiler compiler, Path out) throws IOException {

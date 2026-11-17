@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-587545be182423964798d5f944d57eb0f1e74a1ac31bbcb9a191ee597e6dcc75 */
+* sources: sha256-6e0a2c64ddf82486aad6a92b04ad4e0b50893106170a12f6a2ab3c43dce38a5b */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -2057,6 +2057,21 @@
 				Idiomorph.morph(el, parsed.content.firstElementChild, config);
 				return true;
 			},
+			/**
+			* An attribute region's patch (ADR 0036): only the attributes it sets, each asked of the same callback a morph asks,
+			* so what the browser keeps in a morph it keeps here. False when its element is not on the page.
+			*/
+			attrs(anchor, values) {
+				const el = document.querySelector("[data-j2-a-" + anchor + "]");
+				if (!el) return false;
+				for (const name of Object.keys(values)) {
+					const value = values[name];
+					if (value === null) {
+						if (el.hasAttribute(name) && callbacks.beforeAttributeUpdated(name, el, "remove") !== false) el.removeAttribute(name);
+					} else if (el.getAttribute(name) !== value && callbacks.beforeAttributeUpdated(name, el, "update") !== false) el.setAttribute(name, value);
+				}
+				return true;
+			},
 			slot(live, html) {
 				Idiomorph.morph(live, html, slotConfig);
 			}
@@ -2642,6 +2657,9 @@
 				if (m.root === true) repair.arrived();
 				clients.scan();
 				fields.flush();
+			},
+			attrs: (m) => {
+				if (!morpher.attrs(m.anchor, JSON.parse(m.values))) repair.ask();
 			},
 			head: (m) => morpher.head(m.html),
 			url: (m) => navigation.landed(m.url, m.mode),

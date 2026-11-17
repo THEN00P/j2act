@@ -27,6 +27,8 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   final Set<String> removed = new HashSet<>();
   final Map<String, Handler<?>> events = new LinkedHashMap<>();
   Object key;
+  /** Attribute values the enhancer cut out of the view, which run again on their own (ADR 0036). */
+  final java.util.List<AttrTag> attrRegions = new java.util.ArrayList<>(0);
   long debounceMillis = -1;
   long throttleMillis = -1;
   Preload preload;

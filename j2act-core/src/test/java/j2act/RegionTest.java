@@ -239,6 +239,103 @@ class RegionTest {
     }
   }
 
+  /** Attribute values as the enhancer leaves them: the value a supplier, the call that set it a setter. */
+  static <T extends Tag<T>> T attr(T tag, java.util.function.Supplier<?> value, String name) {
+    @SuppressWarnings("unchecked")
+    T set = (T) Regions.attr(tag, value, (t, v) -> ((Tag<?>) t).attr(name, v));
+    return set;
+  }
+
+  static final class Classes extends LiveComponent {
+    @Override protected View setup() {
+      var on = createSignal(false);
+      var typed = createSignal(false);
+      var count = createSignal(0);
+      return () -> {
+        views.incrementAndGet();
+        return T.page("t", T.div(
+          T.button("flip").onClick(e -> on.set(!on.get())),
+          T.button("type").onClick(e -> typed.set(!typed.get())),
+          T.button("count " + count.get()).onClick(e -> count.set(count.get() + 1)),
+          attr(T.tag("p", Regions.of(() -> T.span("body"))).attr("title", "kept"), () -> on.get() ? "on" : null, "class"),
+          attr(T.input(), () -> typed.get() ? "x" : "y", "placeholder")));
+      };
+    }
+  }
+
+  @Test
+  void anAttributeRegionPatchesOnlyItsAttribute() {
+    views.set(0);
+    try (Harness h = new Harness(Classes::new)) {
+      String html = h.load();
+      assertTrue(html.contains("<p title=\"kept\" data-j2-a-s"), html);
+      assertTrue(html.matches("(?s).*data-j2-a-s[0-9]+=\"\".*"), html);
+      assertFalse(html.contains("class="), html);
+      h.connect();
+      int before = views.get();
+      List<Map<String, String>> sent = h.click(Harness.clickOn(html, "flip"));
+      assertEquals(before, views.get(), "the view did not run again: " + sent);
+      Map<String, String> attrs = null;
+      for (Map<String, String> m : h.conn.since(0, m -> "attrs".equals(m.get("type")))) {
+        attrs = m;
+      }
+      assertTrue(attrs != null && attrs.get("values").equals("{\"class\":\"on\"}"), String.valueOf(attrs));
+      assertTrue(h.page().contains("<p title=\"kept\" data-j2-a-") && h.page().contains(" class=\"on\">"), h.page());
+      // A form field's attributes stay part of the view, which runs again for its placeholder.
+      h.click(Harness.clickOn(h.page(), "type"));
+      assertEquals(before + 1, views.get());
+      assertTrue(h.page().contains("placeholder=\"x\""), h.page());
+      h.click(Harness.clickOn(h.page(), "flip"));
+      assertFalse(h.page().contains("class=\"on\""), h.page());
+      // The view running again keeps the attribute region, which goes on working.
+      h.click(Harness.clickOn(h.page(), "count 0"));
+      h.click(Harness.clickOn(h.page(), "flip"));
+      assertTrue(h.page().contains(" class=\"on\"") && h.page().contains("count 1"), h.page());
+    }
+  }
+
+  static CompletableFuture<Void> gate;
+
+  /** The demo's Publisher, as the enhancer leaves it: a region of the button, and in it its disabled attribute. */
+  static final class Publishing extends LiveComponent {
+    @Override protected View setup() {
+      var publishing = createOptimistic(false);
+      var done = createSignal("no");
+      var publish = action((Integer n) -> {
+        publishing.set(true);
+        gate.join();
+        done.set("yes");
+      });
+      return () -> T.page("t", T.div(
+        // The setter takes the values as the enhancer's does, an Object[], so a missing value fails as it would.
+        Regions.of(() -> ((CustomTag) Regions.attr(T.button(publishing.get() ? "Publishing" : "Publish"),
+          () -> new Object[] {publishing.get() ? "" : null},
+          (t, v) -> ((Tag<?>) t).attr("disabled", ((Object[]) v)[0]))).onClick(e -> publish.run(1))),
+        Regions.of(() -> T.span("done " + done.get()))));
+    }
+  }
+
+  @Test
+  void anOptimisticAttributeStaysUpUntilTheActionEnds() {
+    gate = new CompletableFuture<>();
+    try (Harness h = new Harness(Publishing::new)) {
+      String html = h.load();
+      h.connect();
+      int clicked = h.conn.size();
+      h.click(Harness.clickOn(html, "Publish"));
+      // The action's body runs off the lane: its guess lands after the click's ack.
+      h.conn.await(clicked, m -> h.page().contains("Publishing"));
+      String during = h.page();
+      String messages = h.conn.since(0, m -> true).toString();
+      assertTrue(during.contains(">Publishing</button>") && during.contains(" disabled"), messages);
+      int from = h.conn.size();
+      gate.complete(null);
+      h.awaitPatch(from, p -> h.page().contains("done yes"));
+      String after = h.page();
+      assertTrue(after.contains(">Publish</button>") && !after.contains(" disabled"), after + "\n" + h.conn.since(from, m -> true));
+    }
+  }
+
   static final class RawText extends LiveComponent {
     @Override protected View setup() {
       var title = createSignal("one");
