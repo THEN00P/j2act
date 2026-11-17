@@ -43,7 +43,16 @@ public class EnhanceMojo extends AbstractMojo {
   @Parameter(defaultValue = "${project.build.directory}/" + OUTPUT)
   private File output;
 
-  /** Copies the classes without enhancing them: the app runs the same, re-running whole views. */
+  /**
+   * Enhances target/classes itself, so that what runs from it runs enhanced too: tests after this goal, the app run
+   * from the build, an exploded WAR made from it. For profiling and for trying the enhanced app in development; what an
+   * IDE compiles there afterwards is plain again, and its hot code replace cannot swap a plain class over an enhanced
+   * one on a JVM without enhanced redefinition (ADR 0036).
+   */
+  @Parameter(property = "j2act.enhance.classFolders", defaultValue = "false")
+  private boolean classFolders;
+
+  /** Leaves the classes plain: the app runs the same, re-running whole views. */
   @Parameter(property = "j2act.enhance.skip", defaultValue = "false")
   private boolean skip;
 
@@ -51,6 +60,12 @@ public class EnhanceMojo extends AbstractMojo {
     Path classes = new File(project.getBuild().getOutputDirectory()).toPath();
     if (!Files.isDirectory(classes)) {
       return;
+    }
+    // Maven does not compile classes again whose sources did not change, so they stay enhanced after the flag is off.
+    File marker = new File(project.getBuild().getDirectory(), "j2act-enhanced-class-folders");
+    if (!classFolders && marker.isFile()) {
+      getLog().warn("j2act: target/classes still holds classes enhanced by an earlier -Dj2act.enhance.classFolders"
+        + " build; run mvn clean for plain ones");
     }
     if (skip) {
       getLog().info("j2act: not enhanced (j2act.enhance.skip)");
@@ -70,10 +85,13 @@ public class EnhanceMojo extends AbstractMojo {
       throw new MojoExecutionException("j2act-core is " + core + " but j2act-maven-plugin is " + Enhancer.VERSION
         + ": classes enhanced by one call into the other (ADR 0036), so use the same version of both");
     }
-    try {
-      copy(classes, output.toPath());
-    } catch (IOException | UncheckedIOException e) {
-      throw new MojoExecutionException("could not copy " + classes + " to " + output, e);
+    Path target = classFolders ? classes : output.toPath();
+    if (!classFolders) {
+      try {
+        copy(classes, target);
+      } catch (IOException | UncheckedIOException e) {
+        throw new MojoExecutionException("could not copy " + classes + " to " + output, e);
+      }
     }
     List<Path> classpath = new ArrayList<>();
     try {
@@ -85,9 +103,19 @@ public class EnhanceMojo extends AbstractMojo {
     } catch (DependencyResolutionRequiredException e) {
       throw new MojoExecutionException("no compile classpath", e);
     }
-    Enhancer.Report report = new Enhancer(classpath).enhance(output.toPath());
-    getLog().info("j2act: " + report);
-    project.getBuild().setOutputDirectory(output.getAbsolutePath());
+    if (classFolders) {
+      try {
+        Files.createDirectories(marker.getParentFile().toPath());
+        Files.write(marker.toPath(), new byte[0]);
+      } catch (IOException e) {
+        throw new MojoExecutionException("could not write " + marker, e);
+      }
+    }
+    Enhancer.Report report = new Enhancer(classpath).enhance(target);
+    getLog().info("j2act: " + report + (classFolders ? ", in " + classes : ""));
+    if (!classFolders) {
+      project.getBuild().setOutputDirectory(output.getAbsolutePath());
+    }
   }
 
   /**

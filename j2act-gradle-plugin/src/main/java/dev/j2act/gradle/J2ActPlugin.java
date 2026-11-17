@@ -16,6 +16,7 @@ import org.gradle.api.Task;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.tasks.bundling.Jar;
 import org.gradle.api.tasks.bundling.War;
+import org.gradle.api.tasks.compile.JavaCompile;
 import java.util.Set;
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.plugins.JavaPluginExtension;
@@ -89,6 +90,17 @@ public class J2ActPlugin implements Plugin<Project> {
       task.getSkip().convention(project.getProviders().gradleProperty("j2act.enhance.skip")
         .map(Boolean::parseBoolean).orElse(false));
     });
+    // Opt-in: the class folders themselves, so what runs from them runs enhanced too (run, test, an exploded WAR of
+    // the build's classes). What an IDE compiles into its own folders stays plain.
+    boolean classFolders = project.getProviders().gradleProperty("j2act.enhance.classFolders")
+      .map(Boolean::parseBoolean).getOrElse(false);
+    if (classFolders) {
+      FileCollection compileClasspath = main.getCompileClasspath();
+      project.getTasks().named(main.getCompileJavaTaskName(), JavaCompile.class, compile -> {
+        compile.getInputs().property("j2act.enhance.classFolders", true);
+        compile.doLast("j2actEnhanceClassFolder", new EnhanceInPlace(compile.getDestinationDirectory(), compileClasspath));
+      });
+    }
     project.getTasks().named(JavaPlugin.JAR_TASK_NAME, Jar.class, jar -> {
       Set<File> dirs = classesDirs.getFiles();
       jar.from(enhance);
@@ -110,6 +122,26 @@ public class J2ActPlugin implements Plugin<Project> {
         });
       }
     });
+  }
+
+  /** j2act.enhance.classFolders: compileJava's output, enhanced as it is written. A class, for the configuration cache. */
+  static final class EnhanceInPlace implements org.gradle.api.Action<Task> {
+    private final org.gradle.api.file.DirectoryProperty classes;
+    private final FileCollection classpath;
+
+    EnhanceInPlace(org.gradle.api.file.DirectoryProperty classes, FileCollection classpath) {
+      this.classes = classes;
+      this.classpath = classpath;
+    }
+
+    @Override public void execute(Task task) {
+      java.util.List<java.nio.file.Path> paths = new java.util.ArrayList<>();
+      for (File file : classpath.getFiles()) {
+        paths.add(file.toPath());
+      }
+      task.getLogger().lifecycle("j2act: " + new j2act.enhancer.Enhancer(paths).enhance(classes.get().getAsFile().toPath())
+        + ", in " + classes.get().getAsFile());
+    }
   }
 
   /** What comes from the class folders, which the jar takes from j2actEnhance instead. A class, for the configuration cache. */

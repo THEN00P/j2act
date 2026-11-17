@@ -160,4 +160,22 @@ class J2ActPluginTest {
     }
     assertTrue(run(gradle, "--configuration-cache", "jar").getOutput().contains("Configuration cache entry reused"));
   }
+
+  /** ADR 0036: j2act.enhance.classFolders enhances the class folder itself, and keeps it enhanced across builds. */
+  @ParameterizedTest @MethodSource("gradleVersions")
+  void classFoldersAreEnhancedOnlyWhenAsked(String gradle) throws IOException {
+    theJarCarriesEnhancedClassesAndTheClassFoldersStayPlain(gradle);
+    String output = run(gradle, "--configuration-cache", "-Pj2act.enhance.classFolders=true", "classes").getOutput();
+    assertTrue(output.contains("j2act: 1 of 1 classes enhanced"), output);
+    String enhanced = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
+      StandardCharsets.ISO_8859_1);
+    assertTrue(enhanced.contains("j2act$enhanced"), "the class folder is enhanced");
+    assertTrue(run(gradle, "--configuration-cache", "-Pj2act.enhance.classFolders=true", "classes").getOutput()
+      .contains("Configuration cache entry reused"));
+    // Without the flag the compile's input changed: it runs again, and its output is plain.
+    run(gradle, "classes");
+    String plain = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
+      StandardCharsets.ISO_8859_1);
+    assertFalse(plain.contains("j2act$enhanced"), "plain again without the flag");
+  }
 }
