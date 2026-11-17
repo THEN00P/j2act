@@ -425,6 +425,9 @@ class RandomAppTest {
           r(() -> T.span("[kept=" + shared.kept.get() + "]")),
           ra(ra(T.span("[attr" + me.id + "]"), () -> String.valueOf(shared.n.get()), "data-n"),
             () -> queryParam("q"), "data-q"),
+          // Keyed rows, each its own region with regions on, as the enhancer leaves each(...)'s rows.
+          T.tag("ul", T.each(Arrays.asList(1, 2, 3), k -> r(() -> T.span("[row" + me.id + "." + k + "="
+            + (shared.n.get() + k) + "]").withKey(k)))),
           T.div().withId("meter" + me.id).withClient(meter),
           T.button("read" + me.id).onClick(e -> world.results.add(meter.read().toCompletableFuture())),
           T.button("reset" + me.id).onClick(e -> meter.reset(() -> me.running("a client's callback"))),
@@ -1079,6 +1082,9 @@ class RandomAppTest {
           && (queryIn(tab.wanted).equals("null") ? !attrs.group(1).contains(" data-q=")
             : attrs.group(1).contains(" data-q=\"" + queryIn(tab.wanted) + "\"")),
           at + ": wanted data-n=" + n + " and its query on [attr" + pageId + "]");
+        for (int k = 1; k <= 3; k++) {
+          expect(tab, tab.doc.contains("[row" + pageId + "." + k + "=" + (n + k) + "]"), at + ": wanted row " + k + " at " + (n + k));
+        }
         Integer locals = clicks.get("local" + pageId);
         expect(tab, rest.contains(" local=" + (locals == null ? 0 : locals) + "]") || rest.endsWith(" local=" + (locals == null ? 0 : locals)),
           at + ": wanted " + locals + " local clicks in " + rest);

@@ -62,10 +62,16 @@ class EnhancedAppTest {
     assertTrue(after.views < before.views, "the view ran " + after.views + " times enhanced, " + before.views + " plain");
     assertTrue(after.sent < before.sent, "patches carried " + after.sent + " chars enhanced, " + before.sent + " plain");
     assertTrue(after.raw.contains("<!--j2:"), after.raw);
+    // Rows run on their own: selecting c patches the rows of a and c, and leaves b alone.
+    String selecting = String.join("\n", after.selecting);
+    assertTrue(selecting.contains("<li>a</li>") && selecting.contains("<li>c *</li>"), selecting);
+    assertTrue(!selecting.contains("<li>b</li>") && !selecting.contains("<ul"), selecting);
   }
 
   private static final class Run {
     final List<String> pages = new ArrayList<>();
+    /** What the first click on "select c" sent. */
+    final List<String> selecting = new ArrayList<>();
     int views;
     long sent;
     String raw;
@@ -89,13 +95,18 @@ class EnhancedAppTest {
         h.connect();
         run.pages.add(normalized(h.page()));
         for (String label : Arrays.asList("rename", "count 0", "toggle", "rename", "badge Ada!! 0", "count 1",
-          "toggle", "LATE", "rename", "count 2")) {
+          "toggle", "LATE", "select c", "rename", "add d", "count 2", "select c")) {
           int from = h.conn.size();
           if (label.equals("LATE")) {
             late.complete("done");
             h.awaitPatch(from, html -> h.page().contains("slow done"));
           } else {
             h.click(Harness.clickOn(h.page(), label));
+            if (label.equals("select c") && run.selecting.isEmpty()) {
+              for (java.util.Map<String, String> m : h.conn.since(from, x -> "patch".equals(x.get("type")))) {
+                run.selecting.add(m.get("html"));
+              }
+            }
           }
           run.pages.add(normalized(h.page()));
         }

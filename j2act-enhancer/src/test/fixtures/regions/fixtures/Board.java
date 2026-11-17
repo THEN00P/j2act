@@ -2,6 +2,7 @@ package fixtures;
 
 import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
+import static j2act.html.TagHelpers.each;
 
 import j2act.ComponentTag;
 import j2act.DomContent;
@@ -35,6 +36,8 @@ public final class Board extends LiveComponent {
     var count = createSignal(0);
     var show = createSignal(true);
     var slow = createMemo(() -> late);
+    var items = createSignal(java.util.List.of("a", "b", "c"));
+    var selected = createSignal("a");
     long big = 7L;
     double ratio = 0.5;
     int base = 3;
@@ -61,8 +64,22 @@ public final class Board extends LiveComponent {
           p("classy").withClass(show.get() ? "on" : "off"),
           span("maybe hidden").withCondHidden(!show.get()),
           div("counted").attr("data-count", count.get()),
-          span("both").withTitle("t " + name.get()).withLang(show.get() ? "en" : "de")));
+          span("both").withTitle("t " + name.get()).withLang(show.get() ? "en" : "de"),
+          // Rows: keyed, reading what is selected; indexed; and a method reference.
+          button("select c").onClick(e -> selected.set("c")),
+          button("add d").onClick(e -> {
+            java.util.List<String> more = new java.util.ArrayList<>(items.get());
+            more.add(0, "d");
+            items.set(more);
+          }),
+          ul(each(items.get(), item -> li(item + (item.equals(selected.get()) ? " *" : "")).withKey(item))),
+          ol(each(items.get(), (i, item) -> li(i + ":" + item + " " + count.get()))),
+          div(j2act.html.TagCreator.each(items.get(), Board::tagged))));
     };
+  }
+
+  private static DomContent tagged(String item) {
+    return span("#" + item);
   }
 
   private DomContent label(String n) {

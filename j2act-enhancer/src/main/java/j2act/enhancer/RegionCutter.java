@@ -133,6 +133,7 @@ final class RegionCutter {
       // A class this build cannot see all of: its views run as they are.
       return new ArrayList<>();
     }
+    rows(method, sources);
     Flow flow = new Flow(method);
     List<Site> sites = new ArrayList<>();
     for (int c = 0; c < insns.size(); c++) {
@@ -189,6 +190,127 @@ final class RegionCutter {
       cut++;
     }
     return made;
+  }
+
+  /**
+   * The rows of each(items, row): each lambda or method reference handed to j2act's each(...) gets a bridge in its
+   * place, which returns its row as a region (ADR 0036), so a row runs again on its own, keyed by its withKey or its
+   * position. Only the call site changes: the lambda's own method stays, and is cut as any other.
+   */
+  private void rows(MethodNode method, Frame<SourceValue>[] sources) {
+    InsnList insns = method.instructions;
+    for (int c = 0; c < insns.size(); c++) {
+      AbstractInsnNode insn = insns.get(c);
+      if (!(insn instanceof MethodInsnNode) || sources[c] == null) {
+        continue;
+      }
+      MethodInsnNode call = (MethodInsnNode) insn;
+      // TagCreator's each(...) hands its row to TagHelpers', so both are calls of it.
+      if (!(call.owner.equals("j2act/html/TagHelpers") || call.owner.equals("j2act/html/TagCreator"))
+        || !call.name.equals("each")) {
+        continue;
+      }
+      Type[] args = Type.getArgumentTypes(call.desc);
+      int base = sources[c].getStackSize() - args.length;
+      for (int j = 0; j < args.length; j++) {
+        String d = args[j].getDescriptor();
+        if (!d.equals("Ljava/util/function/Function;") && !d.equals("Ljava/util/function/BiFunction;")) {
+          continue;
+        }
+        SourceValue row = sources[c].getStack(base + j);
+        if (row.insns.size() == 1 && row.insns.iterator().next() instanceof InvokeDynamicInsnNode) {
+          InvokeDynamicInsnNode lambda = (InvokeDynamicInsnNode) row.insns.iterator().next();
+          if (row(lambda)) {
+            cut++;
+          }
+        }
+      }
+    }
+  }
+
+  /** Points one row's lambda at a bridge returning it as a region; false when its shape is not one this knows. */
+  private boolean row(InvokeDynamicInsnNode lambda) {
+    if (!METAFACTORY.equals(lambda.bsm) || lambda.bsmArgs.length != 3 || !(lambda.bsmArgs[1] instanceof Handle)) {
+      return false;
+    }
+    Handle impl = (Handle) lambda.bsmArgs[1];
+    if (impl.getName().startsWith("j2act$row$")) {
+      return false; // Already a row's bridge, copied here with the region it was in.
+    }
+    Type instantiated = (Type) lambda.bsmArgs[2];
+    List<Type> given = new ArrayList<>(java.util.Arrays.asList(Type.getArgumentTypes(lambda.desc)));
+    given.addAll(java.util.Arrays.asList(instantiated.getArgumentTypes()));
+    List<Type> taken = new ArrayList<>();
+    int tag = impl.getTag();
+    if (tag == Opcodes.H_INVOKEVIRTUAL || tag == Opcodes.H_INVOKEINTERFACE || tag == Opcodes.H_INVOKESPECIAL) {
+      taken.add(Type.getObjectType(impl.getOwner()));
+    } else if (tag != Opcodes.H_INVOKESTATIC && tag != Opcodes.H_NEWINVOKESPECIAL) {
+      return false;
+    }
+    taken.addAll(java.util.Arrays.asList(Type.getArgumentTypes(impl.getDesc())));
+    Type returned = tag == Opcodes.H_NEWINVOKESPECIAL ? Type.getObjectType(impl.getOwner()) : Type.getReturnType(impl.getDesc());
+    if (taken.size() != given.size() || returned.getSort() != Type.OBJECT) {
+      return false;
+    }
+    for (int i = 0; i < given.size(); i++) {
+      boolean ref = given.get(i).getSort() >= Type.ARRAY;
+      if (ref != (taken.get(i).getSort() >= Type.ARRAY) || (!ref && !given.get(i).equals(taken.get(i)))) {
+        return false; // A primitive the metafactory would box or unbox: left as it is.
+      }
+    }
+    Type[] params = given.toArray(new Type[0]);
+    String desc = Type.getMethodDescriptor(Type.getObjectType(DOM_CONTENT), params);
+    int n = next++;
+    boolean itf = (owner.access & Opcodes.ACC_INTERFACE) != 0;
+
+    // The row itself, as the lambda would have made it.
+    MethodNode body = new MethodNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC,
+      "j2act$rowbody$" + n, desc, null, null);
+    InsnList b = body.instructions;
+    if (tag == Opcodes.H_NEWINVOKESPECIAL) {
+      b.add(new TypeInsnNode(Opcodes.NEW, impl.getOwner()));
+      b.add(new InsnNode(Opcodes.DUP));
+    }
+    int slot = 0;
+    for (int i = 0; i < params.length; i++) {
+      b.add(new VarInsnNode(params[i].getOpcode(Opcodes.ILOAD), slot));
+      slot += params[i].getSize();
+      if (params[i].getSort() >= Type.ARRAY && !params[i].equals(taken.get(i))) {
+        b.add(new TypeInsnNode(Opcodes.CHECKCAST, taken.get(i).getInternalName()));
+      }
+    }
+    int opcode = tag == Opcodes.H_INVOKESTATIC ? Opcodes.INVOKESTATIC : tag == Opcodes.H_INVOKEVIRTUAL ? Opcodes.INVOKEVIRTUAL
+      : tag == Opcodes.H_INVOKEINTERFACE ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKESPECIAL;
+    b.add(new MethodInsnNode(opcode, impl.getOwner(), tag == Opcodes.H_NEWINVOKESPECIAL ? "<init>" : impl.getName(),
+      impl.getDesc(), impl.isInterface()));
+    b.add(new TypeInsnNode(Opcodes.CHECKCAST, DOM_CONTENT));
+    b.add(new InsnNode(Opcodes.ARETURN));
+    body.maxLocals = slot;
+    body.maxStack = slot + 2;
+
+    // The bridge the call site now names: the row, as a region.
+    MethodNode bridge = new MethodNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC,
+      "j2act$row$" + n, desc, null, null);
+    InsnList r = bridge.instructions;
+    slot = 0;
+    for (Type param : params) {
+      r.add(new VarInsnNode(param.getOpcode(Opcodes.ILOAD), slot));
+      slot += param.getSize();
+    }
+    r.add(new InvokeDynamicInsnNode("get", Type.getMethodDescriptor(Type.getType("Ljava/util/function/Supplier;"), params),
+      METAFACTORY, Type.getType("()Ljava/lang/Object;"), new Handle(Opcodes.H_INVOKESTATIC, owner.name, body.name, desc, itf),
+      Type.getType("()L" + DOM_CONTENT + ";")));
+    r.add(new MethodInsnNode(Opcodes.INVOKESTATIC, REGIONS, "of",
+      "(Ljava/util/function/Supplier;)L" + DOM_CONTENT + ";", false));
+    r.add(new InsnNode(Opcodes.ARETURN));
+    bridge.maxLocals = slot;
+    bridge.maxStack = slot + 1;
+
+    lambda.bsmArgs = new Object[] {lambda.bsmArgs[0], new Handle(Opcodes.H_INVOKESTATIC, owner.name, bridge.name, desc, itf),
+      Type.getMethodType(Type.getObjectType(DOM_CONTENT), instantiated.getArgumentTypes())};
+    setters.add(body);
+    setters.add(bridge);
+    return true;
   }
 
   /** Classes whose with*(...) and attr(...) set attributes: core's tags and the generated ones. */
