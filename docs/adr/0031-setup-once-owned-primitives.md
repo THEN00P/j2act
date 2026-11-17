@@ -38,7 +38,7 @@ public final class Counter extends ComponentTag {
 }
 ```
 
-setup() is the only method a component overrides. It is Vue 3's `setup()`, and Solid's component function split in two because Java cannot re-run part of a method: setup is the part Solid runs once, the view is the part its compiler re-runs per expression. Here the whole view re-runs, so this first version is component-level reactivity: the view is rebuilt and morphed, work that Solid's expression-level updates skip. A later compile step narrows it to regions; lists stay small-ish until then.
+setup() is the only method a component overrides. It is Vue 3's `setup()`, and Solid's component function split in two because Java cannot re-run part of a method: setup is the part Solid runs once, the view is the part its compiler re-runs per expression. Here the whole view re-runs, so this first version is component-level reactivity: the view is rebuilt and morphed, work that Solid's expression-level updates skip. A later compile step narrows it to regions (ADR 0036); lists stay small-ish until then.
 
 Because setup runs once, the creation-order rule is gone: an `if` around a createSignal is fine. Locals take `var`, and the description built on every parent render creates no primitives, so it costs one small object.
 
@@ -133,7 +133,7 @@ loading(() -> p(user.get().name())).withFallback(spinner())
 errored(() -> p(user.get().name())).withFallback(err -> p("Failed"))
 ```
 
-The later compile step can insert the lambda; until then the processor reports a value read directly inside a boundary's arguments.
+The enhancer does not insert the lambda (ADR 0036): an enhanced build must catch a read at the same boundary as a plain one, so the processor keeps reporting a value read directly inside a boundary's arguments.
 
 ## Solid 2 semantics
 
@@ -494,7 +494,7 @@ Because the page's script waits for the end of the response, one load that hangs
 - Boundaries take a lambda for plain markup, since Java evaluates arguments first; JSX defers children for Solid.
 - `retry(fn, times, backoff)` and `withStaleOnError()`/`failed(x)` are extras Solid has no counterpart for.
 - A component is a class with Prop fields and setup(), since Java has no props object or JSX; with* builders replace attributes.
-- The view re-runs as a whole instead of per expression, until compile-time regions.
+- The view re-runs as a whole instead of per expression, until compile-time regions (ADR 0036).
 - Retained signals, stores as container beans and the processor's name table have no Solid counterpart.
 - Signal is one object with get() and set(), not a getter and setter pair.
 

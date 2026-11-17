@@ -67,6 +67,8 @@ The bean `get()` returns is built for the reader. Inside a pending or optimistic
 
 ### What the enhancer compiles to
 
+The enhancer itself, and which classes it tracks, is ADR 0036.
+
 The bytecode enhancer narrows reads by class, not by call site: it makes an application's bean or record a `Tracked` one, whose every read of its own fields first calls `StoreReads.field(this, "city")`, and gives it a `j2act$` field for the record a store built it from. A store hands out a tracked object built as `get()` builds it, stamped with its record, and subscribing to nothing, so whoever reads it subscribes to the fields it reads, from any caller, getter or method. Below a field, what cannot track itself is subscribed whole: a list's or a map's size and slots, a set's membership, and the whole of an object of a class that is not tracked, such as one from a library. A tracked object is always a copy, never the object the store was given, so one object stands for one record.
 
 Without the enhancer no class is tracked and every reader reads whole objects. Both show the same values; the built app runs readers less often. `TrackedStoreTest` holds that, running one random app over plain classes and over the same classes tracked by hand, and wanting equal values after every step and no more runs. Where the record an object came from cannot be told exactly, the store reads deep instead: a chained backing, which serves another store's records, or an object whose record is gone. A tracked object read by reflection, as a JSON binding may read it, reads untracked; a reader handing one to such code reads `deep` first. `at(...)` stays for a field binding and for apps built without the enhancer.
