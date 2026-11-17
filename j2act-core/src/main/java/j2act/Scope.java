@@ -26,6 +26,8 @@ final class Scope {
   String localPath;
   final String anchor;
   ComponentTag instance;
+  /** The regions its view's last run made (ADR 0036). */
+  final List<RegionTag> regionsMade = new ArrayList<>();
   /** What setup() returned, called on every render (ADR 0031). */
   View view;
   /** Where the next primitive of a running setup() goes: re-running it after a class swap finds its cells again. */
@@ -103,7 +105,21 @@ final class Scope {
   String shape;
 
   Scope(Tab tab, Scope parent, String address) {
-    this(tab, parent, address, null);
+    this(tab, parent, address, (Owner) null);
+  }
+
+  /**
+   * A region's scope (ADR 0036): its slot belongs to the view that made it, not the one placing it, so what stops it
+   * on a later run stops where that view's would have.
+   */
+  Scope(Tab tab, Scope parent, String address, RegionTag region) {
+    this.tab = tab;
+    this.parent = parent;
+    this.address = address;
+    this.anchor = tab.nextAnchor();
+    this.codeEpoch = tab.engine.codeEpoch;
+    this.slot = region.creator == parent || region.creator.disposed ? tab.rt.createSlotOwner(parent.slot)
+      : tab.rt.createSlotOwner(region.creator.slot, region.running);
   }
 
   /** `above` is what a scope with no parent still belongs to: the boundary of its tab. */
@@ -131,7 +147,16 @@ final class Scope {
 
   /** The slot path a page mounted from its URL would give this scope; keys Retained State (ADR 0026). */
   String slotPath() {
+    if (instance instanceof RegionTag && parent != null && localPath != null) {
+      // A region is no slot of its own: what it places has the path it would have without it.
+      return parent.slotPath() + localPath.substring(0, localPath.lastIndexOf('@'));
+    }
     return parent == null || localPath == null ? address : parent.slotPath() + localPath;
+  }
+
+  /** How this scope's place shows in the HTML around it: a region's markers, or its root element's anchor. */
+  String mark() {
+    return instance instanceof RegionTag ? "<!--j2:" + anchor + "-->" : "data-j2-scope=\"" + anchor + "\"";
   }
 
   /** The component or store whose primitives this scope holds. */
@@ -298,6 +323,25 @@ final class Scope {
 
   /** Attaches a component object to this slot and binds its field primitives by creation order. */
   void bind(ComponentTag component) {
+    if (component instanceof RegionTag) {
+      // No setup and no primitives: a later description only brings the node of the view's new run.
+      RegionTag region = (RegionTag) component;
+      region.placed = true;
+      if (instance == null) {
+        instance = component;
+        component.scope = this;
+        view = () -> null;
+        settledCount = 0;
+      } else {
+        RegionTag shown = (RegionTag) instance;
+        if (shown.node != region.node) {
+          // Its view ran again: this run's node takes over, and the last one goes.
+          tab.rt.disposeNode(shown.node);
+          shown.node = region.node;
+        }
+      }
+      return;
+    }
     if (view != null && instance != component && !(swapped() && shapeChanged(component.getClass()))) {
       if (instance instanceof Boundary) {
         ((Boundary<?>) instance).adopt((Boundary<?>) component);
@@ -574,7 +618,7 @@ final class Scope {
       // A pass of its parent removed this, but the patch saying so has not gone.
       return true;
     }
-    if (parent.html == null || !parent.html.contains("data-j2-scope=\"" + anchor + "\"")) {
+    if (parent.html == null || !parent.html.contains(mark())) {
       return false;
     }
     Scope top = parent;
@@ -638,6 +682,10 @@ final class Scope {
       return;
     }
     disposed = true;
+    if (instance instanceof RegionTag && instance.scope == this) {
+      tab.rt.disposeNode(((RegionTag) instance).node);
+    }
+    RegionTag.dropUnplaced(tab, regionsMade);
     if (leftBehind) {
       leftBehind(false);
     }

@@ -5,6 +5,11 @@ import type { Pending } from "./pending.ts";
 
 export type Morpher = ReturnType<typeof createMorpher>;
 
+/** Added to Idiomorph by vite.config.ts: morph() of what lies between two nodes of one parent (ADR 0036). */
+const morphRange = (Idiomorph as unknown as {
+  morphRange(start: Node, end: Node, content: Node, config: Config): void;
+}).morphRange;
+
 /**
  * Applies the server's patches with Idiomorph (ADR 0003), keeping what is the browser's: the
  * pending state of a blocked element, form state the render did not set (ADR 0013), a client
@@ -13,12 +18,57 @@ export type Morpher = ReturnType<typeof createMorpher>;
 export function createMorpher(pending: Pending, syncClient: (el: Element, fresh: Element) => void, fields: Fields) {
   /** The last event the server had handled, from the patch being applied. */
   let handled = 0;
-  /** Copies of what the page already has, standing in for a patch's stubs: the morph leaves their originals alone. */
-  const kept = new WeakSet<Node>();
+  /** Copies of what the page already has, standing in for a patch's stubs, by original: the morph leaves those alone. */
+  const kept = new WeakMap<Node, Node>();
+  /** A region's start marker by anchor, found again whenever it is gone (ADR 0036). */
+  const regions = new Map<string, Comment>();
+
+  /** The markers around the region with this anchor, or null when it is not on the page. */
+  function region(anchor: string): [Comment, Comment] | null {
+    let start = regions.get(anchor);
+    if (!start || !start.isConnected || start.data !== "j2:" + anchor) {
+      regions.clear();
+      const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_COMMENT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const data = (node as Comment).data;
+        if (data.startsWith("j2:")) {
+          regions.set(data.slice(3), node as Comment);
+        }
+      }
+      start = regions.get(anchor);
+      if (!start) {
+        return null;
+      }
+    }
+    for (let node = start.nextSibling; node; node = node.nextSibling) {
+      if (node.nodeType === 8 && (node as Comment).data === "/j2:" + anchor) {
+        return [start, node as Comment];
+      }
+    }
+    return null;
+  }
+
+  /** What the page has for this anchor: a component's element, or a region's nodes with their markers. */
+  function live(anchor: string): Node[] | null {
+    const el = document.querySelector('[data-j2-scope="' + anchor + '"]');
+    if (el) {
+      return [el];
+    }
+    const range = region(anchor);
+    if (!range) {
+      return null;
+    }
+    const nodes: Node[] = [];
+    for (let node: Node = range[0]; node !== range[1]; node = node.nextSibling!) {
+      nodes.push(node);
+    }
+    nodes.push(range[1]);
+    return nodes;
+  }
 
   /**
-   * Puts in a copy of the live element for each stub in a patch, a scope the server knows the page has as it renders
-   * now (ADR 0036). False when one is not on the page, which has then drifted from the server.
+   * Puts in a copy of what the page has for each stub in a patch, a scope the server knows the page shows as it
+   * renders now (ADR 0036). False when one is not on the page, which has then drifted from the server.
    */
   function expandStubs(root: Node): boolean {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT);
@@ -29,13 +79,15 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
       }
     }
     for (const stub of stubs) {
-      const live = document.querySelector('[data-j2-scope="' + stub.data.slice(3) + '"]');
-      if (!live) {
+      const originals = live(stub.data.slice(3));
+      if (!originals) {
         return false;
       }
-      const copy = live.cloneNode(true);
-      kept.add(copy);
-      stub.replaceWith(copy);
+      stub.replaceWith(...originals.map((original) => {
+        const copy = original.cloneNode(true);
+        kept.set(copy, original);
+        return copy;
+      }));
     }
     return true;
   }
@@ -62,8 +114,7 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
     // A client element keeps its node; its children are the client's (ADR 0022).
     beforeNodeMorphed: (oldNode, newNode) => {
       // A stub's original: the page has it as the server renders it, and anything since is the browser's.
-      if (kept.has(newNode) && oldNode.nodeType === 1
-        && oldNode.getAttribute("data-j2-scope") === (newNode as Element).getAttribute("data-j2-scope")) {
+      if (kept.get(newNode) === oldNode) {
         return false;
       }
       if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.hasAttribute("data-j2-client")
@@ -128,7 +179,25 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
       }
       const el = document.querySelector('[data-j2-scope="' + anchor + '"]');
       if (!el) {
-        return false;
+        const range = region(anchor);
+        if (!range) {
+          return false;
+        }
+        // A region: its markers stay, and what is between them is morphed.
+        const parsed = document.createElement("template");
+        parsed.innerHTML = html;
+        const content = parsed.content;
+        if (content.firstChild?.nodeType === 8 && (content.firstChild as Comment).data === "j2:" + anchor) {
+          content.firstChild.remove();
+        }
+        if (content.lastChild?.nodeType === 8 && (content.lastChild as Comment).data === "/j2:" + anchor) {
+          content.lastChild.remove();
+        }
+        if (stubs && !expandStubs(content)) {
+          return false;
+        }
+        morphRange(range[0], range[1], content, config);
+        return true;
       }
       if (!stubs) {
         Idiomorph.morph(el, html, config);

@@ -28,7 +28,9 @@ final class Renderer {
   /** Renders a scope; a read that stops it unwinds up to a boundary, with what is mounted kept (ADR 0031). */
   void renderScope(Scope scope) {
     try {
-      if (scope.instance instanceof Reveal) {
+      if (scope.instance instanceof RegionTag) {
+        renderRegion(scope);
+      } else if (scope.instance instanceof Reveal) {
         renderReveal(scope);
       } else if (scope.instance instanceof Boundary) {
         renderBoundary(scope);
@@ -119,6 +121,7 @@ final class Renderer {
     Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
+      RegionTag.dropUnplaced(tab, scope.regionsMade);
       inner.renderChildren(scope, "/0", latest((Boundary<?>) scope.instance).children(), false);
       inner.finish(scope);
     } catch (NotReadyError | StatusError e) {
@@ -260,6 +263,7 @@ final class Renderer {
     Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
+      RegionTag.dropUnplaced(tab, scope.regionsMade);
       scope.refreshView();
       if (scope.shapeChanged(scope.instance.getClass())) {
         // Only a page or a layout reaches here: any other starts over when its next description
@@ -274,6 +278,35 @@ final class Renderer {
       Tracking.swapScope(previousScope);
     }
     emit(scope, root);
+    finish(scope);
+  }
+
+  /** Elements whose text the parser does not read as markup: no comment marker can stand in them. */
+  private static final java.util.Set<String> RAW_TEXT = new java.util.HashSet<>(java.util.Arrays.asList(
+    "textarea", "title", "script", "style"));
+
+  /** A region (ADR 0036): what its node holds now, between the markers that patches find it by. */
+  private void renderRegion(Scope scope) {
+    if (scope.renderedEpoch == epoch) {
+      throw new IllegalStateException("one region was rendered twice in the same pass");
+    }
+    scope.renderedEpoch = epoch;
+    tab.clearDirty(scope);
+    tab.handlers.begin(scope);
+    scope.previousChildren = scope.children;
+    scope.children = new java.util.LinkedHashMap<>();
+    DomContent content;
+    Scope previousScope = Tracking.swapScope(scope);
+    try {
+      content = ((RegionTag) scope.instance).content();
+    } finally {
+      Tracking.swapScope(previousScope);
+    }
+    out.append("<!--j2:").append(scope.anchor).append("-->");
+    if (content != null) {
+      renderNode(scope, "", content, false);
+    }
+    out.append("<!--/j2:").append(scope.anchor).append("-->");
     finish(scope);
   }
 
@@ -478,6 +511,12 @@ final class Renderer {
       renderChildren(scope, path, ((Fragment) node).children, rawText);
     } else if (node instanceof Tag) {
       renderTag(scope, path, (Tag<?>) node, null);
+    } else if (node instanceof RegionTag && (rawText || RAW_TEXT.contains(enclosing))) {
+      // Where no marker can stand, it is part of what is around it, which runs again for it.
+      DomContent content = ((RegionTag) node).content();
+      if (content != null) {
+        renderNode(scope, path, content, rawText);
+      }
     } else if (node instanceof ComponentTag) {
       place(scope, path, (ComponentTag) node);
     } else {
@@ -522,7 +561,8 @@ final class Renderer {
         }
       }
       if (child == null || child.disposed) {
-        child = new Scope(tab, parent, address);
+        child = component instanceof RegionTag ? new Scope(tab, parent, address, (RegionTag) component)
+          : new Scope(tab, parent, address);
       }
       child.localPath = local;
       child.bind(component);

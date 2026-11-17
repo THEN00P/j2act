@@ -148,3 +148,51 @@ describe("stubs for what the page has (ADR 0036)", () => {
     expect(document.querySelector("p")!.textContent).toBe("0");
   });
 });
+
+describe("regions between markers (ADR 0036)", () => {
+  const morpher = () => createMorpher(createPending(), () => {}, createFields());
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("patches what is between a region's markers and nothing around it", () => {
+    document.body.innerHTML = '<p data-j2-scope="s1">Hello <!--j2:s2-->Ada<!--/j2:s2-->, <b>you</b></p>';
+    const bold = document.querySelector("b")!;
+    expect(morpher().patch("s2", "<!--j2:s2-->Grace<!--/j2:s2-->", false)).toBe(true);
+    expect(document.querySelector("p")!.textContent).toBe("Hello Grace, you");
+    expect(document.querySelector("b")).toBe(bold);
+    expect(document.body.innerHTML).toContain("<!--j2:s2-->Grace<!--/j2:s2-->");
+  });
+
+  it("morphs elements in a region, keeping the node that stays", () => {
+    document.body.innerHTML = '<div data-j2-scope="s1"><!--j2:s2--><span class="a">1</span><i>x</i><!--/j2:s2--><em>after</em></div>';
+    const span = document.querySelector("span")!;
+    morpher().patch("s2", '<!--j2:s2--><span class="b">2</span><!--/j2:s2-->', false);
+    expect(document.querySelector("span")).toBe(span);
+    expect(span.className).toBe("b");
+    expect(document.querySelector("i")).toBeNull();
+    expect(document.querySelector("em")!.textContent).toBe("after");
+  });
+
+  it("patches an empty region and a region holding table rows", () => {
+    document.body.innerHTML = '<table><tbody data-j2-scope="s1"><!--j2:s2--><!--/j2:s2--><tr><td>last</td></tr></tbody></table>';
+    morpher().patch("s2", "<!--j2:s2--><tr><td>new</td></tr><!--/j2:s2-->", false);
+    const cells = [...document.querySelectorAll("td")].map((td) => td.textContent);
+    expect(cells).toEqual(["new", "last"]);
+  });
+
+  it("keeps a stubbed region, nodes and all, when what is around it is patched", () => {
+    document.body.innerHTML = '<div data-j2-scope="s1"><b>0</b><!--j2:s2--><span>kept</span>text<!--/j2:s2--></div>';
+    const span = document.querySelector("span")!;
+    morpher().patch("s1", '<div data-j2-scope="s1"><b>1</b><!--j2=s2--></div>', false);
+    expect(document.querySelector("b")!.textContent).toBe("1");
+    expect(document.querySelector("span")).toBe(span);
+    expect(document.querySelector("div")!.textContent).toBe("1kepttext");
+  });
+
+  it("reports a region that is not on the page", () => {
+    document.body.innerHTML = '<div data-j2-scope="s1"></div>';
+    expect(morpher().patch("s5", "<!--j2:s5-->x<!--/j2:s5-->", false)).toBe(false);
+  });
+});

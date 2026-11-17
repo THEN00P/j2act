@@ -22,6 +22,10 @@ final class Heads {
     Map<String, String> items = new LinkedHashMap<>();
     int seq = 0;
     for (DomContent child : head.children) {
+      // The head is merged as a whole, so a region in it is part of the view around it (ADR 0036).
+      while (child instanceof RegionTag) {
+        child = ((RegionTag) child).content();
+      }
       if (child == null) {
         continue;
       }

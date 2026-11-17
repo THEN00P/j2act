@@ -296,7 +296,7 @@ class RandomAppTest {
       return child -> {
         me.running("a layout's view");
         return T.page("t",
-          T.span("[layout" + me.id + "=" + clicks.get() + " where=" + pathParam("id") + " n=" + shared.n.get() + "]"),
+          r(() -> T.span("[layout" + me.id + "=" + clicks.get() + " where=" + pathParam("id") + " n=" + shared.n.get() + "]")),
           T.button("lclick" + me.id).onClick(e -> {
             me.running("a layout's handler");
             clicks.set(++me.counted);
@@ -327,7 +327,7 @@ class RandomAppTest {
       return () -> {
         me.running("a child's view");
         return T.div(
-          T.span("[child" + me.id + "=" + clicks.get() + " d=" + doubled.get() + "]"),
+          r(() -> T.span("[child" + me.id + "=" + clicks.get() + " d=" + doubled.get() + "]")),
           T.button("cclick" + me.id).onClick(e -> {
             me.running("a child's handler");
             clicks.set(++me.counted);
@@ -418,11 +418,11 @@ class RandomAppTest {
         me.running("a view");
         String id = pathParam("id");
         List<DomContent> kids = new ArrayList<>(Arrays.asList(
-          T.span("[page" + me.id + "=" + kind + " guard=" + guard.get() + " id=" + id + " n=" + shared.n.get()
-            + " doubled=" + shared.doubled.get() + " local=" + local.get() + "]"),
-          T.span("[draft" + me.id + "=" + draft.get() + "]"),
-          T.span("[q=" + queryParam("q") + "]"),
-          T.span("[kept=" + shared.kept.get() + "]"),
+          r(() -> T.span("[page" + me.id + "=" + kind + " guard=" + guard.get() + " id=" + id + " n=" + shared.n.get()
+            + " doubled=" + shared.doubled.get() + " local=" + local.get() + "]")),
+          r(() -> T.span("[draft" + me.id + "=" + draft.get() + "]")),
+          r(() -> T.span("[q=" + queryParam("q") + "]")),
+          r(() -> T.span("[kept=" + shared.kept.get() + "]")),
           T.div().withId("meter" + me.id).withClient(meter),
           T.button("read" + me.id).onClick(e -> world.results.add(meter.read().toCompletableFuture())),
           T.button("reset" + me.id).onClick(e -> meter.reset(() -> me.running("a client's callback"))),
@@ -474,7 +474,7 @@ class RandomAppTest {
             me.running("a boundary's content");
             return loading(() -> {
               me.running("a boundary's content");
-              return T.span("[plain=" + plain.get() + "]");
+              return r(() -> T.span("[plain=" + plain.get() + "]"));
             }).withFallback(T.span("[plain=loading]"));
           }).withFallback((e, reset) -> T.div(
             T.span("[plain=err]"),
@@ -482,16 +482,14 @@ class RandomAppTest {
               me.refreshes++;
               reset.run();
             }))),
-          errored(() -> loading(() -> T.span("[stale=" + stale.get() + " failed=" + failed(stale) + "]"))
+          errored(() -> loading(() -> r(() -> T.span("[stale=" + stale.get() + " failed=" + failed(stale) + "]")))
             .withFallback(T.span("[stale=loading]")))
             .withFallback((e, reset) -> T.div(
               T.span("[stale=err]"),
               T.button("sretry" + me.id).onClick(click -> reset.run()))),
-          loading(() -> T.span("[remote=" + shared.remote.get() + "]")).withFallback(T.span("[remote=loading]")),
+          loading(() -> r(() -> T.span("[remote=" + shared.remote.get() + "]"))).withFallback(T.span("[remote=loading]")),
           loading(() -> T.div().withId("inner" + me.id + "n" + shared.n.get()).withClient(inner)).withFallback(T.span("[inner=loading]"))));
-        if (child.get()) {
-          kids.add(new Child(url));
-        }
+        kids.add(r(() -> child.get() ? new Child(url) : null));
         return T.page("t", T.div(kids.toArray(new DomContent[0])));
       };
     }
@@ -1368,6 +1366,26 @@ class RandomAppTest {
       }
     }
     return smallest;
+  }
+
+  /**
+   * Whether views pass their child expressions to Regions.of, as the enhancer leaves them (ADR 0036): every app must
+   * end up showing its state either way.
+   */
+  static volatile boolean regions;
+
+  static DomContent r(java.util.function.Supplier<? extends DomContent> content) {
+    return regions ? j2act.internal.regions.Regions.of(content) : content.get();
+  }
+
+  @Test
+  void wholeAppsWithRegionsEndUpShowingTheirStateToo() throws Exception {
+    regions = true;
+    try {
+      wholeAppsDrivenAtRandomEndUpShowingTheirState();
+    } finally {
+      regions = false;
+    }
   }
 
   @Test

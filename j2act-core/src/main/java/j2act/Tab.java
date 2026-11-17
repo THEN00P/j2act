@@ -1246,7 +1246,7 @@ public final class Tab {
       } else {
         // As it was before a hold, perhaps: the page has its element, but not what is in it now.
         forgetOnPage(child);
-        child.placed = !child.detached && html.contains("data-j2-scope=\"" + child.anchor + "\"");
+        child.placed = !child.detached && html.contains(child.mark());
       }
     }
   }
@@ -1265,7 +1265,7 @@ public final class Tab {
    */
   private void behindThisPatch(Scope scope, String sent, List<Scope> scopes, int next) {
     for (Scope child : scope.children.values()) {
-      if (child.disposed || child.html == null || child.detached || !sent.contains("data-j2-scope=\"" + child.anchor + "\"")) {
+      if (child.disposed || child.html == null || child.detached || !sent.contains(child.mark())) {
         continue;
       }
       if (sent.contains(child.html)) {

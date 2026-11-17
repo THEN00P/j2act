@@ -523,6 +523,16 @@ public final class Runtime {
     node.statusFlags &= ~Constants.STATUS_UNINITIALIZED;
   }
 
+  /** Whether its last run read anything that could run it again. */
+  public boolean hasSources(Node node) {
+    return node.deps != null;
+  }
+
+  /** createSlotOwner, as if `running` were what is running now: a region's, placed by another view than made it. */
+  public Owner createSlotOwner(Owner parent, Owner running) {
+    return core.runWithOwner(running, () -> createSlotOwner(parent));
+  }
+
   public boolean pending(Node node) {
     return (node.statusFlags & Constants.STATUS_PENDING) != 0;
   }

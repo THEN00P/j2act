@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-658e77bb1996f475835a7171c1a76f1861710c5976cd8c8509e38959ff17ab7a */
+* sources: sha256-587545be182423964798d5f944d57eb0f1e74a1ac31bbcb9a191ee597e6dcc75 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1898,13 +1898,23 @@
 				textAreaElement: (value) => htmlElement(value, "textarea")
 			};
 		})();
+		function morphRange(start, end, newContent, config = {}) {
+			const parent = start.parentNode;
+			const newNode = normalizeParent(newContent);
+			const ctx = createMorphContext(parent, newNode, config);
+			saveAndRestoreFocus(ctx, () => morphChildren(ctx, parent, newNode, start.nextSibling, end));
+			ctx.pantry.remove();
+		}
 		return {
 			morph,
+			morphRange,
 			defaults
 		};
 	})();
 	//#endregion
 	//#region src/main/ts/morph.ts
+	/** Added to Idiomorph by vite.config.ts: morph() of what lies between two nodes of one parent (ADR 0036). */
+	var morphRange = Idiomorph.morphRange;
 	/**
 	* Applies the server's patches with Idiomorph (ADR 0003), keeping what is the browser's: the
 	* pending state of a blocked element, form state the render did not set (ADR 0013), a client
@@ -1913,22 +1923,53 @@
 	function createMorpher(pending, syncClient, fields) {
 		/** The last event the server had handled, from the patch being applied. */
 		let handled = 0;
-		/** Copies of what the page already has, standing in for a patch's stubs: the morph leaves their originals alone. */
-		const kept = /* @__PURE__ */ new WeakSet();
+		/** Copies of what the page already has, standing in for a patch's stubs, by original: the morph leaves those alone. */
+		const kept = /* @__PURE__ */ new WeakMap();
+		/** A region's start marker by anchor, found again whenever it is gone (ADR 0036). */
+		const regions = /* @__PURE__ */ new Map();
+		/** The markers around the region with this anchor, or null when it is not on the page. */
+		function region(anchor) {
+			let start = regions.get(anchor);
+			if (!start || !start.isConnected || start.data !== "j2:" + anchor) {
+				regions.clear();
+				const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_COMMENT);
+				for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+					const data = node.data;
+					if (data.startsWith("j2:")) regions.set(data.slice(3), node);
+				}
+				start = regions.get(anchor);
+				if (!start) return null;
+			}
+			for (let node = start.nextSibling; node; node = node.nextSibling) if (node.nodeType === 8 && node.data === "/j2:" + anchor) return [start, node];
+			return null;
+		}
+		/** What the page has for this anchor: a component's element, or a region's nodes with their markers. */
+		function live(anchor) {
+			const el = document.querySelector("[data-j2-scope=\"" + anchor + "\"]");
+			if (el) return [el];
+			const range = region(anchor);
+			if (!range) return null;
+			const nodes = [];
+			for (let node = range[0]; node !== range[1]; node = node.nextSibling) nodes.push(node);
+			nodes.push(range[1]);
+			return nodes;
+		}
 		/**
-		* Puts in a copy of the live element for each stub in a patch, a scope the server knows the page has as it renders
-		* now (ADR 0036). False when one is not on the page, which has then drifted from the server.
+		* Puts in a copy of what the page has for each stub in a patch, a scope the server knows the page shows as it
+		* renders now (ADR 0036). False when one is not on the page, which has then drifted from the server.
 		*/
 		function expandStubs(root) {
 			const walker = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT);
 			const stubs = [];
 			for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.data.startsWith("j2=")) stubs.push(node);
 			for (const stub of stubs) {
-				const live = document.querySelector("[data-j2-scope=\"" + stub.data.slice(3) + "\"]");
-				if (!live) return false;
-				const copy = live.cloneNode(true);
-				kept.add(copy);
-				stub.replaceWith(copy);
+				const originals = live(stub.data.slice(3));
+				if (!originals) return false;
+				stub.replaceWith(...originals.map((original) => {
+					const copy = original.cloneNode(true);
+					kept.set(copy, original);
+					return copy;
+				}));
 			}
 			return true;
 		}
@@ -1941,7 +1982,7 @@
 				return true;
 			},
 			beforeNodeMorphed: (oldNode, newNode) => {
-				if (kept.has(newNode) && oldNode.nodeType === 1 && oldNode.getAttribute("data-j2-scope") === newNode.getAttribute("data-j2-scope")) return false;
+				if (kept.get(newNode) === oldNode) return false;
 				if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.hasAttribute("data-j2-client") && oldNode.getAttribute("data-j2-client") === newNode.getAttribute("data-j2-client")) {
 					syncClient(oldNode, newNode);
 					return false;
@@ -1994,7 +2035,18 @@
 					return true;
 				}
 				const el = document.querySelector("[data-j2-scope=\"" + anchor + "\"]");
-				if (!el) return false;
+				if (!el) {
+					const range = region(anchor);
+					if (!range) return false;
+					const parsed = document.createElement("template");
+					parsed.innerHTML = html;
+					const content = parsed.content;
+					if (content.firstChild?.nodeType === 8 && content.firstChild.data === "j2:" + anchor) content.firstChild.remove();
+					if (content.lastChild?.nodeType === 8 && content.lastChild.data === "/j2:" + anchor) content.lastChild.remove();
+					if (stubs && !expandStubs(content)) return false;
+					morphRange(range[0], range[1], content, config);
+					return true;
+				}
 				if (!stubs) {
 					Idiomorph.morph(el, html, config);
 					return true;

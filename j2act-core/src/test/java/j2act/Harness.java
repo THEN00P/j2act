@@ -283,11 +283,14 @@ final class Harness implements AutoCloseable {
     return span == null ? null : doc.substring(0, span[0]) + html + doc.substring(span[1]);
   }
 
-  /** Where the element carrying this anchor starts and ends in doc; null if there is none. */
+  /** Where the element carrying this anchor, or the region between its markers, starts and ends in doc; null if none. */
   static int[] scopeSpan(String doc, String anchor) {
     Matcher open = Pattern.compile("<([a-zA-Z0-9]+)[^>]*data-j2-scope=\"" + Pattern.quote(anchor) + "\"[^>]*>").matcher(doc);
     if (!open.find()) {
-      return null;
+      int start = doc.indexOf("<!--j2:" + anchor + "-->");
+      String end = "<!--/j2:" + anchor + "-->";
+      int stop = start < 0 ? -1 : doc.indexOf(end, start);
+      return stop < 0 ? null : new int[] {start, stop + end.length()};
     }
     String name = open.group(1);
     int depth = 1;
