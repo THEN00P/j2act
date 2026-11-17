@@ -359,9 +359,7 @@ final class Scope {
           shown.node = cut.node;
         }
         if (shown instanceof AttrTag) {
-          ((AttrTag) shown).tag = ((AttrTag) cut).tag;
-          ((AttrTag) shown).setter = ((AttrTag) cut).setter;
-          ((AttrTag) shown).names.addAll(((AttrTag) cut).names);
+          ((AttrTag) shown).adopt((AttrTag) cut);
         }
       }
       return;

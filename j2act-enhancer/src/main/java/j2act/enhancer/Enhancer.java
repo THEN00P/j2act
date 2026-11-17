@@ -62,11 +62,14 @@ public final class Enhancer {
     public int uncut;
     /** Store classes made to track their own reads (ADR 0035). */
     public int tracked;
+    /** Constant parts of views, built once. */
+    public int hoisted;
 
     @Override public String toString() {
       return rewritten + " of " + classes + " classes enhanced" + (upToDate > 0 ? " (" + upToDate + " were already)" : "")
         + ", " + regions + " regions"
         + (tracked > 0 ? ", " + tracked + " store classes tracked" : "")
+        + (hoisted > 0 ? ", " + hoisted + " constants built once" : "")
         + (uncut > 0 ? ", " + uncut + " child expressions left in their views" : "");
     }
   }
@@ -134,6 +137,7 @@ public final class Enhancer {
     changed |= cutter.cutAll();
     report.regions += cutter.cut;
     report.uncut += cutter.uncut;
+    report.hoisted += cutter.hoisted;
     if (!changed) {
       return null;
     }

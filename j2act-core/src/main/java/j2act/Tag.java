@@ -29,6 +29,10 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   Object key;
   /** Attribute values the enhancer cut out of the view, which run again on their own (ADR 0036). */
   final java.util.List<AttrTag> attrRegions = new java.util.ArrayList<>(0);
+  /** While an attribute region's setter runs on it, the attributes that setter writes (ADR 0036). */
+  Set<String> writing;
+  /** While an attribute region's setter runs again: what it writes is its own, not a later call's. */
+  boolean replaying;
   long debounceMillis = -1;
   long throttleMillis = -1;
   Preload preload;
@@ -68,6 +72,7 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
 
   /** Sets an attribute; a null value removes it and marks it as removed on purpose. */
   @Override public T attr(String name, Object value) {
+    wrote(name);
     if (value == null) {
       attributes.remove(name);
       removed.add(name);
@@ -78,8 +83,21 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
     return self();
   }
 
+  /** Tells the attribute regions what a call writes: the one running, and those it comes after in the chain. */
+  private void wrote(String name) {
+    if (writing != null) {
+      writing.add(name);
+    }
+    if (!replaying) {
+      for (int i = 0; i < attrRegions.size(); i++) {
+        attrRegions.get(i).later.add(name);
+      }
+    }
+  }
+
   /** Sets a boolean attribute such as disabled or checked. */
   @Override public T attr(String name) {
+    wrote(name);
     attributes.put(name, "");
     removed.remove(name);
     return self();

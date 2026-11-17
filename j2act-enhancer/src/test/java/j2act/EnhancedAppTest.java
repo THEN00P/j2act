@@ -52,6 +52,7 @@ class EnhancedAppTest {
     Enhancer.Report report = new Enhancer(classpath()).enhance(enhanced);
     assertTrue(report.regions >= 8, report.toString());
     assertTrue(report.uncut >= 1, "the child expression writing a local stays: " + report);
+    assertTrue(report.hoisted >= 1, "span(\"static\") is built once: " + report);
     verify(enhanced);
     // Again: what is stamped is left alone.
     assertEquals(0, new Enhancer(classpath()).enhance(enhanced).rewritten);
@@ -86,7 +87,7 @@ class EnhancedAppTest {
     compile(compiler, plain);
     compile(compiler, enhanced);
     Enhancer.Report report = new Enhancer(classpath()).enhance(enhanced);
-    assertEquals(1, report.tracked, "Profile, and none of the pages or components: " + report);
+    assertEquals(1, report.tracked, "Profile, and not Pet, nor any page or component: " + report);
     verify(enhanced);
     List<String> steps = Arrays.asList("rename", "move", "move", "rename");
     int[] runs = new int[2];

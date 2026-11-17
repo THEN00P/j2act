@@ -12,7 +12,7 @@ import java.util.function.Supplier;
 final class RegionTag extends CutTag {
 
   static {
-    Regions.install(content -> of(content, false), content -> of(content, true), AttrTag::of);
+    Regions.install(content -> of(content, false), content -> of(content, true), AttrTag::of, Hoisted::new);
   }
 
   /** Where the regions a running region's supplier makes are listed, while it runs. */
@@ -69,6 +69,8 @@ final class RegionTag extends CutTag {
       region.key = ((ComponentTag) value).key;
     } else if (value instanceof Tag) {
       region.key = ((Tag<?>) value).key;
+    } else if (value instanceof Hoisted) {
+      region.key = ((Hoisted) value).key();
     }
     return region;
   }

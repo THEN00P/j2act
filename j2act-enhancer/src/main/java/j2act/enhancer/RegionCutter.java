@@ -64,6 +64,8 @@ final class RegionCutter {
   /** Counts for the build's report. */
   int cut;
   int uncut;
+  /** Constants built once, milestone 6. */
+  int hoisted;
 
   private final ClassNode owner;
   /** The setters of attribute values, which join the class without being cut themselves. */
@@ -102,11 +104,18 @@ final class RegionCutter {
     final int end;
     /** For an attribute's value: the call setting it, which ends the site and moves into the setter. */
     final MethodInsnNode setter;
+    /** A constant: built once and kept, not a region. */
+    final boolean constant;
 
     Site(int start, int end, MethodInsnNode setter) {
+      this(start, end, setter, false);
+    }
+
+    Site(int start, int end, MethodInsnNode setter, boolean constant) {
       this.start = start;
       this.end = end;
       this.setter = setter;
+      this.constant = constant;
     }
 
     /** The first instruction after it. */
@@ -149,6 +158,9 @@ final class RegionCutter {
         attribute(method, types, flow, c, call, sites);
         continue;
       }
+      if (call.owner.equals("j2act/html/TagCreator") && call.name.equals("html")) {
+        continue; // A page's head and body are found by what they are: neither a region nor a constant stands there.
+      }
       Type[] args = Type.getArgumentTypes(call.desc);
       if (!takesContent(args)) {
         continue;
@@ -182,6 +194,11 @@ final class RegionCutter {
     AbstractInsnNode[] at = insns.toArray();
     for (int i = outermost.size() - 1; i >= 0; i--) {
       Site site = outermost.get(i);
+      if (site.constant) {
+        hoist(method, at, site.start, site.end);
+        hoisted++;
+        continue;
+      }
       if (site.setter == null) {
         made.add(extract(method, types[site.start], at, site.start, site.end));
       } else {
@@ -427,6 +444,10 @@ final class RegionCutter {
     if (types[end] == null || types[end].getStackSize() != depth + 1) {
       return;
     }
+    if ((owner.access & Opcodes.ACC_INTERFACE) == 0 && constant(method.instructions, start, end)) {
+      sites.add(new Site(start, end, null, true));
+      return;
+    }
     if (!worthARegion(method.instructions, start, end)) {
       return;
     }
@@ -435,6 +456,96 @@ final class RegionCutter {
       return;
     }
     sites.add(new Site(start, end, null));
+  }
+
+  /**
+   * Whether the expression is a constant (milestone 6 of ADR 0036): tag factories and withers over literals, varargs
+   * arrays of them, text, and strings joined from literals. Nothing it reads can differ between runs: no local, no
+   * field, no jump, no lambda and no other call.
+   */
+  private static boolean constant(InsnList insns, int start, int end) {
+    boolean built = false;
+    for (int k = start; k < end; k++) {
+      AbstractInsnNode insn = insns.get(k);
+      int op = insn.getOpcode();
+      if (op < 0) {
+        continue; // A label, a line number or a frame.
+      }
+      if (insn instanceof LdcInsnNode) {
+        Object cst = ((LdcInsnNode) insn).cst;
+        if (!(cst instanceof String) && !(cst instanceof Number)) {
+          return false;
+        }
+      } else if (insn instanceof MethodInsnNode) {
+        // A handler or a client would come from a lambda or a local, neither of which a constant has.
+        MethodInsnNode call = (MethodInsnNode) insn;
+        if (!pure(call)) {
+          return false;
+        }
+        built |= call.owner.equals("j2act/html/TagCreator");
+      } else if (insn instanceof InvokeDynamicInsnNode) {
+        if (!((InvokeDynamicInsnNode) insn).bsm.getOwner().equals("java/lang/invoke/StringConcatFactory")) {
+          return false;
+        }
+      } else if (insn instanceof TypeInsnNode) {
+        String type = ((TypeInsnNode) insn).desc;
+        if (op == Opcodes.ANEWARRAY ? !type.equals(DOM_CONTENT) && !type.equals("java/lang/String")
+          : op == Opcodes.NEW ? !type.equals("j2act/Text") && !type.equals("java/lang/StringBuilder") : op != Opcodes.CHECKCAST) {
+          return false;
+        }
+      } else if (!(op >= Opcodes.ACONST_NULL && op <= Opcodes.SIPUSH) && op != Opcodes.DUP && op != Opcodes.AASTORE) {
+        return false;
+      }
+    }
+    return built;
+  }
+
+  /**
+   * Builds the constant [start, end) once: a static field of the class keeps what Regions.hoist made of it, which a
+   * static method fills on first use and returns, and a call of that method takes the expression's place.
+   */
+  private void hoist(MethodNode method, AbstractInsnNode[] at, int start, int end) {
+    int n = next++;
+    String field = "j2act$const$" + n;
+    String desc = "L" + DOM_CONTENT + ";";
+    owner.fields.add(new org.objectweb.asm.tree.FieldNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC
+      | Opcodes.ACC_VOLATILE, field, desc, null, null));
+    MethodNode get = new MethodNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC, field, "()" + desc,
+      null, null);
+    InsnList b = get.instructions;
+    LabelNode built = new LabelNode();
+    b.add(new org.objectweb.asm.tree.FieldInsnNode(Opcodes.GETSTATIC, owner.name, field, desc));
+    b.add(new InsnNode(Opcodes.DUP));
+    b.add(new JumpInsnNode(Opcodes.IFNONNULL, built));
+    b.add(new InsnNode(Opcodes.POP));
+    Map<LabelNode, LabelNode> labels = new HashMap<>();
+    for (int k = start; k < end; k++) {
+      if (at[k] instanceof LabelNode) {
+        labels.put((LabelNode) at[k], new LabelNode());
+      }
+    }
+    for (int k = start; k < end; k++) {
+      if (at[k] instanceof FrameNode || at[k] instanceof LineNumberNode) {
+        continue;
+      }
+      b.add(at[k].clone(labels));
+    }
+    b.add(new MethodInsnNode(Opcodes.INVOKESTATIC, REGIONS, "hoist", "(" + desc + ")" + desc, false));
+    b.add(new InsnNode(Opcodes.DUP));
+    b.add(new org.objectweb.asm.tree.FieldInsnNode(Opcodes.PUTSTATIC, owner.name, field, desc));
+    b.add(built);
+    b.add(new InsnNode(Opcodes.ARETURN));
+    get.maxLocals = 0;
+    get.maxStack = method.maxStack + 2;
+    setters.add(get);
+    InsnList insns = method.instructions;
+    insns.insertBefore(at[end], new MethodInsnNode(Opcodes.INVOKESTATIC, owner.name, field, "()" + desc,
+      (owner.access & Opcodes.ACC_INTERFACE) != 0));
+    for (int k = start; k < end; k++) {
+      if (!(at[k] instanceof LabelNode)) {
+        insns.remove(at[k]);
+      }
+    }
   }
 
   /** Whether the expression calls anything that may read state; tag factories and builders over its values do not. */

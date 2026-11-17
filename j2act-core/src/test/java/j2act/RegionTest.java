@@ -294,6 +294,39 @@ class RegionTest {
     }
   }
 
+  static final class Overridden extends LiveComponent {
+    @Override protected View setup() {
+      var on = createSignal(true);
+      return () -> {
+        views.incrementAndGet();
+        return T.page("t", T.div(
+          T.button("flip").onClick(e -> on.set(!on.get())),
+          // withCondClass-like: false writes nothing, so what was there before shows again.
+          (DomContent) Regions.attr(T.tag("b").attr("class", "base"), on::get,
+            (t, v) -> ((Tag<?>) t).condAttr((Boolean) v, "class", "on")),
+          // A later call writing the same attribute wins, as it does plain.
+          attr(T.tag("i"), () -> on.get() ? "x" : "y", "class").attr("class", "fixed")));
+      };
+    }
+  }
+
+  @Test
+  void anAttributeRegionStartsFromWhatWasThereAndLosesToLaterCalls() {
+    views.set(0);
+    try (Harness h = new Harness(Overridden::new)) {
+      String html = h.load();
+      assertTrue(html.contains("<b class=\"on\""), html);
+      assertTrue(html.contains("<i class=\"fixed\""), html);
+      h.connect();
+      h.click(Harness.clickOn(html, "flip"));
+      assertTrue(h.page().contains("<b class=\"base\""), h.page());
+      assertTrue(h.page().contains("<i class=\"fixed\""), h.page());
+      h.click(Harness.clickOn(h.page(), "flip"));
+      assertTrue(h.page().contains("<b class=\"on\""), h.page());
+      assertTrue(h.page().contains("<i class=\"fixed\""), h.page());
+    }
+  }
+
   static CompletableFuture<Void> gate;
 
   /** The demo's Publisher, as the enhancer leaves it: a region of the button, and in it its disabled attribute. */
@@ -334,6 +367,33 @@ class RegionTest {
       String after = h.page();
       assertTrue(after.contains(">Publish</button>") && !after.contains(" disabled"), after + "\n" + h.conn.since(from, m -> true));
     }
+  }
+
+  static final DomContent CONSTANT = Regions.hoist(T.div(T.span("built once"), T.tag("b", "<&>")).withKey("k"));
+
+  static final class Constant extends LiveComponent {
+    @Override protected View setup() {
+      var count = createSignal(0);
+      return () -> T.page("t", T.div(
+        T.button("count " + count.get()).onClick(e -> count.set(count.get() + 1)),
+        CONSTANT));
+    }
+  }
+
+  @Test
+  void aConstantRendersAsItsTreeAndKeepsItsHtml() {
+    String expected = "<div><span>built once</span><b>&lt;&amp;&gt;</b></div>";
+    for (int tab = 0; tab < 2; tab++) {
+      try (Harness h = new Harness(Constant::new)) {
+        String html = h.load();
+        assertTrue(html.contains(expected), html);
+        h.connect();
+        h.click(Harness.clickOn(html, "count 0"));
+        assertTrue(h.page().contains("count 1") && h.page().contains(expected), h.page());
+      }
+    }
+    assertEquals(expected, ((Hoisted) CONSTANT).html, "the first render kept its HTML for every later one");
+    assertEquals("k", ((Hoisted) CONSTANT).key());
   }
 
   static final class RawText extends LiveComponent {

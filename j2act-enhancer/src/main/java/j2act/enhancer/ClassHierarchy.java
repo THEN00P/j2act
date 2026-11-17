@@ -13,6 +13,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.Opcodes;
 
 /**
@@ -25,11 +27,14 @@ final class ClassHierarchy implements AutoCloseable {
     final String superName;
     final List<String> interfaces;
     final boolean isInterface;
+    /** Whether it declares instance fields of its own, the enhancer's aside. */
+    final boolean hasFields;
 
-    Info(String superName, List<String> interfaces, boolean isInterface) {
+    Info(String superName, List<String> interfaces, boolean isInterface, boolean hasFields) {
       this.superName = superName;
       this.interfaces = interfaces;
       this.isInterface = isInterface;
+      this.hasFields = hasFields;
     }
   }
 
@@ -69,13 +74,27 @@ final class ClassHierarchy implements AutoCloseable {
   }
 
   private static Info info(ClassReader reader) {
+    boolean[] fields = new boolean[1];
+    reader.accept(new ClassVisitor(Opcodes.ASM9) {
+      @Override public FieldVisitor visitField(int access, String name, String descriptor, String signature,
+        Object value) {
+        fields[0] |= (access & Opcodes.ACC_STATIC) == 0 && !name.startsWith("j2act$");
+        return null;
+      }
+    }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
     return new Info(reader.getSuperName(), Arrays.asList(reader.getInterfaces()),
-      (reader.getAccess() & Opcodes.ACC_INTERFACE) != 0);
+      (reader.getAccess() & Opcodes.ACC_INTERFACE) != 0, fields[0]);
   }
 
   boolean isInterface(String internalName) {
     Info info = info(internalName);
     return info != null && info.isInterface;
+  }
+
+  /** Whether a class declares instance fields; true when its class file cannot be found, which is the safe answer. */
+  boolean hasFields(String internalName) {
+    Info info = info(internalName);
+    return info == null || info.hasFields;
   }
 
   String superName(String internalName) {

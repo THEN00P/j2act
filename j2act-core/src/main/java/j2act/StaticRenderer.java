@@ -45,6 +45,8 @@ final class StaticRenderer {
       }
     } else if (node instanceof Tag) {
       tag((Tag<?>) node, depth);
+    } else if (node instanceof Hoisted) {
+      node(((Hoisted) node).tree, depth, parentTag);
     } else if (node instanceof RegionTag) {
       node(((RegionTag) node).content(), depth, parentTag);
     } else if (node instanceof ComponentTag) {

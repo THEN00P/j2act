@@ -16,6 +16,7 @@ public final class Regions {
   private static volatile Function<Supplier<? extends DomContent>, DomContent> factory;
   private static volatile Function<Supplier<? extends DomContent>, DomContent> rows;
   private static volatile Attribute attributes;
+  private static volatile Function<DomContent, DomContent> hoists;
 
   /** The engine's side of attr(...). */
   public interface Attribute {
@@ -36,10 +37,19 @@ public final class Regions {
 
   /** Called once by the engine. */
   public static void install(Function<Supplier<? extends DomContent>, DomContent> make,
-      Function<Supplier<? extends DomContent>, DomContent> row, Attribute attribute) {
+      Function<Supplier<? extends DomContent>, DomContent> row, Attribute attribute, Function<DomContent, DomContent> hoist) {
     factory = make;
     rows = row;
     attributes = attribute;
+    hoists = hoist;
+  }
+
+  /**
+   * A constant part of a view (ADR 0036): built once by the enhanced class, which keeps what this returns, and rendered
+   * once, its HTML written again on every later render. Only for what reads nothing and is never changed.
+   */
+  public static DomContent hoist(DomContent tree) {
+    return hoists.apply(tree);
   }
 
   /**

@@ -90,9 +90,12 @@ final class Tracker {
     if (!fields || !bare) {
       return false;
     }
-    // Not a component, a store or a tag, nor a JDK class's subclass such as a collection or an exception.
+    // Not a component, a store or a tag, nor a JDK class's subclass such as a collection or an exception. And no
+    // superclass with fields: a superclass is never tracked itself, so a read of its fields would subscribe to nothing,
+    // where the bean's read whole does.
     for (String s = node.superName; s != null && !s.equals("java/lang/Object"); s = hierarchy.superName(s)) {
-      if (s.startsWith("j2act/") || s.startsWith("java/") || s.startsWith("javax/") || s.startsWith("jakarta/")) {
+      if (s.startsWith("j2act/") || s.startsWith("java/") || s.startsWith("javax/") || s.startsWith("jakarta/")
+        || hierarchy.hasFields(s)) {
         return false;
       }
     }

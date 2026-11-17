@@ -366,7 +366,7 @@ final class Renderer {
     ContainerTag<?> head = null;
     List<DomContent> children = html.children;
     for (int i = 0; i < children.size(); i++) {
-      DomContent child = children.get(i);
+      DomContent child = unhoisted(children.get(i));
       if (child instanceof ContainerTag && "head".equals(((ContainerTag<?>) child).name)) {
         head = (ContainerTag<?>) child;
       } else if (child != null) {
@@ -397,7 +397,7 @@ final class Renderer {
     ContainerTag<?> head = null;
     List<DomContent> children = html.children;
     for (int i = 0; i < children.size(); i++) {
-      DomContent child = children.get(i);
+      DomContent child = unhoisted(children.get(i));
       if (child instanceof ContainerTag && "head".equals(((ContainerTag<?>) child).name)) {
         head = (ContainerTag<?>) child;
       } else if (child instanceof ContainerTag && "body".equals(((ContainerTag<?>) child).name)) {
@@ -540,6 +540,26 @@ final class Renderer {
       out.append(((UnsafeHtml) node).html);
     } else if (node instanceof Fragment) {
       renderChildren(scope, path, ((Fragment) node).children, rawText);
+    } else if (node instanceof Hoisted) {
+      Hoisted constant = (Hoisted) node;
+      if (rawText) {
+        renderNode(scope, path, constant.tree, true);
+      } else {
+        String html = constant.html;
+        if (html == null) {
+          // Rendered as any tree is, once: nothing in it reads, binds a handler or places a component.
+          StringBuilder outer = out;
+          out = new StringBuilder();
+          try {
+            renderNode(scope, path, constant.tree, false);
+            html = out.toString();
+          } finally {
+            out = outer;
+          }
+          constant.html = html;
+        }
+        out.append(html);
+      }
     } else if (node instanceof Tag) {
       renderTag(scope, path, (Tag<?>) node, null);
     } else if (node instanceof RegionTag && (rawText || RAW_TEXT.contains(enclosing))) {
@@ -612,12 +632,20 @@ final class Renderer {
     return child;
   }
 
+  /** The head and body of a page are found by what they are, so a constant is looked into (ADR 0036). */
+  private static DomContent unhoisted(DomContent node) {
+    return node instanceof Hoisted ? ((Hoisted) node).tree : node;
+  }
+
   private static Object keyOf(DomContent node) {
     if (node instanceof Tag) {
       return ((Tag<?>) node).key;
     }
     if (node instanceof ComponentTag) {
       return ((ComponentTag) node).key;
+    }
+    if (node instanceof Hoisted) {
+      return ((Hoisted) node).key();
     }
     return null;
   }

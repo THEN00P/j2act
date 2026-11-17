@@ -23,8 +23,8 @@ final class Heads {
     int seq = 0;
     for (DomContent child : head.children) {
       // The head is merged as a whole, so a region in it is part of the view around it (ADR 0036).
-      while (child instanceof RegionTag) {
-        child = ((RegionTag) child).content();
+      while (child instanceof RegionTag || child instanceof Hoisted) {
+        child = child instanceof Hoisted ? ((Hoisted) child).tree : ((RegionTag) child).content();
       }
       if (child == null) {
         continue;
