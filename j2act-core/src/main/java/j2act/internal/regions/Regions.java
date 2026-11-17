@@ -31,6 +31,33 @@ public final class Regions {
     factory = make;
   }
 
+  /** This core's version, which an enhanced class must have been enhanced for. */
+  public static final String VERSION = version();
+
+  private static String version() {
+    java.util.Properties p = new java.util.Properties();
+    try (java.io.InputStream in = Regions.class.getResourceAsStream("version.properties")) {
+      if (in != null) {
+        p.load(in);
+      }
+    } catch (java.io.IOException e) {
+      throw new java.io.UncheckedIOException(e);
+    }
+    return p.getProperty("version", "unknown");
+  }
+
+  /**
+   * What an enhanced class runs as it loads: classes enhanced for another version of j2act call into this one in ways
+   * it may not have, so they stop here with a clear error rather than somewhere in a render (ADR 0036).
+   */
+  public static String enhancedBy(String version) {
+    if (!VERSION.equals(version)) {
+      throw new IllegalStateException("this class was enhanced by j2act-enhancer " + version + ", but j2act-core is "
+        + VERSION + ": build the app again with the j2act plugin of the same version as j2act-core");
+    }
+    return version;
+  }
+
   /** A region of the running view, or the supplier's value outside one. */
   public static DomContent of(Supplier<? extends DomContent> content) {
     return factory.apply(content);
