@@ -6,7 +6,7 @@ A view re-runs as a whole (ADR 0031), and a parent's patch carries the full HTML
 
 - Not an annotation processor: processors may not change existing code, and the ones that do (Lombok) make javac and ECJ disagree (ADR 0008). The processor keeps its jobs (checks, Retained State keys, client module types).
 - Not a Java agent: it needs JVM flags in every launch configuration and server, and the bytes that run are not the bytes that were built.
-- Rewriting class files after javac or ECJ, with ASM shaded into a `j2act-enhancer` library, run by the existing plugins (ADR 0025): an `enhance` goal bound to `process-classes` in `j2act-maven-plugin`, a task after `compileJava` in `j2act-gradle-plugin`. Output is deterministic (region methods numbered in source order, no timestamps), an already stamped class is skipped, only changed classes are rewritten (the Gradle task is cacheable), and extracted code keeps its line numbers so stack traces point at the user's line. Kotlin is out of scope.
+- Rewriting class files after javac or ECJ, with ASM shaded into a `j2act-enhancer` library (relocated to `j2act.enhancer.asm`, its BSD license in `META-INF/LICENSE-asm.txt`, and no ASM in the published pom, since a Gradle build script's plugins share one classpath), run by the existing plugins (ADR 0025): an `enhance` goal bound to `process-classes` in `j2act-maven-plugin`, a task after `compileJava` in `j2act-gradle-plugin`. Output is deterministic (region methods numbered in source order, no timestamps), an already stamped class is skipped, only changed classes are rewritten (the Gradle task is cacheable), and extracted code keeps its line numbers so stack traces point at the user's line. Kotlin is out of scope.
 
 ## Only what gets packaged
 
