@@ -48,6 +48,10 @@ public abstract class EnhanceTask extends DefaultTask {
   @Input
   public abstract Property<Boolean> getSkip();
 
+  /** Packages whose classes stay plain store classes. */
+  @Input
+  public abstract org.gradle.api.provider.ListProperty<String> getTrackExcludes();
+
   @TaskAction
   public void enhance() throws IOException {
     Path out = getOutput().get().getAsFile().toPath();
@@ -78,7 +82,7 @@ public abstract class EnhanceTask extends DefaultTask {
       throw new GradleException("j2act-core is " + core + " but the j2act plugin is " + Enhancer.VERSION
         + ": classes enhanced by one call into the other (ADR 0036), so use the same version of both");
     }
-    getLogger().lifecycle("j2act: " + new Enhancer(classpath).enhance(out));
+    getLogger().lifecycle("j2act: " + new Enhancer(classpath).withTrackExcludes(getTrackExcludes().get()).enhance(out));
   }
 
   private static void clear(Path dir) throws IOException {

@@ -440,6 +440,42 @@ public final class JavaShape implements StoreShape {
     return value;
   }
 
+  /**
+   * A tracked object read its field name (ADR 0036): the reader subscribes to it as trackField does, and this is what
+   * the field holds now, as a reader would be handed it: a bean as present() hands one out, a list, map or set as a
+   * snapshot. own, the object's own value, inside update(...) and when that does not fit the field's type.
+   */
+  Object readField(BeanView owner, String name, Object own, Class<?> type) {
+    if (draft != null) {
+      return own;
+    }
+    return at(owner.target, () -> {
+      Object value = rt.storeGet(owner.target, name);
+      below(value);
+      Object now;
+      if (value instanceof BeanView) {
+        now = present(value);
+      } else if (value instanceof StoreView) {
+        now = rt.handOut(value);
+        if (now == j2act.internal.signals.Stores.NOT_FINE) {
+          now = rt.deep(value);
+        }
+      } else {
+        now = value;
+      }
+      return now == null || boxed(type).isInstance(now) ? now : own;
+    });
+  }
+
+  private static Class<?> boxed(Class<?> type) {
+    if (!type.isPrimitive()) {
+      return type;
+    }
+    return type == int.class ? Integer.class : type == long.class ? Long.class : type == boolean.class ? Boolean.class
+      : type == double.class ? Double.class : type == float.class ? Float.class : type == short.class ? Short.class
+      : type == byte.class ? Byte.class : Character.class;
+  }
+
   /** A tracked object read its field name: the reader subscribes to it, and below it to what cannot track itself. */
   void trackField(BeanView owner, String name) {
     if (draft != null) {

@@ -38,10 +38,17 @@ public final class Enhancer {
   static final String STAMP = "j2act$enhanced";
 
   private final List<Path> classpath;
+  private final List<String> trackExcludes = new ArrayList<>();
 
   /** `classpath`: what the classes to enhance were compiled against. */
   public Enhancer(List<Path> classpath) {
     this.classpath = new ArrayList<>(classpath);
+  }
+
+  /** Packages, by prefix such as "com.example.legacy.", whose classes are never made Tracked. */
+  public Enhancer withTrackExcludes(List<String> packages) {
+    trackExcludes.addAll(packages);
+    return this;
   }
 
   /** What a run did, for the build's log. */
@@ -53,10 +60,13 @@ public final class Enhancer {
     public int regions;
     /** Child expressions that would be worth a region but cannot be moved safely; their views run whole for them. */
     public int uncut;
+    /** Store classes made to track their own reads (ADR 0035). */
+    public int tracked;
 
     @Override public String toString() {
       return rewritten + " of " + classes + " classes enhanced" + (upToDate > 0 ? " (" + upToDate + " were already)" : "")
         + ", " + regions + " regions"
+        + (tracked > 0 ? ", " + tracked + " store classes tracked" : "")
         + (uncut > 0 ? ", " + uncut + " child expressions left in their views" : "");
     }
   }
@@ -74,6 +84,15 @@ public final class Enhancer {
     all.addAll(classpath);
     Report report = new Report();
     try (ClassHierarchy hierarchy = new ClassHierarchy(all)) {
+      // Which classes track their reads is known before any is rewritten: reads of them are in other classes too.
+      List<ClassReader> readers = new ArrayList<>();
+      for (Path file : files) {
+        String name = file.getFileName().toString();
+        if (!name.equals("module-info.class") && !name.equals("package-info.class")) {
+          readers.add(new ClassReader(Files.readAllBytes(file)));
+        }
+      }
+      java.util.Set<String> tracked = Tracker.select(readers, hierarchy, trackExcludes);
       for (Path file : files) {
         String name = file.getFileName().toString();
         if (name.equals("module-info.class") || name.equals("package-info.class")) {
@@ -81,7 +100,7 @@ public final class Enhancer {
         }
         report.classes++;
         byte[] in = Files.readAllBytes(file);
-        byte[] out = enhance(in, hierarchy, report);
+        byte[] out = enhance(in, hierarchy, tracked, report);
         if (out != null) {
           Files.write(file, out);
           report.rewritten++;
@@ -94,7 +113,7 @@ public final class Enhancer {
   }
 
   /** One class: its new bytes, or null when it stays as it is. */
-  static byte[] enhance(byte[] in, ClassHierarchy hierarchy, Report report) {
+  static byte[] enhance(byte[] in, ClassHierarchy hierarchy, java.util.Set<String> tracked, Report report) {
     ClassReader reader = new ClassReader(in);
     ClassNode node = new ClassNode();
     reader.accept(node, ClassReader.SKIP_FRAMES);
@@ -104,8 +123,15 @@ public final class Enhancer {
         return null;
       }
     }
+    // Reads first: a read of a tracked field is one a region can subscribe to, so the cutter sees it as one.
+    boolean changed = false;
+    if (tracked.contains(node.name) && Tracker.track(node)) {
+      report.tracked++;
+      changed = true;
+    }
+    changed |= Tracker.instrument(node, tracked) > 0;
     RegionCutter cutter = new RegionCutter(node, hierarchy);
-    boolean changed = cutter.cutAll();
+    changed |= cutter.cutAll();
     report.regions += cutter.cut;
     report.uncut += cutter.uncut;
     if (!changed) {

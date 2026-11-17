@@ -29,5 +29,11 @@ public abstract class J2ActExtension {
 
     /** Package plain classes: the app runs the same, re-running whole views. Default false, or j2act.enhance.skip. */
     public abstract Property<Boolean> getSkip();
+
+    /**
+     * Packages, by prefix such as "com.example.legacy.", whose classes stay plain store classes: a store reads them
+     * whole instead of field by field (ADR 0035, 0036).
+     */
+    public abstract org.gradle.api.provider.ListProperty<String> getTrackExcludes();
   }
 }

@@ -67,7 +67,7 @@ The bean `get()` returns is built for the reader. Inside a pending or optimistic
 
 ### What the enhancer compiles to
 
-The enhancer itself, and which classes it tracks, is ADR 0036.
+The enhancer itself, which classes it tracks, and what a region keeping an out-of-date object does, is ADR 0036.
 
 The bytecode enhancer narrows reads by class, not by call site: it makes an application's bean or record a `Tracked` one, whose every read of its own fields first calls `StoreReads.field(this, "city")`, and gives it a `j2act$` field for the record a store built it from. A store hands out a tracked object built as `get()` builds it, stamped with its record, and subscribing to nothing, so whoever reads it subscribes to the fields it reads, from any caller, getter or method. Below a field, what cannot track itself is subscribed whole: a list's or a map's size and slots, a set's membership, and the whole of an object of a class that is not tracked, such as one from a library. A tracked object is always a copy, never the object the store was given, so one object stands for one record.
 

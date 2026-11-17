@@ -52,6 +52,13 @@ public class EnhanceMojo extends AbstractMojo {
   @Parameter(property = "j2act.enhance.classFolders", defaultValue = "false")
   private boolean classFolders;
 
+  /**
+   * Packages, by prefix such as com.example.legacy., whose classes stay plain store classes: a store reads them whole
+   * instead of field by field (ADR 0035, 0036).
+   */
+  @Parameter
+  private List<String> trackExcludes = new ArrayList<>();
+
   /** Leaves the classes plain: the app runs the same, re-running whole views. */
   @Parameter(property = "j2act.enhance.skip", defaultValue = "false")
   private boolean skip;
@@ -120,7 +127,7 @@ public class EnhanceMojo extends AbstractMojo {
         throw new MojoExecutionException("could not write " + marker, e);
       }
     }
-    Enhancer.Report report = new Enhancer(classpath).enhance(target);
+    Enhancer.Report report = new Enhancer(classpath).withTrackExcludes(trackExcludes).enhance(target);
     getLog().info("j2act: " + report + (classFolders ? ", in " + classes : ""));
     if (!classFolders) {
       project.getBuild().setOutputDirectory(output.getAbsolutePath());

@@ -68,6 +68,60 @@ class EnhancedAppTest {
     assertTrue(!selecting.contains("<li>b</li>") && !selecting.contains("<ul"), selecting);
   }
 
+  @Test void javacStoreClassesTrackTheirReads() throws Exception {
+    tracks(ToolProvider.getSystemJavaCompiler());
+  }
+
+  @Test void ecjStoreClassesTrackTheirReads() throws Exception {
+    tracks(new EclipseCompiler());
+  }
+
+  /**
+   * ADR 0035: a store's bean tracks its reads once enhanced, so a region reading its name runs again for a rename and
+   * not for a move. Plain, the whole view runs for both; with regions alone, the region would read the whole bean.
+   */
+  private void tracks(JavaCompiler compiler) throws Exception {
+    Path plain = Files.createTempDirectory("j2act-plain");
+    Path enhanced = Files.createTempDirectory("j2act-enhanced");
+    compile(compiler, plain);
+    compile(compiler, enhanced);
+    Enhancer.Report report = new Enhancer(classpath()).enhance(enhanced);
+    assertEquals(1, report.tracked, "Profile, and none of the pages or components: " + report);
+    verify(enhanced);
+    List<String> steps = Arrays.asList("rename", "move", "move", "rename");
+    int[] runs = new int[2];
+    List<List<String>> pages = new ArrayList<>();
+    for (Path classes : Arrays.asList(plain, enhanced)) {
+      List<String> seen = new ArrayList<>();
+      try (URLClassLoader loader = new URLClassLoader(new URL[] {classes.toUri().toURL()},
+        EnhancedAppTest.class.getClassLoader())) {
+        Class<?> page = loader.loadClass("fixtures.ProfilePage");
+        try (Harness h = new Harness(() -> {
+          try {
+            return (LiveComponent) page.getConstructor().newInstance();
+          } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+          }
+        })) {
+          h.load();
+          h.connect();
+          for (String step : steps) {
+            h.click(Harness.clickOn(h.page(), step));
+            seen.add(normalized(h.page()));
+          }
+        }
+        runs[pages.size()] = page.getField("nameRuns").getInt(null);
+        assertEquals(classes == enhanced, j2act.internal.store.Tracked.class.isAssignableFrom(loader.loadClass("fixtures.Profile")));
+      }
+      pages.add(seen);
+    }
+    assertEquals(pages.get(0), pages.get(1), compiler.getClass().getSimpleName());
+    assertTrue(pages.get(1).get(3).contains("name Ada!!") && pages.get(1).get(3).contains("city Wien++"), pages.get(1).get(3));
+    assertTrue(pages.get(1).get(3).contains("kept Wien++"), "an object kept from the view reads the store now: " + pages.get(1).get(3));
+    assertEquals(5, runs[0], "plain, the whole view runs every time");
+    assertEquals(3, runs[1], "enhanced, the name runs for itself and the two renames only");
+  }
+
   private static final class Run {
     final List<String> pages = new ArrayList<>();
     /** What the first click on "select c" sent. */

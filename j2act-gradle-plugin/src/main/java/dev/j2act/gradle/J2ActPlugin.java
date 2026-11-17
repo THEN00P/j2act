@@ -93,14 +93,16 @@ public class J2ActPlugin implements Plugin<Project> {
       task.getClasspath().from(main.getCompileClasspath());
       task.getOutput().convention(project.getLayout().getBuildDirectory().dir("j2act-classes"));
       task.getSkip().convention(settings.getSkip());
+      task.getTrackExcludes().convention(settings.getTrackExcludes());
     });
     // Opt-in: the class folders themselves, so what runs from them runs enhanced too (run, test, an exploded WAR of
     // the build's classes). An input of the compile, so turning it off compiles plain classes again.
     FileCollection compileClasspath = main.getCompileClasspath();
     project.getTasks().named(main.getCompileJavaTaskName(), JavaCompile.class, compile -> {
       compile.getInputs().property("j2act.enhance.classFolders", settings.getClassFolders());
+      compile.getInputs().property("j2act.enhance.trackExcludes", settings.getTrackExcludes());
       compile.doLast("j2actEnhanceClassFolder", new EnhanceInPlace(compile.getDestinationDirectory(), compileClasspath,
-        settings.getClassFolders(), settings.getSkip()));
+        settings.getClassFolders(), settings.getSkip(), settings.getTrackExcludes()));
     });
     project.getTasks().named(JavaPlugin.JAR_TASK_NAME, Jar.class, jar -> {
       Set<File> dirs = classesDirs.getFiles();
@@ -131,13 +133,16 @@ public class J2ActPlugin implements Plugin<Project> {
     private final FileCollection classpath;
     private final org.gradle.api.provider.Provider<Boolean> enabled;
     private final org.gradle.api.provider.Provider<Boolean> skip;
+    private final org.gradle.api.provider.Provider<java.util.List<String>> excludes;
 
     EnhanceInPlace(org.gradle.api.file.DirectoryProperty classes, FileCollection classpath,
-        org.gradle.api.provider.Provider<Boolean> enabled, org.gradle.api.provider.Provider<Boolean> skip) {
+        org.gradle.api.provider.Provider<Boolean> enabled, org.gradle.api.provider.Provider<Boolean> skip,
+        org.gradle.api.provider.Provider<java.util.List<String>> excludes) {
       this.classes = classes;
       this.classpath = classpath;
       this.enabled = enabled;
       this.skip = skip;
+      this.excludes = excludes;
     }
 
     @Override public void execute(Task task) {
@@ -148,7 +153,8 @@ public class J2ActPlugin implements Plugin<Project> {
       for (File file : classpath.getFiles()) {
         paths.add(file.toPath());
       }
-      task.getLogger().lifecycle("j2act: " + new j2act.enhancer.Enhancer(paths).enhance(classes.get().getAsFile().toPath())
+      task.getLogger().lifecycle("j2act: " + new j2act.enhancer.Enhancer(paths).withTrackExcludes(excludes.get())
+        .enhance(classes.get().getAsFile().toPath())
         + ", in " + classes.get().getAsFile());
     }
   }

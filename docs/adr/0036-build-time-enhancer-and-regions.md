@@ -44,7 +44,9 @@ An `each(...)` row is a region keyed by its `withKey`, or by position without on
 
 ## Tracked classes
 
-ADR 0035's read path is built and tested by hand (`TrackedStoreTest`). The enhancer makes every bean or record in the module's own output tracked, components and stores excepted, with a plugin setting to exclude packages. Which classes enter a store cannot be told at build time; a class that never does pays one field and a cheap check per field read, and an untracked class stays correct, only coarser.
+The enhancer makes tracked every class of the module's output that a store would hold as a bean: concrete, with a constructor taking nothing and private fields of its own, and not j2act's, the JDK's, a collection, a component, a store or a tag; `trackExcludes` (`<trackExcludes>` in Maven, `j2act { enhance { trackExcludes = [...] } }` in Gradle) leaves packages out. Private fields only, because a tracked object is handed out subscribing to nothing: a read the enhancer did not rewrite would subscribe to nothing, and a private field is read only in its class and its nestmates, which are compiled together. Records stay as they are: a store reads them whole. Which classes enter a store cannot be told at build time; a class that never does pays one field and a cheap call per read. Each read of a tracked field, in any class of the app, becomes `StoreReads.value(object, own, "name", type)`.
+
+A handed-out object stays the version it was, as ADR 0035 has it, in both builds. Regions make that meet a case the plain build never has: a region keeps an object its view fetched, and when the store moves on, only the region runs again, on the old copy. So `value` also compares the object's own value with what the store has now; when they differ while a cut's supplier runs, the cut's creator is marked to render again within the same job, which fetches the current version and makes the cut anew, as the plain build's view, subscribed to the whole object, would have run again. Tracking then saves the runs where an object is read where it is fetched, and for fields nobody reads. Live reads, Solid's proxy behaviour, were rejected: an app that keeps a handed-out object, to undo or to compare, would read other values enhanced than plain.
 
 ## How it is checked
 
@@ -56,7 +58,7 @@ Every `RandomAppTest` and `ConsistencyTest` seed runs twice, over plain and enha
 2. The enhancer with regions and attribute regions, markers, the range morph and repair.
 3. `each(...)` rows as regions.
 4. Keyed list operations, with keyed inserts, moves and removals of stateful rows in `RandomAppTest`.
-5. Tracked classes (ADR 0035).
+5. Tracked classes (ADR 0035), built.
 6. Static hoisting: a subtree that reads nothing renders once to a constant string, Solid's template cloning.
 
 1 to 4 are the first release; 4 may slip without holding up 1 to 3.

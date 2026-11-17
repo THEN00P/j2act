@@ -46,9 +46,19 @@ abstract class CutTag extends ComponentTag {
    */
   void start(Supplier<Object> compute, List<CutTag> into) {
     node = tab.rt.runWithOwner(creator.slot, () -> tab.rt.memoNode(previous -> {
-      Object value = Tracking.in(tab, creator, compute);
-      computed = value;
-      return value;
+      CutTag outer = COMPUTING.get();
+      COMPUTING.set(this);
+      try {
+        Object value = Tracking.in(tab, creator, compute);
+        computed = value;
+        return value;
+      } finally {
+        if (outer == null) {
+          COMPUTING.remove();
+        } else {
+          COMPUTING.set(outer);
+        }
+      }
     }, ALWAYS_NEW));
     into.add(this);
     if (tab.rt.pending(node) || tab.rt.failed(node)) {
@@ -58,6 +68,28 @@ abstract class CutTag extends ComponentTag {
 
   /** What its supplier last gave. */
   private Object computed;
+  /** The cut whose supplier is running on this thread, if one is. */
+  private static final ThreadLocal<CutTag> COMPUTING = new ThreadLocal<>();
+  /** Whether a read of an out-of-date object has asked for what made it to run again. */
+  private boolean refetching;
+
+  static {
+    j2act.internal.store.StoreReads.whenStale(CutTag::staleRead);
+  }
+
+  /**
+   * A read in a running supplier found its object out of date: an object this cut kept from the run of what made it,
+   * whose store has moved on. The view that made it handed the object out, so it runs again and hands out the current
+   * one, making this cut anew, as the plain build's view would have run again for any change to the object (ADR 0036).
+   */
+  private static void staleRead() {
+    CutTag cut = COMPUTING.get();
+    if (cut != null && !cut.refetching) {
+      cut.refetching = true;
+      // Marked, not rerun: this is inside a flush, and the job runs what is marked before it ends.
+      cut.tab.markDirty(cut.creator);
+    }
+  }
 
   /**
    * Its first value, as the plain build's expression gave it in whatever was running, a guess or a transition included:

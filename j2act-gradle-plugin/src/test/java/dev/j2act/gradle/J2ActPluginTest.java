@@ -190,4 +190,18 @@ class J2ActPluginTest {
       StandardCharsets.ISO_8859_1);
     assertTrue(enhanced.contains("j2act$enhanced"), "the class folder is enhanced");
   }
+
+  /** ADR 0035, 0036: a bean is made to track its reads, unless its package is excluded in the build script. */
+  @ParameterizedTest @MethodSource("gradleVersions")
+  void beansTrackTheirReadsUnlessTheirPackageIsExcluded(String gradle) throws IOException {
+    theJarCarriesEnhancedClassesAndTheClassFoldersStayPlain(gradle);
+    write("src/main/java/demo/Bean.java", "package demo;\n\npublic class Bean {\n  private String name;\n"
+      + "  public String getName() {\n    return name;\n  }\n}\n");
+    String output = run(gradle, "--configuration-cache", "jar").getOutput();
+    assertTrue(output.contains("1 store classes tracked"), output);
+    Files.write(project.resolve("build.gradle"), "\nj2act {\n  enhance {\n    trackExcludes = ['demo.']\n  }\n}\n"
+      .getBytes(StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.APPEND);
+    output = run(gradle, "--configuration-cache", "jar").getOutput();
+    assertTrue(output.contains("j2act: ") && !output.contains("store classes tracked"), output);
+  }
 }
