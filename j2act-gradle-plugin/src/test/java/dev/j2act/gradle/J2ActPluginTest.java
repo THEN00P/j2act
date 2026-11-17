@@ -129,4 +129,35 @@ class J2ActPluginTest {
     }
     assertTrue(read(".settings/org.eclipse.wst.common.project.facet.core.xml").contains("facet=\"jst.web\" version=\"6.0\""));
   }
+
+  /**
+   * ADR 0036: the jar packages enhanced classes, while the class folders, which run, tests and IDEs use, stay plain.
+   * j2act-core and j2act-html come from the local repository at the plugin's version.
+   */
+  @ParameterizedTest @MethodSource("gradleVersions")
+  void theJarCarriesEnhancedClassesAndTheClassFoldersStayPlain(String gradle) throws IOException {
+    write("settings.gradle", "rootProject.name = 'demo'\n");
+    write("build.gradle", "plugins {\n  id 'io.github.then00p.j2act'\n}\n"
+      + "repositories {\n  mavenLocal()\n  mavenCentral()\n}\n"
+      + "dependencies {\n  implementation 'io.github.then00p.j2act:j2act-html:" + J2ActPlugin.VERSION + "'\n}\n");
+    write("src/main/java/demo/Home.java", "package demo;\n\n"
+      + "import static j2act.Reactive.*;\nimport static j2act.html.TagCreator.*;\n\n"
+      + "public class Home extends j2act.LiveComponent {\n"
+      + "  @Override protected j2act.View setup() {\n"
+      + "    var name = createSignal(\"Ada\");\n"
+      + "    return () -> div(p(\"hello \" + name.get()), button(\"x\").onClick(e -> name.set(\"Grace\")));\n"
+      + "  }\n}\n");
+    String output = run(gradle, "--configuration-cache", "jar").getOutput();
+    assertTrue(output.contains("j2act: 1 of 1 classes enhanced"), output);
+    String plain = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
+      StandardCharsets.ISO_8859_1);
+    assertFalse(plain.contains("j2act$enhanced"), "the class folder stays plain");
+    try (java.util.zip.ZipFile jar = new java.util.zip.ZipFile(project.resolve("build/libs/demo.jar").toFile())) {
+      java.util.zip.ZipEntry entry = jar.getEntry("demo/Home.class");
+      String packaged = new String(jar.getInputStream(entry).readAllBytes(), StandardCharsets.ISO_8859_1);
+      assertTrue(packaged.contains("j2act$enhanced"), "the jar's class is enhanced");
+      assertTrue(packaged.contains("j2act/internal/regions/Regions"), "and has regions");
+    }
+    assertTrue(run(gradle, "--configuration-cache", "jar").getOutput().contains("Configuration cache entry reused"));
+  }
 }
