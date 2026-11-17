@@ -9,7 +9,7 @@ import { openBrowser } from "../tools/cdp.mjs";
 
 const URL = process.argv[2] || "http://localhost:8080/vite-gradle-wildfly/";
 const reimport = process.argv.indexOf("--reimport") > 0 ? process.argv[process.argv.indexOf("--reimport") + 1] : null;
-const b = await openBrowser(9337);
+const b = await openBrowser();
 const { js, until, open, check } = b;
 
 b.run(async () => {

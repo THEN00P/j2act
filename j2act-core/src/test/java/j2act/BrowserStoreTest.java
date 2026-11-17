@@ -234,6 +234,32 @@ class BrowserStoreTest {
   }
 
   @Test
+  void aStoredBrowserSnapshotRestoresOnlyForItsCookie() {
+    RetainedStateTest.CountingStorage storage = new RetainedStateTest.CountingStorage();
+    String cookie;
+    try (Harness h = new Harness(PlayerPage::new, b -> b
+        .withRetainedStateStorage(storage).withSaveOnShutdown())) {
+      Page first = new Page(h.engine, "/", Exchange.empty()).connect();
+      cookie = cookieValue(first.result.setCookies());
+      first.change("volume", "10");
+    }
+    String id = Retained.id("browser:" + cookie);
+    assertTrue(storage.inner.load(id).isPresent(), "the previous server saved the browser");
+    try (Harness h = new Harness(PlayerPage::new, b -> b.withRetainedStateStorage(storage))) {
+      Page fresh = new Page(h.engine, "/", Exchange.empty());
+      String freshCookie = cookieValue(fresh.result.setCookies());
+      assertNotEquals(cookie, freshCookie);
+      assertTrue(fresh.html.contains("volume=5;"), fresh.html);
+      Page second = new Page(h.engine, "/", withCookie(freshCookie));
+      assertTrue(second.html.contains("volume=5;"), second.html);
+      assertTrue(storage.inner.load(id).isPresent(), "a different browser did not consume the snapshot");
+      Page restored = new Page(h.engine, "/", withCookie(cookie));
+      assertTrue(restored.html.contains("volume=10;"), restored.html);
+      assertTrue(storage.inner.load(id).isEmpty(), "the matching browser consumed its snapshot");
+    }
+  }
+
+  @Test
   void aTabThatComesAndGoesRestartsTheBrowsersGraceWindow() {
     try (Harness h = harness(PlayerPage::new)) {
       Page first = new Page(h.engine, "/", Exchange.empty());

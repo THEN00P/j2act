@@ -3,7 +3,7 @@
 import { openBrowser, sleep } from "./cdp.mjs";
 
 const URL = process.argv[2] || "http://localhost:8089/";
-const { cdp, js, until, key, open, check, run } = await openBrowser(9336);
+const { cdp, js, until, key, open, check, run } = await openBrowser();
 
 const rows = `[...document.querySelectorAll('#packing-rows .packing-row')].map(r => r.textContent)`;
 const rendered = (i) => `Number(/rendered (\\d+)/.exec(${rows}[${i}])[1])`;

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { openBrowser, sleep } from "./cdp.mjs";
 
 const URL = process.argv[2] || "http://localhost:8080/counter-jakarta/";
-const b = await openBrowser(9335);
+const b = await openBrowser();
 const { cdp, js, until, key, open, check, btn } = b;
 
 b.run(async () => {

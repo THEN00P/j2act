@@ -7,7 +7,7 @@
 import { openBrowser } from "./cdp.mjs";
 
 const URL = process.argv[2] || "http://localhost:8089/";
-const b = await openBrowser(9338);
+const b = await openBrowser();
 const { cdp, js, until, open, check } = b;
 
 const second = `document.getElementById('second-tab')`;
@@ -38,7 +38,12 @@ b.run(async () => {
   check("and in the tab that picked it", await until(`${playing(top)} === 'Playing in this browser: Intro'`));
 
   const before = await js(volume(top));
+  check("a fresh browser starts with its own retained volume", before === "Volume 5", before);
+  await js(`const otherTrack = ${frame}.getElementById('player-track'); otherTrack.value = 'Outro';
+    otherTrack.dispatchEvent(new Event('change', { bubbles: true })); true`);
+  check("a track change in the second tab reaches the first independently of volume",
+    await until(`${playing(top)} === 'Playing in this browser: Outro'`));
   await js(`${frame}.getElementById('player-louder').click(); true`);
-  const louder = `Volume ${Number(before.split(' ')[1]) + 1}`;
-  check("a click in the second tab changes the first", await until(`${volume(top)} === ${JSON.stringify(louder)}`), louder);
+  const louder = `Volume ${Math.min(10, Number(before.split(' ')[1]) + 1)}`;
+  check("the second tab shares its capped volume with the first", await until(`${volume(top)} === ${JSON.stringify(louder)}`), louder);
 });

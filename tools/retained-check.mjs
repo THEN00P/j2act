@@ -15,7 +15,7 @@ const args = process.argv.slice(2);
 const restartAt = args.indexOf("--restart");
 const RESTART = restartAt >= 0 ? args.splice(restartAt, 2)[1] : null;
 const URL = args[0] || "http://localhost:8089/";
-const b = await openBrowser(9337);
+const b = await openBrowser();
 const { js, until, open, check } = b;
 
 const tab = `document.querySelector('meta[name="j2-tab"]').content`;

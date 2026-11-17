@@ -66,7 +66,7 @@ function push(classFile) {
   return { ok: /^redefined [1-9]/.test(output), output: output.trim() };
 }
 
-const b = await openBrowser(9338);
+const b = await openBrowser();
 const { js, until, open, check } = b;
 
 const saved = readFileSync(DEPLOYED_BY_IDE);

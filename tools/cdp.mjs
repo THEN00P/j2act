@@ -1,6 +1,6 @@
 // Headless Chrome over the DevTools protocol, no dependencies (Node 22+ has WebSocket).
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,14 +9,27 @@ const CHROME = process.env.CHROME || "C:/Program Files/Google/Chrome/Application
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Opens a page and returns helpers; call run(main) to report and exit. */
-export async function openBrowser(port = 9333) {
+export async function openBrowser() {
+  const profile = mkdtempSync(join(tmpdir(), "j2act-cdp-"));
   const chrome = spawn(CHROME, [
-    "--headless=new", `--remote-debugging-port=${port}`, "--no-first-run", "--no-default-browser-check",
-    `--user-data-dir=${mkdtempSync(join(tmpdir(), "j2act-cdp-"))}`, "about:blank",
+    "--headless=new", "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check",
+    `--user-data-dir=${profile}`, "about:blank",
   ], { stdio: "ignore" });
+  // Read this launch's endpoint from its fresh profile. A fixed port can belong to an old
+  // Chrome (especially when killing a Flatpak launcher left Chrome itself running).
+  let launchError;
+  chrome.on("error", error => { launchError = error; });
   let targets;
   for (let i = 0; i < 50 && !targets; i++) {
-    try { targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); } catch { await sleep(100); }
+    if (launchError) throw launchError;
+    try {
+      const port = Number(readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0]);
+      targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+    } catch { await sleep(100); }
+  }
+  if (!targets) {
+    chrome.kill();
+    throw new Error("Chrome did not publish a DevTools endpoint for " + profile);
   }
   const ws = new WebSocket(targets.find((t) => t.type === "page").webSocketDebuggerUrl);
   await new Promise((r) => (ws.onopen = r));
@@ -66,15 +79,20 @@ export async function openBrowser(port = 9333) {
   };
   const btn = (label) =>
     `[...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith(${JSON.stringify(label)}))`;
+  const close = async () => {
+    // Close Chrome over CDP: the spawned process may only be a Flatpak launcher.
+    await Promise.race([cdp("Browser.close"), sleep(1000)]);
+    ws.close();
+    chrome.kill();
+  };
   const run = (main) => main()
     .catch((e) => { console.log("FAIL  driver error — " + e.message); results.push(false); })
-    .finally(() => {
+    .finally(async () => {
       check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
-      ws.close();
-      chrome.kill();
+      await close();
       const failed = results.filter((ok) => !ok).length;
       console.log(`\n${results.length - failed}/${results.length} browser checks passed`);
       process.exit(failed ? 1 : 0);
     });
-  return { cdp, js, until, key, open, check, btn, run };
+  return { cdp, js, until, key, open, check, btn, run, close };
 }

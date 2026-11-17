@@ -4,7 +4,7 @@
 import { openBrowser } from "./cdp.mjs";
 
 const URL = process.argv[2] || "http://localhost:8090/";
-const b = await openBrowser(9336);
+const b = await openBrowser();
 const { cdp, js, until, open, check } = b;
 
 b.run(async () => {
