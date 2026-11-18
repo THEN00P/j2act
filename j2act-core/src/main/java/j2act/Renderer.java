@@ -292,12 +292,13 @@ final class Renderer {
   }
 
   /**
-   * Elements no comment marker can stand directly in: the parser reads the text of the first four as no markup, and
-   * inside a table it puts what comes after a tr into a tbody it makes, so a closing marker would end up in another
-   * parent than its opening one. A tbody, thead or tfoot of the view's own keeps both together.
+   * Elements no comment marker can stand directly in: the parser reads what is in all but the last as text, not markup
+   * (iframe and noscript among them, the latter as scripting is on where j2act runs), and inside a table it puts what
+   * comes after a tr into a tbody it makes, so a closing marker would end up in another parent than its opening one.
+   * A tbody, thead or tfoot of the view's own keeps both together.
    */
   static final java.util.Set<String> NO_MARKERS = new java.util.HashSet<>(java.util.Arrays.asList(
-    "textarea", "title", "script", "style", "table"));
+    "textarea", "title", "script", "style", "iframe", "noscript", "noembed", "noframes", "xmp", "plaintext", "table"));
 
   /** A region (ADR 0036): what its node holds now, between the markers that patches find it by. */
   private void renderRegion(Scope scope) {

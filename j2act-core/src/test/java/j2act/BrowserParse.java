@@ -30,7 +30,9 @@ final class BrowserParse {
   static final String SVG = "http://www.w3.org/2000/svg";
   static final String MATHML = "http://www.w3.org/1998/Math/MathML";
 
-  private static final Set<String> RAW_TEXT = new HashSet<>(Arrays.asList("textarea", "title", "script", "style"));
+  /** What the parser reads as text: scripting on, as where j2act runs, so noscript too. */
+  private static final Set<String> RAW_TEXT = new HashSet<>(Arrays.asList("textarea", "title", "script", "style",
+    "iframe", "noscript", "noembed", "noframes", "xmp", "plaintext"));
 
   private BrowserParse() {
   }
@@ -38,6 +40,7 @@ final class BrowserParse {
   private static HtmlDocumentBuilder builder() {
     HtmlDocumentBuilder builder = new HtmlDocumentBuilder(XmlViolationPolicy.ALLOW);
     builder.setIgnoringComments(false);
+    builder.setScriptingEnabled(true);
     return builder;
   }
 

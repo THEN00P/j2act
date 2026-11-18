@@ -480,6 +480,28 @@ class RegionTest {
     }
   }
 
+  static final class ReadAsText extends LiveComponent {
+    @Override protected View setup() {
+      var n = createSignal(0);
+      return () -> T.page("t", T.button("more " + n.get()).onClick(e -> n.set(n.get() + 1)),
+        T.tag("iframe", Regions.of(() -> new Text("frame " + n.get()))),
+        T.tag("noscript", Regions.of(() -> new Text("noscript " + n.get()))));
+    }
+  }
+
+  @Test
+  void aRegionInsideAnIframeOrNoscriptIsPartOfWhatIsAroundIt() {
+    try (Harness h = new Harness(ReadAsText::new)) {
+      String html = h.load();
+      // The parser reads their content as text: a marker there would be text the client cannot find.
+      assertTrue(html.contains("<iframe>frame 0</iframe>") && html.contains("<noscript>noscript 0</noscript>"), html);
+      h.connect();
+      h.click(Harness.clickOn(html, "more 0"));
+      assertTrue(h.page().contains("<iframe>frame 1</iframe>") && h.page().contains("<noscript>noscript 1</noscript>"),
+        h.page());
+    }
+  }
+
   static CompletableFuture<Void> gate;
 
   /** The demo's Publisher, as the enhancer leaves it: a region of the button, and in it its disabled attribute. */

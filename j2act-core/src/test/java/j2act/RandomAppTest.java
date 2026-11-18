@@ -509,6 +509,8 @@ class RandomAppTest {
         kids.add(T.tag("table", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr", T.tag("td", "[bare"
           + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k))))));
         kids.add(T.tag("template", r(() -> T.span("[tpl" + me.id + "=" + shared.n.get() + "]"))));
+        kids.add(T.tag("iframe", r(() -> new Text("[ifr" + me.id + "=" + shared.n.get() + "]"))));
+        kids.add(T.tag("noscript", r(() -> new Text("[nos" + me.id + "=" + shared.n.get() + "]"))));
         kids.add(T.button("pending" + me.id).withPending(r(() -> T.span("[pend" + me.id + "=" + shared.n.get() + "]"))));
         if (RESHAPED) {
           kids.add(T.tag("p", r(() -> T.tag("div", "[pdiv" + me.id + "=" + shared.n.get() + "]"))));
@@ -1166,8 +1168,8 @@ class RandomAppTest {
             expect(tab, tab.doc.contains(cell), at + ": wanted " + cell);
           }
         }
-        for (String shown : RESHAPED ? new String[] {"svg", "fo", "pspan", "tpl", "pend", "pdiv"}
-          : new String[] {"svg", "fo", "pspan", "tpl", "pend"}) {
+        for (String shown : RESHAPED ? new String[] {"svg", "fo", "pspan", "tpl", "pend", "ifr", "nos", "pdiv"}
+          : new String[] {"svg", "fo", "pspan", "tpl", "pend", "ifr", "nos"}) {
           String text = "[" + shown + pageId + "=" + n + "]";
           expect(tab, tab.doc.contains(text), at + ": wanted " + text);
         }
