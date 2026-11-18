@@ -214,4 +214,40 @@ class J2ActPluginTest {
     output = run(gradle, "--configuration-cache", "jar").getOutput();
     assertTrue(output.contains("j2act: ") && !output.contains("store classes tracked"), output);
   }
+
+  /**
+   * ADR 0036: a bean extending a dependency's class is tracked only while that class has no fields, private ones
+   * included, which the task's classpath has to see change.
+   */
+  @ParameterizedTest @MethodSource("gradleVersions")
+  void aPrivateFieldInADependencysSuperclassStopsTracking(String gradle) throws Exception {
+    theJarCarriesEnhancedClassesAndTheClassFoldersStayPlain(gradle);
+    Files.write(project.resolve("build.gradle"), "\ndependencies {\n  implementation files('libs/base.jar')\n}\n"
+      .getBytes(StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.APPEND);
+    baseJar("public int y() {\n    return 0;\n  }");
+    write("src/main/java/demo/Bean.java", "package demo;\n\npublic class Bean extends base.Base {\n  private String name;\n"
+      + "  public String getName() {\n    return name;\n  }\n}\n");
+    String output = run(gradle, "jar").getOutput();
+    assertTrue(output.contains("1 store classes tracked"), output);
+    baseJar("private int y;\n  public int y() {\n    return y;\n  }");
+    output = run(gradle, "jar").getOutput();
+    assertTrue(output.contains("j2act: ") && !output.contains("store classes tracked"), output);
+  }
+
+  /** libs/base.jar, holding base.Base with this body. */
+  private void baseJar(String body) throws Exception {
+    Path src = project.resolve("base-src/base/Base.java");
+    Files.createDirectories(src.getParent());
+    Files.write(src, ("package base;\n\npublic class Base {\n  " + body + "\n}\n").getBytes(StandardCharsets.UTF_8));
+    Path classes = project.resolve("base-classes");
+    javax.tools.JavaCompiler javac = javax.tools.ToolProvider.getSystemJavaCompiler();
+    assertTrue(javac.run(null, null, null, "--release", "11", "-d", classes.toString(), src.toString()) == 0);
+    Path jar = project.resolve("libs/base.jar");
+    Files.createDirectories(jar.getParent());
+    try (java.util.jar.JarOutputStream out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar))) {
+      out.putNextEntry(new java.util.jar.JarEntry("base/Base.class"));
+      out.write(Files.readAllBytes(classes.resolve("base/Base.class")));
+      out.closeEntry();
+    }
+  }
 }

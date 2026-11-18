@@ -596,15 +596,7 @@ class RandomAppTest {
     synchronized void stream(String chunk) {
       Matcher m = STREAMED.matcher(chunk);
       while (m.find()) {
-        // Up to its own closing tag, as the parser reads it: the HTML can hold templates of its own.
-        int depth = 1;
-        int at = m.end();
-        Matcher tag = Pattern.compile("<(/?)template[ >]").matcher(chunk);
-        while (depth > 0 && tag.find(at)) {
-          depth += tag.group(1).isEmpty() ? 1 : -1;
-          at = tag.end();
-        }
-        String html = chunk.substring(m.end(), tag.start());
+        String html = (String) j2act.internal.json.Json.parse(m.group(2));
         String next = Harness.replaceScope(doc, m.group(1), html);
         if (next != null) {
           doc = next;
@@ -709,7 +701,7 @@ class RandomAppTest {
     }
   }
 
-  private static final Pattern STREAMED = Pattern.compile("<template id=\"j2t-([^\"]+)\">");
+  private static final Pattern STREAMED = Pattern.compile("j2s\\(\"([^\"]+)\",(\"(?:[^\"\\\\]|\\\\.)*\")\\)");
 
   private static final class Driver implements AutoCloseable {
     final World w = new World();

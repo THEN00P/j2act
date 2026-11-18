@@ -125,6 +125,69 @@ class EnhancedAppTest {
     assertEquals(3, runs[1], "enhanced, the name runs for itself and the two renames only");
   }
 
+  @Test void javacShapesShowTheSamePagesEnhanced() throws Exception {
+    shapes(ToolProvider.getSystemJavaCompiler());
+  }
+
+  @Test void ecjShapesShowTheSamePagesEnhanced() throws Exception {
+    shapes(new EclipseCompiler());
+  }
+
+  /** Shapes' pages, plain and enhanced: the same pages after every step, and none the browser would parse amiss. */
+  private void shapes(JavaCompiler compiler) throws Exception {
+    Path plain = Files.createTempDirectory("j2act-plain");
+    Path enhanced = Files.createTempDirectory("j2act-enhanced");
+    compile(compiler, plain);
+    compile(compiler, enhanced);
+    new Enhancer(classpath()).enhance(enhanced);
+    verify(enhanced);
+    for (String name : Arrays.asList("TemplateAttr", "HtmlWith", "RawText", "Revealed")) {
+      List<List<String>> pages = new ArrayList<>();
+      for (Path classes : Arrays.asList(plain, enhanced)) {
+        List<String> seen = new ArrayList<>();
+        try (URLClassLoader loader = new URLClassLoader(new URL[] {classes.toUri().toURL()},
+          EnhancedAppTest.class.getClassLoader())) {
+          Class<?> shapes = loader.loadClass("fixtures.Shapes");
+          CompletableFuture<String> first = new CompletableFuture<>();
+          CompletableFuture<String> second = new CompletableFuture<>();
+          shapes.getField("first").set(null, first);
+          shapes.getField("second").set(null, second);
+          Class<?> page = loader.loadClass("fixtures.Shapes$" + name);
+          try (Harness h = new Harness(() -> {
+            try {
+              return (LiveComponent) page.getConstructor().newInstance();
+            } catch (ReflectiveOperationException e) {
+              throw new IllegalStateException(e);
+            }
+          })) {
+            String served = h.load();
+            if (classes == enhanced) {
+              assertEquals(null, BrowserParse.problems(served), name + ": " + served);
+            }
+            seen.add(normalized(served));
+            h.connect();
+            Tab tab = h.engine.tab(h.sid);
+            for (String step : name.equals("Revealed") ? Arrays.asList("second", "first") : Arrays.asList("more", "more")) {
+              int from = h.conn.size();
+              if (step.equals("second")) {
+                second.complete("B");
+                tab.call(() -> null).get();
+              } else if (step.equals("first")) {
+                first.complete("A");
+                h.awaitPatch(from, html -> h.page().contains("one:A") && h.page().contains("two:B"));
+              } else {
+                h.click(Harness.clickOn(h.page(), step));
+              }
+              seen.add(normalized(h.page()));
+            }
+          }
+        }
+        pages.add(seen);
+      }
+      assertEquals(pages.get(0), pages.get(1), name + ", " + compiler.getClass().getSimpleName());
+    }
+  }
+
   private static final class Run {
     final List<String> pages = new ArrayList<>();
     /** What the first click on "select c" sent. */

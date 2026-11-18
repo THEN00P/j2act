@@ -114,7 +114,7 @@ abstract class CutTag extends ComponentTag {
   static void dropUnplaced(Tab tab, List<CutTag> made) {
     for (CutTag cut : made) {
       if (!cut.placed) {
-        tab.rt.disposeNode(cut.node);
+        cut.release(); // a region's own unplaced cuts with it
       }
     }
     made.clear();

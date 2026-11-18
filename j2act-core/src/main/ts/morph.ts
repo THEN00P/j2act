@@ -35,23 +35,28 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
   function parseIn(html: string, parent: Node | null): DocumentFragment {
     const el = parent && parent.nodeType === 1 ? (parent as Element) : null;
     const ns = el ? el.namespaceURI : null;
-    let wrap = ns === "http://www.w3.org/2000/svg" ? "svg" : ns === "http://www.w3.org/1998/Math/MathML" ? "math" : null;
-    // Where the parser goes back to HTML inside them: SVG's foreignObject, desc and title, MathML's text elements and
-    // an annotation-xml holding HTML.
-    if (el && wrap === "svg" && (el.localName === "foreignObject" || el.localName === "desc" || el.localName === "title")) {
-      wrap = null;
-    } else if (el && wrap === "math" && (["mi", "mo", "mn", "ms", "mtext"].indexOf(el.localName) >= 0
-      || (el.localName === "annotation-xml"
-        && /^(text\/html|application\/xhtml\+xml)$/i.test(el.getAttribute("encoding") || "")))) {
-      wrap = null;
+    // The elements to parse it in, outermost first. Where the parser goes back to HTML inside them, SVG's
+    // foreignObject, desc and title and an annotation-xml holding HTML, none; MathML's text elements keep mglyph and
+    // malignmark MathML, as parsing in one of them does.
+    let wrap: string[] = ns === "http://www.w3.org/2000/svg" ? ["svg"] : ns === "http://www.w3.org/1998/Math/MathML" ? ["math"] : [];
+    if (el && wrap[0] === "svg" && (el.localName === "foreignObject" || el.localName === "desc" || el.localName === "title")) {
+      wrap = [];
+    } else if (el && wrap[0] === "math" && el.localName === "annotation-xml"
+      && /^(text\/html|application\/xhtml\+xml)$/i.test(el.getAttribute("encoding") || "")) {
+      wrap = [];
+    } else if (el && wrap[0] === "math" && ["mi", "mo", "mn", "ms", "mtext"].indexOf(el.localName) >= 0) {
+      wrap.push("mi");
     }
     const parsed = document.createElement("template");
-    if (!wrap) {
+    if (wrap.length === 0) {
       parsed.innerHTML = html;
       return parsed.content;
     }
-    parsed.innerHTML = "<" + wrap + ">" + html + "</" + wrap + ">";
-    const outer = parsed.content.firstChild!;
+    parsed.innerHTML = wrap.map((n) => "<" + n + ">").join("") + html + wrap.slice().reverse().map((n) => "</" + n + ">").join("");
+    let outer: Node = parsed.content;
+    for (let i = 0; i < wrap.length; i++) {
+      outer = outer.firstChild!;
+    }
     const content = document.createDocumentFragment();
     while (outer.firstChild) {
       content.appendChild(outer.firstChild);

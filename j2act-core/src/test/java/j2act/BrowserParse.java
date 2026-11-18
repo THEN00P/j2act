@@ -120,7 +120,7 @@ final class BrowserParse {
 
   /**
    * How the client parses a patch's HTML for a place under `parent` (morph.ts's parseIn): in a template, and in an svg
-   * or math element where the parser would read it as SVG or MathML. `wrapped` false is idiomorph's own parse of a
+   * or math element where the parser would read it as SVG or MathML, in a MathML text element inside one. `wrapped` false is idiomorph's own parse of a
    * whole element's patch, which is always a template's.
    */
   static DocumentFragment parseAsClient(String html, Element parent, boolean wrapped) {
@@ -131,7 +131,10 @@ final class BrowserParse {
     if (wrapped && SVG.equals(ns) && !Arrays.asList("foreignObject", "desc", "title").contains(local)) {
       context = "svg";
       contextNs = SVG;
-    } else if (wrapped && MATHML.equals(ns) && !Arrays.asList("mi", "mo", "mn", "ms", "mtext").contains(local)
+    } else if (wrapped && MATHML.equals(ns) && Arrays.asList("mi", "mo", "mn", "ms", "mtext").contains(local)) {
+      context = "mi"; // where mglyph and malignmark stay MathML
+      contextNs = MATHML;
+    } else if (wrapped && MATHML.equals(ns)
       && !("annotation-xml".equals(local) && parent.getAttribute("encoding").matches("(?i)text/html|application/xhtml\\+xml"))) {
       context = "math";
       contextNs = MATHML;

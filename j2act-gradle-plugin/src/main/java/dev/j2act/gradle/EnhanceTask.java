@@ -18,7 +18,7 @@ import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.CacheableTask;
-import org.gradle.api.tasks.CompileClasspath;
+import org.gradle.api.tasks.Classpath;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.OutputDirectory;
@@ -37,8 +37,11 @@ public abstract class EnhanceTask extends DefaultTask {
   @InputFiles @PathSensitive(PathSensitivity.RELATIVE)
   public abstract ConfigurableFileCollection getClasses();
 
-  /** What they were compiled against. */
-  @CompileClasspath
+  /**
+   * What they were compiled against, private members included: whether a store class is tracked depends on the fields
+   * of its superclasses, which a compile classpath's normalization leaves out (ADR 0036).
+   */
+  @Classpath
   public abstract ConfigurableFileCollection getClasspath();
 
   @OutputDirectory

@@ -20,7 +20,7 @@ const SVG = "http://www.w3.org/2000/svg";
 const HTML = "http://www.w3.org/1999/xhtml";
 
 describe("streamed swaps (ADR 0036)", () => {
-  let j2s: (anchor: string) => void;
+  let j2s: (anchor: string, html: string) => void;
 
   beforeAll(() => {
     Object.defineProperty(document, "currentScript", { configurable: true, get: () => ({ remove() {} }) });
@@ -32,11 +32,7 @@ describe("streamed swaps (ADR 0036)", () => {
   });
 
   function stream(anchor: string, html: string): void {
-    const t = document.createElement("template");
-    t.id = "j2t-" + anchor;
-    t.innerHTML = html;
-    document.body.appendChild(t);
-    j2s(anchor);
+    j2s(anchor, html);
   }
 
   it("swaps a region in an svg in as SVG", () => {
@@ -45,7 +41,6 @@ describe("streamed swaps (ADR 0036)", () => {
     const circle = document.querySelector("circle")!;
     expect(circle.getAttribute("r")).toBe("2");
     expect(circle.namespaceURI).toBe(SVG);
-    expect(document.querySelector("template")).toBeNull();
   });
 
   it("swaps an element in an svg in as SVG", () => {
@@ -59,5 +54,14 @@ describe("streamed swaps (ADR 0036)", () => {
     stream("s4", "<p>b</p>");
     expect(document.querySelector("p")!.textContent).toBe("b");
     expect(document.querySelector("p")!.namespaceURI).toBe(HTML);
+  });
+
+  it("swaps an svg image in as SVG, which a template parsed as HTML would have made an img of", () => {
+    document.body.innerHTML = "<svg><!--j2:s5--><!--/j2:s5--></svg>";
+    stream("s5", '<!--j2:s5--><image href="a.png"></image><!--/j2:s5-->');
+    const image = document.querySelector("svg")!.firstElementChild!;
+    expect(image.localName).toBe("image");
+    expect(image.namespaceURI).toBe(SVG);
+    expect(document.querySelector("svg")!.lastChild!.nodeValue).toBe("/j2:s5");
   });
 });

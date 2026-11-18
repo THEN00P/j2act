@@ -537,9 +537,17 @@ public final class Runtime {
     return node.deps != null;
   }
 
-  /** createSlotOwner, as if `running` were what is running now: a region's, placed by another view than made it. */
+  /**
+   * createSlotOwner, as if `running` were what is running now: a region's, placed by another view than made it. Its
+   * context is where it is placed, as what it places would have in the plain build, under a reveal or a boundary there.
+   */
   public Owner createSlotOwner(Owner parent, Owner running) {
-    return core.runWithOwner(running, () -> createSlotOwner(parent));
+    Owner placing = core.context;
+    Owner owner = core.runWithOwner(running, () -> createSlotOwner(parent));
+    if (placing != null) {
+      owner.ctx = placing.ctx;
+    }
+    return owner;
   }
 
   public boolean pending(Node node) {

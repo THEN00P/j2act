@@ -13,22 +13,26 @@ import java.util.Deque;
 final class PageStream {
 
   /**
-   * Swaps a template in for the element with its anchor, or for a region between its markers (ADR 0036), and sets an
-   * attribute region's attributes. Defined once, right after the shell. j2f is morph.ts's parseIn: what goes under an
-   * svg or math element is parsed in one, unless the parser goes back to HTML there.
+   * Swaps HTML in for the element with its anchor, or for a region between its markers (ADR 0036), and sets an
+   * attribute region's attributes. Defined once, right after the shell. The HTML comes as a string, not a template,
+   * which the page's parser would read as HTML before it is known where it goes. j2f is morph.ts's parseIn: what goes
+   * under an svg or math element is parsed in one, and in MathML's text elements in one of those, unless the parser
+   * goes back to HTML there.
    */
-  private static final String HELPER = "function j2f(t,p){var m=p&&p.namespaceURI,l=p&&p.localName,"
-    + "w=m===\"http://www.w3.org/2000/svg\"?\"svg\":m===\"http://www.w3.org/1998/Math/MathML\"?\"math\":null;"
-    + "if(w===\"svg\"&&/^(foreignObject|desc|title)$/.test(l)||w===\"math\"&&(/^(mi|mo|mn|ms|mtext)$/.test(l)"
-    + "||l===\"annotation-xml\"&&/^(text\\/html|application\\/xhtml\\+xml)$/i.test(p.getAttribute(\"encoding\")||\"\")))w=null;"
-    + "if(!w)return t.content;var x=document.createElement(\"template\");x.innerHTML=\"<\"+w+\">\"+t.innerHTML+\"</\"+w+\">\";"
-    + "var f=document.createDocumentFragment(),o=x.content.firstChild;while(o.firstChild)f.appendChild(o.firstChild);"
-    + "return f}"
-    + "function j2s(a){var t=document.getElementById(\"j2t-\"+a),"
-    + "e=document.querySelector('[data-j2-scope=\"'+a+'\"]');if(t){if(e){var c=j2f(t,e.parentNode).firstElementChild;"
-    + "if(c)e.replaceWith(c)}else{var w=document.createTreeWalker(document.body,128),s=null,n;"
+  private static final String HELPER = "function j2f(h,p){var m=p&&p.namespaceURI,l=p&&p.localName,"
+    + "w=m===\"http://www.w3.org/2000/svg\"?[\"svg\"]:m===\"http://www.w3.org/1998/Math/MathML\"?[\"math\"]:[];"
+    + "if(w[0]===\"svg\"&&/^(foreignObject|desc|title)$/.test(l)||w[0]===\"math\"&&l===\"annotation-xml\""
+    + "&&/^(text\\/html|application\\/xhtml\\+xml)$/i.test(p.getAttribute(\"encoding\")||\"\"))w=[];"
+    + "else if(w[0]===\"math\"&&/^(mi|mo|mn|ms|mtext)$/.test(l))w.push(\"mi\");"
+    + "var x=document.createElement(\"template\");x.innerHTML=w.map(function(n){return\"<\"+n+\">\"}).join(\"\")+h"
+    + "+w.reverse().map(function(n){return\"</\"+n+\">\"}).join(\"\");if(!w.length)return x.content;"
+    + "var f=document.createDocumentFragment(),o=x.content;for(var i=0;i<w.length;i++)o=o.firstChild;"
+    + "while(o.firstChild)f.appendChild(o.firstChild);return f}"
+    + "function j2s(a,h){var e=document.querySelector('[data-j2-scope=\"'+a+'\"]');"
+    + "if(e){var c=j2f(h,e.parentNode).firstElementChild;if(c)e.replaceWith(c)}else{"
+    + "var w=document.createTreeWalker(document.body,128),s=null,n;"
     + "while(n=w.nextNode()){if(n.data===\"j2:\"+a)s=n;else if(s&&n.data===\"/j2:\"+a){var r=document.createRange(),"
-    + "f=j2f(t,s.parentNode);r.setStartBefore(s);r.setEndAfter(n);r.deleteContents();r.insertNode(f);break}}}t.remove()}"
+    + "f=j2f(h,s.parentNode);r.setStartBefore(s);r.setEndAfter(n);r.deleteContents();r.insertNode(f);break}}}"
     + "document.currentScript.remove()}"
     + "function j2a(a,v){var e=document.querySelector(\"[data-j2-a-\"+a+\"]\");if(e)for(var k in v)"
     + "v[k]===null?e.removeAttribute(k):e.setAttribute(k,v[k]);document.currentScript.remove()}"
@@ -53,7 +57,14 @@ final class PageStream {
 
   /** Lane-only. A boundary's HTML, ready to swap in. */
   void patch(String anchor, String html) {
-    emit("<template id=\"j2t-" + anchor + "\">" + html + "</template>" + scriptTag + "j2s(\"" + anchor + "\")</script>");
+    emit(scriptTag + "j2s(\"" + anchor + "\"," + scriptString(html) + ")</script>");
+  }
+
+  /** A JavaScript string of `s` that cannot end the script it is in: no `<` at all, so no `</script` nor `<!--`. */
+  static String scriptString(String s) {
+    StringBuilder b = new StringBuilder(s.length() + 16);
+    j2act.internal.json.Json.string(s, b);
+    return b.toString().replace("<", "\\u003c");
   }
 
   /** Lane-only. An attribute region's attributes, as JSON (ADR 0036). */

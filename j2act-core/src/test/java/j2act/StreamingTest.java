@@ -73,8 +73,8 @@ class StreamingTest {
       Harness.eventually(() -> sink.ends.get() == 1, "the stream ends once nothing is left to wait for");
       String rest = sink.all();
       assertTrue(rest.contains("reviews:good"), rest);
-      assertTrue(rest.contains("<template id=\"j2t-"), rest);
-      assertTrue(rest.contains("function j2s(a)"), "the swap helper, once: " + rest);
+      assertTrue(rest.contains("j2s(\"s"), rest);
+      assertTrue(rest.contains("function j2s(a,h)"), "the swap helper, once: " + rest);
       assertTrue(rest.endsWith("</body></html>"), rest);
     }
   }

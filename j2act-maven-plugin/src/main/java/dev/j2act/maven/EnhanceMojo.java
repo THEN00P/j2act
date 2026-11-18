@@ -76,6 +76,12 @@ public class EnhanceMojo extends AbstractMojo {
     }
     if (skip) {
       getLog().info("j2act: not enhanced (j2act.enhance.skip)");
+      if (!classFolders && output.isDirectory()) {
+        // An earlier build packaged an enhanced copy, and a jar made from it is newer than the plain classes, so the
+        // jar plugin would keep it: a plain copy, newer than that jar, is packaged instead.
+        refresh(classes, output.toPath(), "plain");
+        project.getBuild().setOutputDirectory(output.getAbsolutePath());
+      }
       return;
     }
     String core = null;
@@ -94,21 +100,7 @@ public class EnhanceMojo extends AbstractMojo {
     }
     Path target = classFolders ? classes : output.toPath();
     if (!classFolders) {
-      try {
-        // Made by another enhancer, as a snapshot rebuilt at the same version, or with other packages left
-        // untracked: start the copy over, since what is stamped is never enhanced again. Beside the copy, not in it,
-        // which is packaged.
-        Path made = target.resolveSibling(target.getFileName() + ".enhancer");
-        String enhancer = enhancerIdentity() + "\ntrackExcludes " + new java.util.TreeSet<>(trackExcludes);
-        if (Files.isDirectory(target) && !(Files.isRegularFile(made)
-          && new String(Files.readAllBytes(made), java.nio.charset.StandardCharsets.UTF_8).equals(enhancer))) {
-          clear(target);
-        }
-        copy(classes, target);
-        Files.write(made, enhancer.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-      } catch (IOException | UncheckedIOException e) {
-        throw new MojoExecutionException("could not copy " + classes + " to " + output, e);
-      }
+      refresh(classes, target, enhancerIdentity() + "\ntrackExcludes " + new java.util.TreeSet<>(trackExcludes));
     }
     List<Path> classpath = new ArrayList<>();
     try {
@@ -132,6 +124,25 @@ public class EnhanceMojo extends AbstractMojo {
     getLog().info("j2act: " + report + (classFolders ? ", in " + classes : ""));
     if (!classFolders) {
       project.getBuild().setOutputDirectory(output.getAbsolutePath());
+    }
+  }
+
+  /**
+   * Makes `target` the copy of `classes` that `made` makes, `plain` for none. A copy made otherwise, by another enhancer
+   * (a snapshot rebuilt at the same version), with other packages left untracked or plain, starts over, since what is
+   * stamped is never enhanced again. What made it is written beside the copy, not in it, which is packaged.
+   */
+  private void refresh(Path classes, Path target, String made) throws MojoExecutionException {
+    try {
+      Path stamp = target.resolveSibling(target.getFileName() + ".enhancer");
+      if (Files.isDirectory(target) && !(Files.isRegularFile(stamp)
+        && new String(Files.readAllBytes(stamp), java.nio.charset.StandardCharsets.UTF_8).equals(made))) {
+        clear(target);
+      }
+      copy(classes, target);
+      Files.write(stamp, made.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    } catch (IOException | UncheckedIOException e) {
+      throw new MojoExecutionException("could not copy " + classes + " to " + target, e);
     }
   }
 

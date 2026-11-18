@@ -395,6 +395,28 @@ class RegionTest {
     }
   }
 
+  static final class InertAttr extends LiveComponent {
+    @Override protected View setup() {
+      var n = createSignal(0);
+      // As the enhancer leaves template(span().withClass("c" + n.get())): nothing but the attribute reads n.
+      return () -> T.page("t", T.button("more").onClick(e -> n.set(n.get() + 1)),
+        T.tag("template", Regions.of(() -> attr(T.tag("span"), () -> "c" + n.get(), "class"))));
+    }
+  }
+
+  @Test
+  void anAttributeInsideATemplateFollowsItsValue() {
+    try (Harness h = new Harness(InertAttr::new)) {
+      String html = h.load();
+      assertTrue(html.contains("<template><span class=\"c0\">"), html);
+      h.connect();
+      h.click(Harness.clickOn(html, "more"));
+      assertTrue(h.page().contains("<template><span class=\"c1\">"), h.page());
+      h.click(Harness.clickOn(h.page(), "more"));
+      assertTrue(h.page().contains("<template><span class=\"c2\">"), h.page());
+    }
+  }
+
   static final class Count extends ComponentTag {
     @Override protected View setup() {
       var n = createSignal(0);
@@ -445,6 +467,64 @@ class RegionTest {
         owned.add(tab.call(() -> tab.rt.ownedCount(tab.root.slot)).get());
       }
       assertEquals(owned.get(1), owned.get(4), "what the view owns stays as it runs again: " + owned);
+    }
+  }
+
+  static final class TemplateNested extends LiveComponent {
+    @Override protected View setup() {
+      var n = createSignal(0);
+      var label = createSignal("x");
+      // Rendered inline in a template, the outer region's node makes the inner one each time it runs.
+      return () -> T.page("t", T.button("view " + n.get()).onClick(e -> n.set(n.get() + 1)),
+        T.tag("template", T.div(Regions.of(() -> T.div(Regions.of(() -> T.span(label.get())))))));
+    }
+  }
+
+  @Test
+  void aRegionRenderedInlineDropsTheRegionsItMadeWhenItGoes() throws Exception {
+    try (Harness h = new Harness(TemplateNested::new)) {
+      h.load();
+      h.connect();
+      Tab tab = h.engine.tab(h.sid);
+      List<Integer> owned = new java.util.ArrayList<>();
+      for (int i = 0; i < 5; i++) {
+        h.click(Harness.clickOn(h.page(), "view " + i));
+        owned.add(tab.call(() -> tab.rt.ownedCount(tab.root.slot)).get());
+      }
+      assertEquals(owned.get(1), owned.get(4), "what the view owns stays as it runs again: " + owned);
+    }
+  }
+
+  static CompletableFuture<String> revealFirst;
+  static CompletableFuture<String> revealSecond;
+
+  /** Boundaries in regions under a reveal, as the enhancer leaves reveal(loading(...), loading(...)). */
+  static final class Revealed extends LiveComponent {
+    @Override protected View setup() {
+      AsyncSupplier<String> a = () -> revealFirst;
+      AsyncSupplier<String> b = () -> revealSecond;
+      var one = createMemo(a);
+      var two = createMemo(b);
+      return () -> T.page("t", T.div(reveal(
+        Regions.of(() -> loading(() -> T.span("one:" + one.get() + ";")).withFallback(T.span("wait one;"))),
+        Regions.of(() -> loading(() -> T.span("two:" + two.get() + ";")).withFallback(T.span("wait two;"))))));
+    }
+  }
+
+  @Test
+  void aBoundaryInARegionUnderARevealWaitsItsTurn() throws Exception {
+    revealFirst = new CompletableFuture<>();
+    revealSecond = new CompletableFuture<>();
+    try (Harness h = new Harness(Revealed::new)) {
+      h.load();
+      h.connect();
+      int from = h.conn.size();
+      revealSecond.complete("B");
+      Tab tab = h.engine.tab(h.sid);
+      tab.call(() -> null).get(); // what the completion posted has run
+      assertFalse(h.page().contains("two:B"), "sequential: the second waits for the first: " + h.page());
+      revealFirst.complete("A");
+      h.awaitPatch(from, p -> h.page().contains("one:A;") && h.page().contains("two:B;"));
     }
   }
 

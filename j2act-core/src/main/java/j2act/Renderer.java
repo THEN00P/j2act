@@ -62,9 +62,9 @@ final class Renderer {
   /** The element being rendered, outside any component's root. */
   String enclosing;
   /**
-   * Inside a template's content, the view's own or a pending element's: inert, out of the document, where the client
-   * finds no region's markers, no attribute region's element and no stub (ADR 0036). What is cut out there stays part
-   * of the view around it.
+   * Inside a template's content, the view's own or a pending element's, or inside an element the parser reads as text
+   * (NO_MARKERS but table): inert, where the client finds no region's markers, no attribute region's element and no
+   * stub (ADR 0036). What is cut out there stays part of the view around it.
    */
   boolean inert;
 
@@ -386,7 +386,7 @@ final class Renderer {
     ContainerTag<?> head = null;
     List<DomContent> children = html.children;
     for (int i = 0; i < children.size(); i++) {
-      DomContent child = unhoisted(children.get(i));
+      DomContent child = documentChild(children.get(i));
       if (child instanceof ContainerTag && "head".equals(((ContainerTag<?>) child).name)) {
         head = (ContainerTag<?>) child;
       } else if (child != null) {
@@ -417,7 +417,7 @@ final class Renderer {
     ContainerTag<?> head = null;
     List<DomContent> children = html.children;
     for (int i = 0; i < children.size(); i++) {
-      DomContent child = unhoisted(children.get(i));
+      DomContent child = documentChild(children.get(i));
       if (child instanceof ContainerTag && "head".equals(((ContainerTag<?>) child).name)) {
         head = (ContainerTag<?>) child;
       } else if (child instanceof ContainerTag && "body".equals(((ContainerTag<?>) child).name)) {
@@ -438,8 +438,8 @@ final class Renderer {
         attrs = new java.util.ArrayList<>();
       }
       if (inert) {
-        // Read here, so the view runs again for it: its tag already has what the chain set.
-        tab.rt.read(tag.attrRegions.get(i).node);
+        // Set here, as its own scope would, and read by the scope around it, which renders again when it changes.
+        tag.attrRegions.get(i).render();
         continue;
       }
       attrs.add(place(scope, path + "/@" + i, tag.attrRegions.get(i), false));
@@ -531,15 +531,16 @@ final class Renderer {
     }
     String outer = enclosing;
     boolean outerInert = inert;
-    enclosing = tag.name;
-    inert |= tag.name.equals("template");
+    // As the parser has it: any case, and below an element it reads as text, all of what is there is text.
+    enclosing = tag.name.toLowerCase(java.util.Locale.ROOT);
+    inert |= enclosing.equals("template") || !enclosing.equals("table") && NO_MARKERS.contains(enclosing);
     int contentStart = out.length();
     try {
       String text = Html.textareaText(tag);
       if (text != null) {
         Html.escape(text, out);
       } else {
-        renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(tag.name));
+        renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(enclosing));
       }
     } finally {
       enclosing = outer;
@@ -668,8 +669,15 @@ final class Renderer {
   }
 
   /** The head and body of a page are found by what they are, so a constant is looked into (ADR 0036). */
-  private static DomContent unhoisted(DomContent node) {
-    return node instanceof Hoisted ? ((Hoisted) node).tree : node;
+  /**
+   * A child of a page's html as what it is: html(...)'s arguments are never cut, but html().with(...)'s are, and a head
+   * or body is found by being one. A region there renders as part of the page's view, which renders again for it.
+   */
+  private static DomContent documentChild(DomContent node) {
+    while (node instanceof RegionTag || node instanceof Hoisted) {
+      node = node instanceof Hoisted ? ((Hoisted) node).tree : ((RegionTag) node).content();
+    }
+    return node;
   }
 
   private static Object keyOf(DomContent node) {

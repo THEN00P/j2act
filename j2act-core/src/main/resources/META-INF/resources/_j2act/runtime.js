@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-e6fa36b954c29f8039d6eaef27fccab8c902dc41c2d5b28c0a204a3537b5b518 */
+* sources: sha256-37b8c5b3b2bf8f8554abd3a051ded529be6bc7e515c59fad33d854cdea0e8502 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1935,22 +1935,24 @@
 		function parseIn(html, parent) {
 			const el = parent && parent.nodeType === 1 ? parent : null;
 			const ns = el ? el.namespaceURI : null;
-			let wrap = ns === "http://www.w3.org/2000/svg" ? "svg" : ns === "http://www.w3.org/1998/Math/MathML" ? "math" : null;
-			if (el && wrap === "svg" && (el.localName === "foreignObject" || el.localName === "desc" || el.localName === "title")) wrap = null;
-			else if (el && wrap === "math" && ([
+			let wrap = ns === "http://www.w3.org/2000/svg" ? ["svg"] : ns === "http://www.w3.org/1998/Math/MathML" ? ["math"] : [];
+			if (el && wrap[0] === "svg" && (el.localName === "foreignObject" || el.localName === "desc" || el.localName === "title")) wrap = [];
+			else if (el && wrap[0] === "math" && el.localName === "annotation-xml" && /^(text\/html|application\/xhtml\+xml)$/i.test(el.getAttribute("encoding") || "")) wrap = [];
+			else if (el && wrap[0] === "math" && [
 				"mi",
 				"mo",
 				"mn",
 				"ms",
 				"mtext"
-			].indexOf(el.localName) >= 0 || el.localName === "annotation-xml" && /^(text\/html|application\/xhtml\+xml)$/i.test(el.getAttribute("encoding") || ""))) wrap = null;
+			].indexOf(el.localName) >= 0) wrap.push("mi");
 			const parsed = document.createElement("template");
-			if (!wrap) {
+			if (wrap.length === 0) {
 				parsed.innerHTML = html;
 				return parsed.content;
 			}
-			parsed.innerHTML = "<" + wrap + ">" + html + "</" + wrap + ">";
-			const outer = parsed.content.firstChild;
+			parsed.innerHTML = wrap.map((n) => "<" + n + ">").join("") + html + wrap.slice().reverse().map((n) => "</" + n + ">").join("");
+			let outer = parsed.content;
+			for (let i = 0; i < wrap.length; i++) outer = outer.firstChild;
 			const content = document.createDocumentFragment();
 			while (outer.firstChild) content.appendChild(outer.firstChild);
 			return content;
