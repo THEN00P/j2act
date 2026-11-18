@@ -430,9 +430,9 @@ class RandomAppTest {
           T.tag("ul", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.span("[row" + me.id + "." + k + "="
             + (shared.n.get() + k) + "]").withKey(k))))),
           // Where the parser reshapes what it reads (BrowserParse): rows in a table's tbody, SVG and the HTML inside
-          // its foreignObject, and a p. With app.reshaped, also what still fails with regions: rows straight in a
-          // table, which the parser puts in a tbody of its own; a template's content and a pending element's, out of
-          // the document; and a p holding a div, which the parser closes first.
+          // its foreignObject, and a p; and, below, rows straight in a table, which the parser puts in a tbody of its
+          // own, and a template's content and a pending element's, out of the document. With app.reshaped, also what
+          // still fails with regions: a p holding a div, which the parser closes first.
           T.tag("table", T.tag("tbody", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr",
             T.tag("td", "[body" + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k)))))),
           T.tag("svg", ra(T.tag("circle"), () -> shared.n.get(), "r"),
@@ -506,11 +506,11 @@ class RandomAppTest {
           loading(() -> r(() -> T.span("[remote=" + shared.remote.get() + "]"))).withFallback(T.span("[remote=loading]")),
           loading(() -> T.div().withId("inner" + me.id + "n" + shared.n.get()).withClient(inner)).withFallback(T.span("[inner=loading]"))));
         kids.add(r(() -> child.get() ? new Child(url) : null));
+        kids.add(T.tag("table", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr", T.tag("td", "[bare"
+          + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k))))));
+        kids.add(T.tag("template", r(() -> T.span("[tpl" + me.id + "=" + shared.n.get() + "]"))));
+        kids.add(T.button("pending" + me.id).withPending(r(() -> T.span("[pend" + me.id + "=" + shared.n.get() + "]"))));
         if (RESHAPED) {
-          kids.add(T.tag("table", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr", T.tag("td", "[bare"
-            + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k))))));
-          kids.add(T.tag("template", r(() -> T.span("[tpl" + me.id + "=" + shared.n.get() + "]"))));
-          kids.add(T.button("pending" + me.id).withPending(r(() -> T.span("[pend" + me.id + "=" + shared.n.get() + "]"))));
           kids.add(T.tag("p", r(() -> T.tag("div", "[pdiv" + me.id + "=" + shared.n.get() + "]"))));
         }
         return T.page("t", T.div(kids.toArray(new DomContent[0])));
@@ -1161,13 +1161,13 @@ class RandomAppTest {
         }
         expect(tab, rows.toString().equals(wantedRows.toString()), at + ": rows " + rows + " for n=" + n);
         for (int k : rowsFor(n)) {
-          for (String table : RESHAPED ? new String[] {"bare", "body"} : new String[] {"body"}) {
+          for (String table : new String[] {"bare", "body"}) {
             String cell = "[" + table + pageId + "." + k + "=" + (n + k) + "]";
             expect(tab, tab.doc.contains(cell), at + ": wanted " + cell);
           }
         }
         for (String shown : RESHAPED ? new String[] {"svg", "fo", "pspan", "tpl", "pend", "pdiv"}
-          : new String[] {"svg", "fo", "pspan"}) {
+          : new String[] {"svg", "fo", "pspan", "tpl", "pend"}) {
           String text = "[" + shown + pageId + "=" + n + "]";
           expect(tab, tab.doc.contains(text), at + ": wanted " + text);
         }
@@ -1481,7 +1481,7 @@ class RandomAppTest {
   static volatile boolean regions;
 
   /**
-   * app.reshaped: also what the parser reshapes that still fails with regions (see the page's view), to work on it.
+   * app.reshaped: also what the parser reshapes that still fails with regions (a div in a p), to work on it.
    */
   static final boolean RESHAPED = Boolean.getBoolean("app.reshaped");
 
@@ -1501,6 +1501,23 @@ class RandomAppTest {
     regions = true;
     try {
       wholeAppsDrivenAtRandomEndUpShowingTheirState();
+    } finally {
+      regions = false;
+    }
+  }
+
+  /**
+   * Seeds past the default ones that found bugs with regions: a page served while another tab's hold kept its pass
+   * from showing, then left (57, its root; 69, a page in a layout), and a region running again on its own meanwhile,
+   * whose patch the held pass then brings (106).
+   */
+  @Test
+  void seedsThatFoundBugsWithRegions() throws Exception {
+    regions = true;
+    try {
+      for (long seed : new long[] {57, 69, 106}) {
+        run(seed, 40, java.util.Collections.emptySet());
+      }
     } finally {
       regions = false;
     }

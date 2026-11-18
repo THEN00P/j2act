@@ -189,6 +189,54 @@ class LeavingPageTest {
     buttonsWorkWhileTheNextPageLoads("/deep/item/1", "/shell/slow/x");
   }
 
+  /**
+   * A browser's tabs share one runtime, and a hold in one keeps the passes of the others from showing: a page served
+   * then comes from a pass whose second half has not run, so its scopes have no html yet. It is on screen all the same,
+   * so leaving it keeps it working until what replaces it comes (RandomAppTest seed 57 with -Dapp.reshaped=true).
+   */
+  @Test
+  void aPageServedFromAPassAHoldKeptFromShowingStaysWhileItIsLeft() {
+    servedFromAPassAHoldKeptFromShowing("/alone/item/1");
+  }
+
+  @Test
+  void aPageUnderALayoutWhosePassAHoldKeptFromShowingStaysWhileItIsLeft() {
+    servedFromAPassAHoldKeptFromShowing("/shell/item/1");
+  }
+
+  private void servedFromAPassAHoldKeptFromShowing(String from) {
+    try (Harness h = new Harness(ROUTES, LONG_HOLD)) {
+      h.load(from, Exchange.empty());
+      h.connect();
+      String add = Harness.clickOn(h.html, "add");
+      Tab tab = h.engine.liveTab(h.token);
+      // The state such a hold leaves: the page has it, but the item's pass has not shown.
+      tab.call(() -> {
+        Scope item = itemIn(tab.root);
+        assertTrue(item != null && item.rendered != null, "the item's scope");
+        item.html = null;
+        return null;
+      }).join();
+      go(h, "/alone/slow/x");
+      h.click(add);
+      assertEquals(0, h.engine.stats().rejectedEvents.get(), "the page on screen refused a click");
+      assertEquals(0, cleanups.get(), "it is still there");
+    }
+  }
+
+  private static Scope itemIn(Scope scope) {
+    if (scope.instance instanceof Item) {
+      return scope;
+    }
+    for (Scope child : scope.children.values()) {
+      Scope found = itemIn(child);
+      if (found != null) {
+        return found;
+      }
+    }
+    return null;
+  }
+
   @Test
   void onceThePageIsReplacedItsButtonsAreGone() {
     try (Harness h = new Harness(ROUTES, LONG_HOLD)) {

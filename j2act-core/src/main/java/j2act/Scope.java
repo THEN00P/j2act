@@ -591,6 +591,7 @@ final class Scope {
 
   /** The second half: the frame can show, so its patch is on its way, and what it replaced goes with that. */
   private void shown(String value) {
+    value = withLatestChildren(value);
     html = value;
     if (value == embedded) {
       // What is around it brings this along, in its own patch.
@@ -603,6 +604,25 @@ final class Scope {
     } else {
       tab.queuePatch(this);
     }
+  }
+
+  /**
+   * What this pass rendered, with what each child showed since in place of what it rendered here. They differ only when
+   * a hold kept this pass from showing while a child ran again on its own: the child's patch waited for this one, as
+   * the page had no place for it yet, so this one brings it (ADR 0036).
+   */
+  private String withLatestChildren(String value) {
+    for (Scope child : children.values()) {
+      String was = child.embedded;
+      if (child.html == null || was == null || child.html.equals(was)) {
+        continue;
+      }
+      int at = value.indexOf(was);
+      if (at >= 0) {
+        value = value.substring(0, at) + child.html + value.substring(at + was.length());
+      }
+    }
+    return value;
   }
 
   /** The page has this, or never will: nothing on it can reach what the pass behind it removed. */
@@ -660,11 +680,28 @@ final class Scope {
   /** Whether the page has this scope: it has shown, and so has everything around it. */
   boolean onThePageAllTheWay() {
     for (Scope s = this; s != null; s = s.parent) {
-      if (s.html == null || (s.parent == null ? s != tab.rootOnPage : !s.onThePage())) {
+      if (s.shows() == null || (s.parent == null ? s != tab.rootOnPage : s.html != null && !s.onThePage())) {
         return false;
       }
     }
     return true;
+  }
+
+  /**
+   * What the page shows of this scope: what its last pass showed; or, when a hold kept that pass from showing (a
+   * browser's runtime holds for all its tabs), what it rendered there, if the page has it all the same: served as the
+   * root, or inside what its parent shows.
+   */
+  String shows() {
+    if (html != null) {
+      return html;
+    }
+    String has = embedded != null ? embedded : rendered;
+    if (parent == null) {
+      return this == tab.rootOnPage ? has : null;
+    }
+    String around = parent.shows();
+    return around != null && around.contains(mark()) ? has : null;
   }
 
   /** The pass of a parent placing this scope: runs its effect inside that pass, and stops if it stopped. */
