@@ -316,6 +316,13 @@ final class Renderer {
     } finally {
       Tracking.swapScope(previousScope);
     }
+    RegionTag region = (RegionTag) scope.instance;
+    if (!java.util.Objects.equals(keyOf(content), region.key)) {
+      // Keyed by what it showed when made, as the plain build's slot would be: another key is another slot, which
+      // only the view that made it can place, so that view runs again and what was here goes.
+      tab.markDirty(region.creator);
+      content = null;
+    }
     out.append("<!--j2:").append(scope.anchor).append("-->");
     if (content != null) {
       renderNode(scope, "", content, false);

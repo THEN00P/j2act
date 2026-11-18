@@ -357,8 +357,11 @@ final class Scope {
         CutTag shown = (CutTag) instance;
         if (shown.node != cut.node) {
           // Its view ran again: this run's node takes over, and the last one goes.
-          tab.rt.disposeNode(shown.node);
+          shown.release();
           shown.node = cut.node;
+          if (shown instanceof RegionTag) {
+            ((RegionTag) shown).adopt((RegionTag) cut);
+          }
         }
         if (shown instanceof AttrTag) {
           ((AttrTag) shown).adopt((AttrTag) cut);
@@ -708,7 +711,7 @@ final class Scope {
     }
     disposed = true;
     if (instance instanceof CutTag && instance.scope == this) {
-      tab.rt.disposeNode(((CutTag) instance).node);
+      ((CutTag) instance).release();
     }
     CutTag.dropUnplaced(tab, regionsMade);
     if (leftBehind) {

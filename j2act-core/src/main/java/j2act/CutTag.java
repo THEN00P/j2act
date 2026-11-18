@@ -66,6 +66,11 @@ abstract class CutTag extends ComponentTag {
     }
   }
 
+  /** Its node goes: its scope took a newer one, or went itself. */
+  void release() {
+    tab.rt.disposeNode(node);
+  }
+
   /** What its supplier last gave. */
   private Object computed;
   /** The cut whose supplier is running on this thread, if one is. */

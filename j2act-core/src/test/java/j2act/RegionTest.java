@@ -395,6 +395,59 @@ class RegionTest {
     }
   }
 
+  static final class Count extends ComponentTag {
+    @Override protected View setup() {
+      var n = createSignal(0);
+      return () -> T.button("n " + n.get()).onClick(e -> n.set(n.get() + 1));
+    }
+  }
+
+  static final class Rekeyed extends LiveComponent {
+    @Override protected View setup() {
+      var id = createSignal(1);
+      return () -> T.page("t", T.button("id").onClick(e -> id.set(id.get() + 1)),
+        Regions.of(() -> new Count().withKey(id.get())));
+    }
+  }
+
+  @Test
+  void aRegionWhoseKeyChangesPlacesANewComponentAsPlainDoes() {
+    try (Harness h = new Harness(Rekeyed::new)) {
+      String html = h.load();
+      h.connect();
+      h.click(Harness.clickOn(html, "n 0"));
+      assertTrue(h.page().contains("n 1"), h.page());
+      h.click(Harness.clickOn(h.page(), "id"));
+      assertTrue(h.page().contains("n 0"), "another key, another component: " + h.page());
+    }
+  }
+
+  static final class InlineNested extends LiveComponent {
+    @Override protected View setup() {
+      var n = createSignal(0);
+      var label = createSignal("notes");
+      // The outer region reads a signal of its own, so it is a region and not part of the view, which runs again.
+      return () -> T.page("t", T.button("view " + n.get()).onClick(e -> n.set(n.get() + 1)),
+        Regions.of(() -> T.tag("textarea", Regions.of(() -> new Text(label.get() + " " + n.get())))
+          .attr("name", label.get())));
+    }
+  }
+
+  @Test
+  void aRegionReplacedDropsTheRegionsItRenderedInline() throws Exception {
+    try (Harness h = new Harness(InlineNested::new)) {
+      h.load();
+      h.connect();
+      Tab tab = h.engine.tab(h.sid);
+      List<Integer> owned = new java.util.ArrayList<>();
+      for (int i = 0; i < 5; i++) {
+        h.click(Harness.clickOn(h.page(), "view " + i));
+        owned.add(tab.call(() -> tab.rt.ownedCount(tab.root.slot)).get());
+      }
+      assertEquals(owned.get(1), owned.get(4), "what the view owns stays as it runs again: " + owned);
+    }
+  }
+
   static CompletableFuture<Void> gate;
 
   /** The demo's Publisher, as the enhancer leaves it: a region of the button, and in it its disabled attribute. */

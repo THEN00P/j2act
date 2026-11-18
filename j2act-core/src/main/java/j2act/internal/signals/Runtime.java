@@ -523,6 +523,15 @@ public final class Runtime {
     node.statusFlags &= ~Constants.STATUS_UNINITIALIZED;
   }
 
+  /** How many owners and nodes live below this one, at any depth: what a test counts to see nothing leaks. */
+  public int ownedCount(Owner owner) {
+    int count = 0;
+    for (Owner child = owner.firstChild; child != null; child = child.nextSibling) {
+      count += 1 + ownedCount(child);
+    }
+    return count;
+  }
+
   /** Whether its last run read anything that could run it again. */
   public boolean hasSources(Node node) {
     return node.deps != null;

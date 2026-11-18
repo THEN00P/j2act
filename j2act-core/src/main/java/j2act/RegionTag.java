@@ -18,8 +18,8 @@ final class RegionTag extends CutTag {
   /** Where the regions a running region's supplier makes are listed, while it runs. */
   private static final ThreadLocal<List<CutTag>> IN_REGION = new ThreadLocal<>();
 
-  /** The regions its supplier's last run made. */
-  private final List<CutTag> made = new ArrayList<>();
+  /** The regions its supplier's last run made: the list that run's node fills, which a scope showing it takes over. */
+  private List<CutTag> made = new ArrayList<>();
 
   private RegionTag(Tab tab, Scope creator) {
     super(tab, creator, tab.rt.getOwner());
@@ -73,6 +73,17 @@ final class RegionTag extends CutTag {
       region.key = ((Hoisted) value).key();
     }
     return region;
+  }
+
+  /** With its node go the regions its supplier made that no scope took: rendered inline, nothing else drops them. */
+  @Override void release() {
+    dropUnplaced(tab, made);
+    super.release();
+  }
+
+  /** The view ran again and made `newer` where this one is shown: from now on its node's regions are listed here. */
+  void adopt(RegionTag newer) {
+    made = newer.made;
   }
 
   /** What it renders now, read by the scope rendering it. */
