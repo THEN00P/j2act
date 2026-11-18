@@ -327,6 +327,25 @@ class RegionTest {
     }
   }
 
+  static final class Lang extends LiveComponent {
+    @Override protected View setup() {
+      var lang = createSignal("en");
+      return () -> attr(T.page("t", T.button("lang " + "de").onClick(e -> lang.set("de"))), lang::get, "lang");
+    }
+  }
+
+  @Test
+  void theDocumentsOwnAttributesStayWithTheView() {
+    try (Harness h = new Harness(Lang::new)) {
+      String html = h.load();
+      assertTrue(html.contains(" lang=\"en\""), html);
+      assertFalse(html.contains("data-j2-a-"), html);
+      h.connect();
+      h.click(Harness.clickOn(html, "lang de"));
+      assertTrue(h.page().contains(" lang=\"de\""), h.page());
+    }
+  }
+
   static CompletableFuture<Void> gate;
 
   /** The demo's Publisher, as the enhancer leaves it: a region of the button, and in it its disabled attribute. */

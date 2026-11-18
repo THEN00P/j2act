@@ -4,6 +4,7 @@ package fixtures;
 public final class Profile {
   private String name;
   private String city;
+  private Pet pet;
 
   public Profile() {
   }
@@ -11,6 +12,9 @@ public final class Profile {
   public Profile(String name, String city) {
     this.name = name;
     this.city = city;
+    this.pet = new Pet();
+    this.pet.setKind("cat");
+    this.pet.setName("Tom");
   }
 
   public String getName() {
@@ -27,5 +31,13 @@ public final class Profile {
 
   public void setCity(String city) {
     this.city = city;
+  }
+
+  public Pet getPet() {
+    return pet;
+  }
+
+  public void setPet(Pet pet) {
+    this.pet = pet;
   }
 }

@@ -14,4 +14,13 @@ public final class Pet extends Named {
   public void setKind(String kind) {
     this.kind = kind;
   }
+
+  /** Equal by kind, as an entity is by its id: a renamed pet is still equal to what it was. */
+  @Override public boolean equals(Object o) {
+    return o instanceof Pet && java.util.Objects.equals(kind, ((Pet) o).kind);
+  }
+
+  @Override public int hashCode() {
+    return java.util.Objects.hashCode(kind);
+  }
 }

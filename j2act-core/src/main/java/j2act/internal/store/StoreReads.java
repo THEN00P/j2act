@@ -8,11 +8,6 @@ public final class StoreReads {
   private StoreReads() {
   }
 
-  /**
-   * owner is about to read its field name. When a store built owner, the reader subscribes to that field, and to
-   * what the field holds where that cannot track itself: a list's or a map's size and slots, and the whole of an
-   * object whose class is not tracked. An object no store built subscribes to nothing.
-   */
   /** What runs when a read finds its object out of date; the engine installs it (ADR 0036). */
   private static volatile Runnable stale = () -> { };
 
@@ -33,12 +28,24 @@ public final class StoreReads {
     if (record instanceof BeanView) {
       BeanView view = (BeanView) record;
       Object now = view.shape.readField(view, name, own, type);
-      boolean same = now == own || (!(now instanceof Tracked) && !(own instanceof Tracked) && java.util.Objects.equals(now, own));
+      // An object by identity: a store hands out the same snapshot until something in it changes, and a new one
+      // after, even when it equals the old one, as an entity equal by its id does. A scalar by its value.
+      boolean same = now == own || (scalar(now) && java.util.Objects.equals(now, own));
       if (!same) {
         stale.run();
       }
     }
     return own;
+  }
+
+  /**
+   * owner is about to read its field name. When a store built owner, the reader subscribes to that field, and to
+   * what the field holds where that cannot track itself: a list's or a map's size and slots, and the whole of an
+   * object whose class is not tracked. An object no store built subscribes to nothing.
+   */
+  private static boolean scalar(Object value) {
+    return value instanceof String || value instanceof Number || value instanceof Boolean
+      || value instanceof Character || value instanceof Enum;
   }
 
   public static void field(Object owner, String name) {

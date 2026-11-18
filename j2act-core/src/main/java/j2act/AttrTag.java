@@ -19,11 +19,13 @@ import java.util.function.Supplier;
  * wins in the plain build, so then the view runs again instead.
  *
  * <p>Form fields get none: their value, checked and selected are merged with what the user does (ADR 0013, 0034), so
- * their attributes stay part of the view around them.
+ * their attributes stay part of the view around them. So do html's and head's, which render with the document.
  */
 final class AttrTag extends CutTag {
 
   private static final Set<String> FORM_FIELDS = Set.of("input", "textarea", "select", "option");
+  /** The document's own: the page writes html's attributes as it is, and a head's are merged into the tab's head. */
+  private static final Set<String> DOCUMENT = Set.of("html", "head");
 
   /** The tag it sets, the description of the view's last run, which it keeps setting as the value changes. */
   Tag<?> tag;
@@ -46,7 +48,8 @@ final class AttrTag extends CutTag {
     Scope creator = Tracking.scope();
     Tab tab = Tab.current();
     List<CutTag> into = RegionTag.listFor(creator);
-    if (tab == null || into == null || !(target instanceof Tag) || FORM_FIELDS.contains(((Tag<?>) target).name)) {
+    if (tab == null || into == null || !(target instanceof Tag) || FORM_FIELDS.contains(((Tag<?>) target).name)
+      || DOCUMENT.contains(((Tag<?>) target).name)) {
       return setter.apply(target, value.get());
     }
     Tag<?> tag = (Tag<?>) target;

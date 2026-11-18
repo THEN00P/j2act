@@ -89,7 +89,7 @@ class EnhancedAppTest {
     Enhancer.Report report = new Enhancer(classpath()).enhance(enhanced);
     assertEquals(1, report.tracked, "Profile, and not Pet, nor any page or component: " + report);
     verify(enhanced);
-    List<String> steps = Arrays.asList("rename", "move", "move", "rename");
+    List<String> steps = Arrays.asList("rename", "move", "move", "rename", "pet");
     int[] runs = new int[2];
     List<List<String>> pages = new ArrayList<>();
     for (Path classes : Arrays.asList(plain, enhanced)) {
@@ -119,7 +119,9 @@ class EnhancedAppTest {
     assertEquals(pages.get(0), pages.get(1), compiler.getClass().getSimpleName());
     assertTrue(pages.get(1).get(3).contains("name Ada!!") && pages.get(1).get(3).contains("city Wien++"), pages.get(1).get(3));
     assertTrue(pages.get(1).get(3).contains("kept Wien++"), "an object kept from the view reads the store now: " + pages.get(1).get(3));
-    assertEquals(5, runs[0], "plain, the whole view runs every time");
+    assertTrue(pages.get(1).get(4).contains("pet Tom#"),
+      "a kept object reads a nested one that is still equal to what it was: " + pages.get(1).get(4));
+    assertEquals(6, runs[0], "plain, the whole view runs every time");
     assertEquals(3, runs[1], "enhanced, the name runs for itself and the two renames only");
   }
 

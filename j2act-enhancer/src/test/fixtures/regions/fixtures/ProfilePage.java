@@ -20,6 +20,7 @@ public final class ProfilePage extends LiveComponent {
       body(
         button("rename").onClick(e -> profile.update(d -> d.setName(d.getName() + "!"))),
         button("move").onClick(e -> profile.update(d -> d.setCity(d.getCity() + "+"))),
+        button("pet").onClick(e -> profile.update(d -> d.getPet().setName(d.getPet().getName() + "#"))),
         p(name(profile.get())),
         p(span("city " + profile.get().getCity())),
         new Kept().with(profile)));
@@ -38,7 +39,7 @@ public final class ProfilePage extends LiveComponent {
     @Override protected View setup() {
       return () -> {
         Profile now = profile.get().get();
-        return p(span("kept " + now.getCity()));
+        return p(span("kept " + now.getCity()), span("pet " + now.getPet().getName()));
       };
     }
   }
