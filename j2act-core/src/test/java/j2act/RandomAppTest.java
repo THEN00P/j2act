@@ -431,8 +431,8 @@ class RandomAppTest {
             + (shared.n.get() + k) + "]").withKey(k))))),
           // Where the parser reshapes what it reads (BrowserParse): rows in a table's tbody, SVG and the HTML inside
           // its foreignObject, and a p; and, below, rows straight in a table, which the parser puts in a tbody of its
-          // own, and a template's content and a pending element's, out of the document. With app.reshaped, also what
-          // still fails with regions: a p holding a div, which the parser closes first.
+          // own, a template's content and a pending element's, out of the document, a p holding a div, which the parser
+          // closes first, also below a span, an li in an li, and a tbody straight in a table, whose markers stand.
           T.tag("table", T.tag("tbody", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr",
             T.tag("td", "[body" + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k)))))),
           T.tag("svg", ra(T.tag("circle"), () -> shared.n.get(), "r"),
@@ -512,9 +512,11 @@ class RandomAppTest {
         kids.add(T.tag("iframe", r(() -> new Text("[ifr" + me.id + "=" + shared.n.get() + "]"))));
         kids.add(T.tag("noscript", r(() -> new Text("[nos" + me.id + "=" + shared.n.get() + "]"))));
         kids.add(T.button("pending" + me.id).withPending(r(() -> T.span("[pend" + me.id + "=" + shared.n.get() + "]"))));
-        if (RESHAPED) {
-          kids.add(T.tag("p", r(() -> T.tag("div", "[pdiv" + me.id + "=" + shared.n.get() + "]"))));
-        }
+        kids.add(T.tag("p", r(() -> T.tag("div", "[pdiv" + me.id + "=" + shared.n.get() + "]"))));
+        kids.add(T.tag("p", r(() -> T.tag("span", T.tag("div", "[psd" + me.id + "=" + shared.n.get() + "]")))));
+        kids.add(T.tag("ul", T.tag("li", r(() -> T.tag("li", "[lili" + me.id + "=" + shared.n.get() + "]")))));
+        kids.add(T.tag("table", r(() -> T.tag("tbody", T.tag("tr", T.tag("td", "[tsec" + me.id + "=" + shared.n.get()
+          + "]"))))));
         return T.page("t", T.div(kids.toArray(new DomContent[0])));
       };
     }
@@ -1160,8 +1162,8 @@ class RandomAppTest {
             expect(tab, tab.doc.contains(cell), at + ": wanted " + cell);
           }
         }
-        for (String shown : RESHAPED ? new String[] {"svg", "fo", "pspan", "tpl", "pend", "ifr", "nos", "pdiv"}
-          : new String[] {"svg", "fo", "pspan", "tpl", "pend", "ifr", "nos"}) {
+        for (String shown : new String[] {"svg", "fo", "pspan", "tpl", "pend", "ifr", "nos", "pdiv", "psd", "lili",
+          "tsec"}) {
           String text = "[" + shown + pageId + "=" + n + "]";
           expect(tab, tab.doc.contains(text), at + ": wanted " + text);
         }
@@ -1473,11 +1475,6 @@ class RandomAppTest {
    * end up showing its state either way.
    */
   static volatile boolean regions;
-
-  /**
-   * app.reshaped: also what the parser reshapes that still fails with regions (a div in a p), to work on it.
-   */
-  static final boolean RESHAPED = Boolean.getBoolean("app.reshaped");
 
   static DomContent r(java.util.function.Supplier<? extends DomContent> content) {
     return regions ? j2act.internal.regions.Regions.of(content) : content.get();

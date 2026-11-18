@@ -417,6 +417,37 @@ class RegionTest {
     }
   }
 
+  static final class Reshaped extends LiveComponent {
+    @Override protected View setup() {
+      var block = createSignal(false);
+      var n = createSignal(0);
+      return () -> T.page("t", T.button("block").onClick(e -> block.set(!block.get())),
+        T.button("more").onClick(e -> n.set(n.get() + 1)),
+        T.tag("p", Regions.of(() -> block.get() ? T.tag("div", "div " + n.get()) : T.span("span " + n.get()))),
+        T.tag("table", Regions.of(() -> T.tag("tbody", T.tag("tr", T.tag("td", "cell " + n.get()))))));
+    }
+  }
+
+  @Test
+  void aRegionWhoseContentTheParserWouldMoveOutOfItsMarkersIsPartOfTheViewAroundIt() {
+    try (Harness h = new Harness(Reshaped::new)) {
+      String html = h.load();
+      // A span stays in the p, and a tbody in the table: both regions keep their markers.
+      assertTrue(html.matches("(?s).*<p><!--j2:s\\d+--><span>span 0</span><!--/j2:s\\d+--></p>.*"), html);
+      assertTrue(html.matches("(?s).*<table><!--j2:s\\d+--><tbody>.*"), html);
+      h.connect();
+      h.click(Harness.clickOn(html, "more"));
+      assertTrue(h.page().contains("span 1") && h.page().contains("cell 1"), h.page());
+      // A div would end the p first: now the view renders it, with no markers to move.
+      h.click(Harness.clickOn(h.page(), "block"));
+      assertTrue(h.page().contains("<p><div>div 1</div></p>"), h.page());
+      h.click(Harness.clickOn(h.page(), "more"));
+      assertTrue(h.page().contains("<p><div>div 2</div></p>"), h.page());
+      h.click(Harness.clickOn(h.page(), "block"));
+      assertTrue(h.page().contains("span 2"), h.page());
+    }
+  }
+
   static final class Count extends ComponentTag {
     @Override protected View setup() {
       var n = createSignal(0);

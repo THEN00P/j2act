@@ -140,7 +140,7 @@ final class Checks {
         unsafeCall(node, scope);
       }
       missingKeys(node, scope);
-      rowsInTable(node, scope);
+      nesting(node, scope);
       retainedChangedInPlace(node, scope);
       readsInAsync(node, scope);
       transactionalSelfCall(node, scope);
@@ -393,51 +393,116 @@ final class Checks {
     }
   }
 
-  // ---- rows straight in a table (ADR 0036)
+  // ---- markup the parser builds otherwise (ADR 0036)
+
+  /** Tag calls already looked at from an outer one, which saw what is open around them. */
+  private final Set<Node> nested = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
   /**
-   * A tr given to table(...), or to a with(...) on one, alone or as each(...)'s rows. The browser's parser puts it into
-   * a tbody it makes, which the HTML j2act sends does not have: patches are parsed into that shape again, and what
-   * the enhancer cuts out stays part of the table's view, its rows re-rendering with it. Writing the tbody gives the
-   * page the shape the view describes.
+   * A tag given to another where the browser's parser builds something else (j2act.internal.html.Nesting, the table
+   * the renderer goes by): a div in a p, whose p the parser ends first, a tr straight in a table, which it puts into a
+   * tbody of its own, text or a span fostered out of a row. The page then holds other elements than the HTML j2act
+   * sends, patches are parsed into that shape again, and what the enhancer cuts out there stays part of the view
+   * around it. Looked at from the outermost tag call down, so what is open includes every tag call around it.
    */
-  private void rowsInTable(Node call, Scope scope) {
-    boolean table = call.name.equals("table") && call.receiver == null && isTagCreator(call, scope)
-      || call.name.equals("with") && call.receiver != null && isTable(chainRoot(call.receiver), scope);
-    if (!table) {
+  private void nesting(Node call, Scope scope) {
+    if (nested.contains(call)) {
       return;
     }
-    for (Node child : call.args) {
-      Node row = rowOf(child, scope);
-      if (row != null) {
-        report(row, scope, "tr in table(...) without tbody(...): the browser moves it into a tbody of its own, so "
-          + "its rows re-render with the whole table; wrap them in tbody(...) (ADR 0036)");
-      }
+    Node root = chainRoot(call);
+    if (call.kind != Node.Kind.CALL || (call != root && !call.name.equals("with")) || !isTag(root, scope)) {
+      return;
     }
+    nesting(call, j2act.internal.html.Nesting.Open.push(null, root.name), scope);
   }
 
-  /** The tr a table child is, or the each(...) whose rows are trs; null otherwise. */
-  private Node rowOf(Node child, Scope scope) {
-    Node root = chainRoot(child);
-    if (root.is(Node.Kind.CALL, "tr") && root.receiver == null && isTagCreator(root, scope)) {
-      return child;
+  private void nesting(Node call, j2act.internal.html.Nesting.Open open, Scope scope) {
+    nested.add(call);
+    if (open.name.equals("template") || j2act.internal.html.Nesting.TEXT.contains(open.name)) {
+      // A template's content is parsed on its own, and text is text: nothing below is looked at alone either.
+      quiet(call);
+      return;
     }
-    if (child.is(Node.Kind.CALL, "each") && child.receiver == null && !child.args.isEmpty()
-        && child.args.get(child.args.size() - 1).kind == Node.Kind.LAMBDA
-        && scope.isOwnedBy(scope.candidates(child), TAG_HELPERS)) {
-      for (Node row : results(child.args.get(child.args.size() - 1))) {
-        Node r = chainRoot(row);
-        if (r.is(Node.Kind.CALL, "tr") && r.receiver == null && isTagCreator(r, scope)) {
-          return child;
+    for (Node arg : call.args) {
+      List<Node> tags = new ArrayList<>();
+      Node root = chainRoot(arg);
+      if (isTag(root, scope)) {
+        tags.add(arg);
+      } else if (arg.is(Node.Kind.CALL, "each") && arg.receiver == null && !arg.args.isEmpty()
+          && arg.args.get(arg.args.size() - 1).kind == Node.Kind.LAMBDA
+          && scope.isOwnedBy(scope.candidates(arg), TAG_HELPERS)) {
+        for (Node row : results(arg.args.get(arg.args.size() - 1))) {
+          if (isTag(chainRoot(row), scope)) {
+            tags.add(row);
+          }
+        }
+      }
+      boolean reported = false;
+      for (Node tag : tags) {
+        String name = chainRoot(tag).name;
+        j2act.internal.html.Nesting.Fix fix = j2act.internal.html.Nesting.repair(name, open);
+        if (fix != null && !reported) {
+          report(arg, scope, nestingMessage(name, open, fix));
+          reported = true;
+        }
+        j2act.internal.html.Nesting.Open inside = fix == null ? j2act.internal.html.Nesting.Open.push(open, name)
+          : fix.repair == j2act.internal.html.Nesting.Repair.CLOSES
+            ? j2act.internal.html.Nesting.Open.push(fix.at.up, name)
+          : fix.repair == j2act.internal.html.Nesting.Repair.WRAPS ? j2act.internal.html.Nesting.Open.push(open, name)
+          : open;
+        for (Node c = tag; c != null && c.kind == Node.Kind.CALL; c = c.receiver) {
+          if (c == chainRoot(tag) || c.name.equals("with")) {
+            nesting(c, inside, scope);
+          }
+          if (c == chainRoot(tag)) {
+            break;
+          }
         }
       }
     }
-    return null;
   }
 
-  private boolean isTable(Node node, Scope scope) {
-    return node.is(Node.Kind.CALL, "table") && node.receiver == null && isTagCreator(node, scope);
+  private void quiet(Node node) {
+    for (Node child : node.children) {
+      if (child.kind == Node.Kind.CALL) {
+        nested.add(child);
+      }
+      quiet(child);
+    }
   }
+
+  private static String nestingMessage(String name, j2act.internal.html.Nesting.Open open,
+      j2act.internal.html.Nesting.Fix fix) {
+    if (name.equals("tr") && open.name.equals("table") && fix.repair == j2act.internal.html.Nesting.Repair.WRAPS) {
+      return "tr in table(...) without tbody(...): the browser moves it into a tbody of its own, so its rows re-render"
+        + " with the whole table; wrap them in tbody(...) (ADR 0036)";
+    }
+    String what;
+    switch (fix.repair) {
+      case CLOSES:
+        what = "ends the " + fix.at.name + " before it";
+        break;
+      case WRAPS:
+        what = "puts it into a " + (name.equals("col") ? "colgroup" : name.equals("tr") ? "tbody" : "tr") + " of its own";
+        break;
+      case FOSTERS:
+        what = "moves it out of the table, before it";
+        break;
+      case EMPTIES:
+        what = "leaves it empty, and moves what is in it out";
+        break;
+      default:
+        what = "drops its tag, keeping what is in it";
+    }
+    return name + " in " + open.name + "(...): the browser's parser " + what + ", so the page holds other elements than"
+      + " the view, and what is cut out there re-renders with what is around it (ADR 0036)";
+  }
+
+  /** A call of one of TagCreator's tag factories. */
+  private boolean isTag(Node node, Scope scope) {
+    return node.kind == Node.Kind.CALL && node.receiver == null && isTagCreator(node, scope);
+  }
+
 
   private boolean isTagCreator(Node call, Scope scope) {
     return scope.isOwnedBy(scope.candidates(call), TAG_CREATOR);

@@ -15,6 +15,14 @@
     <ecj.version>3.46.100</ecj.version>
   </properties>
   <dependencies>
+    <!--
+      Nesting, the HTML parser's table the renderer goes by (ADR 0036), so the processor warns where the renderer folds.
+      Core has no dependencies of its own; on the processor path only, as the processor is.
+    -->
+    <dependency>
+      <groupId>io.github.then00p.j2act</groupId>
+      <artifactId>j2act-core</artifactId>
+    </dependency>
     <!-- Test only: fixtures compile against the real API, under javac and under ECJ. -->
     <dependency>
       <groupId>io.github.then00p.j2act</groupId>

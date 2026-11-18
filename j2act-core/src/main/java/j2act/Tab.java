@@ -1221,16 +1221,31 @@ public final class Tab {
 
   /**
    * A patch's HTML with each scope below that the page already has, exactly as it renders now, sent as a stub the
-   * client keeps (ADR 0036); never where no marker can stand (Renderer.NO_MARKERS) nor inside a template's content. A controlled field's patch is always sent, since the client merges the user's typing
+   * client keeps (ADR 0036); never inside a template's content or an element the parser reads as text, nor where the
+   * parser would not keep the scope's element where it stands (Nesting), as a tr directly in a table, which a stub
+   * would move out of the tbody the page's parser made for it. A controlled field's patch is always sent, since the client merges the user's typing
    * with every answer the server gives it (ADR 0034).
    */
+  /** Whether the parser keeps the element a scope's HTML starts with where the scope is placed. */
+  private static boolean keptWhereItStands(Scope scope) {
+    String html = scope.html;
+    if (!html.startsWith("<") || html.length() < 2 || !Character.isLetter(html.charAt(1))) {
+      return true; // a region's markers, which were placed only where they fit
+    }
+    int end = 1;
+    while (end < html.length() && html.charAt(end) != ' ' && html.charAt(end) != '>' && html.charAt(end) != '/') {
+      end++;
+    }
+    return j2act.internal.html.Nesting.repair(html.substring(1, end), scope.placedOpen) == null;
+  }
+
   private static String stubbed(Scope scope, String html) {
     if (scope.disposed || scope.detached || scope.html == null || scope.instance instanceof AttrTag) {
       return html;
     }
     int at;
     if (scope.html.equals(scope.onPage) && !scope.html.contains("data-j2-controlled=\"")
-      && !Renderer.NO_MARKERS.contains(scope.placedInside) && !scope.placedInert && (at = html.indexOf(scope.html)) >= 0) {
+      && !scope.placedInert && keptWhereItStands(scope) && (at = html.indexOf(scope.html)) >= 0) {
       return html.substring(0, at) + "<!--j2=" + scope.anchor + "-->" + html.substring(at + scope.html.length());
     }
     for (Scope child : scope.children.values()) {

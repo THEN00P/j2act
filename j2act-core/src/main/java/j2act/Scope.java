@@ -61,8 +61,8 @@ final class Scope {
   /** A region's children, in order, as the page has them: what a list's operations start from (ADR 0036). */
   List<Scope> pageRows;
   private boolean inParent;
-  /** The element its parent's pass is inside at this scope's place. */
-  String placedInside;
+  /** The elements its parent's pass has open at this scope's place, innermost first. */
+  j2act.internal.html.Nesting.Open placedOpen;
   /** Placed inside a template's content (Renderer.inert). */
   boolean placedInert;
   /** What a loading(...) or errored(...) shows, rendered as a scope of its own. */
@@ -535,7 +535,7 @@ final class Scope {
     try {
       Renderer renderer = new Renderer(tab, tab.renderEpoch());
       renderer.nonce = tab.nonceFor(this);
-      renderer.enclosing = placedInside;
+      renderer.open = placedOpen;
       renderer.inert = placedInert;
       renderer.renderScope(this);
       out = renderer.out.toString();

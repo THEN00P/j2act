@@ -192,7 +192,7 @@ class LeavingPageTest {
   /**
    * A browser's tabs share one runtime, and a hold in one keeps the passes of the others from showing: a page served
    * then comes from a pass whose second half has not run, so its scopes have no html yet. It is on screen all the same,
-   * so leaving it keeps it working until what replaces it comes (RandomAppTest seed 57 with -Dapp.reshaped=true).
+   * so leaving it keeps it working until what replaces it comes (RandomAppTest seed 57, with a p holding a div among its shapes).
    */
   @Test
   void aPageServedFromAPassAHoldKeptFromShowingStaysWhileItIsLeft() {
