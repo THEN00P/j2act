@@ -58,8 +58,10 @@ final class RegionTag extends CutTag {
       }
     }, into);
     Object value = region.current();
-    if (region.static_() && !row) {
-      // It read nothing, so nothing will run it again: it is part of the view around it.
+    if (region.static_() && !row && region.made.isEmpty() && !holdsComponent((DomContent) value)) {
+      // It read nothing, so nothing will run it again: it is part of the view around it. Not when a component or a
+      // region of its own would move with that: whether it read anything can change from one run to the next, and a
+      // component placed in another scope starts over, where the plain build keeps it.
       tab.rt.disposeNode(region.node);
       into.addAll(region.made);
       region.made.clear();
@@ -84,6 +86,34 @@ final class RegionTag extends CutTag {
   /** The view ran again and made `newer` where this one is shown: from now on its node's regions are listed here. */
   void adopt(RegionTag newer) {
     made = newer.made;
+  }
+
+  /** Whether a component is placed anywhere in this content, which folding it would move to another scope. */
+  static boolean holdsComponent(DomContent content) {
+    if (content instanceof ComponentTag) {
+      return true;
+    }
+    if (content instanceof Fragment) {
+      for (DomContent child : ((Fragment) content).children) {
+        if (holdsComponent(child)) {
+          return true;
+        }
+      }
+    }
+    if (content instanceof Tag) {
+      Tag<?> tag = (Tag<?>) content;
+      if (tag.pending != null && holdsComponent(tag.pending)) {
+        return true;
+      }
+      if (tag instanceof ContainerTag) {
+        for (DomContent child : ((ContainerTag<?>) tag).children) {
+          if (holdsComponent(child)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   /** What it renders now, read by the scope rendering it. */

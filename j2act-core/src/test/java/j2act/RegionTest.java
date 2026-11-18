@@ -448,6 +448,38 @@ class RegionTest {
     }
   }
 
+  static final class Toggled extends LiveComponent {
+    @Override protected View setup() {
+      var flag = createSignal(true);
+      var other = createSignal(0);
+      return () -> {
+        boolean enabled = flag.get();
+        // The region reads other only while enabled: whether it reads anything changes, its counter does not.
+        return T.page("t", T.button("flip").onClick(e -> flag.set(!flag.get())),
+          Regions.of(() -> {
+            if (enabled) {
+              other.get();
+            }
+            return new Count();
+          }));
+      };
+    }
+  }
+
+  @Test
+  void aComponentStaysWhereItIsWhenItsRegionStopsReading() {
+    try (Harness h = new Harness(Toggled::new)) {
+      String html = h.load();
+      h.connect();
+      h.click(Harness.clickOn(html, "n 0"));
+      assertTrue(h.page().contains("n 1"), h.page());
+      h.click(Harness.clickOn(h.page(), "flip"));
+      assertTrue(h.page().contains("n 1"), "the counter kept its state, as plain: " + h.page());
+      h.click(Harness.clickOn(h.page(), "flip"));
+      assertTrue(h.page().contains("n 1"), "and back: " + h.page());
+    }
+  }
+
   static CompletableFuture<Void> gate;
 
   /** The demo's Publisher, as the enhancer leaves it: a region of the button, and in it its disabled attribute. */
