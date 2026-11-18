@@ -283,9 +283,13 @@ final class Renderer {
     finish(scope);
   }
 
-  /** Elements whose text the parser does not read as markup: no comment marker can stand in them. */
-  private static final java.util.Set<String> RAW_TEXT = new java.util.HashSet<>(java.util.Arrays.asList(
-    "textarea", "title", "script", "style"));
+  /**
+   * Elements no comment marker can stand directly in: the parser reads the text of the first four as no markup, and
+   * inside a table it puts what comes after a tr into a tbody it makes, so a closing marker would end up in another
+   * parent than its opening one. A tbody, thead or tfoot of the view's own keeps both together.
+   */
+  static final java.util.Set<String> NO_MARKERS = new java.util.HashSet<>(java.util.Arrays.asList(
+    "textarea", "title", "script", "style", "table"));
 
   /** A region (ADR 0036): what its node holds now, between the markers that patches find it by. */
   private void renderRegion(Scope scope) {
@@ -562,7 +566,7 @@ final class Renderer {
       }
     } else if (node instanceof Tag) {
       renderTag(scope, path, (Tag<?>) node, null);
-    } else if (node instanceof RegionTag && (rawText || RAW_TEXT.contains(enclosing))) {
+    } else if (node instanceof RegionTag && (rawText || NO_MARKERS.contains(enclosing))) {
       // Where no marker can stand, it is part of what is around it, which runs again for it.
       DomContent content = ((RegionTag) node).content();
       if (content != null) {

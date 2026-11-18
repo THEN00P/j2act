@@ -346,6 +346,28 @@ class RegionTest {
     }
   }
 
+  static final class Rows extends LiveComponent {
+    @Override protected View setup() {
+      var n = createSignal(0);
+      return () -> T.page("t", T.button("more " + n.get()).onClick(e -> n.set(n.get() + 1)),
+        T.tag("table", Regions.of(() -> T.tag("tr", T.tag("td", "bare " + n.get())))),
+        T.tag("table", T.tag("tbody", Regions.of(() -> T.tag("tr", T.tag("td", "body " + n.get()))))));
+    }
+  }
+
+  @Test
+  void aRegionDirectlyInATableIsPartOfWhatIsAroundIt() {
+    try (Harness h = new Harness(Rows::new)) {
+      String html = h.load();
+      // The parser puts a tr straight in a table into a tbody it makes: a closing marker would land in another parent.
+      assertTrue(html.contains("<table><tr><td>bare 0</td></tr></table>"), html);
+      assertTrue(html.matches("(?s).*<tbody><!--j2:s[0-9]+--><tr><td>body 0</td></tr><!--/j2:s[0-9]+--></tbody>.*"), html);
+      h.connect();
+      h.click(Harness.clickOn(html, "more 0"));
+      assertTrue(h.page().contains("bare 1") && h.page().contains("body 1"), h.page());
+    }
+  }
+
   static CompletableFuture<Void> gate;
 
   /** The demo's Publisher, as the enhancer leaves it: a region of the button, and in it its disabled attribute. */
