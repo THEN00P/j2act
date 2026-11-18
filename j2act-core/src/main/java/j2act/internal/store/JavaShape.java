@@ -121,12 +121,26 @@ public final class JavaShape implements StoreShape {
    * copy of an object is always built into one: its record may be gone, as a record nobody reads is let go while
    * its copy stays in its parent, so the copy is the only sign of whose it is.
    */
+  /**
+   * Whether a class tracks its reads itself: it implements Tracked, not only through a superclass. A subclass of a
+   * tracked class has fields whose reads the enhancer did not rewrite (ADR 0036), so it is read whole.
+   */
+  static boolean tracks(Class<?> type) {
+    return type != null && TRACKS.get(type);
+  }
+
+  private static final ClassValue<Boolean> TRACKS = new ClassValue<Boolean>() {
+    @Override protected Boolean computeValue(Class<?> type) {
+      return java.util.Arrays.asList(type.getInterfaces()).contains(Tracked.class);
+    }
+  };
+
   @Override public boolean copiesWhenHanded(Object raw) {
-    return raw instanceof Copy || Tracked.class.isAssignableFrom(classOf(raw));
+    return raw instanceof Copy || tracks(classOf(raw));
   }
 
   @Override public boolean handedFor(Object built, StoreTarget target) {
-    if (!(built instanceof Tracked)) {
+    if (built == null || !tracks(built.getClass())) {
       return true;
     }
     Object view = target != null ? target.view() : null;
@@ -427,7 +441,7 @@ public final class JavaShape implements StoreShape {
       if (draft != null && rt.storeWriting(bean.target)) {
         return draft.copyOf(bean);
       }
-      Object given = Tracked.class.isAssignableFrom(bean.type) ? rt.handOut(bean) : j2act.internal.signals.Stores.NOT_FINE;
+      Object given = tracks(bean.type) ? rt.handOut(bean) : j2act.internal.signals.Stores.NOT_FINE;
       if (given == j2act.internal.signals.Stores.NOT_FINE) {
         given = rt.deep(bean);
       }
@@ -501,7 +515,7 @@ public final class JavaShape implements StoreShape {
       }
     } else if (value instanceof SetView) {
       rt.storeKeys(((SetView<?>) value).target());
-    } else if (value instanceof BeanView && !Tracked.class.isAssignableFrom(((BeanView) value).type)) {
+    } else if (value instanceof BeanView && !tracks(((BeanView) value).type)) {
       rt.deep(value);
     }
   }

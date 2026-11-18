@@ -142,6 +142,27 @@ class TrackedStoreTest {
     }
   }
 
+  /** A subclass of a tracked class, with a field the enhancer did not rewrite reads of: Tracked only by inheritance. */
+  public static class TSub extends TItem {
+    private String extra;
+
+    TSub() {
+    }
+
+    TSub(String extra) {
+      super("one", 1, new Tag("red"));
+      this.extra = extra;
+    }
+
+    public String getExtra() {
+      return extra;
+    }
+
+    public void setExtra(String extra) {
+      this.extra = extra;
+    }
+  }
+
   /** A tracked class holding a tracked one. */
   public static class TBox implements Tracked {
     private String title;
@@ -225,6 +246,15 @@ class TrackedStoreTest {
     assertEquals("crate", title.last);
     assertEquals(2, count.runs);
     assertEquals(2, tag.runs);
+  }
+
+  @Test
+  void aSubclassOfATrackedClassIsReadWhole() {
+    Object store = shape.create(new TSub("before"));
+    Reader<String> extra = new Reader<>(() -> ((TSub) shape.value(store)).getExtra());
+    shape.<TSub>update(store, d -> d.setExtra("after"));
+    rt.flush();
+    assertEquals("after", extra.last, "its own field's read is not tracked, so its reader reads all of it");
   }
 
   @Test
