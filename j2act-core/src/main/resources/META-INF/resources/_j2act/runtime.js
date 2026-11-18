@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-a271f7d7899f259b45e8610dc9f82f221abec0b87e20f929e9edd16b1bb5960d */
+* sources: sha256-e6fa36b954c29f8039d6eaef27fccab8c902dc41c2d5b28c0a204a3537b5b518 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1933,8 +1933,17 @@
 		* which a template on its own would make HTML ones of, so the fragment is parsed inside such an element.
 		*/
 		function parseIn(html, parent) {
-			const ns = parent && parent.nodeType === 1 ? parent.namespaceURI : null;
-			const wrap = ns === "http://www.w3.org/2000/svg" ? "svg" : ns === "http://www.w3.org/1998/Math/MathML" ? "math" : null;
+			const el = parent && parent.nodeType === 1 ? parent : null;
+			const ns = el ? el.namespaceURI : null;
+			let wrap = ns === "http://www.w3.org/2000/svg" ? "svg" : ns === "http://www.w3.org/1998/Math/MathML" ? "math" : null;
+			if (el && wrap === "svg" && (el.localName === "foreignObject" || el.localName === "desc" || el.localName === "title")) wrap = null;
+			else if (el && wrap === "math" && ([
+				"mi",
+				"mo",
+				"mn",
+				"ms",
+				"mtext"
+			].indexOf(el.localName) >= 0 || el.localName === "annotation-xml" && /^(text\/html|application\/xhtml\+xml)$/i.test(el.getAttribute("encoding") || ""))) wrap = null;
 			const parsed = document.createElement("template");
 			if (!wrap) {
 				parsed.innerHTML = html;

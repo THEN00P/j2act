@@ -33,8 +33,18 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
    * which a template on its own would make HTML ones of, so the fragment is parsed inside such an element.
    */
   function parseIn(html: string, parent: Node | null): DocumentFragment {
-    const ns = parent && parent.nodeType === 1 ? (parent as Element).namespaceURI : null;
-    const wrap = ns === "http://www.w3.org/2000/svg" ? "svg" : ns === "http://www.w3.org/1998/Math/MathML" ? "math" : null;
+    const el = parent && parent.nodeType === 1 ? (parent as Element) : null;
+    const ns = el ? el.namespaceURI : null;
+    let wrap = ns === "http://www.w3.org/2000/svg" ? "svg" : ns === "http://www.w3.org/1998/Math/MathML" ? "math" : null;
+    // Where the parser goes back to HTML inside them: SVG's foreignObject, desc and title, MathML's text elements and
+    // an annotation-xml holding HTML.
+    if (el && wrap === "svg" && (el.localName === "foreignObject" || el.localName === "desc" || el.localName === "title")) {
+      wrap = null;
+    } else if (el && wrap === "math" && (["mi", "mo", "mn", "ms", "mtext"].indexOf(el.localName) >= 0
+      || (el.localName === "annotation-xml"
+        && /^(text\/html|application\/xhtml\+xml)$/i.test(el.getAttribute("encoding") || "")))) {
+      wrap = null;
+    }
     const parsed = document.createElement("template");
     if (!wrap) {
       parsed.innerHTML = html;

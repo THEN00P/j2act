@@ -200,6 +200,15 @@ describe("regions between markers (ADR 0036)", () => {
     expect(document.querySelector("rect")!.namespaceURI).toBe(svg);
   });
 
+  it("parses a region in an svg's foreignObject as HTML, as the page's own parse did", () => {
+    document.body.innerHTML = '<svg data-j2-scope="s1"><foreignObject><!--j2:s2--><p>a</p><!--/j2:s2--></foreignObject></svg>';
+    expect(morpher().patch("s2", "<!--j2:s2--><p>b</p><div>c</div><!--/j2:s2-->", false)).toBe(true);
+    const html = "http://www.w3.org/1999/xhtml";
+    expect(document.querySelector("p")!.namespaceURI).toBe(html);
+    expect(document.querySelector("p")!.textContent).toBe("b");
+    expect(document.querySelector("div")!.namespaceURI).toBe(html);
+  });
+
   it("reports a region that is not on the page", () => {
     document.body.innerHTML = '<div data-j2-scope="s1"></div>';
     expect(morpher().patch("s5", "<!--j2:s5-->x<!--/j2:s5-->", false)).toBe(false);
