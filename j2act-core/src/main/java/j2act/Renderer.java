@@ -61,6 +61,12 @@ final class Renderer {
 
   /** The element being rendered, outside any component's root. */
   String enclosing;
+  /**
+   * Inside a template's content, the view's own or a pending element's: inert, out of the document, where the client
+   * finds no region's markers, no attribute region's element and no stub (ADR 0036). What is cut out there stays part
+   * of the view around it.
+   */
+  boolean inert;
 
   private void renderBoundary(Scope scope) {
     if (enclosing != null && NO_DIV_INSIDE.contains(enclosing)) {
@@ -117,6 +123,7 @@ final class Renderer {
     tab.enterRender();
     Renderer inner = new Renderer(tab, tab.renderEpoch());
     inner.enclosing = enclosing;
+    inner.inert = inert;
     tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
     scope.children = new java.util.LinkedHashMap<>();
@@ -177,6 +184,7 @@ final class Renderer {
     tab.enterRender();
     Renderer inner = new Renderer(tab, tab.renderEpoch());
     inner.enclosing = enclosing;
+    inner.inert = inert;
     tab.handlers.begin(own);
     Scope previousScope = Tracking.swapScope(own);
     try {
@@ -421,6 +429,11 @@ final class Renderer {
       if (attrs == null) {
         attrs = new java.util.ArrayList<>();
       }
+      if (inert) {
+        // Read here, so the view runs again for it: its tag already has what the chain set.
+        tab.rt.read(tag.attrRegions.get(i).node);
+        continue;
+      }
       attrs.add(place(scope, path + "/@" + i, tag.attrRegions.get(i), false));
     }
     out.append('<').append(tag.name);
@@ -499,11 +512,19 @@ final class Renderer {
     }
     if (tag.pending != null) {
       out.append("<template data-j2-pending>");
-      renderNode(scope, path + "/pending", tag.pending, false);
+      boolean wasInert = inert;
+      inert = true;
+      try {
+        renderNode(scope, path + "/pending", tag.pending, false);
+      } finally {
+        inert = wasInert;
+      }
       out.append("</template>");
     }
     String outer = enclosing;
+    boolean outerInert = inert;
     enclosing = tag.name;
+    inert |= tag.name.equals("template");
     int contentStart = out.length();
     try {
       String text = Html.textareaText(tag);
@@ -514,6 +535,7 @@ final class Renderer {
       }
     } finally {
       enclosing = outer;
+      inert = outerInert;
     }
     if (Html.dropsFirstNewline(tag.name) && out.length() > contentStart && out.charAt(contentStart) == '\n') {
       out.insert(contentStart, '\n');
@@ -566,7 +588,7 @@ final class Renderer {
       }
     } else if (node instanceof Tag) {
       renderTag(scope, path, (Tag<?>) node, null);
-    } else if (node instanceof RegionTag && (rawText || NO_MARKERS.contains(enclosing))) {
+    } else if (node instanceof RegionTag && (rawText || inert || NO_MARKERS.contains(enclosing))) {
       // Where no marker can stand, it is part of what is around it, which runs again for it.
       DomContent content = ((RegionTag) node).content();
       if (content != null) {
@@ -629,6 +651,7 @@ final class Renderer {
     }
     parent.children.put(child.address, child);
     child.placedInside = enclosing;
+    child.placedInert = inert;
     String rendered = child.renderInParent();
     if (emit) {
       out.append(rendered);

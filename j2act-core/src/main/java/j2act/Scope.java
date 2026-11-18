@@ -63,6 +63,8 @@ final class Scope {
   private boolean inParent;
   /** The element its parent's pass is inside at this scope's place. */
   String placedInside;
+  /** Placed inside a template's content (Renderer.inert). */
+  boolean placedInert;
   /** What a loading(...) or errored(...) shows, rendered as a scope of its own. */
   Scope fallbackScope;
   /** A reveal's owner, which its boundaries are created under. */
@@ -531,6 +533,7 @@ final class Scope {
       Renderer renderer = new Renderer(tab, tab.renderEpoch());
       renderer.nonce = tab.nonceFor(this);
       renderer.enclosing = placedInside;
+      renderer.inert = placedInert;
       renderer.renderScope(this);
       out = renderer.out.toString();
     } catch (RouteException e) {

@@ -368,6 +368,33 @@ class RegionTest {
     }
   }
 
+  static final class Inert extends LiveComponent {
+    @Override protected View setup() {
+      var n = createSignal(0);
+      return () -> T.page("t", T.button("more").onClick(e -> n.set(n.get() + 1))
+          .withPending(Regions.of(() -> T.span("saving " + n.get()))),
+        T.tag("template", T.div(Regions.of(() -> T.span("kept " + n.get())))),
+        T.tag("template", attr(T.tag("i"), () -> "c" + n.get(), "class")));
+    }
+  }
+
+  @Test
+  void whatIsCutOutInsideATemplateIsPartOfTheViewAroundIt() {
+    try (Harness h = new Harness(Inert::new)) {
+      String html = h.load();
+      // A template's content is out of the document: the client finds no markers, attribute marks or stubs there.
+      for (String inside : html.split("<template")) {
+        String content = inside.contains("</template>") ? inside.substring(0, inside.indexOf("</template>")) : "";
+        assertFalse(content.contains("<!--j2") || content.contains("data-j2-a-"), content);
+      }
+      assertTrue(html.contains("saving 0") && html.contains("kept 0") && html.contains("class=\"c0\""), html);
+      h.connect();
+      h.click(Harness.clickOn(html, "<template data-j2-pending><span>saving 0</span></template>more"));
+      assertTrue(h.page().contains("saving 1") && h.page().contains("kept 1") && h.page().contains("class=\"c1\""),
+        h.page());
+    }
+  }
+
   static CompletableFuture<Void> gate;
 
   /** The demo's Publisher, as the enhancer leaves it: a region of the button, and in it its disabled attribute. */

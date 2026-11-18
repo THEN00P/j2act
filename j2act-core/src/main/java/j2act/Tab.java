@@ -1221,7 +1221,7 @@ public final class Tab {
 
   /**
    * A patch's HTML with each scope below that the page already has, exactly as it renders now, sent as a stub the
-   * client keeps (ADR 0036); never where no marker can stand (Renderer.NO_MARKERS). A controlled field's patch is always sent, since the client merges the user's typing
+   * client keeps (ADR 0036); never where no marker can stand (Renderer.NO_MARKERS) nor inside a template's content. A controlled field's patch is always sent, since the client merges the user's typing
    * with every answer the server gives it (ADR 0034).
    */
   private static String stubbed(Scope scope, String html) {
@@ -1230,7 +1230,7 @@ public final class Tab {
     }
     int at;
     if (scope.html.equals(scope.onPage) && !scope.html.contains("data-j2-controlled=\"")
-      && !Renderer.NO_MARKERS.contains(scope.placedInside) && (at = html.indexOf(scope.html)) >= 0) {
+      && !Renderer.NO_MARKERS.contains(scope.placedInside) && !scope.placedInert && (at = html.indexOf(scope.html)) >= 0) {
       return html.substring(0, at) + "<!--j2=" + scope.anchor + "-->" + html.substring(at + scope.html.length());
     }
     for (Scope child : scope.children.values()) {
