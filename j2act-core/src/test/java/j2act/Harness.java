@@ -149,6 +149,7 @@ final class Harness implements AutoCloseable {
         String next = applyList(pageDoc, m.get("anchor"), m.get("ops"));
         assertTrue(next != null, "a list's operations do not fit the page: " + m + "\non\n" + pageDoc);
         pageDoc = next;
+        browserParses(m.get("anchor"), null, false);
         continue;
       }
       if ("attrs".equals(m.get("type"))) {
@@ -156,6 +157,7 @@ final class Harness implements AutoCloseable {
         String next = applyAttrs(pageDoc, m.get("anchor"), m.get("values"));
         if (next != null) {
           pageDoc = next;
+          browserParses(m.get("anchor"), null, false);
         }
         continue;
       }
@@ -170,14 +172,29 @@ final class Harness implements AutoCloseable {
       assertTrue(patch != null, "a patch stands for something the page does not have: " + m.get("html"));
       if (root) {
         pageDoc = patch;
+        browserParses(m.get("anchor"), null, false);
       } else {
         String next = replaceScope(pageDoc, m.get("anchor"), patch);
         if (next != null) {
           pageDoc = next;
+          browserParses(m.get("anchor"), patch, m.get("html").contains("<!--j2="));
         }
       }
     }
     return pageDoc;
+  }
+
+  /**
+   * What the page model reads as, a browser builds too (BrowserParse, ADR 0036): every region's markers under one
+   * parent and reachable, and a patch's HTML, parsed where the client puts it, the nodes a fresh load gives there.
+   */
+  private void browserParses(String anchor, String patch, boolean stubbed) {
+    String problems = BrowserParse.problems(pageDoc);
+    assertTrue(problems == null, problems + "\non\n" + pageDoc);
+    if (patch != null) {
+      String problem = BrowserParse.patchProblem(pageDoc, anchor, patch, stubbed);
+      assertTrue(problem == null, problem + "\non\n" + pageDoc);
+    }
   }
 
   /** The click handler id on the element whose text starts with {@code label}. */

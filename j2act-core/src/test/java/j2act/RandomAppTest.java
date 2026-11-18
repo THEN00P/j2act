@@ -429,6 +429,16 @@ class RandomAppTest {
           // The rows turn and grow and shrink with n, so a list's operations move, insert and remove them.
           T.tag("ul", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.span("[row" + me.id + "." + k + "="
             + (shared.n.get() + k) + "]").withKey(k))))),
+          // Where the parser reshapes what it reads (BrowserParse): rows in a table's tbody, SVG and the HTML inside
+          // its foreignObject, and a p. With app.reshaped, also what still fails with regions: rows straight in a
+          // table, which the parser puts in a tbody of its own; a template's content and a pending element's, out of
+          // the document; and a p holding a div, which the parser closes first.
+          T.tag("table", T.tag("tbody", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr",
+            T.tag("td", "[body" + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k)))))),
+          T.tag("svg", ra(T.tag("circle"), () -> shared.n.get(), "r"),
+            r(() -> T.tag("text", "[svg" + me.id + "=" + shared.n.get() + "]")),
+            T.tag("foreignObject", r(() -> T.span("[fo" + me.id + "=" + shared.n.get() + "]")))),
+          T.tag("p", r(() -> T.span("[pspan" + me.id + "=" + shared.n.get() + "]"))),
           T.div().withId("meter" + me.id).withClient(meter),
           T.button("read" + me.id).onClick(e -> world.results.add(meter.read().toCompletableFuture())),
           T.button("reset" + me.id).onClick(e -> meter.reset(() -> me.running("a client's callback"))),
@@ -496,6 +506,13 @@ class RandomAppTest {
           loading(() -> r(() -> T.span("[remote=" + shared.remote.get() + "]"))).withFallback(T.span("[remote=loading]")),
           loading(() -> T.div().withId("inner" + me.id + "n" + shared.n.get()).withClient(inner)).withFallback(T.span("[inner=loading]"))));
         kids.add(r(() -> child.get() ? new Child(url) : null));
+        if (RESHAPED) {
+          kids.add(T.tag("table", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr", T.tag("td", "[bare"
+            + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k))))));
+          kids.add(T.tag("template", r(() -> T.span("[tpl" + me.id + "=" + shared.n.get() + "]"))));
+          kids.add(T.button("pending" + me.id).withPending(r(() -> T.span("[pend" + me.id + "=" + shared.n.get() + "]"))));
+          kids.add(T.tag("p", r(() -> T.tag("div", "[pdiv" + me.id + "=" + shared.n.get() + "]"))));
+        }
         return T.page("t", T.div(kids.toArray(new DomContent[0])));
       };
     }
@@ -577,9 +594,39 @@ class RandomAppTest {
     synchronized void stream(String chunk) {
       Matcher m = STREAMED.matcher(chunk);
       while (m.find()) {
-        String next = Harness.replaceScope(doc, m.group(1), m.group(2));
+        // Up to its own closing tag, as the parser reads it: the HTML can hold templates of its own.
+        int depth = 1;
+        int at = m.end();
+        Matcher tag = Pattern.compile("<(/?)template[ >]").matcher(chunk);
+        while (depth > 0 && tag.find(at)) {
+          depth += tag.group(1).isEmpty() ? 1 : -1;
+          at = tag.end();
+        }
+        String html = chunk.substring(m.end(), tag.start());
+        String next = Harness.replaceScope(doc, m.group(1), html);
         if (next != null) {
           doc = next;
+          // PageStream's j2s parses where it goes, as parseIn does.
+          browserParses(m.group(1), html, true);
+        }
+      }
+    }
+
+    /** What the page model reads as, a browser builds too (BrowserParse); a problem otherwise. */
+    void browserParses(String anchor, String patch, boolean stubbed) {
+      String problem;
+      try {
+        problem = BrowserParse.problems(doc);
+        if (problem == null && patch != null) {
+          problem = BrowserParse.patchProblem(doc, anchor, patch, stubbed);
+        }
+      } catch (RuntimeException e) {
+        problem = "the page did not parse: " + e;
+      }
+      if (problem != null) {
+        String head = problem.substring(0, Math.min(60, problem.length()));
+        if (problems.stream().noneMatch(p -> p.startsWith(head))) {
+          problems.add(problem + "\non\n" + doc);
         }
       }
     }
@@ -606,12 +653,14 @@ class RandomAppTest {
             problems.add("a list's operations do not fit the page: " + m.get("ops"));
           } else {
             doc = next;
+            browserParses(null, null, false);
           }
         } else if ("attrs".equals(type)) {
           // As a patch whose place is not on the page, which the hold brings along with what is around it.
           String next = Harness.applyAttrs(doc, m.get("anchor"), m.get("values"));
           if (next != null) {
             doc = next;
+            browserParses(null, null, false);
           }
         } else if ("callSeen".equals(type)) {
           unseen.remove(m.get("id"));
@@ -631,12 +680,14 @@ class RandomAppTest {
           }
           if (root) {
             doc = html;
+            browserParses(null, null, false);
           } else {
             String next = Harness.replaceScope(doc, m.get("anchor"), html);
             // During a hold a child's patch can get ahead of its parent's, whose own patch brings it along. The
             // runtime ignores it, and what the page ends up showing is checked at rest.
             if (next != null) {
               doc = next;
+              browserParses(m.get("anchor"), html, m.get("html").contains("<!--j2="));
             }
           }
         } else if ("ack".equals(type)) {
@@ -656,7 +707,7 @@ class RandomAppTest {
     }
   }
 
-  private static final Pattern STREAMED = Pattern.compile("<template id=\"j2t-([^\"]+)\">(.*?)</template>", Pattern.DOTALL);
+  private static final Pattern STREAMED = Pattern.compile("<template id=\"j2t-([^\"]+)\">");
 
   private static final class Driver implements AutoCloseable {
     final World w = new World();
@@ -1109,6 +1160,18 @@ class RandomAppTest {
           wantedRows.append(k).append(',');
         }
         expect(tab, rows.toString().equals(wantedRows.toString()), at + ": rows " + rows + " for n=" + n);
+        for (int k : rowsFor(n)) {
+          for (String table : RESHAPED ? new String[] {"bare", "body"} : new String[] {"body"}) {
+            String cell = "[" + table + pageId + "." + k + "=" + (n + k) + "]";
+            expect(tab, tab.doc.contains(cell), at + ": wanted " + cell);
+          }
+        }
+        for (String shown : RESHAPED ? new String[] {"svg", "fo", "pspan", "tpl", "pend", "pdiv"}
+          : new String[] {"svg", "fo", "pspan"}) {
+          String text = "[" + shown + pageId + "=" + n + "]";
+          expect(tab, tab.doc.contains(text), at + ": wanted " + text);
+        }
+        expect(tab, tab.doc.matches("(?s).*<circle[^>]* r=\"" + n + "\".*"), at + ": wanted the circle's r=" + n);
         Integer locals = clicks.get("local" + pageId);
         expect(tab, rest.contains(" local=" + (locals == null ? 0 : locals) + "]") || rest.endsWith(" local=" + (locals == null ? 0 : locals)),
           at + ": wanted " + locals + " local clicks in " + rest);
@@ -1416,6 +1479,11 @@ class RandomAppTest {
    * end up showing its state either way.
    */
   static volatile boolean regions;
+
+  /**
+   * app.reshaped: also what the parser reshapes that still fails with regions (see the page's view), to work on it.
+   */
+  static final boolean RESHAPED = Boolean.getBoolean("app.reshaped");
 
   static DomContent r(java.util.function.Supplier<? extends DomContent> content) {
     return regions ? j2act.internal.regions.Regions.of(content) : content.get();
