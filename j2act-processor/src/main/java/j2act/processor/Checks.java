@@ -31,6 +31,7 @@ import javax.tools.Diagnostic;
 final class Checks {
 
   private static final String TAG_HELPERS = "j2act.html.TagHelpers";
+  private static final String TAG_CREATOR = "j2act.html.TagCreator";
   private static final String COMPONENT = "j2act.ComponentTag";
   private static final String REACTIVE = "j2act.Reactive";
   private static final String UNSAFE_HTML = "j2act.UnsafeHtml";
@@ -139,6 +140,7 @@ final class Checks {
         unsafeCall(node, scope);
       }
       missingKeys(node, scope);
+      rowsInTable(node, scope);
       retainedChangedInPlace(node, scope);
       readsInAsync(node, scope);
       transactionalSelfCall(node, scope);
@@ -389,6 +391,64 @@ final class Checks {
           + "position instead of its item (ADR 0019)");
       }
     }
+  }
+
+  // ---- rows straight in a table (ADR 0036)
+
+  /**
+   * A tr given to table(...), or to a with(...) on one, alone or as each(...)'s rows. The browser's parser puts it into
+   * a tbody it makes, which the HTML j2act sends does not have: patches are parsed into that shape again, and what
+   * the enhancer cuts out stays part of the table's view, its rows re-rendering with it. Writing the tbody gives the
+   * page the shape the view describes.
+   */
+  private void rowsInTable(Node call, Scope scope) {
+    boolean table = call.name.equals("table") && call.receiver == null && isTagCreator(call, scope)
+      || call.name.equals("with") && call.receiver != null && isTable(chainRoot(call.receiver), scope);
+    if (!table) {
+      return;
+    }
+    for (Node child : call.args) {
+      Node row = rowOf(child, scope);
+      if (row != null) {
+        report(row, scope, "tr in table(...) without tbody(...): the browser moves it into a tbody of its own, so "
+          + "its rows re-render with the whole table; wrap them in tbody(...) (ADR 0036)");
+      }
+    }
+  }
+
+  /** The tr a table child is, or the each(...) whose rows are trs; null otherwise. */
+  private Node rowOf(Node child, Scope scope) {
+    Node root = chainRoot(child);
+    if (root.is(Node.Kind.CALL, "tr") && root.receiver == null && isTagCreator(root, scope)) {
+      return child;
+    }
+    if (child.is(Node.Kind.CALL, "each") && child.receiver == null && !child.args.isEmpty()
+        && child.args.get(child.args.size() - 1).kind == Node.Kind.LAMBDA
+        && scope.isOwnedBy(scope.candidates(child), TAG_HELPERS)) {
+      for (Node row : results(child.args.get(child.args.size() - 1))) {
+        Node r = chainRoot(row);
+        if (r.is(Node.Kind.CALL, "tr") && r.receiver == null && isTagCreator(r, scope)) {
+          return child;
+        }
+      }
+    }
+    return null;
+  }
+
+  private boolean isTable(Node node, Scope scope) {
+    return node.is(Node.Kind.CALL, "table") && node.receiver == null && isTagCreator(node, scope);
+  }
+
+  private boolean isTagCreator(Node call, Scope scope) {
+    return scope.isOwnedBy(scope.candidates(call), TAG_CREATOR);
+  }
+
+  /** The call a chain such as tr(...).withClass(...) starts with. */
+  private static Node chainRoot(Node node) {
+    while (node.kind == Node.Kind.CALL && node.receiver != null && node.receiver.kind == Node.Kind.CALL) {
+      node = node.receiver;
+    }
+    return node;
   }
 
   // ---- transactions skipped by self-calls (ADR 0030)
