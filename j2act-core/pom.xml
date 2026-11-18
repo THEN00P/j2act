@@ -70,7 +70,6 @@
     <dependency>
       <groupId>nu.validator</groupId>
       <artifactId>htmlparser</artifactId>
-      <version>1.4.16</version>
       <scope>test</scope>
     </dependency>
   </dependencies>

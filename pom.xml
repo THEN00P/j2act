@@ -71,6 +71,12 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
+      <!-- Tests only: what the page models hold, parsed as a browser does (BrowserParse in core's test jar). -->
+      <dependency>
+        <groupId>nu.validator</groupId>
+        <artifactId>htmlparser</artifactId>
+        <version>1.4.16</version>
+      </dependency>
       <dependency>
         <groupId>io.github.then00p.j2act</groupId>
         <artifactId>j2act-core</artifactId>

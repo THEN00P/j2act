@@ -44,6 +44,12 @@
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
+    <!-- Core's Harness parses its page model with it; a test jar brings none of its test dependencies. -->
+    <dependency>
+      <groupId>nu.validator</groupId>
+      <artifactId>htmlparser</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.ow2.asm</groupId>
       <artifactId>asm-util</artifactId>
