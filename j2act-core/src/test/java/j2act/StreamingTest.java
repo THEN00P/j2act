@@ -143,7 +143,7 @@ class StreamingTest {
       result.streamTo(sink);
       load("reviews").complete("good");
       Harness.eventually(() -> sink.ends.get() == 1, "done");
-      assertTrue(sink.all().contains("<script nonce=\"abc123\">function j2s"), sink.all());
+      assertTrue(sink.all().contains("<script nonce=\"abc123\">function j2f"), sink.all());
       assertTrue(sink.all().contains("<script nonce=\"abc123\">j2s("), sink.all());
     }
   }

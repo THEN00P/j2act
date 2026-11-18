@@ -14,13 +14,21 @@ final class PageStream {
 
   /**
    * Swaps a template in for the element with its anchor, or for a region between its markers (ADR 0036), and sets an
-   * attribute region's attributes. Defined once, right after the shell.
+   * attribute region's attributes. Defined once, right after the shell. j2f is morph.ts's parseIn: what goes under an
+   * svg or math element is parsed in one, unless the parser goes back to HTML there.
    */
-  private static final String HELPER = "function j2s(a){var t=document.getElementById(\"j2t-\"+a),"
-    + "e=document.querySelector('[data-j2-scope=\"'+a+'\"]');if(t){if(e){if(t.content.firstElementChild)"
-    + "e.replaceWith(t.content.firstElementChild)}else{var w=document.createTreeWalker(document.body,128),s=null,n;"
-    + "while(n=w.nextNode()){if(n.data===\"j2:\"+a)s=n;else if(s&&n.data===\"/j2:\"+a){var r=document.createRange();"
-    + "r.setStartBefore(s);r.setEndAfter(n);r.deleteContents();r.insertNode(t.content);break}}}t.remove()}"
+  private static final String HELPER = "function j2f(t,p){var m=p&&p.namespaceURI,l=p&&p.localName,"
+    + "w=m===\"http://www.w3.org/2000/svg\"?\"svg\":m===\"http://www.w3.org/1998/Math/MathML\"?\"math\":null;"
+    + "if(w===\"svg\"&&/^(foreignObject|desc|title)$/.test(l)||w===\"math\"&&(/^(mi|mo|mn|ms|mtext)$/.test(l)"
+    + "||l===\"annotation-xml\"&&/^(text\\/html|application\\/xhtml\\+xml)$/i.test(p.getAttribute(\"encoding\")||\"\")))w=null;"
+    + "if(!w)return t.content;var x=document.createElement(\"template\");x.innerHTML=\"<\"+w+\">\"+t.innerHTML+\"</\"+w+\">\";"
+    + "var f=document.createDocumentFragment(),o=x.content.firstChild;while(o.firstChild)f.appendChild(o.firstChild);"
+    + "return f}"
+    + "function j2s(a){var t=document.getElementById(\"j2t-\"+a),"
+    + "e=document.querySelector('[data-j2-scope=\"'+a+'\"]');if(t){if(e){var c=j2f(t,e.parentNode).firstElementChild;"
+    + "if(c)e.replaceWith(c)}else{var w=document.createTreeWalker(document.body,128),s=null,n;"
+    + "while(n=w.nextNode()){if(n.data===\"j2:\"+a)s=n;else if(s&&n.data===\"/j2:\"+a){var r=document.createRange(),"
+    + "f=j2f(t,s.parentNode);r.setStartBefore(s);r.setEndAfter(n);r.deleteContents();r.insertNode(f);break}}}t.remove()}"
     + "document.currentScript.remove()}"
     + "function j2a(a,v){var e=document.querySelector(\"[data-j2-a-\"+a+\"]\");if(e)for(var k in v)"
     + "v[k]===null?e.removeAttribute(k):e.setAttribute(k,v[k]);document.currentScript.remove()}"
