@@ -60,17 +60,24 @@ final class PageStream {
     emit(scriptTag + "j2s(\"" + anchor + "\"," + scriptString(html) + ")</script>");
   }
 
-  /** A JavaScript string of `s` that cannot end the script it is in: no `<` at all, so no `</script` nor `<!--`. */
+  /** A JavaScript string of `s`, for inside a script (inScript). */
   static String scriptString(String s) {
     StringBuilder b = new StringBuilder(s.length() + 16);
     j2act.internal.json.Json.string(s, b);
-    return b.toString().replace("<", "\\u003c");
+    return inScript(b.toString());
+  }
+
+  /**
+   * JSON as it can stand in an inline script: no `<` at all, so neither `</script` nor `<!--` changes how the page's
+   * parser reads the script. Only a JSON string holds one, where `\u003c` reads the same.
+   */
+  static String inScript(String json) {
+    return json.replace("<", "\\u003c");
   }
 
   /** Lane-only. An attribute region's attributes, as JSON (ADR 0036). */
   void patchAttributes(String anchor, String values) {
-    // Inside a script, so no "</" may end it early.
-    emit(scriptTag + "j2a(\"" + anchor + "\"," + values.replace("</", "<\\/") + ")</script>");
+    emit(scriptTag + "j2a(\"" + anchor + "\"," + inScript(values) + ")</script>");
   }
 
   /** Lane-only. The closing tags go last; nothing is written after them. */
