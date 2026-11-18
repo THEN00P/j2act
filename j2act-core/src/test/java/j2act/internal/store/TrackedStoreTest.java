@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * ADR 0035: the read path the bytecode enhancer compiles to. The tracked classes here are written by hand as the
- * enhancer will write them: each read of a field calls StoreReads.field first, and the record a store built the
+ * enhancer will write them: each read of a field is StoreReads.value, the value the store has now, and the record a store built the
  * object from is kept in a j2act$ field. The same app over plain classes is the dev mode, which reads whole
  * objects: both must show the same values after every step, the tracked one running no more often.
  */
@@ -112,8 +112,7 @@ class TrackedStoreTest {
     }
 
     public String getLabel() {
-      StoreReads.field(this, "label");
-      return label;
+      return (String) StoreReads.value(this, label, "label", String.class);
     }
 
     public void setLabel(String label) {
@@ -121,8 +120,7 @@ class TrackedStoreTest {
     }
 
     public int getCount() {
-      StoreReads.field(this, "count");
-      return count;
+      return (Integer) StoreReads.value(this, count, "count", int.class);
     }
 
     public void setCount(int count) {
@@ -130,8 +128,7 @@ class TrackedStoreTest {
     }
 
     public Tag getTag() {
-      StoreReads.field(this, "tag");
-      return tag;
+      return (Tag) StoreReads.value(this, tag, "tag", Tag.class);
     }
 
     public void setTag(Tag tag) {
@@ -139,8 +136,30 @@ class TrackedStoreTest {
     }
 
     public List<String> getNotes() {
-      StoreReads.field(this, "notes");
-      return notes;
+      @SuppressWarnings("unchecked")
+      List<String> now = (List<String>) StoreReads.value(this, notes, "notes", List.class);
+      return now;
+    }
+  }
+
+  /** A subclass of a tracked class, with a field the enhancer did not rewrite reads of: Tracked only by inheritance. */
+  public static class TSub extends TItem {
+    private String extra;
+
+    TSub() {
+    }
+
+    TSub(String extra) {
+      super("one", 1, new Tag("red"));
+      this.extra = extra;
+    }
+
+    public String getExtra() {
+      return extra;
+    }
+
+    public void setExtra(String extra) {
+      this.extra = extra;
     }
   }
 
@@ -167,8 +186,7 @@ class TrackedStoreTest {
     }
 
     public String getTitle() {
-      StoreReads.field(this, "title");
-      return title;
+      return (String) StoreReads.value(this, title, "title", String.class);
     }
 
     public void setTitle(String title) {
@@ -176,8 +194,7 @@ class TrackedStoreTest {
     }
 
     public TItem getItem() {
-      StoreReads.field(this, "item");
-      return item;
+      return (TItem) StoreReads.value(this, item, "item", TItem.class);
     }
   }
 
@@ -229,6 +246,15 @@ class TrackedStoreTest {
     assertEquals("crate", title.last);
     assertEquals(2, count.runs);
     assertEquals(2, tag.runs);
+  }
+
+  @Test
+  void aSubclassOfATrackedClassIsReadWhole() {
+    Object store = shape.create(new TSub("before"));
+    Reader<String> extra = new Reader<>(() -> ((TSub) shape.value(store)).getExtra());
+    shape.<TSub>update(store, d -> d.setExtra("after"));
+    rt.flush();
+    assertEquals("after", extra.last, "its own field's read is not tracked, so its reader reads all of it");
   }
 
   @Test

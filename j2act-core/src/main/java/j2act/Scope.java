@@ -26,6 +26,8 @@ final class Scope {
   String localPath;
   final String anchor;
   ComponentTag instance;
+  /** The regions its view's last run made (ADR 0036). */
+  final List<CutTag> regionsMade = new ArrayList<>();
   /** What setup() returned, called on every render (ADR 0031). */
   View view;
   /** Where the next primitive of a running setup() goes: re-running it after a class swap finds its cells again. */
@@ -46,9 +48,23 @@ final class Scope {
   String embedded;
   /** What the page has, so a pass that changed nothing sends nothing. */
   String sent;
+  /**
+   * What the client is known to have for this scope, from the socket patches that brought it: a patch around it
+   * sends a stub instead when this is still its html (ADR 0036). Null when in doubt.
+   */
+  String onPage;
+  /**
+   * Whether the client has an element for this scope, from the socket patches that brought one. A patch of a scope
+   * that has none, as a child's ahead of its parent's during a hold, is not applied, so it tells nothing.
+   */
+  boolean placed;
+  /** A region's children, in order, as the page has them: what a list's operations start from (ADR 0036). */
+  List<Scope> pageRows;
   private boolean inParent;
-  /** The element its parent's pass is inside at this scope's place. */
-  String placedInside;
+  /** The elements its parent's pass has open at this scope's place, innermost first. */
+  j2act.internal.html.Nesting.Open placedOpen;
+  /** Placed inside a template's content (Renderer.inert). */
+  boolean placedInert;
   /** What a loading(...) or errored(...) shows, rendered as a scope of its own. */
   Scope fallbackScope;
   /** A reveal's owner, which its boundaries are created under. */
@@ -93,7 +109,21 @@ final class Scope {
   String shape;
 
   Scope(Tab tab, Scope parent, String address) {
-    this(tab, parent, address, null);
+    this(tab, parent, address, (Owner) null);
+  }
+
+  /**
+   * A region's scope (ADR 0036): its slot belongs to the view that made it, not the one placing it, so what stops it
+   * on a later run stops where that view's would have.
+   */
+  Scope(Tab tab, Scope parent, String address, CutTag region) {
+    this.tab = tab;
+    this.parent = parent;
+    this.address = address;
+    this.anchor = tab.nextAnchor();
+    this.codeEpoch = tab.engine.codeEpoch;
+    this.slot = region.creator == parent || region.creator.disposed ? tab.rt.createSlotOwner(parent.slot)
+      : tab.rt.createSlotOwner(region.creator.slot, region.running);
   }
 
   /** `above` is what a scope with no parent still belongs to: the boundary of its tab. */
@@ -121,7 +151,33 @@ final class Scope {
 
   /** The slot path a page mounted from its URL would give this scope; keys Retained State (ADR 0026). */
   String slotPath() {
+    if (instance instanceof CutTag && parent != null && localPath != null) {
+      // A region is no slot of its own: what it places has the path it would have without it.
+      return parent.slotPath() + localPath.substring(0, localPath.lastIndexOf('@'));
+    }
     return parent == null || localPath == null ? address : parent.slotPath() + localPath;
+  }
+
+  /** How this scope's place shows in the HTML around it: a region's markers, or its root element's anchor. */
+  String mark() {
+    return instance instanceof RegionTag ? "<!--j2:" + anchor + "-->"
+      : instance instanceof AttrTag ? attrMark(anchor) : "data-j2-scope=\"" + anchor + "\"";
+  }
+
+  /** The attribute an element carries for each attribute region of it, which its patches find it by (ADR 0036). */
+  static String attrMark(String anchor) {
+    return "data-j2-a-" + anchor + "=\"\"";
+  }
+
+  /**
+   * Whether HTML sent around this scope brought what it shows now. An attribute region's values are not text of their
+   * own there: they came along if the element did, from the pass that also gave them to this scope.
+   */
+  boolean broughtBy(String around) {
+    if (instance instanceof AttrTag) {
+      return html != null && html.equals(embedded) && around.contains(mark());
+    }
+    return html != null && around.contains(html);
   }
 
   /** The component or store whose primitives this scope holds. */
@@ -288,6 +344,31 @@ final class Scope {
 
   /** Attaches a component object to this slot and binds its field primitives by creation order. */
   void bind(ComponentTag component) {
+    if (component instanceof CutTag) {
+      // No setup and no primitives: a later description only brings what the view's new run made.
+      CutTag cut = (CutTag) component;
+      cut.placed = true;
+      if (instance == null) {
+        instance = component;
+        component.scope = this;
+        view = () -> null;
+        settledCount = 0;
+      } else {
+        CutTag shown = (CutTag) instance;
+        if (shown.node != cut.node) {
+          // Its view ran again: this run's node takes over, and the last one goes.
+          shown.release();
+          shown.node = cut.node;
+          if (shown instanceof RegionTag) {
+            ((RegionTag) shown).adopt((RegionTag) cut);
+          }
+        }
+        if (shown instanceof AttrTag) {
+          ((AttrTag) shown).adopt((AttrTag) cut);
+        }
+      }
+      return;
+    }
     if (view != null && instance != component && !(swapped() && shapeChanged(component.getClass()))) {
       if (instance instanceof Boundary) {
         ((Boundary<?>) instance).adopt((Boundary<?>) component);
@@ -454,7 +535,8 @@ final class Scope {
     try {
       Renderer renderer = new Renderer(tab, tab.renderEpoch());
       renderer.nonce = tab.nonceFor(this);
-      renderer.enclosing = placedInside;
+      renderer.open = placedOpen;
+      renderer.inert = placedInert;
       renderer.renderScope(this);
       out = renderer.out.toString();
     } catch (RouteException e) {
@@ -509,6 +591,7 @@ final class Scope {
 
   /** The second half: the frame can show, so its patch is on its way, and what it replaced goes with that. */
   private void shown(String value) {
+    value = withLatestChildren(value);
     html = value;
     if (value == embedded) {
       // What is around it brings this along, in its own patch.
@@ -523,6 +606,25 @@ final class Scope {
     }
   }
 
+  /**
+   * What this pass rendered, with what each child showed since in place of what it rendered here. They differ only when
+   * a hold kept this pass from showing while a child ran again on its own: the child's patch waited for this one, as
+   * the page had no place for it yet, so this one brings it (ADR 0036).
+   */
+  private String withLatestChildren(String value) {
+    for (Scope child : children.values()) {
+      String was = child.embedded;
+      if (child.html == null || was == null || child.html.equals(was)) {
+        continue;
+      }
+      int at = value.indexOf(was);
+      if (at >= 0) {
+        value = value.substring(0, at) + child.html + value.substring(at + was.length());
+      }
+    }
+    return value;
+  }
+
   /** The page has this, or never will: nothing on it can reach what the pass behind it removed. */
   void pageHas(String what) {
     for (Scope old : removing) {
@@ -531,7 +633,7 @@ final class Scope {
     removing.clear();
     tab.handlers.drop(this);
     for (Scope child : new ArrayList<>(children.values())) {
-      if (!child.disposed && child.html != null && !child.detached && what.contains(child.html)) {
+      if (!child.disposed && !child.detached && child.broughtBy(what)) {
         child.pageHas(child.html);
       }
     }
@@ -564,7 +666,7 @@ final class Scope {
       // A pass of its parent removed this, but the patch saying so has not gone.
       return true;
     }
-    if (parent.html == null || !parent.html.contains("data-j2-scope=\"" + anchor + "\"")) {
+    if (parent.html == null || !parent.html.contains(mark())) {
       return false;
     }
     Scope top = parent;
@@ -578,11 +680,28 @@ final class Scope {
   /** Whether the page has this scope: it has shown, and so has everything around it. */
   boolean onThePageAllTheWay() {
     for (Scope s = this; s != null; s = s.parent) {
-      if (s.html == null || (s.parent == null ? s != tab.rootOnPage : !s.onThePage())) {
+      if (s.shows() == null || (s.parent == null ? s != tab.rootOnPage : s.html != null && !s.onThePage())) {
         return false;
       }
     }
     return true;
+  }
+
+  /**
+   * What the page shows of this scope: what its last pass showed; or, when a hold kept that pass from showing (a
+   * browser's runtime holds for all its tabs), what it rendered there, if the page has it all the same: served as the
+   * root, or inside what its parent shows.
+   */
+  String shows() {
+    if (html != null) {
+      return html;
+    }
+    String has = embedded != null ? embedded : rendered;
+    if (parent == null) {
+      return this == tab.rootOnPage ? has : null;
+    }
+    String around = parent.shows();
+    return around != null && around.contains(mark()) ? has : null;
   }
 
   /** The pass of a parent placing this scope: runs its effect inside that pass, and stops if it stopped. */
@@ -628,6 +747,10 @@ final class Scope {
       return;
     }
     disposed = true;
+    if (instance instanceof CutTag && instance.scope == this) {
+      ((CutTag) instance).release();
+    }
+    CutTag.dropUnplaced(tab, regionsMade);
     if (leftBehind) {
       leftBehind(false);
     }

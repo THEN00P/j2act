@@ -73,8 +73,8 @@ class StreamingTest {
       Harness.eventually(() -> sink.ends.get() == 1, "the stream ends once nothing is left to wait for");
       String rest = sink.all();
       assertTrue(rest.contains("reviews:good"), rest);
-      assertTrue(rest.contains("<template id=\"j2t-"), rest);
-      assertTrue(rest.contains("function j2s(a)"), "the swap helper, once: " + rest);
+      assertTrue(rest.contains("j2s(\"s"), rest);
+      assertTrue(rest.contains("function j2s(a,h)"), "the swap helper, once: " + rest);
       assertTrue(rest.endsWith("</body></html>"), rest);
     }
   }
@@ -143,7 +143,7 @@ class StreamingTest {
       result.streamTo(sink);
       load("reviews").complete("good");
       Harness.eventually(() -> sink.ends.get() == 1, "done");
-      assertTrue(sink.all().contains("<script nonce=\"abc123\">function j2s"), sink.all());
+      assertTrue(sink.all().contains("<script nonce=\"abc123\">function j2f"), sink.all());
       assertTrue(sink.all().contains("<script nonce=\"abc123\">j2s("), sink.all());
     }
   }
@@ -373,5 +373,18 @@ class StreamingTest {
       Harness.eventually(() -> slow.ends.get() == 1, "and the response ends when it has caught up");
       assertTrue(slow.all().contains("second:b"), slow.all());
     }
+  }
+
+  @Test
+  void whatAStreamedScriptCarriesHasNoLessThanSign() {
+    // "<!--" and then "<script" put the parser in a state where "</script>" no longer ends the script.
+    String html = "<span title=\"<!--<script>\">a</span></script>";
+    String string = PageStream.scriptString(html);
+    assertFalse(string.contains("<"), string);
+    assertEquals(html, j2act.internal.json.Json.parse(string));
+    String values = "{\"title\":\"<!--<script></script>\"}";
+    String attrs = PageStream.inScript(values);
+    assertFalse(attrs.contains("<"), attrs);
+    assertEquals(j2act.internal.json.Json.parse(values), j2act.internal.json.Json.parse(attrs));
   }
 }

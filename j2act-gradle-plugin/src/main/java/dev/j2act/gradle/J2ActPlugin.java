@@ -13,6 +13,11 @@ import java.util.regex.Pattern;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
+import org.gradle.api.file.FileCollection;
+import org.gradle.api.tasks.bundling.Jar;
+import org.gradle.api.tasks.bundling.War;
+import org.gradle.api.tasks.compile.JavaCompile;
+import java.util.Set;
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.plugins.WarPlugin;
@@ -60,10 +65,116 @@ public class J2ActPlugin implements Plugin<Project> {
       task.from("src/main/java", spec -> spec.include("**/*.js", "**/*.mjs", "**/*.cjs", "**/*.css", "**/*.json")));
 
     eclipse(project);
+    enhance(project);
     // explodedWar: the WAR as a folder with the editor's classes, for IDE servers, dev mode and HotSwap.
     project.getPluginManager().apply("io.github.then00p.exploded-hotswap");
     if (project.file("package.json").exists()) {
       vite(project);
+    }
+  }
+
+  /**
+   * j2actEnhance, and what is packaged takes its output in place of the class folders (ADR 0036): jar's classes,
+   * war's, and Spring Boot's bootJar and bootWar. Everything that runs from the class folders stays plain.
+   */
+  private void enhance(Project project) {
+    SourceSet main = project.getExtensions().getByType(JavaPluginExtension.class)
+      .getSourceSets().getByName(SourceSet.MAIN_SOURCE_SET_NAME);
+    FileCollection classesDirs = main.getOutput().getClassesDirs();
+    J2ActExtension.Enhance settings = project.getExtensions().create("j2act", J2ActExtension.class).getEnhance();
+    settings.getClassFolders().convention(project.getProviders().gradleProperty("j2act.enhance.classFolders")
+      .map(Boolean::parseBoolean).orElse(false));
+    settings.getSkip().convention(project.getProviders().gradleProperty("j2act.enhance.skip")
+      .map(Boolean::parseBoolean).orElse(false));
+    TaskProvider<EnhanceTask> enhance = project.getTasks().register("j2actEnhance", EnhanceTask.class, task -> {
+      task.setGroup("build");
+      task.setDescription("Copies the main classes for packaging and cuts their views into regions.");
+      task.getClasses().from(classesDirs);
+      task.getClasspath().from(main.getCompileClasspath());
+      task.getOutput().convention(project.getLayout().getBuildDirectory().dir("j2act-classes"));
+      task.getSkip().convention(settings.getSkip());
+      task.getTrackExcludes().convention(settings.getTrackExcludes());
+    });
+    // Opt-in: the class folders themselves, so what runs from them runs enhanced too (run, test, an exploded WAR of
+    // the build's classes). Inputs of the compile, with skip and trackExcludes, so changing one compiles the classes again.
+    FileCollection compileClasspath = main.getCompileClasspath();
+    project.getTasks().named(main.getCompileJavaTaskName(), JavaCompile.class, compile -> {
+      compile.getInputs().property("j2act.enhance.classFolders", settings.getClassFolders());
+      compile.getInputs().property("j2act.enhance.trackExcludes", settings.getTrackExcludes());
+      compile.getInputs().property("j2act.enhance.skip", settings.getSkip());
+      compile.doLast("j2actEnhanceClassFolder", new EnhanceInPlace(compile.getDestinationDirectory(), compileClasspath,
+        settings.getClassFolders(), settings.getSkip(), settings.getTrackExcludes()));
+    });
+    project.getTasks().named(JavaPlugin.JAR_TASK_NAME, Jar.class, jar -> {
+      Set<File> dirs = classesDirs.getFiles();
+      jar.from(enhance);
+      jar.exclude(new UnderAny(dirs));
+    });
+    project.getPlugins().withType(WarPlugin.class, war -> project.getTasks().named(WarPlugin.WAR_TASK_NAME, War.class,
+      task -> task.setClasspath(project.files(enhance).plus(task.getClasspath().minus(classesDirs)))));
+    project.getPluginManager().withPlugin("org.springframework.boot", boot -> {
+      for (String name : new String[] {"bootJar", "bootWar"}) {
+        project.getTasks().matching(task -> task.getName().equals(name)).configureEach(task -> {
+          // Spring Boot's tasks are not on this plugin's classpath: their classpath property, by its accessors.
+          try {
+            FileCollection classpath = (FileCollection) task.getClass().getMethod("getClasspath").invoke(task);
+            task.getClass().getMethod("setClasspath", FileCollection.class)
+              .invoke(task, project.files(enhance).plus(classpath.minus(classesDirs)));
+          } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("cannot give " + name + " the enhanced classes", e);
+          }
+        });
+      }
+    });
+  }
+
+  /** j2act.enhance.classFolders: compileJava's output, enhanced as it is written. A class, for the configuration cache. */
+  static final class EnhanceInPlace implements org.gradle.api.Action<Task> {
+    private final org.gradle.api.file.DirectoryProperty classes;
+    private final FileCollection classpath;
+    private final org.gradle.api.provider.Provider<Boolean> enabled;
+    private final org.gradle.api.provider.Provider<Boolean> skip;
+    private final org.gradle.api.provider.Provider<java.util.List<String>> excludes;
+
+    EnhanceInPlace(org.gradle.api.file.DirectoryProperty classes, FileCollection classpath,
+        org.gradle.api.provider.Provider<Boolean> enabled, org.gradle.api.provider.Provider<Boolean> skip,
+        org.gradle.api.provider.Provider<java.util.List<String>> excludes) {
+      this.classes = classes;
+      this.classpath = classpath;
+      this.enabled = enabled;
+      this.skip = skip;
+      this.excludes = excludes;
+    }
+
+    @Override public void execute(Task task) {
+      if (!enabled.get() || skip.get()) {
+        return;
+      }
+      java.util.List<java.nio.file.Path> paths = new java.util.ArrayList<>();
+      for (File file : classpath.getFiles()) {
+        paths.add(file.toPath());
+      }
+      task.getLogger().lifecycle("j2act: " + new j2act.enhancer.Enhancer(paths).withTrackExcludes(excludes.get())
+        .enhance(classes.get().getAsFile().toPath())
+        + ", in " + classes.get().getAsFile());
+    }
+  }
+
+  /** What comes from the class folders, which the jar takes from j2actEnhance instead. A class, for the configuration cache. */
+  static final class UnderAny implements org.gradle.api.specs.Spec<org.gradle.api.file.FileTreeElement> {
+    private final Set<File> dirs;
+
+    UnderAny(Set<File> dirs) {
+      this.dirs = dirs;
+    }
+
+    @Override public boolean isSatisfiedBy(org.gradle.api.file.FileTreeElement element) {
+      for (File f = element.getFile(); f != null; f = f.getParentFile()) {
+        if (dirs.contains(f)) {
+          return true;
+        }
+      }
+      return false;
     }
   }
 

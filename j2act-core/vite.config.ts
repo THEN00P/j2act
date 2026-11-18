@@ -24,7 +24,49 @@ function sourceHash(): string {
   return hash.digest("hex");
 }
 
+/*
+ * Idiomorph 0.8 morphs an element's outerHTML as a range of its parent's children, from the element to its next
+ * sibling, but exports only morph(). A region (ADR 0036) is such a range between two comment markers, so this adds
+ * morphRange(start, end, content, config) beside it, built from the same calls, and fails the build if a new release
+ * of Idiomorph no longer has them where they were.
+ */
+const IDIOMORPH_EXPORTS = "  return {\n    morph,\n    defaults,\n  };";
+const MORPH_RANGE = `
+  function morphRange(start, end, newContent, config = {}) {
+    const parent = start.parentNode;
+    const newNode = normalizeParent(newContent);
+    const ctx = createMorphContext(parent, newNode, config);
+    saveAndRestoreFocus(ctx, () => morphChildren(ctx, parent, newNode, start.nextSibling, end));
+    ctx.pantry.remove();
+  }
+
+  return {
+    morph,
+    morphRange,
+    defaults,
+  };`;
+
+function idiomorphRange() {
+  return {
+    name: "j2act-idiomorph-range",
+    enforce: "pre" as const,
+    transform(code: string, id: string) {
+      if (!/[\\/]idiomorph[\\/]dist[\\/]idiomorph\.esm\.js$/.test(id)) {
+        return null;
+      }
+      for (const needed of [IDIOMORPH_EXPORTS, "function morphOuterHTML(ctx, oldNode, newNode)", "function morphChildren(",
+        "function normalizeParent(", "function createMorphContext(", "function saveAndRestoreFocus("]) {
+        if (!code.includes(needed)) {
+          throw new Error("idiomorph changed, so morphRange (ADR 0036) needs checking: no " + needed);
+        }
+      }
+      return code.replace(IDIOMORPH_EXPORTS, MORPH_RANGE);
+    }
+  };
+}
+
 export default defineConfig({
+  plugins: [idiomorphRange()],
   build: {
     outDir: "src/main/resources/META-INF/resources/_j2act",
     emptyOutDir: false,
@@ -47,6 +89,8 @@ export default defineConfig({
   },
   test: {
     environment: "happy-dom",
+    // Through Vite, so its tests get the same Idiomorph as the bundle.
+    server: { deps: { inline: ["idiomorph"] } },
     include: ["src/test/ts/**/*.test.ts"]
   }
 });

@@ -31,6 +31,7 @@ import javax.tools.Diagnostic;
 final class Checks {
 
   private static final String TAG_HELPERS = "j2act.html.TagHelpers";
+  private static final String TAG_CREATOR = "j2act.html.TagCreator";
   private static final String COMPONENT = "j2act.ComponentTag";
   private static final String REACTIVE = "j2act.Reactive";
   private static final String UNSAFE_HTML = "j2act.UnsafeHtml";
@@ -139,6 +140,7 @@ final class Checks {
         unsafeCall(node, scope);
       }
       missingKeys(node, scope);
+      nesting(node, scope);
       retainedChangedInPlace(node, scope);
       readsInAsync(node, scope);
       transactionalSelfCall(node, scope);
@@ -389,6 +391,129 @@ final class Checks {
           + "position instead of its item (ADR 0019)");
       }
     }
+  }
+
+  // ---- markup the parser builds otherwise (ADR 0036)
+
+  /** Tag calls already looked at from an outer one, which saw what is open around them. */
+  private final Set<Node> nested = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+
+  /**
+   * A tag given to another where the browser's parser builds something else (j2act.internal.html.Nesting, the table
+   * the renderer goes by): a div in a p, whose p the parser ends first, a tr straight in a table, which it puts into a
+   * tbody of its own, text or a span fostered out of a row. The page then holds other elements than the HTML j2act
+   * sends, patches are parsed into that shape again, and what the enhancer cuts out there stays part of the view
+   * around it. Looked at from the outermost tag call down, so what is open includes every tag call around it.
+   */
+  private void nesting(Node call, Scope scope) {
+    if (nested.contains(call)) {
+      return;
+    }
+    Node root = chainRoot(call);
+    if (call.kind != Node.Kind.CALL || (call != root && !call.name.equals("with")) || !isTag(root, scope)) {
+      return;
+    }
+    nesting(call, j2act.internal.html.Nesting.Open.push(null, root.name), scope);
+  }
+
+  private void nesting(Node call, j2act.internal.html.Nesting.Open open, Scope scope) {
+    nested.add(call);
+    if (open.name.equals("template") || j2act.internal.html.Nesting.TEXT.contains(open.name)) {
+      // A template's content is parsed on its own, and text is text: nothing below is looked at alone either.
+      quiet(call);
+      return;
+    }
+    for (Node arg : call.args) {
+      List<Node> tags = new ArrayList<>();
+      Node root = chainRoot(arg);
+      if (isTag(root, scope)) {
+        tags.add(arg);
+      } else if (arg.is(Node.Kind.CALL, "each") && arg.receiver == null && !arg.args.isEmpty()
+          && arg.args.get(arg.args.size() - 1).kind == Node.Kind.LAMBDA
+          && scope.isOwnedBy(scope.candidates(arg), TAG_HELPERS)) {
+        for (Node row : results(arg.args.get(arg.args.size() - 1))) {
+          if (isTag(chainRoot(row), scope)) {
+            tags.add(row);
+          }
+        }
+      }
+      boolean reported = false;
+      for (Node tag : tags) {
+        String name = chainRoot(tag).name;
+        j2act.internal.html.Nesting.Fix fix = j2act.internal.html.Nesting.repair(name, open);
+        if (fix != null && !reported) {
+          report(arg, scope, nestingMessage(name, open, fix));
+          reported = true;
+        }
+        j2act.internal.html.Nesting.Open inside = fix == null ? j2act.internal.html.Nesting.Open.push(open, name)
+          : fix.repair == j2act.internal.html.Nesting.Repair.CLOSES
+            ? j2act.internal.html.Nesting.Open.push(fix.at.up, name)
+          : fix.repair == j2act.internal.html.Nesting.Repair.WRAPS ? j2act.internal.html.Nesting.Open.push(open, name)
+          : open;
+        for (Node c = tag; c != null && c.kind == Node.Kind.CALL; c = c.receiver) {
+          if (c == chainRoot(tag) || c.name.equals("with")) {
+            nesting(c, inside, scope);
+          }
+          if (c == chainRoot(tag)) {
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  private void quiet(Node node) {
+    for (Node child : node.children) {
+      if (child.kind == Node.Kind.CALL) {
+        nested.add(child);
+      }
+      quiet(child);
+    }
+  }
+
+  private static String nestingMessage(String name, j2act.internal.html.Nesting.Open open,
+      j2act.internal.html.Nesting.Fix fix) {
+    if (name.equals("tr") && open.name.equals("table") && fix.repair == j2act.internal.html.Nesting.Repair.WRAPS) {
+      return "tr in table(...) without tbody(...): the browser moves it into a tbody of its own, so its rows re-render"
+        + " with the whole table; wrap them in tbody(...) (ADR 0036)";
+    }
+    String what;
+    switch (fix.repair) {
+      case CLOSES:
+        what = "ends the " + fix.at.name + " before it";
+        break;
+      case WRAPS:
+        what = "puts it into a " + (name.equals("col") ? "colgroup" : name.equals("tr") ? "tbody" : "tr") + " of its own";
+        break;
+      case FOSTERS:
+        what = "moves it out of the table, before it";
+        break;
+      case EMPTIES:
+        what = "leaves it empty, and moves what is in it out";
+        break;
+      default:
+        what = "drops its tag, keeping what is in it";
+    }
+    return name + " in " + open.name + "(...): the browser's parser " + what + ", so the page holds other elements than"
+      + " the view, and what is cut out there re-renders with what is around it (ADR 0036)";
+  }
+
+  /** A call of one of TagCreator's tag factories. */
+  private boolean isTag(Node node, Scope scope) {
+    return node.kind == Node.Kind.CALL && node.receiver == null && isTagCreator(node, scope);
+  }
+
+
+  private boolean isTagCreator(Node call, Scope scope) {
+    return scope.isOwnedBy(scope.candidates(call), TAG_CREATOR);
+  }
+
+  /** The call a chain such as tr(...).withClass(...) starts with. */
+  private static Node chainRoot(Node node) {
+    while (node.kind == Node.Kind.CALL && node.receiver != null && node.receiver.kind == Node.Kind.CALL) {
+      node = node.receiver;
+    }
+    return node;
   }
 
   // ---- transactions skipped by self-calls (ADR 0030)

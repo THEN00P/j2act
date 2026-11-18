@@ -72,6 +72,14 @@ _Avoid_: Parent, Context
 loading(...) or errored(...), a component wrapping what may stop rendering. Reading an async memo with no value yet stops rendering at the nearest loading(...) above the read; reading a failed one at the nearest errored(...). On a page load a read outside every loading(...) is waited for and is in the first HTML, and a read inside one streams down the same response (ADR 0031).
 _Avoid_: Suspense, Skeleton
 
+**Region**:
+A part of a component's view that the build's enhancer cut out to run on its own: it has its own reads and its own patch, and the view around it does not re-run when only what the region read changed. Not a component: no setup, no primitives, no state of its own. An app built without the enhancer has no regions and shows the same page, re-running whole views instead. Solid's counterpart is the render effect its compiler makes per JSX expression.
+_Avoid_: Island, Fragment, Partial, Hole
+
+**Enhancer**:
+The build step of the Maven and Gradle plugins that rewrites an app's compiled classes into what runs faster and sends less: views cut into regions, store classes that track their own reads. It changes cost, never behaviour: an app run from plain classes, as an IDE or dev mode runs it, shows the same pages. It works on what gets packaged, not on class folders.
+_Avoid_: Agent, Weaver, Compiler plugin, Optimizer
+
 **Async memo**:
 A memo whose body returns a future: createMemo(() -> { var key = id.get(); return async(() -> service.load(key)); }). Reads go before async(...), where they are tracked (ADR 0033); one inside it reads the screen untracked, and the processor warns. get() gives the future's value. While there is none it stops rendering at the nearest loading(...); on a reload the old value stays and the newest run wins.
 _Avoid_: Query, Deferred, Fetcher, Resource

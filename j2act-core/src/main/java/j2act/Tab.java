@@ -1173,8 +1173,13 @@ public final class Tab {
       }
       if (connection == null) {
         if (scope != root) {
-          stream.patch(scope.anchor, scope.html);
+          if (scope.instance instanceof AttrTag) {
+            stream.patchAttributes(scope.anchor, scope.html);
+          } else {
+            stream.patch(scope.anchor, scope.html);
+          }
           scope.pageHas(scope.html);
+          pageGot(scope);
         } else {
           unsent.add(scope);
         }
@@ -1192,12 +1197,245 @@ public final class Tab {
         for (Scope s = scope.parent; s != null; s = s.parent) {
           s.sent = null;
         }
-        send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope.parent == null ? true : null,
-          "handled", handledFor(scope), "html", scope.html));
+        if (scope.instance instanceof AttrTag) {
+          // An attribute region: only the attributes it sets (ADR 0036).
+          send(Json.object("type", "attrs", "anchor", scope.anchor, "values", scope.html));
+        } else {
+          long handled = handledFor(scope);
+          String ops = listOps(scope);
+          if (ops != null) {
+            // A list of rows: what moved, came or went, and the rows that changed (ADR 0036).
+            send(Json.object("type", "list", "anchor", scope.anchor, "handled", handled, "ops", ops));
+          } else {
+            send(Json.object("type", "patch", "anchor", scope.anchor, "root", scope.parent == null ? true : null,
+              "handled", handled, "html", withStubs(scope)));
+          }
+        }
         engine.stats.patches.incrementAndGet();
+        pageGot(scope);
         scope.pageHas(scope.html);
         behindThisPatch(scope, scope.html, scopes, i + 1);
       }
+    }
+  }
+
+  /**
+   * A patch's HTML with each scope below that the page already has, exactly as it renders now, sent as a stub the
+   * client keeps (ADR 0036); never inside a template's content or an element the parser reads as text, nor where the
+   * parser would not keep the scope's element where it stands (Nesting), as a tr directly in a table, which a stub
+   * would move out of the tbody the page's parser made for it. A controlled field's patch is always sent, since the client merges the user's typing
+   * with every answer the server gives it (ADR 0034).
+   */
+  /** Whether the parser keeps the element a scope's HTML starts with where the scope is placed. */
+  private static boolean keptWhereItStands(Scope scope) {
+    String html = scope.html;
+    if (!html.startsWith("<") || html.length() < 2 || !Character.isLetter(html.charAt(1))) {
+      return true; // a region's markers, which were placed only where they fit
+    }
+    int end = 1;
+    while (end < html.length() && html.charAt(end) != ' ' && html.charAt(end) != '>' && html.charAt(end) != '/') {
+      end++;
+    }
+    return j2act.internal.html.Nesting.repair(html.substring(1, end), scope.placedOpen) == null;
+  }
+
+  private static String stubbed(Scope scope, String html) {
+    if (scope.disposed || scope.detached || scope.html == null || scope.instance instanceof AttrTag) {
+      return html;
+    }
+    int at;
+    if (scope.html.equals(scope.onPage) && !scope.html.contains("data-j2-controlled=\"")
+      && !scope.placedInert && keptWhereItStands(scope) && (at = html.indexOf(scope.html)) >= 0) {
+      return html.substring(0, at) + "<!--j2=" + scope.anchor + "-->" + html.substring(at + scope.html.length());
+    }
+    for (Scope child : scope.children.values()) {
+      html = stubbed(child, html);
+    }
+    return html;
+  }
+
+  /**
+   * A patch of this scope went: the page has what it carried once applied, if it had a place for it. A patch of a
+   * scope with no place on the page, as a child's ahead of its parent's during a hold, is not applied, so it tells
+   * nothing.
+   */
+  private static void pageGot(Scope scope) {
+    if (scope.parent == null || scope.placed) {
+      // What is around it on the page now holds this in place of what it had, when that can be told exactly.
+      String was = scope.onPage;
+      String now = scope.html;
+      for (Scope s = scope.parent; s != null; s = s.parent) {
+        String around = s.onPage;
+        int at = was == null || around == null || scope.instance instanceof AttrTag ? -1 : around.indexOf(was);
+        if (at < 0 || around.indexOf(was, at + 1) >= 0) {
+          for (Scope up = s; up != null; up = up.parent) {
+            up.onPage = null;
+          }
+          break;
+        }
+        s.onPage = around.substring(0, at) + now + around.substring(at + was.length());
+        was = around;
+        now = s.onPage;
+      }
+      onPage(scope, scope.html);
+    }
+  }
+
+  /** A scope's HTML for its patch, with a stub for each scope below that the page already has. */
+  private static String withStubs(Scope scope) {
+    String html = scope.html;
+    for (Scope child : scope.children.values()) {
+      html = stubbed(child, html);
+    }
+    return html;
+  }
+
+  /**
+   * A region whose content is only regions, rows, and whose rows the page has in some order: the operations that make
+   * that order this one, as JSON, rather than a patch carrying a stub for every row (ADR 0036). A row that stays, the
+   * longest run of them already in order, is not touched unless its content changed; one holding a controlled field is
+   * always patched, as the client merges typing with every answer (ADR 0034). Null when the region is not that.
+   */
+  private static String listOps(Scope list) {
+    if (!(list.instance instanceof RegionTag) || !list.placed || list.pageRows == null || list.onPage == null) {
+      return null;
+    }
+    // And what the page has of it is only those rows, one after another, as what it renders now must be too.
+    StringBuilder had = new StringBuilder("<!--j2:").append(list.anchor).append("-->");
+    for (Scope row : list.pageRows) {
+      if (row.onPage == null) {
+        return null;
+      }
+      had.append(row.onPage);
+    }
+    had.append("<!--/j2:").append(list.anchor).append("-->");
+    if (!had.toString().equals(list.onPage)) {
+      return null;
+    }
+    List<Scope> rows = new ArrayList<>(list.children.values());
+    StringBuilder whole = new StringBuilder("<!--j2:").append(list.anchor).append("-->");
+    for (Scope row : rows) {
+      if (!(row.instance instanceof RegionTag) || row.html == null || row.disposed || row.detached) {
+        return null;
+      }
+      whole.append(row.html);
+    }
+    whole.append("<!--/j2:").append(list.anchor).append("-->");
+    if (!whole.toString().equals(list.html)) {
+      return null;
+    }
+    java.util.Set<Scope> before = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    before.addAll(list.pageRows);
+    java.util.Map<Scope, Integer> now = new java.util.IdentityHashMap<>();
+    for (int i = 0; i < rows.size(); i++) {
+      now.put(rows.get(i), i);
+    }
+    StringBuilder ops = new StringBuilder("[");
+    for (Scope old : list.pageRows) {
+      if (!now.containsKey(old)) {
+        op(ops, "r", old.anchor, null, null);
+      }
+    }
+    // The rows that stay where they are: the longest run of kept rows whose new places rise in their old order.
+    List<Scope> kept = new ArrayList<>();
+    for (Scope old : list.pageRows) {
+      if (now.containsKey(old)) {
+        kept.add(old);
+      }
+    }
+    java.util.Set<Scope> stay = longestRising(kept, now);
+    Scope previous = null;
+    for (Scope row : rows) {
+      String after = previous == null ? null : previous.anchor;
+      if (!before.contains(row)) {
+        op(ops, "i", row.anchor, after, row.html);
+      } else {
+        if (!stay.contains(row)) {
+          op(ops, "m", row.anchor, after, null);
+        }
+        if (!row.html.equals(row.onPage) || row.html.contains("data-j2-controlled=\"")) {
+          op(ops, "p", row.anchor, null, withStubs(row));
+        }
+      }
+      previous = row;
+    }
+    return ops.append(']').toString();
+  }
+
+  private static void op(StringBuilder ops, String kind, String anchor, String after, String html) {
+    if (ops.length() > 1) {
+      ops.append(',');
+    }
+    ops.append("{\"").append(kind).append("\":");
+    Json.string(anchor, ops);
+    if (kind.equals("i") || kind.equals("m")) {
+      ops.append(",\"a\":");
+      if (after == null) {
+        ops.append("null");
+      } else {
+        Json.string(after, ops);
+      }
+    }
+    if (html != null) {
+      ops.append(",\"h\":");
+      Json.string(html, ops);
+    }
+    ops.append('}');
+  }
+
+  /** The kept rows that need not move: a longest increasing subsequence of their new places, in their old order. */
+  private static java.util.Set<Scope> longestRising(List<Scope> kept, java.util.Map<Scope, Integer> now) {
+    int n = kept.size();
+    int[] tails = new int[n];
+    int[] previous = new int[n];
+    int length = 0;
+    for (int i = 0; i < n; i++) {
+      int place = now.get(kept.get(i));
+      int lo = 0;
+      int hi = length;
+      while (lo < hi) {
+        int mid = (lo + hi) >>> 1;
+        if (now.get(kept.get(tails[mid])) < place) {
+          lo = mid + 1;
+        } else {
+          hi = mid;
+        }
+      }
+      previous[i] = lo > 0 ? tails[lo - 1] : -1;
+      tails[lo] = i;
+      if (lo == length) {
+        length++;
+      }
+    }
+    java.util.Set<Scope> stay = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    for (int i = length > 0 ? tails[length - 1] : -1; i >= 0; i = previous[i]) {
+      stay.add(kept.get(i));
+    }
+    return stay;
+  }
+
+  /** A patch with this html went: what is in it, the page has once the client applied it. */
+  private static void onPage(Scope scope, String html) {
+    scope.onPage = html;
+    scope.placed = true;
+    scope.pageRows = scope.instance instanceof RegionTag ? new ArrayList<>(scope.children.values()) : null;
+    for (Scope child : scope.children.values()) {
+      if (!child.detached && child.broughtBy(html)) {
+        onPage(child, child.html);
+      } else {
+        // As it was before a hold, perhaps: the page has its element, but not what is in it now.
+        forgetOnPage(child);
+        child.placed = !child.detached && html.contains(child.mark());
+      }
+    }
+  }
+
+  private static void forgetOnPage(Scope scope) {
+    scope.onPage = null;
+    scope.pageRows = null;
+    scope.placed = false;
+    for (Scope child : scope.children.values()) {
+      forgetOnPage(child);
     }
   }
 
@@ -1207,10 +1445,10 @@ public final class Tab {
    */
   private void behindThisPatch(Scope scope, String sent, List<Scope> scopes, int next) {
     for (Scope child : scope.children.values()) {
-      if (child.disposed || child.html == null || child.detached || !sent.contains("data-j2-scope=\"" + child.anchor + "\"")) {
+      if (child.disposed || child.html == null || child.detached || !sent.contains(child.mark())) {
         continue;
       }
-      if (sent.contains(child.html)) {
+      if (child.broughtBy(sent)) {
         behindThisPatch(child, child.html, scopes, next);
       } else {
         // Next, even if it already went: this patch replaced it.
@@ -1327,6 +1565,9 @@ public final class Tab {
       // A change came between rendering this response and sending it: the page gets what it missed as a patch.
       root.sent = null;
       unsent.add(root);
+    } else if (root.html != null) {
+      // The page has what was served: stubs and list operations can start from it (ADR 0036).
+      onPage(root, root.html);
     }
     if (!streamHasMore() || !html.endsWith("</body></html>")) {
       applyVisibility();
@@ -1728,6 +1969,7 @@ public final class Tab {
     if (page != null) {
       // The same HTML goes out again: what the page has is what is in doubt.
       page.sent = null;
+      forgetOnPage(page);
       markDirty(page);
     }
   }

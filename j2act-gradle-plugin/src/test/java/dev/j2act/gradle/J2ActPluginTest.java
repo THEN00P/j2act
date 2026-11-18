@@ -129,4 +129,125 @@ class J2ActPluginTest {
     }
     assertTrue(read(".settings/org.eclipse.wst.common.project.facet.core.xml").contains("facet=\"jst.web\" version=\"6.0\""));
   }
+
+  /**
+   * ADR 0036: the jar packages enhanced classes, while the class folders, which run, tests and IDEs use, stay plain.
+   * j2act-core and j2act-html come from the local repository at the plugin's version.
+   */
+  @ParameterizedTest @MethodSource("gradleVersions")
+  void theJarCarriesEnhancedClassesAndTheClassFoldersStayPlain(String gradle) throws IOException {
+    write("settings.gradle", "rootProject.name = 'demo'\n");
+    write("build.gradle", "plugins {\n  id 'io.github.then00p.j2act'\n}\n"
+      + "repositories {\n  mavenLocal()\n  mavenCentral()\n}\n"
+      + "dependencies {\n  implementation 'io.github.then00p.j2act:j2act-html:" + J2ActPlugin.VERSION + "'\n}\n");
+    write("src/main/java/demo/Home.java", "package demo;\n\n"
+      + "import static j2act.Reactive.*;\nimport static j2act.html.TagCreator.*;\n\n"
+      + "public class Home extends j2act.LiveComponent {\n"
+      + "  @Override protected j2act.View setup() {\n"
+      + "    var name = createSignal(\"Ada\");\n"
+      + "    return () -> div(p(\"hello \" + name.get()), button(\"x\").onClick(e -> name.set(\"Grace\")));\n"
+      + "  }\n}\n");
+    String output = run(gradle, "--configuration-cache", "jar").getOutput();
+    assertTrue(output.contains("j2act: 1 of 1 classes enhanced"), output);
+    String plain = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
+      StandardCharsets.ISO_8859_1);
+    assertFalse(plain.contains("j2act$enhanced"), "the class folder stays plain");
+    try (java.util.zip.ZipFile jar = new java.util.zip.ZipFile(project.resolve("build/libs/demo.jar").toFile())) {
+      java.util.zip.ZipEntry entry = jar.getEntry("demo/Home.class");
+      String packaged = new String(jar.getInputStream(entry).readAllBytes(), StandardCharsets.ISO_8859_1);
+      assertTrue(packaged.contains("j2act$enhanced"), "the jar's class is enhanced");
+      assertTrue(packaged.contains("j2act/internal/regions/Regions"), "and has regions");
+    }
+    assertTrue(run(gradle, "--configuration-cache", "jar").getOutput().contains("Configuration cache entry reused"));
+  }
+
+  /** ADR 0036: j2act.enhance.classFolders enhances the class folder itself, and keeps it enhanced across builds. */
+  @ParameterizedTest @MethodSource("gradleVersions")
+  void classFoldersAreEnhancedOnlyWhenAsked(String gradle) throws IOException {
+    theJarCarriesEnhancedClassesAndTheClassFoldersStayPlain(gradle);
+    String output = run(gradle, "--configuration-cache", "-Pj2act.enhance.classFolders=true", "classes").getOutput();
+    assertTrue(output.contains("j2act: 1 of 1 classes enhanced"), output);
+    String enhanced = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
+      StandardCharsets.ISO_8859_1);
+    assertTrue(enhanced.contains("j2act$enhanced"), "the class folder is enhanced");
+    assertTrue(run(gradle, "--configuration-cache", "-Pj2act.enhance.classFolders=true", "classes").getOutput()
+      .contains("Configuration cache entry reused"));
+    // Without the flag the compile's input changed: it runs again, and its output is plain.
+    run(gradle, "classes");
+    String plain = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
+      StandardCharsets.ISO_8859_1);
+    assertFalse(plain.contains("j2act$enhanced"), "plain again without the flag");
+    // Skip is an input of the compile too: turning it on, and off again, compiles the class folder again.
+    run(gradle, "-Pj2act.enhance.classFolders=true", "classes");
+    run(gradle, "-Pj2act.enhance.classFolders=true", "-Pj2act.enhance.skip=true", "classes");
+    String skipped = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
+      StandardCharsets.ISO_8859_1);
+    assertFalse(skipped.contains("j2act$enhanced"), "plain with skip");
+    run(gradle, "-Pj2act.enhance.classFolders=true", "classes");
+    String again = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
+      StandardCharsets.ISO_8859_1);
+    assertTrue(again.contains("j2act$enhanced"), "enhanced again without skip");
+  }
+
+  /** The same setting kept in the build script: j2act { enhance { classFolders = true } }. */
+  @ParameterizedTest @MethodSource("gradleVersions")
+  void theBuildScriptKeepsTheSetting(String gradle) throws IOException {
+    theJarCarriesEnhancedClassesAndTheClassFoldersStayPlain(gradle);
+    Files.write(project.resolve("build.gradle"), "\nj2act {\n  enhance {\n    classFolders = true\n  }\n}\n"
+      .getBytes(StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.APPEND);
+    run(gradle, "--configuration-cache", "classes");
+    String enhanced = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
+      StandardCharsets.ISO_8859_1);
+    assertTrue(enhanced.contains("j2act$enhanced"), "the class folder is enhanced");
+  }
+
+  /** ADR 0035, 0036: a bean is made to track its reads, unless its package is excluded in the build script. */
+  @ParameterizedTest @MethodSource("gradleVersions")
+  void beansTrackTheirReadsUnlessTheirPackageIsExcluded(String gradle) throws IOException {
+    theJarCarriesEnhancedClassesAndTheClassFoldersStayPlain(gradle);
+    write("src/main/java/demo/Bean.java", "package demo;\n\npublic class Bean {\n  private String name;\n"
+      + "  public String getName() {\n    return name;\n  }\n}\n");
+    String output = run(gradle, "--configuration-cache", "jar").getOutput();
+    assertTrue(output.contains("1 store classes tracked"), output);
+    Files.write(project.resolve("build.gradle"), "\nj2act {\n  enhance {\n    trackExcludes = ['demo.']\n  }\n}\n"
+      .getBytes(StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.APPEND);
+    output = run(gradle, "--configuration-cache", "jar").getOutput();
+    assertTrue(output.contains("j2act: ") && !output.contains("store classes tracked"), output);
+  }
+
+  /**
+   * ADR 0036: a bean extending a dependency's class is tracked only while that class has no fields, private ones
+   * included, which the task's classpath has to see change.
+   */
+  @ParameterizedTest @MethodSource("gradleVersions")
+  void aPrivateFieldInADependencysSuperclassStopsTracking(String gradle) throws Exception {
+    theJarCarriesEnhancedClassesAndTheClassFoldersStayPlain(gradle);
+    Files.write(project.resolve("build.gradle"), "\ndependencies {\n  implementation files('libs/base.jar')\n}\n"
+      .getBytes(StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.APPEND);
+    baseJar("public int y() {\n    return 0;\n  }");
+    write("src/main/java/demo/Bean.java", "package demo;\n\npublic class Bean extends base.Base {\n  private String name;\n"
+      + "  public String getName() {\n    return name;\n  }\n}\n");
+    String output = run(gradle, "jar").getOutput();
+    assertTrue(output.contains("1 store classes tracked"), output);
+    baseJar("private int y;\n  public int y() {\n    return y;\n  }");
+    output = run(gradle, "jar").getOutput();
+    assertTrue(output.contains("j2act: ") && !output.contains("store classes tracked"), output);
+  }
+
+  /** libs/base.jar, holding base.Base with this body. */
+  private void baseJar(String body) throws Exception {
+    Path src = project.resolve("base-src/base/Base.java");
+    Files.createDirectories(src.getParent());
+    Files.write(src, ("package base;\n\npublic class Base {\n  " + body + "\n}\n").getBytes(StandardCharsets.UTF_8));
+    Path classes = project.resolve("base-classes");
+    javax.tools.JavaCompiler javac = javax.tools.ToolProvider.getSystemJavaCompiler();
+    assertTrue(javac.run(null, null, null, "--release", "11", "-d", classes.toString(), src.toString()) == 0);
+    Path jar = project.resolve("libs/base.jar");
+    Files.createDirectories(jar.getParent());
+    try (java.util.jar.JarOutputStream out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar))) {
+      out.putNextEntry(new java.util.jar.JarEntry("base/Base.class"));
+      out.write(Files.readAllBytes(classes.resolve("base/Base.class")));
+      out.closeEntry();
+    }
+  }
 }

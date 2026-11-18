@@ -24,7 +24,7 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
  * Gradle. Whatever the pom declares wins. Maven and m2e (Eclipse, VS Code) both run it after
  * reading the projects, so the IDEs see the same build as mvn does.
  * <ul>
- * <li>the bundle and typecheck goals, when the pom lists no executions of its own;</li>
+ * <li>the bundle, typecheck and enhance goals, when the pom lists no executions of its own;</li>
  * <li>j2act-processor on the compiler's processor path, beside any the pom lists;</li>
  * <li>src/main/java as a resource folder for plain client modules and what they import;</li>
  * <li>m2e.apt.activation=jdt_apt, since m2e runs no annotation processors by default;</li>
@@ -67,6 +67,7 @@ public class J2ActExtension extends AbstractMavenLifecycleParticipant {
       execution.setId("default");
       execution.addGoal("bundle");
       execution.addGoal("typecheck");
+      execution.addGoal("enhance");
       self.addExecution(execution);
     }
     processorPath(build.getPluginsAsMap().get(COMPILER), self.getVersion());

@@ -1,5 +1,7 @@
 package j2act;
 
+import j2act.internal.html.Nesting;
+
 import j2act.internal.signals.Errors.NotReadyError;
 import j2act.internal.signals.Errors.StatusError;
 import j2act.internal.signals.Node;
@@ -28,7 +30,11 @@ final class Renderer {
   /** Renders a scope; a read that stops it unwinds up to a boundary, with what is mounted kept (ADR 0031). */
   void renderScope(Scope scope) {
     try {
-      if (scope.instance instanceof Reveal) {
+      if (scope.instance instanceof RegionTag) {
+        renderRegion(scope);
+      } else if (scope.instance instanceof AttrTag) {
+        renderAttr(scope);
+      } else if (scope.instance instanceof Reveal) {
         renderReveal(scope);
       } else if (scope.instance instanceof Boundary) {
         renderBoundary(scope);
@@ -51,18 +57,23 @@ final class Renderer {
     scope.previousChildren = new java.util.LinkedHashMap<>();
   }
 
-  /** Where the HTML parser moves a div out of its parent, which would part a boundary from what it wraps. */
-  private static final java.util.Set<String> NO_DIV_INSIDE = new java.util.HashSet<>(java.util.Arrays.asList(
-    "table", "thead", "tbody", "tfoot", "tr", "colgroup", "select", "optgroup", "p"));
 
-  /** The element being rendered, outside any component's root. */
-  String enclosing;
+  /** The elements being rendered, innermost first, outside any component's root: what the parser has open there. */
+  Nesting.Open open;
+  /**
+   * Inside a template's content, the view's own or a pending element's, or inside an element the parser reads as text
+   * (Nesting.TEXT): inert, where the client finds no region's markers, no attribute region's element and no
+   * stub (ADR 0036). What is cut out there stays part of the view around it.
+   */
+  boolean inert;
 
   private void renderBoundary(Scope scope) {
-    if (enclosing != null && NO_DIV_INSIDE.contains(enclosing)) {
+    // Its wrapper is a div, which the parser must keep where it stands, or the boundary parts from what it wraps.
+    Nesting.Fix fix = Nesting.repair("div", open);
+    if (fix != null) {
       throw new IllegalStateException(scope.instance.getClass().getSimpleName().toLowerCase() + "(...) cannot stand"
-        + " directly inside <" + enclosing + ">, whose parsing would move it out of there: put the boundary around the"
-        + " whole <" + enclosing + "> (ADR 0031)");
+        + " inside <" + open.name + ">, whose parsing would move it out of there (" + fix + "): put the boundary"
+        + " around the whole <" + fix.at.name + "> (ADR 0031)");
     }
     if (scope.renderedEpoch == epoch) {
       throw new IllegalStateException("one boundary was rendered twice in the same pass");
@@ -112,13 +123,15 @@ final class Renderer {
     // It runs again on its own, so this can be a pass of its own, not the one that made it.
     tab.enterRender();
     Renderer inner = new Renderer(tab, tab.renderEpoch());
-    inner.enclosing = enclosing;
+    inner.open = open;
+    inner.inert = inert;
     tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
     scope.children = new java.util.LinkedHashMap<>();
     Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
+      CutTag.dropUnplaced(tab, scope.regionsMade);
       inner.renderChildren(scope, "/0", latest((Boundary<?>) scope.instance).children(), false);
       inner.finish(scope);
     } catch (NotReadyError | StatusError e) {
@@ -171,7 +184,8 @@ final class Renderer {
     own.children = new java.util.LinkedHashMap<>();
     tab.enterRender();
     Renderer inner = new Renderer(tab, tab.renderEpoch());
-    inner.enclosing = enclosing;
+    inner.open = open;
+    inner.inert = inert;
     tab.handlers.begin(own);
     Scope previousScope = Tracking.swapScope(own);
     try {
@@ -260,6 +274,7 @@ final class Renderer {
     Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
+      CutTag.dropUnplaced(tab, scope.regionsMade);
       scope.refreshView();
       if (scope.shapeChanged(scope.instance.getClass())) {
         // Only a page or a layout reaches here: any other starts over when its next description
@@ -275,6 +290,110 @@ final class Renderer {
     }
     emit(scope, root);
     finish(scope);
+  }
+
+  /**
+   * Whether the parser keeps `content` between a region's markers with `at` open (ADR 0036): no element or text in it
+   * closes, wraps or moves out what is open outside it, as a div closes a p, a tr gets a tbody of its own directly in
+   * a table, and text is fostered out of a row. What a component renders and an unsafeHtml are not looked into.
+   */
+  static boolean fits(DomContent content, Nesting.Open at) {
+    return fits(content, at, at);
+  }
+
+  private static boolean fits(DomContent node, Nesting.Open at, Nesting.Open open) {
+    if (node instanceof Text) {
+      return ((Text) node).text.trim().isEmpty() || stays(Nesting.repair(null, open), at);
+    }
+    if (node instanceof Fragment) {
+      for (DomContent child : ((Fragment) node).children) {
+        if (!fits(child, at, open)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (node instanceof Hoisted) {
+      return fits(((Hoisted) node).tree, at, open);
+    }
+    if (node instanceof RegionTag) {
+      return fits((DomContent) ((RegionTag) node).current(), at, open);
+    }
+    if (!(node instanceof Tag)) {
+      return true;
+    }
+    Tag<?> tag = (Tag<?>) node;
+    Nesting.Fix fix = Nesting.repair(tag.name, open);
+    if (!stays(fix, at)) {
+      return false;
+    }
+    if (!(tag instanceof ContainerTag) || tag.name.equalsIgnoreCase("template")
+      || Nesting.TEXT.contains(tag.name.toLowerCase(java.util.Locale.ROOT))) {
+      return true;
+    }
+    // Where its children go: inside it, or, for a tag the parser drops or empties, where it stands.
+    Nesting.Open inside = fix != null && (fix.repair == Nesting.Repair.DROPS || fix.repair == Nesting.Repair.EMPTIES)
+      ? open : Nesting.Open.push(fix != null && fix.repair == Nesting.Repair.CLOSES ? fix.at.up : open, tag.name);
+    for (DomContent child : ((ContainerTag<?>) tag).children) {
+      if (child != null && !fits(child, at, inside)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Whether what the parser does leaves what is open at a region's markers alone. */
+  private static boolean stays(Nesting.Fix fix, Nesting.Open at) {
+    return fix == null || fix.repair == Nesting.Repair.DROPS || fix.repair == Nesting.Repair.EMPTIES
+      || at == null || !at.within(fix.at);
+  }
+
+  /** A region (ADR 0036): what its node holds now, between the markers that patches find it by. */
+  private void renderRegion(Scope scope) {
+    if (scope.renderedEpoch == epoch) {
+      throw new IllegalStateException("one region was rendered twice in the same pass");
+    }
+    scope.renderedEpoch = epoch;
+    tab.clearDirty(scope);
+    tab.handlers.begin(scope);
+    scope.previousChildren = scope.children;
+    scope.children = new java.util.LinkedHashMap<>();
+    DomContent content;
+    Scope previousScope = Tracking.swapScope(scope);
+    try {
+      content = ((RegionTag) scope.instance).content();
+    } finally {
+      Tracking.swapScope(previousScope);
+    }
+    RegionTag region = (RegionTag) scope.instance;
+    if (!java.util.Objects.equals(keyOf(content), region.key) || !fits(content, open)) {
+      // Keyed by what it showed when made, as the plain build's slot would be: another key is another slot, which
+      // only the view that made it can place, so that view runs again and what was here goes. And so for what the
+      // parser would move out of its markers: placed by that view, it is part of what is around it.
+      tab.markDirty(region.creator);
+      content = null;
+    }
+    out.append("<!--j2:").append(scope.anchor).append("-->");
+    if (content != null) {
+      renderNode(scope, "", content, false);
+    }
+    out.append("<!--/j2:").append(scope.anchor).append("-->");
+    finish(scope);
+  }
+
+  /** An attribute region (ADR 0036): its value set on its tag, and the attributes that gives, for its patch. */
+  private void renderAttr(Scope scope) {
+    if (scope.renderedEpoch == epoch) {
+      throw new IllegalStateException("one attribute region was rendered twice in the same pass");
+    }
+    scope.renderedEpoch = epoch;
+    tab.clearDirty(scope);
+    Scope previousScope = Tracking.swapScope(scope);
+    try {
+      out.append(((AttrTag) scope.instance).render());
+    } finally {
+      Tracking.swapScope(previousScope);
+    }
   }
 
   /** The scope rendered: handlers no element uses go, and so do children it did not place again. */
@@ -316,7 +435,7 @@ final class Renderer {
     ContainerTag<?> head = null;
     List<DomContent> children = html.children;
     for (int i = 0; i < children.size(); i++) {
-      DomContent child = children.get(i);
+      DomContent child = documentChild(children.get(i));
       if (child instanceof ContainerTag && "head".equals(((ContainerTag<?>) child).name)) {
         head = (ContainerTag<?>) child;
       } else if (child != null) {
@@ -347,7 +466,7 @@ final class Renderer {
     ContainerTag<?> head = null;
     List<DomContent> children = html.children;
     for (int i = 0; i < children.size(); i++) {
-      DomContent child = children.get(i);
+      DomContent child = documentChild(children.get(i));
       if (child instanceof ContainerTag && "head".equals(((ContainerTag<?>) child).name)) {
         head = (ContainerTag<?>) child;
       } else if (child instanceof ContainerTag && "body".equals(((ContainerTag<?>) child).name)) {
@@ -361,6 +480,19 @@ final class Renderer {
   }
 
   private void renderTag(Scope scope, String path, Tag<?> tag, String anchor) {
+    // Its attribute regions run first, inside this pass, setting what the tag's attributes are now.
+    List<Scope> attrs = null;
+    for (int i = 0; i < tag.attrRegions.size(); i++) {
+      if (attrs == null) {
+        attrs = new java.util.ArrayList<>();
+      }
+      if (inert) {
+        // Set here, as its own scope would, and read by the scope around it, which renders again when it changes.
+        tag.attrRegions.get(i).render();
+        continue;
+      }
+      attrs.add(place(scope, path + "/@" + i, tag.attrRegions.get(i), false));
+    }
     out.append('<').append(tag.name);
     if (anchor != null) {
       attribute("data-j2-scope", anchor);
@@ -372,6 +504,12 @@ final class Renderer {
     for (Map.Entry<String, String> attr : tag.attributes.entrySet()) {
       if (!Html.isTextareaText(tag, attr.getKey())) {
         attribute(attr.getKey(), attr.getValue());
+      }
+    }
+    if (attrs != null) {
+      for (Scope attr : attrs) {
+        // With its empty value written out, so data-j2-a-s2 never reads as the start of data-j2-a-s21.
+        out.append(' ').append(Scope.attrMark(attr.anchor));
       }
     }
     for (Map.Entry<String, Handler<?>> event : tag.events.entrySet()) {
@@ -431,21 +569,31 @@ final class Renderer {
     }
     if (tag.pending != null) {
       out.append("<template data-j2-pending>");
-      renderNode(scope, path + "/pending", tag.pending, false);
+      boolean wasInert = inert;
+      inert = true;
+      try {
+        renderNode(scope, path + "/pending", tag.pending, false);
+      } finally {
+        inert = wasInert;
+      }
       out.append("</template>");
     }
-    String outer = enclosing;
-    enclosing = tag.name;
+    Nesting.Open outer = open;
+    boolean outerInert = inert;
+    // As the parser has it: any case, and below an element it reads as text, all of what is there is text.
+    open = Nesting.Open.push(open, tag.name);
+    inert |= open.name.equals("template") || Nesting.TEXT.contains(open.name);
     int contentStart = out.length();
     try {
       String text = Html.textareaText(tag);
       if (text != null) {
         Html.escape(text, out);
       } else {
-        renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(tag.name));
+        renderChildren(scope, path, ((ContainerTag<?>) tag).children, Html.isRawText(open.name));
       }
     } finally {
-      enclosing = outer;
+      open = outer;
+      inert = outerInert;
     }
     if (Html.dropsFirstNewline(tag.name) && out.length() > contentStart && out.charAt(contentStart) == '\n') {
       out.insert(contentStart, '\n');
@@ -476,8 +624,35 @@ final class Renderer {
       out.append(((UnsafeHtml) node).html);
     } else if (node instanceof Fragment) {
       renderChildren(scope, path, ((Fragment) node).children, rawText);
+    } else if (node instanceof Hoisted) {
+      Hoisted constant = (Hoisted) node;
+      if (rawText) {
+        renderNode(scope, path, constant.tree, true);
+      } else {
+        String html = constant.html;
+        if (html == null) {
+          // Rendered as any tree is, once: nothing in it reads, binds a handler or places a component.
+          StringBuilder outer = out;
+          out = new StringBuilder();
+          try {
+            renderNode(scope, path, constant.tree, false);
+            html = out.toString();
+          } finally {
+            out = outer;
+          }
+          constant.html = html;
+        }
+        out.append(html);
+      }
     } else if (node instanceof Tag) {
       renderTag(scope, path, (Tag<?>) node, null);
+    } else if (node instanceof RegionTag && (rawText || inert || !fits((DomContent) ((RegionTag) node).current(), open))) {
+      // Where no marker can stand, or the parser would move it out of its markers, it is part of what is around it,
+      // which runs again for it.
+      DomContent content = ((RegionTag) node).content();
+      if (content != null) {
+        renderNode(scope, path, content, rawText);
+      }
     } else if (node instanceof ComponentTag) {
       place(scope, path, (ComponentTag) node);
     } else {
@@ -487,6 +662,11 @@ final class Renderer {
 
   /** Finds or creates the child's scope: a route's frame is its own, anything else matches by slot (ADR 0031). */
   private void place(Scope parent, String path, ComponentTag component) {
+    place(parent, path, component, true);
+  }
+
+  /** emit: what it renders goes into this pass's HTML; an attribute region's goes only into its own patches. */
+  private Scope place(Scope parent, String path, ComponentTag component, boolean emit) {
     Scope child;
     String local = path + "@" + component.getClass().getName();
     if (component.scope != null) {
@@ -522,14 +702,32 @@ final class Renderer {
         }
       }
       if (child == null || child.disposed) {
-        child = new Scope(tab, parent, address);
+        child = component instanceof CutTag ? new Scope(tab, parent, address, (CutTag) component)
+          : new Scope(tab, parent, address);
       }
       child.localPath = local;
       child.bind(component);
     }
     parent.children.put(child.address, child);
-    child.placedInside = enclosing;
-    out.append(child.renderInParent());
+    child.placedOpen = open;
+    child.placedInert = inert;
+    String rendered = child.renderInParent();
+    if (emit) {
+      out.append(rendered);
+    }
+    return child;
+  }
+
+  /** The head and body of a page are found by what they are, so a constant is looked into (ADR 0036). */
+  /**
+   * A child of a page's html as what it is: html(...)'s arguments are never cut, but html().with(...)'s are, and a head
+   * or body is found by being one. A region there renders as part of the page's view, which renders again for it.
+   */
+  private static DomContent documentChild(DomContent node) {
+    while (node instanceof RegionTag || node instanceof Hoisted) {
+      node = node instanceof Hoisted ? ((Hoisted) node).tree : ((RegionTag) node).content();
+    }
+    return node;
   }
 
   private static Object keyOf(DomContent node) {
@@ -538,6 +736,9 @@ final class Renderer {
     }
     if (node instanceof ComponentTag) {
       return ((ComponentTag) node).key;
+    }
+    if (node instanceof Hoisted) {
+      return ((Hoisted) node).key();
     }
     return null;
   }

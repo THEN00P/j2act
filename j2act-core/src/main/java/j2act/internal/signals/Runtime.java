@@ -523,6 +523,33 @@ public final class Runtime {
     node.statusFlags &= ~Constants.STATUS_UNINITIALIZED;
   }
 
+  /** How many owners and nodes live below this one, at any depth: what a test counts to see nothing leaks. */
+  public int ownedCount(Owner owner) {
+    int count = 0;
+    for (Owner child = owner.firstChild; child != null; child = child.nextSibling) {
+      count += 1 + ownedCount(child);
+    }
+    return count;
+  }
+
+  /** Whether its last run read anything that could run it again. */
+  public boolean hasSources(Node node) {
+    return node.deps != null;
+  }
+
+  /**
+   * createSlotOwner, as if `running` were what is running now: a region's, placed by another view than made it. Its
+   * context is where it is placed, as what it places would have in the plain build, under a reveal or a boundary there.
+   */
+  public Owner createSlotOwner(Owner parent, Owner running) {
+    Owner placing = core.context;
+    Owner owner = core.runWithOwner(running, () -> createSlotOwner(parent));
+    if (placing != null) {
+      owner.ctx = placing.ctx;
+    }
+    return owner;
+  }
+
   public boolean pending(Node node) {
     return (node.statusFlags & Constants.STATUS_PENDING) != 0;
   }

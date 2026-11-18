@@ -89,7 +89,7 @@ class J2ActExtensionTest {
     Build build = project.getBuild();
 
     PluginExecution own = build.getPluginsAsMap().get(J2ActExtension.PLUGIN).getExecutions().get(0);
-    assertEquals(List.of("bundle", "typecheck"), own.getGoals());
+    assertEquals(List.of("bundle", "typecheck", "enhance"), own.getGoals());
 
     Plugin compiler = build.getPluginsAsMap().get(J2ActExtension.COMPILER);
     assertEquals(List.of("j2act-processor:0.1.0"), processorPath(compiler.getConfiguration()));

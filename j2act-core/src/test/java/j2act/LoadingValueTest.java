@@ -98,7 +98,9 @@ class LoadingValueTest {
 
       int from = h.conn.size();
       name.complete("Ada");
-      String next = h.awaitPatch(from, p -> p.contains("user:Ada;") && p.contains("plain:Ada;")).get("html");
+      h.awaitPatch(from, p -> p.contains("user:Ada;"));
+      String next = h.page();
+      assertTrue(next.contains("plain:Ada;"), next);
       assertTrue(next.contains("length:3;") && next.contains("editable:Ada;") && next.contains("guessed:Ada;"), next);
       assertTrue(next.contains("summary:of Ada;"), next);
 

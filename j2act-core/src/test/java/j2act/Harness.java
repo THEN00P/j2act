@@ -128,6 +128,75 @@ final class Harness implements AutoCloseable {
     return conn.await(from, m -> "patch".equals(m.get("type")) && htmlMatches.test(m.get("html")));
   }
 
+  private int pageRead;
+  private String pageDoc;
+
+  /**
+   * The page as runtime.js would have it now: the served HTML with every patch so far applied, each stub standing
+   * for what the page had (ADR 0036). One patch's HTML only shows what changed.
+   */
+  String page() {
+    if (pageDoc == null) {
+      pageDoc = html;
+    }
+    List<Map<String, String>> messages = conn.since(pageRead, m -> true);
+    pageRead += messages.size();
+    for (Map<String, String> m : messages) {
+      if ("list".equals(m.get("type"))) {
+        if (scopeSpan(pageDoc, m.get("anchor")) == null) {
+          continue; // As a patch whose place is not on the page: not applied.
+        }
+        String next = applyList(pageDoc, m.get("anchor"), m.get("ops"));
+        assertTrue(next != null, "a list's operations do not fit the page: " + m + "\non\n" + pageDoc);
+        pageDoc = next;
+        browserParses(m.get("anchor"), null, false);
+        continue;
+      }
+      if ("attrs".equals(m.get("type"))) {
+        // As a patch whose place is not on the page: not applied.
+        String next = applyAttrs(pageDoc, m.get("anchor"), m.get("values"));
+        if (next != null) {
+          pageDoc = next;
+          browserParses(m.get("anchor"), null, false);
+        }
+        continue;
+      }
+      if (!"patch".equals(m.get("type"))) {
+        continue;
+      }
+      boolean root = "true".equals(m.get("root"));
+      if (!root && scopeSpan(pageDoc, m.get("anchor")) == null) {
+        continue; // As runtime.js: its place is not on the page, so it is not applied.
+      }
+      String patch = expandStubs(pageDoc, m.get("html"));
+      assertTrue(patch != null, "a patch stands for something the page does not have: " + m.get("html"));
+      if (root) {
+        pageDoc = patch;
+        browserParses(m.get("anchor"), null, false);
+      } else {
+        String next = replaceScope(pageDoc, m.get("anchor"), patch);
+        if (next != null) {
+          pageDoc = next;
+          browserParses(m.get("anchor"), patch, m.get("html").contains("<!--j2="));
+        }
+      }
+    }
+    return pageDoc;
+  }
+
+  /**
+   * What the page model reads as, a browser builds too (BrowserParse, ADR 0036): every region's markers under one
+   * parent and reachable, and a patch's HTML, parsed where the client puts it, the nodes a fresh load gives there.
+   */
+  private void browserParses(String anchor, String patch, boolean stubbed) {
+    String problems = BrowserParse.problems(pageDoc);
+    assertTrue(problems == null, problems + "\non\n" + pageDoc);
+    if (patch != null) {
+      String problem = BrowserParse.patchProblem(pageDoc, anchor, patch, stubbed);
+      assertTrue(problem == null, problem + "\non\n" + pageDoc);
+    }
+  }
+
   /** The click handler id on the element whose text starts with {@code label}. */
   static String clickOn(String html, String label) {
     return find(html, "data-j2-click=\"([^\"]+)\"[^>]*>" + Pattern.quote(label));
@@ -222,4 +291,143 @@ final class Harness implements AutoCloseable {
       }
     }
   }
+
+  private static final Pattern TAG = Pattern.compile("<(/?)([a-zA-Z0-9]+)([^>]*?)(/?)>");
+  private static final Pattern STUB = Pattern.compile("<!--j2=([^>]+?)-->");
+
+  /**
+   * A list region's operations, as runtime.js applies them (ADR 0036): rows removed, inserted after a row or at the
+   * start, moved, patched. Null when the list or a row it names is not in doc.
+   */
+  @SuppressWarnings("unchecked")
+  static String applyList(String doc, String anchor, String opsJson) {
+    if (scopeSpan(doc, anchor) == null) {
+      return null;
+    }
+    for (Object item : (List<Object>) j2act.internal.json.Json.parse(opsJson)) {
+      Map<String, Object> op = (Map<String, Object>) item;
+      if (op.containsKey("r")) {
+        int[] row = scopeSpan(doc, (String) op.get("r"));
+        if (row == null) {
+          return null;
+        }
+        doc = doc.substring(0, row[0]) + doc.substring(row[1]);
+      } else if (op.containsKey("i") || op.containsKey("m")) {
+        String moved;
+        if (op.containsKey("i")) {
+          moved = expandStubs(doc, (String) op.get("h"));
+        } else {
+          int[] row = scopeSpan(doc, (String) op.get("m"));
+          if (row == null) {
+            return null;
+          }
+          moved = doc.substring(row[0], row[1]);
+          doc = doc.substring(0, row[0]) + doc.substring(row[1]);
+        }
+        if (moved == null) {
+          return null;
+        }
+        String after = (String) op.get("a");
+        int at;
+        if (after == null) {
+          at = doc.indexOf("<!--j2:" + anchor + "-->") + ("<!--j2:" + anchor + "-->").length();
+        } else {
+          int[] row = scopeSpan(doc, after);
+          if (row == null) {
+            return null;
+          }
+          at = row[1];
+        }
+        doc = doc.substring(0, at) + moved + doc.substring(at);
+      } else {
+        String html = expandStubs(doc, (String) op.get("h"));
+        String next = html == null ? null : replaceScope(doc, (String) op.get("p"), html);
+        if (next == null) {
+          return null;
+        }
+        doc = next;
+      }
+    }
+    return doc;
+  }
+
+  /**
+   * An attribute region's patch, as runtime.js applies it (ADR 0036): on the element carrying its anchor, each attribute
+   * set in place or added at the end, or removed. Null when no element carries it.
+   */
+  static String applyAttrs(String doc, String anchor, String values) {
+    Matcher open = Pattern.compile("<[a-zA-Z0-9]+[^>]* data-j2-a-" + Pattern.quote(anchor) + "=\"\"[^>]*>").matcher(doc);
+    if (!open.find()) {
+      return null;
+    }
+    String tag = open.group();
+    boolean selfClosing = tag.endsWith("/>");
+    String body = tag.substring(0, tag.length() - (selfClosing ? 2 : 1));
+    for (Map.Entry<String, String> attr : j2act.internal.json.Json.parseFlat(values).entrySet()) {
+      Pattern existing = Pattern.compile(" " + Pattern.quote(attr.getKey()) + "(=\"[^\"]*\")?(?=[ />]|$)");
+      StringBuilder escaped = new StringBuilder();
+      if (attr.getValue() != null) {
+        Html.escape(attr.getValue(), escaped);
+      }
+      // Written as the renderer writes it: an empty value as the bare name.
+      String value = attr.getValue() == null ? null
+        : attr.getValue().isEmpty() ? " " + attr.getKey() : " " + attr.getKey() + "=\"" + escaped + "\"";
+      Matcher m = existing.matcher(body);
+      if (m.find()) {
+        body = body.substring(0, m.start()) + (value == null ? "" : value) + body.substring(m.end());
+      } else if (value != null) {
+        body = body + value;
+      }
+    }
+    return doc.substring(0, open.start()) + body + (selfClosing ? "/>" : ">") + doc.substring(open.end());
+  }
+
+  /** A patch's HTML with each stub replaced by what the page has for it, as runtime.js does; null if it has none. */
+  static String expandStubs(String doc, String html) {
+    Matcher stub = STUB.matcher(html);
+    StringBuilder out = new StringBuilder();
+    int at = 0;
+    while (stub.find()) {
+      int[] span = scopeSpan(doc, stub.group(1));
+      if (span == null) {
+        return null;
+      }
+      out.append(html, at, stub.start()).append(doc, span[0], span[1]);
+      at = stub.end();
+    }
+    return out.append(html, at, html.length()).toString();
+  }
+
+  /** Puts html where the element carrying this anchor is; null if there is none. */
+  static String replaceScope(String doc, String anchor, String html) {
+    int[] span = scopeSpan(doc, anchor);
+    return span == null ? null : doc.substring(0, span[0]) + html + doc.substring(span[1]);
+  }
+
+  /** Where the element carrying this anchor, or the region between its markers, starts and ends in doc; null if none. */
+  static int[] scopeSpan(String doc, String anchor) {
+    Matcher open = Pattern.compile("<([a-zA-Z0-9]+)[^>]*data-j2-scope=\"" + Pattern.quote(anchor) + "\"[^>]*>").matcher(doc);
+    if (!open.find()) {
+      int start = doc.indexOf("<!--j2:" + anchor + "-->");
+      String end = "<!--/j2:" + anchor + "-->";
+      int stop = start < 0 ? -1 : doc.indexOf(end, start);
+      return stop < 0 ? null : new int[] {start, stop + end.length()};
+    }
+    String name = open.group(1);
+    int depth = 1;
+    Matcher tags = TAG.matcher(doc);
+    int at = open.end();
+    while (tags.find(at)) {
+      at = tags.end();
+      if (!tags.group(2).equals(name) || !tags.group(4).isEmpty()) {
+        continue;
+      }
+      depth += tags.group(1).isEmpty() ? 1 : -1;
+      if (depth == 0) {
+        return new int[] {open.start(), tags.end()};
+      }
+    }
+    return null;
+  }
+
 }

@@ -296,7 +296,7 @@ class RandomAppTest {
       return child -> {
         me.running("a layout's view");
         return T.page("t",
-          T.span("[layout" + me.id + "=" + clicks.get() + " where=" + pathParam("id") + " n=" + shared.n.get() + "]"),
+          r(() -> T.span("[layout" + me.id + "=" + clicks.get() + " where=" + pathParam("id") + " n=" + shared.n.get() + "]")),
           T.button("lclick" + me.id).onClick(e -> {
             me.running("a layout's handler");
             clicks.set(++me.counted);
@@ -327,7 +327,7 @@ class RandomAppTest {
       return () -> {
         me.running("a child's view");
         return T.div(
-          T.span("[child" + me.id + "=" + clicks.get() + " d=" + doubled.get() + "]"),
+          r(() -> T.span("[child" + me.id + "=" + clicks.get() + " d=" + doubled.get() + "]")),
           T.button("cclick" + me.id).onClick(e -> {
             me.running("a child's handler");
             clicks.set(++me.counted);
@@ -418,11 +418,27 @@ class RandomAppTest {
         me.running("a view");
         String id = pathParam("id");
         List<DomContent> kids = new ArrayList<>(Arrays.asList(
-          T.span("[page" + me.id + "=" + kind + " guard=" + guard.get() + " id=" + id + " n=" + shared.n.get()
-            + " doubled=" + shared.doubled.get() + " local=" + local.get() + "]"),
-          T.span("[draft" + me.id + "=" + draft.get() + "]"),
-          T.span("[q=" + queryParam("q") + "]"),
-          T.span("[kept=" + shared.kept.get() + "]"),
+          r(() -> T.span("[page" + me.id + "=" + kind + " guard=" + guard.get() + " id=" + id + " n=" + shared.n.get()
+            + " doubled=" + shared.doubled.get() + " local=" + local.get() + "]")),
+          r(() -> T.span("[draft" + me.id + "=" + draft.get() + "]")),
+          r(() -> T.span("[q=" + queryParam("q") + "]")),
+          r(() -> T.span("[kept=" + shared.kept.get() + "]")),
+          ra(ra(T.span("[attr" + me.id + "]"), () -> String.valueOf(shared.n.get()), "data-n"),
+            () -> queryParam("q"), "data-q"),
+          // Keyed rows, each its own region with regions on, as the enhancer leaves each(...)'s rows.
+          // The rows turn and grow and shrink with n, so a list's operations move, insert and remove them.
+          T.tag("ul", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.span("[row" + me.id + "." + k + "="
+            + (shared.n.get() + k) + "]").withKey(k))))),
+          // Where the parser reshapes what it reads (BrowserParse): rows in a table's tbody, SVG and the HTML inside
+          // its foreignObject, and a p; and, below, rows straight in a table, which the parser puts in a tbody of its
+          // own, a template's content and a pending element's, out of the document, a p holding a div, which the parser
+          // closes first, also below a span, an li in an li, and a tbody straight in a table, whose markers stand.
+          T.tag("table", T.tag("tbody", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr",
+            T.tag("td", "[body" + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k)))))),
+          T.tag("svg", ra(T.tag("circle"), () -> shared.n.get(), "r"),
+            r(() -> T.tag("text", "[svg" + me.id + "=" + shared.n.get() + "]")),
+            T.tag("foreignObject", r(() -> T.span("[fo" + me.id + "=" + shared.n.get() + "]")))),
+          T.tag("p", r(() -> T.span("[pspan" + me.id + "=" + shared.n.get() + "]"))),
           T.div().withId("meter" + me.id).withClient(meter),
           T.button("read" + me.id).onClick(e -> world.results.add(meter.read().toCompletableFuture())),
           T.button("reset" + me.id).onClick(e -> meter.reset(() -> me.running("a client's callback"))),
@@ -474,7 +490,7 @@ class RandomAppTest {
             me.running("a boundary's content");
             return loading(() -> {
               me.running("a boundary's content");
-              return T.span("[plain=" + plain.get() + "]");
+              return r(() -> T.span("[plain=" + plain.get() + "]"));
             }).withFallback(T.span("[plain=loading]"));
           }).withFallback((e, reset) -> T.div(
             T.span("[plain=err]"),
@@ -482,16 +498,25 @@ class RandomAppTest {
               me.refreshes++;
               reset.run();
             }))),
-          errored(() -> loading(() -> T.span("[stale=" + stale.get() + " failed=" + failed(stale) + "]"))
+          errored(() -> loading(() -> r(() -> T.span("[stale=" + stale.get() + " failed=" + failed(stale) + "]")))
             .withFallback(T.span("[stale=loading]")))
             .withFallback((e, reset) -> T.div(
               T.span("[stale=err]"),
               T.button("sretry" + me.id).onClick(click -> reset.run()))),
-          loading(() -> T.span("[remote=" + shared.remote.get() + "]")).withFallback(T.span("[remote=loading]")),
+          loading(() -> r(() -> T.span("[remote=" + shared.remote.get() + "]"))).withFallback(T.span("[remote=loading]")),
           loading(() -> T.div().withId("inner" + me.id + "n" + shared.n.get()).withClient(inner)).withFallback(T.span("[inner=loading]"))));
-        if (child.get()) {
-          kids.add(new Child(url));
-        }
+        kids.add(r(() -> child.get() ? new Child(url) : null));
+        kids.add(T.tag("table", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr", T.tag("td", "[bare"
+          + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k))))));
+        kids.add(T.tag("template", r(() -> T.span("[tpl" + me.id + "=" + shared.n.get() + "]"))));
+        kids.add(T.tag("iframe", r(() -> new Text("[ifr" + me.id + "=" + shared.n.get() + "]"))));
+        kids.add(T.tag("noscript", r(() -> new Text("[nos" + me.id + "=" + shared.n.get() + "]"))));
+        kids.add(T.button("pending" + me.id).withPending(r(() -> T.span("[pend" + me.id + "=" + shared.n.get() + "]"))));
+        kids.add(T.tag("p", r(() -> T.tag("div", "[pdiv" + me.id + "=" + shared.n.get() + "]"))));
+        kids.add(T.tag("p", r(() -> T.tag("span", T.tag("div", "[psd" + me.id + "=" + shared.n.get() + "]")))));
+        kids.add(T.tag("ul", T.tag("li", r(() -> T.tag("li", "[lili" + me.id + "=" + shared.n.get() + "]")))));
+        kids.add(T.tag("table", r(() -> T.tag("tbody", T.tag("tr", T.tag("td", "[tsec" + me.id + "=" + shared.n.get()
+          + "]"))))));
         return T.page("t", T.div(kids.toArray(new DomContent[0])));
       };
     }
@@ -526,6 +551,13 @@ class RandomAppTest {
 
   private static final String[] URLS = {"/a/1", "/a/2", "/a/3", "/b/1", "/b/2", "/d/1", "/d/2", "/c", "/a/nf", "/a/rd", "/d/nf",
     "/a/1?q=2", "/a/1?q=3", "/b/1?q=2"};
+
+  /** Rows that turn by n and number between one and five. */
+  static List<Integer> rowsFor(int n) {
+    List<Integer> rows = new ArrayList<>(Arrays.asList(1, 2, 3, 4, 5));
+    Collections.rotate(rows, n);
+    return rows.subList(0, 1 + Math.floorMod(n * 3, 5));
+  }
 
   private static String queryIn(String url) {
     int at = url.indexOf("?q=");
@@ -566,9 +598,31 @@ class RandomAppTest {
     synchronized void stream(String chunk) {
       Matcher m = STREAMED.matcher(chunk);
       while (m.find()) {
-        String next = replaceScope(doc, m.group(1), m.group(2));
+        String html = (String) j2act.internal.json.Json.parse(m.group(2));
+        String next = Harness.replaceScope(doc, m.group(1), html);
         if (next != null) {
           doc = next;
+          // PageStream's j2s parses where it goes, as parseIn does.
+          browserParses(m.group(1), html, true);
+        }
+      }
+    }
+
+    /** What the page model reads as, a browser builds too (BrowserParse); a problem otherwise. */
+    void browserParses(String anchor, String patch, boolean stubbed) {
+      String problem;
+      try {
+        problem = BrowserParse.problems(doc);
+        if (problem == null && patch != null) {
+          problem = BrowserParse.patchProblem(doc, anchor, patch, stubbed);
+        }
+      } catch (RuntimeException e) {
+        problem = "the page did not parse: " + e;
+      }
+      if (problem != null) {
+        String head = problem.substring(0, Math.min(60, problem.length()));
+        if (problems.stream().noneMatch(p -> p.startsWith(head))) {
+          problems.add(problem + "\non\n" + doc);
         }
       }
     }
@@ -588,7 +642,23 @@ class RandomAppTest {
           }
           applied = number;
         }
-        if ("callSeen".equals(type)) {
+        if ("list".equals(type)) {
+          // As a patch whose place is not on the page: not applied.
+          String next = Harness.scopeSpan(doc, m.get("anchor")) == null ? doc : Harness.applyList(doc, m.get("anchor"), m.get("ops"));
+          if (next == null) {
+            problems.add("a list's operations do not fit the page: " + m.get("ops"));
+          } else {
+            doc = next;
+            browserParses(null, null, false);
+          }
+        } else if ("attrs".equals(type)) {
+          // As a patch whose place is not on the page, which the hold brings along with what is around it.
+          String next = Harness.applyAttrs(doc, m.get("anchor"), m.get("values"));
+          if (next != null) {
+            doc = next;
+            browserParses(null, null, false);
+          }
+        } else if ("callSeen".equals(type)) {
           unseen.remove(m.get("id"));
         } else if ("patch".equals(type)) {
           String shown = m.get("html").replaceAll("<button[^>]*>[^<]*</button>", "");
@@ -596,14 +666,24 @@ class RandomAppTest {
           if (recent.size() > 8) {
             recent.remove(0);
           }
-          if ("true".equals(m.get("root"))) {
-            doc = m.get("html");
+          boolean root = "true".equals(m.get("root"));
+          // As runtime.js: a patch whose place is not on the page is not applied, so its stubs are not looked at.
+          String html = root || Harness.scopeSpan(doc, m.get("anchor")) != null ? Harness.expandStubs(doc, m.get("html")) : "";
+          if (html == null) {
+            problems.add("a patch of " + m.get("anchor") + " stands for something the page does not have: "
+              + m.get("html") + "\non\n" + doc);
+            continue;
+          }
+          if (root) {
+            doc = html;
+            browserParses(null, null, false);
           } else {
-            String next = replaceScope(doc, m.get("anchor"), m.get("html"));
+            String next = Harness.replaceScope(doc, m.get("anchor"), html);
             // During a hold a child's patch can get ahead of its parent's, whose own patch brings it along. The
             // runtime ignores it, and what the page ends up showing is checked at rest.
             if (next != null) {
               doc = next;
+              browserParses(m.get("anchor"), html, m.get("html").contains("<!--j2="));
             }
           }
         } else if ("ack".equals(type)) {
@@ -623,31 +703,7 @@ class RandomAppTest {
     }
   }
 
-  private static final Pattern STREAMED = Pattern.compile("<template id=\"j2t-([^\"]+)\">(.*?)</template>", Pattern.DOTALL);
-  private static final Pattern TAG = Pattern.compile("<(/?)([a-zA-Z0-9]+)([^>]*?)(/?)>");
-
-  /** Puts html where the element carrying this anchor is; null if there is none. */
-  static String replaceScope(String doc, String anchor, String html) {
-    Matcher open = Pattern.compile("<([a-zA-Z0-9]+)[^>]*data-j2-scope=\"" + Pattern.quote(anchor) + "\"[^>]*>").matcher(doc);
-    if (!open.find()) {
-      return null;
-    }
-    String name = open.group(1);
-    int depth = 1;
-    Matcher tags = TAG.matcher(doc);
-    int at = open.end();
-    while (tags.find(at)) {
-      at = tags.end();
-      if (!tags.group(2).equals(name) || !tags.group(4).isEmpty()) {
-        continue;
-      }
-      depth += tags.group(1).isEmpty() ? 1 : -1;
-      if (depth == 0) {
-        return doc.substring(0, open.start()) + html + doc.substring(tags.end());
-      }
-    }
-    return null;
-  }
+  private static final Pattern STREAMED = Pattern.compile("j2s\\(\"([^\"]+)\",(\"(?:[^\"\\\\]|\\\\.)*\")\\)");
 
   private static final class Driver implements AutoCloseable {
     final World w = new World();
@@ -1084,6 +1140,34 @@ class RandomAppTest {
         expect(tab, tab.doc.contains("[q=" + queryIn(tab.wanted) + "]"), at + ": wanted its query");
         expect(tab, tab.doc.contains("[kept=" + w.kept + "]"), at + ": wanted kept " + w.kept);
         String pageId = page.group(1);
+        Matcher attrs = Pattern.compile("<span([^>]*)>\\[attr" + pageId + "\\]").matcher(tab.doc);
+        expect(tab, attrs.find() && attrs.group(1).contains(" data-n=\"" + n + "\"")
+          && (queryIn(tab.wanted).equals("null") ? !attrs.group(1).contains(" data-q=")
+            : attrs.group(1).contains(" data-q=\"" + queryIn(tab.wanted) + "\"")),
+          at + ": wanted data-n=" + n + " and its query on [attr" + pageId + "]");
+        StringBuilder rows = new StringBuilder();
+        Matcher row = Pattern.compile("\\[row" + pageId + "\\.(\\d+)=(\\d+)\\]").matcher(tab.doc);
+        while (row.find()) {
+          rows.append(row.group(1)).append(',');
+          expect(tab, Integer.parseInt(row.group(2)) == n + Integer.parseInt(row.group(1)), at + ": row " + row.group());
+        }
+        StringBuilder wantedRows = new StringBuilder();
+        for (int k : rowsFor(n)) {
+          wantedRows.append(k).append(',');
+        }
+        expect(tab, rows.toString().equals(wantedRows.toString()), at + ": rows " + rows + " for n=" + n);
+        for (int k : rowsFor(n)) {
+          for (String table : new String[] {"bare", "body"}) {
+            String cell = "[" + table + pageId + "." + k + "=" + (n + k) + "]";
+            expect(tab, tab.doc.contains(cell), at + ": wanted " + cell);
+          }
+        }
+        for (String shown : new String[] {"svg", "fo", "pspan", "tpl", "pend", "ifr", "nos", "pdiv", "psd", "lili",
+          "tsec"}) {
+          String text = "[" + shown + pageId + "=" + n + "]";
+          expect(tab, tab.doc.contains(text), at + ": wanted " + text);
+        }
+        expect(tab, tab.doc.matches("(?s).*<circle[^>]* r=\"" + n + "\".*"), at + ": wanted the circle's r=" + n);
         Integer locals = clicks.get("local" + pageId);
         expect(tab, rest.contains(" local=" + (locals == null ? 0 : locals) + "]") || rest.endsWith(" local=" + (locals == null ? 0 : locals)),
           at + ": wanted " + locals + " local clicks in " + rest);
@@ -1384,6 +1468,50 @@ class RandomAppTest {
       }
     }
     return smallest;
+  }
+
+  /**
+   * Whether views pass their child expressions to Regions.of, as the enhancer leaves them (ADR 0036): every app must
+   * end up showing its state either way.
+   */
+  static volatile boolean regions;
+
+  static DomContent r(java.util.function.Supplier<? extends DomContent> content) {
+    return regions ? j2act.internal.regions.Regions.of(content) : content.get();
+  }
+
+  /** An attribute set as the enhancer leaves it, with regions on: its value a supplier, its call a setter. */
+  @SuppressWarnings("unchecked")
+  static <T extends Tag<T>> T ra(T tag, java.util.function.Supplier<?> value, String name) {
+    return regions ? (T) j2act.internal.regions.Regions.attr(tag, value, (t, v) -> ((Tag<?>) t).attr(name, v))
+      : tag.attr(name, value.get());
+  }
+
+  @Test
+  void wholeAppsWithRegionsEndUpShowingTheirStateToo() throws Exception {
+    regions = true;
+    try {
+      wholeAppsDrivenAtRandomEndUpShowingTheirState();
+    } finally {
+      regions = false;
+    }
+  }
+
+  /**
+   * Seeds past the default ones that found bugs with regions: a page served while another tab's hold kept its pass
+   * from showing, then left (57, its root; 69, a page in a layout), and a region running again on its own meanwhile,
+   * whose patch the held pass then brings (106).
+   */
+  @Test
+  void seedsThatFoundBugsWithRegions() throws Exception {
+    regions = true;
+    try {
+      for (long seed : new long[] {57, 69, 106}) {
+        run(seed, 40, java.util.Collections.emptySet());
+      }
+    } finally {
+      regions = false;
+    }
   }
 
   @Test

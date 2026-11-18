@@ -36,6 +36,13 @@ export type BoundCall = { window: WebCall } | { window?: undefined; client: stri
 export type ServerMessage =
   | { type: "ready"; maxFrame: number }
   | { type: "patch"; anchor: string; html: string; root?: true; handled?: number }
+  /**
+   * A list region's rows changed (ADR 0036): ops, as JSON, remove a row (r), insert one's html after another or at the
+   * start (i, a, h), move one after another (m, a), or patch one (p, h), in this order.
+   */
+  | { type: "list"; anchor: string; ops: string; handled?: number }
+  /** An attribute region's attributes, as JSON: a value, or null to remove it (ADR 0036). */
+  | { type: "attrs"; anchor: string; values: string }
   | { type: "head"; html: string }
   | { type: "url"; url: string; mode: NavMode }
   | { type: "load"; url: string }

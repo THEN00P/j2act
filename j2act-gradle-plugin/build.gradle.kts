@@ -12,15 +12,22 @@ description = "The j2act Gradle plugin: annotation processor, client modules, Vi
 version = providers.gradleProperty("releaseVersion").getOrElse("0.1.0-SNAPSHOT")
 
 repositories {
+  // j2act's own modules come from ./mvnw install until j2act is published, and only from there: a snapshot is
+  // otherwise looked up in every repository, and one answering 429 fails the build.
+  exclusiveContent {
+    forRepository { mavenLocal() }
+    filter { includeGroup("io.github.then00p.j2act") }
+  }
   gradlePluginPortal()
-  // j2act-processor comes from ./mvnw install until j2act is published; exploded-hotswap from Maven Central.
-  mavenLocal()
+  // exploded-hotswap comes from Maven Central.
   mavenCentral()
 }
 
 dependencies {
   implementation("com.github.node-gradle:gradle-node-plugin:7.1.0")
   implementation("io.github.then00p:exploded-hotswap-gradle-plugin:0.1.0")
+  // ADR 0036, from ./mvnw install until j2act is published, at this plugin's own version.
+  implementation("io.github.then00p.j2act:j2act-enhancer:${version}")
   testImplementation(platform("org.junit:junit-bom:5.10.3"))
   testImplementation("org.junit.jupiter:junit-jupiter")
   testImplementation("org.junit.jupiter:junit-jupiter-params")

@@ -99,6 +99,19 @@
       </resource>
     </resources>
     <plugins>
+      <!-- Regions in what is packaged (ADR 0036); -Dj2act.enhance.skip builds the plain app, which shows the same. -->
+      <plugin>
+        <groupId>io.github.then00p.j2act</groupId>
+        <artifactId>j2act-maven-plugin</artifactId>
+        <version>${project.version}</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>enhance</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>

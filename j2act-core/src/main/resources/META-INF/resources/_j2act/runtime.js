@@ -1,5 +1,5 @@
 /* j2act client runtime (ADR 0003, 0010, 0013, 0022, 0026). Built from j2act-core/src/main/ts by npm run build; do not edit.
-* sources: sha256-ed24d12a6c7b136be6ddec8d2a450dde3b02a631945268f388afd783d9ff1e8b */
+* sources: sha256-37b8c5b3b2bf8f8554abd3a051ded529be6bc7e515c59fad33d854cdea0e8502 */
 "use strict";
 (function() {
 	//#region src/main/ts/util.ts
@@ -1898,13 +1898,23 @@
 				textAreaElement: (value) => htmlElement(value, "textarea")
 			};
 		})();
+		function morphRange(start, end, newContent, config = {}) {
+			const parent = start.parentNode;
+			const newNode = normalizeParent(newContent);
+			const ctx = createMorphContext(parent, newNode, config);
+			saveAndRestoreFocus(ctx, () => morphChildren(ctx, parent, newNode, start.nextSibling, end));
+			ctx.pantry.remove();
+		}
 		return {
 			morph,
+			morphRange,
 			defaults
 		};
 	})();
 	//#endregion
 	//#region src/main/ts/morph.ts
+	/** Added to Idiomorph by vite.config.ts: morph() of what lies between two nodes of one parent (ADR 0036). */
+	var morphRange = Idiomorph.morphRange;
 	/**
 	* Applies the server's patches with Idiomorph (ADR 0003), keeping what is the browser's: the
 	* pending state of a blocked element, form state the render did not set (ADR 0013), a client
@@ -1913,6 +1923,85 @@
 	function createMorpher(pending, syncClient, fields) {
 		/** The last event the server had handled, from the patch being applied. */
 		let handled = 0;
+		/** Copies of what the page already has, standing in for a patch's stubs, by original: the morph leaves those alone. */
+		const kept = /* @__PURE__ */ new WeakMap();
+		/** A region's start marker by anchor, found again whenever it is gone (ADR 0036). */
+		const regions = /* @__PURE__ */ new Map();
+		/** The markers around the region with this anchor, or null when it is not on the page. */
+		/**
+		* HTML parsed as it would be where it goes: under an svg or math element the parser makes SVG or MathML elements,
+		* which a template on its own would make HTML ones of, so the fragment is parsed inside such an element.
+		*/
+		function parseIn(html, parent) {
+			const el = parent && parent.nodeType === 1 ? parent : null;
+			const ns = el ? el.namespaceURI : null;
+			let wrap = ns === "http://www.w3.org/2000/svg" ? ["svg"] : ns === "http://www.w3.org/1998/Math/MathML" ? ["math"] : [];
+			if (el && wrap[0] === "svg" && (el.localName === "foreignObject" || el.localName === "desc" || el.localName === "title")) wrap = [];
+			else if (el && wrap[0] === "math" && el.localName === "annotation-xml" && /^(text\/html|application\/xhtml\+xml)$/i.test(el.getAttribute("encoding") || "")) wrap = [];
+			else if (el && wrap[0] === "math" && [
+				"mi",
+				"mo",
+				"mn",
+				"ms",
+				"mtext"
+			].indexOf(el.localName) >= 0) wrap.push("mi");
+			const parsed = document.createElement("template");
+			if (wrap.length === 0) {
+				parsed.innerHTML = html;
+				return parsed.content;
+			}
+			parsed.innerHTML = wrap.map((n) => "<" + n + ">").join("") + html + wrap.slice().reverse().map((n) => "</" + n + ">").join("");
+			let outer = parsed.content;
+			for (let i = 0; i < wrap.length; i++) outer = outer.firstChild;
+			const content = document.createDocumentFragment();
+			while (outer.firstChild) content.appendChild(outer.firstChild);
+			return content;
+		}
+		function region(anchor) {
+			let start = regions.get(anchor);
+			if (!start || !start.isConnected || start.data !== "j2:" + anchor) {
+				regions.clear();
+				const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_COMMENT);
+				for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+					const data = node.data;
+					if (data.startsWith("j2:")) regions.set(data.slice(3), node);
+				}
+				start = regions.get(anchor);
+				if (!start) return null;
+			}
+			for (let node = start.nextSibling; node; node = node.nextSibling) if (node.nodeType === 8 && node.data === "/j2:" + anchor) return [start, node];
+			return null;
+		}
+		/** What the page has for this anchor: a component's element, or a region's nodes with their markers. */
+		function live(anchor) {
+			const el = document.querySelector("[data-j2-scope=\"" + anchor + "\"]");
+			if (el) return [el];
+			const range = region(anchor);
+			if (!range) return null;
+			const nodes = [];
+			for (let node = range[0]; node !== range[1]; node = node.nextSibling) nodes.push(node);
+			nodes.push(range[1]);
+			return nodes;
+		}
+		/**
+		* Puts in a copy of what the page has for each stub in a patch, a scope the server knows the page shows as it
+		* renders now (ADR 0036). False when one is not on the page, which has then drifted from the server.
+		*/
+		function expandStubs(root) {
+			const walker = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT);
+			const stubs = [];
+			for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.data.startsWith("j2=")) stubs.push(node);
+			for (const stub of stubs) {
+				const originals = live(stub.data.slice(3));
+				if (!originals) return false;
+				stub.replaceWith(...originals.map((original) => {
+					const copy = original.cloneNode(true);
+					kept.set(copy, original);
+					return copy;
+				}));
+			}
+			return true;
+		}
 		const callbacks = {
 			beforeAttributeUpdated: (name, el) => {
 				if (pending.has(el) && (name === "data-pending" || name === "aria-busy")) return false;
@@ -1922,6 +2011,7 @@
 				return true;
 			},
 			beforeNodeMorphed: (oldNode, newNode) => {
+				if (kept.get(newNode) === oldNode) return false;
 				if (oldNode.nodeType === 1 && newNode.nodeType === 1 && oldNode.hasAttribute("data-j2-client") && oldNode.getAttribute("data-j2-client") === newNode.getAttribute("data-j2-client")) {
 					syncClient(oldNode, newNode);
 					return false;
@@ -1964,16 +2054,94 @@
 			*/
 			patch(anchor, html, isRoot, eventsHandled) {
 				if (eventsHandled !== void 0) handled = eventsHandled;
+				const stubs = html.indexOf("<!--j2=") >= 0;
 				if (isRoot) {
 					const doc = new DOMParser().parseFromString(html, "text/html");
+					if (stubs && !expandStubs(doc.body)) return false;
 					document.documentElement.setAttribute("data-j2-scope", anchor);
 					head(doc.head.innerHTML);
 					body(doc.body);
 					return true;
 				}
 				const el = document.querySelector("[data-j2-scope=\"" + anchor + "\"]");
+				if (!el) {
+					const range = region(anchor);
+					if (!range) return false;
+					const content = parseIn(html, range[0].parentNode);
+					if (content.firstChild?.nodeType === 8 && content.firstChild.data === "j2:" + anchor) content.firstChild.remove();
+					if (content.lastChild?.nodeType === 8 && content.lastChild.data === "/j2:" + anchor) content.lastChild.remove();
+					if (stubs && !expandStubs(content)) return false;
+					morphRange(range[0], range[1], content, config);
+					return true;
+				}
+				if (!stubs) {
+					Idiomorph.morph(el, html, config);
+					return true;
+				}
+				const content = parseIn(html, el.parentNode);
+				if (!expandStubs(content)) return false;
+				Idiomorph.morph(el, content.firstElementChild, config);
+				return true;
+			},
+			/**
+			* A list region's rows, changed in place (ADR 0036): rows that stay are not touched, a moved row's nodes move with
+			* their state (moveBefore where the browser has it, keeping focus where it has not), and a changed row is morphed
+			* as its own patch. False when the list or a row it names is not on the page, which has then drifted.
+			*/
+			list(anchor, ops, eventsHandled) {
+				if (eventsHandled !== void 0) handled = eventsHandled;
+				const list = region(anchor);
+				if (!list) return false;
+				/** The node before which what goes after `after`, or at the list's start, is put; false if that row is gone. */
+				const place = (after) => {
+					if (after === null) return list[0].nextSibling;
+					const row = region(after);
+					return row ? row[1].nextSibling : false;
+				};
+				for (const op of ops) if ("r" in op) {
+					const row = region(op.r);
+					if (!row) return false;
+					for (let node = row[0]; node;) {
+						const next = node === row[1] ? null : node.nextSibling;
+						node.parentNode.removeChild(node);
+						node = next;
+					}
+				} else if ("i" in op) {
+					const at = place(op.a);
+					if (at === false) return false;
+					const content = parseIn(op.h, list[0].parentNode);
+					if (op.h.indexOf("<!--j2=") >= 0 && !expandStubs(content)) return false;
+					list[0].parentNode.insertBefore(content, at);
+				} else if ("m" in op) {
+					const row = region(op.m);
+					const at = place(op.a);
+					if (!row || at === false) return false;
+					const parent = list[0].parentNode;
+					const focused = document.activeElement;
+					const nodes = [];
+					for (let node = row[0];; node = node.nextSibling) {
+						nodes.push(node);
+						if (node === row[1]) break;
+					}
+					for (const node of nodes) if (typeof parent.moveBefore === "function") parent.moveBefore(node, at);
+					else parent.insertBefore(node, at);
+					if (focused instanceof HTMLElement && focused !== document.activeElement && focused.isConnected) focused.focus();
+				} else if (!this.patch(op.p, op.h, false)) return false;
+				return true;
+			},
+			/**
+			* An attribute region's patch (ADR 0036): only the attributes it sets, each asked of the same callback a morph asks,
+			* so what the browser keeps in a morph it keeps here. False when its element is not on the page.
+			*/
+			attrs(anchor, values) {
+				const el = document.querySelector("[data-j2-a-" + anchor + "]");
 				if (!el) return false;
-				Idiomorph.morph(el, html, config);
+				for (const name of Object.keys(values)) {
+					const value = values[name];
+					if (value === null) {
+						if (el.hasAttribute(name) && callbacks.beforeAttributeUpdated(name, el, "remove") !== false) el.removeAttribute(name);
+					} else if (el.getAttribute(name) !== value && callbacks.beforeAttributeUpdated(name, el, "update") !== false) el.setAttribute(name, value);
+				}
 				return true;
 			},
 			slot(live, html) {
@@ -2561,6 +2729,14 @@
 				if (m.root === true) repair.arrived();
 				clients.scan();
 				fields.flush();
+			},
+			list: (m) => {
+				if (!morpher.list(m.anchor, JSON.parse(m.ops), m.handled)) repair.ask();
+				clients.scan();
+				fields.flush();
+			},
+			attrs: (m) => {
+				if (!morpher.attrs(m.anchor, JSON.parse(m.values))) repair.ask();
 			},
 			head: (m) => morpher.head(m.html),
 			url: (m) => navigation.landed(m.url, m.mode),

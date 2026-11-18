@@ -15,6 +15,16 @@
   <description>Reactive primitives, tabs, rendering and the client runtime. No dependencies.</description>
 
   <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <!-- The version enhanced classes check at load (ADR 0036). -->
+      <resource>
+        <directory>src/main/resources-filtered</directory>
+        <filtering>true</filtering>
+      </resource>
+    </resources>
     <plugins>
       <!-- The headless tab harness is shared with other modules' tests. -->
       <plugin>
@@ -53,6 +63,13 @@
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Tests only: the page models parse what is sent as a browser does (Validator.nu, what Firefox's parser is
+         translated from), so a marker, stub or namespace the parser would move fails a test (ADR 0036). -->
+    <dependency>
+      <groupId>nu.validator</groupId>
+      <artifactId>htmlparser</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

@@ -121,12 +121,26 @@ public final class JavaShape implements StoreShape {
    * copy of an object is always built into one: its record may be gone, as a record nobody reads is let go while
    * its copy stays in its parent, so the copy is the only sign of whose it is.
    */
+  /**
+   * Whether a class tracks its reads itself: it implements Tracked, not only through a superclass. A subclass of a
+   * tracked class has fields whose reads the enhancer did not rewrite (ADR 0036), so it is read whole.
+   */
+  static boolean tracks(Class<?> type) {
+    return type != null && TRACKS.get(type);
+  }
+
+  private static final ClassValue<Boolean> TRACKS = new ClassValue<Boolean>() {
+    @Override protected Boolean computeValue(Class<?> type) {
+      return java.util.Arrays.asList(type.getInterfaces()).contains(Tracked.class);
+    }
+  };
+
   @Override public boolean copiesWhenHanded(Object raw) {
-    return raw instanceof Copy || Tracked.class.isAssignableFrom(classOf(raw));
+    return raw instanceof Copy || tracks(classOf(raw));
   }
 
   @Override public boolean handedFor(Object built, StoreTarget target) {
-    if (!(built instanceof Tracked)) {
+    if (built == null || !tracks(built.getClass())) {
       return true;
     }
     Object view = target != null ? target.view() : null;
@@ -427,7 +441,7 @@ public final class JavaShape implements StoreShape {
       if (draft != null && rt.storeWriting(bean.target)) {
         return draft.copyOf(bean);
       }
-      Object given = Tracked.class.isAssignableFrom(bean.type) ? rt.handOut(bean) : j2act.internal.signals.Stores.NOT_FINE;
+      Object given = tracks(bean.type) ? rt.handOut(bean) : j2act.internal.signals.Stores.NOT_FINE;
       if (given == j2act.internal.signals.Stores.NOT_FINE) {
         given = rt.deep(bean);
       }
@@ -438,6 +452,42 @@ public final class JavaShape implements StoreShape {
       return given;
     }
     return value;
+  }
+
+  /**
+   * A tracked object read its field name (ADR 0036): the reader subscribes to it as trackField does, and this is what
+   * the field holds now, as a reader would be handed it: a bean as present() hands one out, a list, map or set as a
+   * snapshot. own, the object's own value, inside update(...) and when that does not fit the field's type.
+   */
+  Object readField(BeanView owner, String name, Object own, Class<?> type) {
+    if (draft != null) {
+      return own;
+    }
+    return at(owner.target, () -> {
+      Object value = rt.storeGet(owner.target, name);
+      below(value);
+      Object now;
+      if (value instanceof BeanView) {
+        now = present(value);
+      } else if (value instanceof StoreView) {
+        now = rt.handOut(value);
+        if (now == j2act.internal.signals.Stores.NOT_FINE) {
+          now = rt.deep(value);
+        }
+      } else {
+        now = value;
+      }
+      return now == null || boxed(type).isInstance(now) ? now : own;
+    });
+  }
+
+  private static Class<?> boxed(Class<?> type) {
+    if (!type.isPrimitive()) {
+      return type;
+    }
+    return type == int.class ? Integer.class : type == long.class ? Long.class : type == boolean.class ? Boolean.class
+      : type == double.class ? Double.class : type == float.class ? Float.class : type == short.class ? Short.class
+      : type == byte.class ? Byte.class : Character.class;
   }
 
   /** A tracked object read its field name: the reader subscribes to it, and below it to what cannot track itself. */
@@ -465,7 +515,7 @@ public final class JavaShape implements StoreShape {
       }
     } else if (value instanceof SetView) {
       rt.storeKeys(((SetView<?>) value).target());
-    } else if (value instanceof BeanView && !Tracked.class.isAssignableFrom(((BeanView) value).type)) {
+    } else if (value instanceof BeanView && !tracks(((BeanView) value).type)) {
       rt.deep(value);
     }
   }
