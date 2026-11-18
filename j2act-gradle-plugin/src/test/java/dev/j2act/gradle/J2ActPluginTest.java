@@ -177,6 +177,16 @@ class J2ActPluginTest {
     String plain = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
       StandardCharsets.ISO_8859_1);
     assertFalse(plain.contains("j2act$enhanced"), "plain again without the flag");
+    // Skip is an input of the compile too: turning it on, and off again, compiles the class folder again.
+    run(gradle, "-Pj2act.enhance.classFolders=true", "classes");
+    run(gradle, "-Pj2act.enhance.classFolders=true", "-Pj2act.enhance.skip=true", "classes");
+    String skipped = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
+      StandardCharsets.ISO_8859_1);
+    assertFalse(skipped.contains("j2act$enhanced"), "plain with skip");
+    run(gradle, "-Pj2act.enhance.classFolders=true", "classes");
+    String again = new String(Files.readAllBytes(project.resolve("build/classes/java/main/demo/Home.class")),
+      StandardCharsets.ISO_8859_1);
+    assertTrue(again.contains("j2act$enhanced"), "enhanced again without skip");
   }
 
   /** The same setting kept in the build script: j2act { enhance { classFolders = true } }. */

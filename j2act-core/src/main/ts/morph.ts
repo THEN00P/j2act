@@ -28,6 +28,27 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
   const regions = new Map<string, Comment>();
 
   /** The markers around the region with this anchor, or null when it is not on the page. */
+  /**
+   * HTML parsed as it would be where it goes: under an svg or math element the parser makes SVG or MathML elements,
+   * which a template on its own would make HTML ones of, so the fragment is parsed inside such an element.
+   */
+  function parseIn(html: string, parent: Node | null): DocumentFragment {
+    const ns = parent && parent.nodeType === 1 ? (parent as Element).namespaceURI : null;
+    const wrap = ns === "http://www.w3.org/2000/svg" ? "svg" : ns === "http://www.w3.org/1998/Math/MathML" ? "math" : null;
+    const parsed = document.createElement("template");
+    if (!wrap) {
+      parsed.innerHTML = html;
+      return parsed.content;
+    }
+    parsed.innerHTML = "<" + wrap + ">" + html + "</" + wrap + ">";
+    const outer = parsed.content.firstChild!;
+    const content = document.createDocumentFragment();
+    while (outer.firstChild) {
+      content.appendChild(outer.firstChild);
+    }
+    return content;
+  }
+
   function region(anchor: string): [Comment, Comment] | null {
     let start = regions.get(anchor);
     if (!start || !start.isConnected || start.data !== "j2:" + anchor) {
@@ -188,9 +209,7 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
           return false;
         }
         // A region: its markers stay, and what is between them is morphed.
-        const parsed = document.createElement("template");
-        parsed.innerHTML = html;
-        const content = parsed.content;
+        const content = parseIn(html, range[0].parentNode);
         if (content.firstChild?.nodeType === 8 && (content.firstChild as Comment).data === "j2:" + anchor) {
           content.firstChild.remove();
         }
@@ -207,12 +226,11 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
         Idiomorph.morph(el, html, config);
         return true;
       }
-      const parsed = document.createElement("template");
-      parsed.innerHTML = html;
-      if (!expandStubs(parsed.content)) {
+      const content = parseIn(html, el.parentNode);
+      if (!expandStubs(content)) {
         return false;
       }
-      Idiomorph.morph(el, parsed.content.firstElementChild!, config);
+      Idiomorph.morph(el, content.firstElementChild!, config);
       return true;
     },
 
@@ -253,12 +271,11 @@ export function createMorpher(pending: Pending, syncClient: (el: Element, fresh:
           if (at === false) {
             return false;
           }
-          const parsed = document.createElement("template");
-          parsed.innerHTML = op.h;
-          if (op.h.indexOf("<!--j2=") >= 0 && !expandStubs(parsed.content)) {
+          const content = parseIn(op.h, list[0].parentNode);
+          if (op.h.indexOf("<!--j2=") >= 0 && !expandStubs(content)) {
             return false;
           }
-          list[0].parentNode!.insertBefore(parsed.content, at);
+          list[0].parentNode!.insertBefore(content, at);
         } else if ("m" in op) {
           const row = region(op.m);
           const at = place(op.a);

@@ -191,6 +191,15 @@ describe("regions between markers (ADR 0036)", () => {
     expect(document.querySelector("div")!.textContent).toBe("1kepttext");
   });
 
+  it("parses a region in an svg as SVG, as the page's own parse did", () => {
+    document.body.innerHTML = '<svg data-j2-scope="s1"><!--j2:s2--><circle r="1"></circle><!--/j2:s2--></svg>';
+    expect(morpher().patch("s2", '<!--j2:s2--><circle r="2"></circle><rect></rect><!--/j2:s2-->', false)).toBe(true);
+    const svg = "http://www.w3.org/2000/svg";
+    expect(document.querySelector("circle")!.namespaceURI).toBe(svg);
+    expect(document.querySelector("circle")!.getAttribute("r")).toBe("2");
+    expect(document.querySelector("rect")!.namespaceURI).toBe(svg);
+  });
+
   it("reports a region that is not on the page", () => {
     document.body.innerHTML = '<div data-j2-scope="s1"></div>';
     expect(morpher().patch("s5", "<!--j2:s5-->x<!--/j2:s5-->", false)).toBe(false);
@@ -263,6 +272,14 @@ describe("keyed list operations (ADR 0036)", () => {
     expect(now[2]).toBe(a);
     expect(c.isConnected).toBe(false);
     expect(document.querySelector("p")!.textContent).toBe("after");
+  });
+
+  it("inserts a row of an svg as SVG", () => {
+    document.body.innerHTML = '<svg data-j2-scope="s1"><!--j2:s2--><!--j2:s3--><circle></circle><!--/j2:s3--><!--/j2:s2--></svg>';
+    expect(morpher().list("s2", [{ i: "s4", a: "s3", h: "<!--j2:s4--><circle></circle><!--/j2:s4-->" }])).toBe(true);
+    const circles = [...document.querySelectorAll("circle")];
+    expect(circles.length).toBe(2);
+    expect(circles[1].namespaceURI).toBe("http://www.w3.org/2000/svg");
   });
 
   it("keeps a focused field in a row that moves", () => {

@@ -95,10 +95,11 @@ public class EnhanceMojo extends AbstractMojo {
     Path target = classFolders ? classes : output.toPath();
     if (!classFolders) {
       try {
-        // Made by another enhancer, as a snapshot rebuilt at the same version: start the copy over.
-        // Beside the copy, not in it, which is packaged.
+        // Made by another enhancer, as a snapshot rebuilt at the same version, or with other packages left
+        // untracked: start the copy over, since what is stamped is never enhanced again. Beside the copy, not in it,
+        // which is packaged.
         Path made = target.resolveSibling(target.getFileName() + ".enhancer");
-        String enhancer = enhancerIdentity();
+        String enhancer = enhancerIdentity() + "\ntrackExcludes " + new java.util.TreeSet<>(trackExcludes);
         if (Files.isDirectory(target) && !(Files.isRegularFile(made)
           && new String(Files.readAllBytes(made), java.nio.charset.StandardCharsets.UTF_8).equals(enhancer))) {
           clear(target);

@@ -96,11 +96,12 @@ public class J2ActPlugin implements Plugin<Project> {
       task.getTrackExcludes().convention(settings.getTrackExcludes());
     });
     // Opt-in: the class folders themselves, so what runs from them runs enhanced too (run, test, an exploded WAR of
-    // the build's classes). An input of the compile, so turning it off compiles plain classes again.
+    // the build's classes). Inputs of the compile, with skip and trackExcludes, so changing one compiles the classes again.
     FileCollection compileClasspath = main.getCompileClasspath();
     project.getTasks().named(main.getCompileJavaTaskName(), JavaCompile.class, compile -> {
       compile.getInputs().property("j2act.enhance.classFolders", settings.getClassFolders());
       compile.getInputs().property("j2act.enhance.trackExcludes", settings.getTrackExcludes());
+      compile.getInputs().property("j2act.enhance.skip", settings.getSkip());
       compile.doLast("j2actEnhanceClassFolder", new EnhanceInPlace(compile.getDestinationDirectory(), compileClasspath,
         settings.getClassFolders(), settings.getSkip(), settings.getTrackExcludes()));
     });
