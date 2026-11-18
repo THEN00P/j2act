@@ -31,6 +31,12 @@
       <artifactId>asm-analysis</artifactId>
       <version>${asm.version}</version>
     </dependency>
+    <!-- SerialVersionUIDAdder: a rewritten class keeps the default serialVersionUID it had. -->
+    <dependency>
+      <groupId>org.ow2.asm</groupId>
+      <artifactId>asm-commons</artifactId>
+      <version>${asm.version}</version>
+    </dependency>
     <!-- Test only: fixtures compile against the real API under javac and ECJ, and run enhanced in a headless tab. -->
     <dependency>
       <groupId>io.github.then00p.j2act</groupId>

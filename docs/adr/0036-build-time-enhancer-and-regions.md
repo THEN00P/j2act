@@ -50,7 +50,7 @@ A handed-out object stays the version it was, as ADR 0035 has it, in both builds
 
 ## How it is checked
 
-Every `RandomAppTest` and `ConsistencyTest` seed runs twice, over plain and enhanced classes, and wants the same page after every step, no more view runs and no larger patches in the enhanced run. This is the release gate.
+Every `RandomAppTest` and `ConsistencyTest` seed runs twice, plain and with regions written by hand as the enhancer leaves them (core's tests cannot run the enhancer, which depends on core), and wants each page to show the app's state, consistent within itself, after every step; both page models also parse what they hold as a browser does (`BrowserParse`). `EnhancedAppTest` runs the enhancer itself on pages compiled by javac and ECJ and wants the same page after every step plain and enhanced, fewer view runs and smaller patches, and the same `serialVersionUID` for a `Serializable` class it rewrites. These are the release gate.
 
 ## Milestones
 

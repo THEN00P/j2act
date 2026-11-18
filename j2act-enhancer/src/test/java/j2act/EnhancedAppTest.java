@@ -87,7 +87,7 @@ class EnhancedAppTest {
     compile(compiler, plain);
     compile(compiler, enhanced);
     Enhancer.Report report = new Enhancer(classpath()).enhance(enhanced);
-    assertEquals(1, report.tracked, "Profile, and not Pet, nor any page or component: " + report);
+    assertEquals(2, report.tracked, "Profile and Saved, and not Pet, nor any page or component: " + report);
     verify(enhanced);
     List<String> steps = Arrays.asList("rename", "move", "move", "rename", "pet");
     int[] runs = new int[2];
@@ -185,6 +185,40 @@ class EnhancedAppTest {
         pages.add(seen);
       }
       assertEquals(pages.get(0), pages.get(1), name + ", " + compiler.getClass().getSimpleName());
+    }
+  }
+
+  @Test void javacClassesKeepTheirSerialVersion() throws Exception {
+    serialVersions(ToolProvider.getSystemJavaCompiler());
+  }
+
+  @Test void ecjClassesKeepTheirSerialVersion() throws Exception {
+    serialVersions(new EclipseCompiler());
+  }
+
+  /** A Serializable class the enhancer rewrites reads back what the plain app saved: its serialVersionUID stays. */
+  private void serialVersions(JavaCompiler compiler) throws Exception {
+    Path plain = Files.createTempDirectory("j2act-plain");
+    Path enhanced = Files.createTempDirectory("j2act-enhanced");
+    compile(compiler, plain);
+    compile(compiler, enhanced);
+    new Enhancer(classpath()).enhance(enhanced);
+    verify(enhanced);
+    for (String name : Arrays.asList("fixtures.Saved", "fixtures.Saved$Page")) {
+      long[] uids = new long[2];
+      int i = 0;
+      for (Path classes : Arrays.asList(plain, enhanced)) {
+        try (URLClassLoader loader = new URLClassLoader(new URL[] {classes.toUri().toURL()},
+          EnhancedAppTest.class.getClassLoader())) {
+          Class<?> type = loader.loadClass(name);
+          uids[i++] = java.io.ObjectStreamClass.lookup(type).getSerialVersionUID();
+          if (classes == enhanced) {
+            assertTrue(type.getName().endsWith("Page") || j2act.internal.store.Tracked.class.isAssignableFrom(type),
+              name + " is tracked");
+          }
+        }
+      }
+      assertEquals(uids[0], uids[1], name + ", " + compiler.getClass().getSimpleName());
     }
   }
 

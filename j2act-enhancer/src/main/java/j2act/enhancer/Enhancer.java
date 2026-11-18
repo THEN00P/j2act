@@ -141,6 +141,7 @@ public final class Enhancer {
     if (!changed) {
       return null;
     }
+    keepSerialVersion(reader, node, hierarchy);
     stamp(node);
     ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_FRAMES) {
       @Override protected String getCommonSuperClass(String a, String b) {
@@ -149,6 +150,32 @@ public final class Enhancer {
     };
     node.accept(writer);
     return writer.toByteArray();
+  }
+
+  /**
+   * A Serializable class without a serialVersionUID of its own gets the default one it had before, as a field: what
+   * the enhancer adds (the stamp and its initializer, Tracked and its methods) would change the default, and an object
+   * saved by the plain app, or by another build, would no longer read back.
+   */
+  private static void keepSerialVersion(ClassReader original, ClassNode node, ClassHierarchy hierarchy) {
+    if ((node.access & (Opcodes.ACC_INTERFACE | Opcodes.ACC_ENUM | Opcodes.ACC_RECORD)) != 0
+      || !hierarchy.isSubtype(node.name, "java/io/Serializable")) {
+      return;
+    }
+    for (FieldNode field : node.fields) {
+      if (field.name.equals("serialVersionUID")) {
+        return;
+      }
+    }
+    ClassNode computed = new ClassNode();
+    original.accept(new org.objectweb.asm.commons.SerialVersionUIDAdder(Opcodes.ASM9, computed) { }, ClassReader.SKIP_FRAMES);
+    for (FieldNode field : computed.fields) {
+      if (field.name.equals("serialVersionUID")) {
+        node.fields.add(new FieldNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, field.name,
+          field.desc, null, field.value));
+        return;
+      }
+    }
   }
 
   /** The stamp, set as the class loads by asking j2act-core whether it is the version enhanced for. */

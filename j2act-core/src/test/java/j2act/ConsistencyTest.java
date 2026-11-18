@@ -162,7 +162,10 @@ class ConsistencyTest {
         // After the buttons, so what appears here leaves their handler ids alone.
         for (int i = 0; i < nodes.size(); i++) {
           if (visible.get(i).get()) {
-            shown.add(T.span("[n" + i + "=" + nodes.get(i).get() + "]"));
+            int at = i;
+            Supplier<DomContent> value = () -> T.span("[n" + at + "=" + nodes.get(at).get() + "]");
+            // With regions on, each value is a region of its own, as the enhancer leaves div(span(...), ...).
+            shown.add(regions ? j2act.internal.regions.Regions.of(value) : value.get());
           }
         }
         return T.page("t", T.div(shown.toArray(new DomContent[0])));
@@ -394,6 +397,19 @@ class ConsistencyTest {
     int seeds = Integer.getInteger("consistency.seeds", 150);
     for (long seed = start; seed < start + seeds; seed++) {
       run(seed, 2 + (int) (seed % 7), 30);
+    }
+  }
+
+  /** Each value renders in a region of its own, running again on its own (ADR 0036). */
+  static volatile boolean regions;
+
+  @Test
+  void everyUpdateIsConsistentWithRegionsToo() throws Exception {
+    regions = true;
+    try {
+      everyUpdateIsConsistentAndEverythingFinishes();
+    } finally {
+      regions = false;
     }
   }
 }
