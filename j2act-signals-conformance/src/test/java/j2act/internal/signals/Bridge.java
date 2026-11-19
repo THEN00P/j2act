@@ -195,6 +195,11 @@ public final class Bridge {
     return rawBacking((StoreTarget) target);
   }
 
+  /** Inside a setter's or a derive's draft of this target, where an inherited constructor is not served. */
+  public boolean storeDrafting(Object target) {
+    return rt.stores.writeOverride || rt.stores.inDraft((StoreTarget) target);
+  }
+
   /** [value] for a key that is there, undefined otherwise. */
   public Object storeDescriptor(Object target, Value key, boolean array) {
     Object[] d = rt.storeDescriptor((StoreTarget) target, storeKey(key, array));

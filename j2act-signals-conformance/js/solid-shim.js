@@ -464,7 +464,8 @@
       // A key the object does not have itself is its prototype's, as Solid's trap has it: a method is
       // served untracked, and a getter runs with the view as `this`, so what it reads is tracked.
       if (!b.storeOwn(jt, key, arr)) {
-        if (key === "constructor" || key === "__proto__" || key === "prototype") return undefined;
+        // An inherited `constructor` is withheld from drafts only: a plain read answers the source's class (#4670).
+        if (key === "constructor" ? b.storeDrafting(jt) : key === "__proto__" || key === "prototype") return undefined;
         const proto = Object.getPrototypeOf(b.storeBacking(jt));
         if (proto !== null && key in proto) {
           const pv = Reflect.get(proto, key, receiver);
@@ -481,6 +482,9 @@
     getPrototypeOf(t) {
       return Object.getPrototypeOf(b.storeBacking(targets.get(t)));
     },
+    // The shell is empty: a store cannot be frozen or re-prototyped.
+    preventExtensions: () => false,
+    setPrototypeOf: () => false,
     ownKeys(t) {
       const keys = b.storeKeys(targets.get(t));
       const out = [];
@@ -547,8 +551,8 @@
         if (!d.get && !d.set) d.writable = true;
       }
       if (!Array.isArray(o)) return Object.create(Object.getPrototypeOf(o), descs);
-      // The length first, so trailing holes stay holes.
-      const a = [];
+      // The length first, so trailing holes stay holes. An array subclass keeps its prototype (#4670).
+      const a = Object.setPrototypeOf([], Object.getPrototypeOf(o));
       a.length = o.length;
       return Object.defineProperties(a, descs);
     },
@@ -586,6 +590,7 @@
             delete inner[prop];
           }),
         ownKeys: () => read(() => Reflect.ownKeys(inner)),
+        getPrototypeOf: () => Object.getPrototypeOf(inner),
         getOwnPropertyDescriptor(_, prop) {
           const d = read(() => Reflect.getOwnPropertyDescriptor(inner, prop));
           if (d && !(prop === "length" && Array.isArray(inner))) d.configurable = true;
