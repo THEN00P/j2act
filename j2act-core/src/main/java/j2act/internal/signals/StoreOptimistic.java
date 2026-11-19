@@ -159,16 +159,24 @@ final class StoreOptimistic implements Stores.OptHooks {
             kept.add(k);
           }
         }
-        for (Object raw : rowsOf(old)) {
+        // The view's rows, then the truth's: a truth row the view lacked was removed by another action's guess,
+        // whose landing judges it (F-11, #4656).
+        List<Object> all = new ArrayList<>(rowsOf(old));
+        int n = all.size();
+        all.addAll(rowsOf(base));
+        for (int i = 0; i < all.size(); i++) {
+          Object raw = all.get(i);
           Object k = shape.isWrappable(raw) ? keyFn.apply(raw) : null;
-          if (k != null && (!kept.contains(k) || truth.containsKey(raw))) {
+          if (k != null && (!kept.contains(k) || (i < n && truth.containsKey(raw)))) {
             removed.add(k);
           }
         }
       }
       LaneView view = new LaneView(rows, base, removed);
       Node d = t.fam.node;
-      if (removed != null && d != null && (d.statusFlags & STATUS_PENDING) != 0 && (d.flags & REACTIVE_REASK) == 0) {
+      // A refresh's flight already up asks nothing new either (D-34, #4656).
+      if (removed != null && d != null && (d.statusFlags & STATUS_PENDING) != 0
+        && !((d.flags & REACTIVE_REASK) != 0 || (d.x != null && d.x.reask))) {
         view.g = null;
       }
       guess(stores.getContainerNode(t), view);
@@ -586,8 +594,14 @@ final class StoreOptimistic implements Stores.OptHooks {
         Object ov;
         if ((node.config & CONFIG_OVERRIDE) != 0) {
           ov = writer ? rt.lanes.laneValueOf(node) : shown(node);
-        } else if (!writer || (ov = rt.lanes.pendingGuessOf(node)) == NOT_PENDING) {
+        } else if (!writer) {
           continue;
+        } else if ((ov = rt.lanes.pendingGuessOf(node)) == NOT_PENDING) {
+          // The writer composes on the screen: a node a correction left held shows what it showed (#4656).
+          ov = node.value;
+          if ((node.config & CONFIG_HELD) == 0) {
+            continue;
+          }
         }
         if (key == StoreShape.LENGTH && shape.isArray(src)) {
           if (!Integer.valueOf(shape.length(out != null ? out : src)).equals(ov)) {
@@ -723,10 +737,14 @@ final class StoreOptimistic implements Stores.OptHooks {
   }
 
   /** The derive asks a new question over the family's guesses. */
-  @Override public void ask(StoreFamily fam) {
+  @Override public java.util.function.Predicate<Node> ask(StoreFamily fam) {
     Scheduler q = s();
-    if ((fam.node.flags & REACTIVE_REASK) != 0 || fam.overlaid == null || fam.overlaid.isEmpty()) {
-      return;
+    if (fam.overlaid == null || fam.overlaid.isEmpty()) {
+      return null;
+    }
+    // A refresh re-asks the guesses' own question: a leaf lane work reads is kept off the wake (F-11, #4656).
+    if ((fam.node.flags & REACTIVE_REASK) != 0) {
+      return n -> n.subs.sub.x != null && n.subs.sub.x.transaction != null && n.subs.sub.x.transaction.lane;
     }
     long a = ~q.clock;
     for (StoreTarget g : fam.overlaid) {
@@ -735,7 +753,7 @@ final class StoreOptimistic implements Stores.OptHooks {
         if (q.passLane == null) {
           a = q.clock + 1;
         } else if (sameAction(q.txOf(n), q.passLane)) {
-          return;
+          return null;
         }
       }
     }
@@ -743,6 +761,7 @@ final class StoreOptimistic implements Stores.OptHooks {
     if (a > 0) {
       q.joinFuture(null);
     }
+    return null;
   }
 
   /** A read of an optimistic family whose derive is pending is served the guesses that stand. */

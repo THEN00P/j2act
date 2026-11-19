@@ -73,7 +73,8 @@ public final class Stores {
 
     void pair(StoreTarget t, Object pb);
 
-    void ask(StoreFamily fam);
+    /** Returns, for a refresh, the leaves its wake skips. */
+    java.util.function.Predicate<Node> ask(StoreFamily fam);
 
     void park(Transaction t);
 
@@ -1590,6 +1591,9 @@ public final class Stores {
       throw new IllegalStateException(Core.REACTIVE_WRITE_IN_OWNED_SCOPE_SIGNAL_MESSAGE);
     }
     StoreTarget target = shape.targetOf(view);
+    if (guard && target != null && target.fam != null && target.fam.opt) {
+      Lanes.guardOptimisticBeforeLoad(target.fam.node);
+    }
     Set<Object> prevScopes = writeScopes;
     writeScopes = Collections.newSetFromMap(new IdentityHashMap<>());
     writeScopes.add(scopeKey(target));
@@ -1991,11 +1995,10 @@ public final class Stores {
     Node fw = fam.node;
     Errors.NotReadyError error = new Errors.NotReadyError(fw);
     fam.woke = true;
-    if (optHooks != null) {
-      optHooks.ask(fam);
-    }
+    // A leaf the optimistic engine keeps off the wake.
+    java.util.function.Predicate<Node> skip = optHooks != null ? optHooks.ask(fam) : null;
     fam.eachLiveNode(n -> {
-      if (n.subs == null) {
+      if (n.subs == null || (skip != null && skip.test(n))) {
         return;
       }
       rt.async.addPendingSource(n, fw);

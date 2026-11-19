@@ -504,7 +504,7 @@ public final class Runtime {
   }
 
   public Object guess(Node node, UnaryOperator<Object> fn) {
-    return lanes.optimisticWrite(node, null, fn);
+    return lanes.userGuess(node, null, fn);
   }
 
   /** The newest value there is, nothing tracked and nothing held back: staged if there is one, else committed. */

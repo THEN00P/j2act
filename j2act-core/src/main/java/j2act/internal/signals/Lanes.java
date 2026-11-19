@@ -184,6 +184,25 @@ final class Lanes {
     }
   }
 
+  static final String OPTIMISTIC_WRITE_BEFORE_LOAD_MESSAGE =
+    "[OPTIMISTIC_WRITE_BEFORE_LOAD] Optimistic write to a source that has not loaded yet. "
+      + "Before its first answer the source is loading, not showing a value to be optimistic over. "
+      + "Keep the pending items in a separate list (an outbox) until the source loads, "
+      + "or disable the action until the source has loaded.";
+
+  /** Solid's dev check, kept as it throws (#4656): an optimistic write to a source whose first answer has not landed. */
+  static void guardOptimisticBeforeLoad(Node source) {
+    if (source != null && (source.statusFlags & STATUS_UNINITIALIZED) != 0) {
+      throw new IllegalStateException(OPTIMISTIC_WRITE_BEFORE_LOAD_MESSAGE);
+    }
+  }
+
+  /** The setter createOptimistic returns. */
+  Object userGuess(Node n, Object v, UnaryOperator<Object> fn) {
+    guardOptimisticBeforeLoad(n);
+    return optimisticWrite(n, v, fn);
+  }
+
   Object optimisticWrite(Node n, Object v, UnaryOperator<Object> fn) {
     Object prev = guessedValueOf(n);
     if (fn != null) {
@@ -483,7 +502,8 @@ final class Lanes {
           && x.error instanceof StatusError && ((StatusError) x.error).source == n) {
           q.dirtyQueue.enqueueSub(n);
         }
-      } else if (guess) {
+      } else if (guess || (guessed && (n.config & CONFIG_SLOT_NODE) != 0 && n.pendingValue != NOT_PENDING)) {
+        // A store slot the lane composed (a keyed re-base) over a truth staged on it lands that truth too (#4642).
         if (n.pendingValue == NOT_PENDING) {
           n.pendingValue = covered(n);
         }
