@@ -899,8 +899,9 @@ final class Core {
     Scheduler q = s();
     if (q.flushTransaction == null || bornInto(c, q.flushTransaction)
       || (el != null && (el.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD)
-      // #4544: this flush's own write, read by a pass whose posture is only inherited, is the frame's derivation.
-      || (q.observeFlightHook != null && el != null && q.holdStagingHook.test(c, el))) {
+      // #4544: this flush's own write, read by a pass whose posture is only inherited, is the frame's derivation;
+      // a store's node-less staging (no el) too.
+      || (q.observeFlightHook != null && q.holdStagingHook.test(c, el))) {
       return false;
     }
     if (q.observeFlightHook != null && q.flushTransaction == q.latestOpened && q.passLane == null

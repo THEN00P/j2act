@@ -490,12 +490,13 @@ final class Verdict {
    */
   private boolean holdStaging(Node c, Node el) {
     Scheduler q = s();
-    Object a = el.x != null ? el.x.askedIn : null;
+    // No el is a store key's node-less staging: this flush's own sync write to a plain store; the posture decides.
+    Object a = el != null && el.x != null ? el.x.askedIn : null;
     if ((c.config & (CONFIG_OWN_PROBE | CONFIG_FRAME)) != 0 || (c.flags & (REACTIVE_WINDOW | REACTIVE_PROBE_UNANSWERED)) != 0
-      || el.pendingValue == NOT_PENDING || (el.config & (CONFIG_ASYNC | CONFIG_OVERRIDE)) != 0
-      || (a instanceof Long && (Long) a == q.clock)
-      || (a instanceof Transaction && Scheduler.resolveTx((Transaction) a)
-        == Scheduler.resolveTx((el.config & CONFIG_HELD) != 0 ? el.x.transaction : q.flushTransaction))) {
+      || (el != null && (el.pendingValue == NOT_PENDING || (el.config & (CONFIG_ASYNC | CONFIG_OVERRIDE)) != 0
+        || (a instanceof Long && (Long) a == q.clock)
+        || (a instanceof Transaction && Scheduler.resolveTx((Transaction) a)
+          == Scheduler.resolveTx((el.config & CONFIG_HELD) != 0 ? el.x.transaction : q.flushTransaction))))) {
       return false;
     }
     if (q.passLane == null) {
