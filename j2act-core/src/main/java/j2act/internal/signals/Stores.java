@@ -67,8 +67,11 @@ public final class Stores {
 
     void sweep();
 
-    /** A setter's draft read key: a live guess of it is one a guess written next derives from (#4788). */
-    void drafted(StoreTarget t, Object key);
+    /**
+     * A setter's draft read key: a live guess of it is one a guess written next derives from (#4788); shape: a
+     * presence read of key, or enumeration (null key), of the key set (#4812).
+     */
+    void drafted(StoreTarget t, Object key, boolean shape);
 
     /** S2, the carrier arms: a key read served through the carrier, NOT_PENDING for none. */
     Object read(StoreTarget t, Object key);
@@ -1104,7 +1107,9 @@ public final class Stores {
     Node k = target.k;
     if (hasKey) {
       Node leaf = target.n != null ? target.n.get(key) : null;
-      if (leaf != null && (leaf.config & CONFIG_OVERRIDE) != 0) {
+      // Unless the container carries the same lane's value: then presence and keys read its frame (#4821).
+      if (leaf != null && (leaf.config & CONFIG_OVERRIDE) != 0
+        && !(k != null && k.x != null && leaf.x.transaction != null && k.x.transaction == leaf.x.transaction)) {
         return committed(target);
       }
     }
@@ -1427,7 +1432,7 @@ public final class Stores {
     // In the user's draft: a read of another action's live guess (#4788).
     if (optHooks != null && target.o && !writeOverride) {
       if (inDraft(target)) {
-        optHooks.drafted(target, key);
+        optHooks.drafted(target, key, false);
       } else {
         Object v = optHooks.read(target, key);
         if (v != NOT_PENDING) {
@@ -1486,6 +1491,10 @@ public final class Stores {
     if (target.fam != null) {
       pullFamily(target);
     }
+    // In the user's draft: presence a live guess changed (#4812).
+    if (optHooks != null && target.o && !writeOverride && inDraft(target)) {
+      optHooks.drafted(target, key, true);
+    }
     // S2: presence of a key a live guess changed is the carrier frame's.
     if (optRead(target)) {
       Boolean guessed = optHooks.has(target, key);
@@ -1515,6 +1524,9 @@ public final class Stores {
     witness(target, null);
     if (target.fam != null) {
       pullFamily(target);
+    }
+    if (optHooks != null && target.o && !writeOverride && inDraft(target)) {
+      optHooks.drafted(target, null, true);
     }
     return shape.keys(enumerationSource(target));
   }

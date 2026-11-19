@@ -604,17 +604,84 @@ final class StoreOptimistic implements Stores.OptHooks {
    */
   private void noteRead(StoreTarget t, Object key, Object v, boolean hasV) {
     Scheduler q = s();
-    Node g = q.actionDepth > 0 && !diffing ? guessFor(t, key, false, false) : null;
-    if (g != null && (g.config & CONFIG_OVERRIDE) != 0
-      && !shape().isWrappable(hasV && v != null && v != shape().undefined() ? v
-        : carrierValue(rt.lanes.guessedValueOf(g), key))) {
-      rt.lanes.readGuesses.add(q.txOf(g));
+    StoreShape shape = shape();
+    if (q.actionDepth == 0 || diffing) {
+      return;
+    }
+    Node g = guessFor(t, key, false, false);
+    boolean live = g != null && (g.config & CONFIG_OVERRIDE) != 0;
+    Object[] p = live ? null : placed().get(t.v);
+    if (p == null && !live) {
+      return;
+    }
+    Transaction l = p != null ? (Transaction) p[0] : q.txOf(g);
+    Object old = stores.unwrapValue(p != null ? (p[1] != null && isObject(p[1]) ? shape.get(p[1], key) : shape.undefined())
+      : shape.get(t.v, key));
+    boolean given = hasV && v != null && v != shape.undefined();
+    Object r = stores.unwrapValue(given ? v : g != null ? carrierValue(rt.lanes.guessedValueOf(g), key) : shape.get(t.v, key));
+    if (shape.isWrappable(r)) {
+      if (!stores.same(r, old)) {
+        placed().put(r, new Object[] {l, old});
+      }
+    } else if (p == null || !ValueEquality.same(r, old)) {
+      rt.lanes.readGuesses.add(l);
       rt.lanes.readGuesses.add(q.question);
     }
   }
 
-  @Override public void drafted(StoreTarget t, Object key) {
-    noteRead(t, key, null, false);
+  /**
+   * #4812: a record a live guess put in place (a replaced child), with the record it replaced: what the setter reads
+   * under it derives from that guess, however deep, where it differs from what the replaced record holds.
+   */
+  private Map<Object, Object[]> placed;
+
+  private Map<Object, Object[]> placed() {
+    if (placed == null) {
+      placed = shape().identityMap();
+    }
+    return placed;
+  }
+
+  /** #4812: presence and enumeration in a setter's draft read the key set a live guess changed. */
+  private void noteShape(StoreTarget t, Object key) {
+    Scheduler q = s();
+    List<Node> kg = q.actionDepth > 0 && !diffing ? kgOf(t) : null;
+    if (kg == null) {
+      return;
+    }
+    for (int i = kg.size() - 1; i >= 0; i--) {
+      Node g = kg.get(i);
+      Patch p = patch(g);
+      if ((g.config & CONFIG_OVERRIDE) == 0) {
+        continue;
+      }
+      boolean hit;
+      if (key != null) {
+        hit = (p.del != null && p.del.contains(key)) || (p.wk != null && p.wk.contains(key) && !shape().has(t.v, key));
+      } else {
+        hit = (p.del != null && !p.del.isEmpty());
+        if (!hit && p.wk != null) {
+          for (Object k : p.wk) {
+            if (!shape().has(t.v, k)) {
+              hit = true;
+              break;
+            }
+          }
+        }
+      }
+      if (hit) {
+        rt.lanes.readGuesses.add(q.txOf(g));
+        rt.lanes.readGuesses.add(q.question);
+      }
+    }
+  }
+
+  @Override public void drafted(StoreTarget t, Object key, boolean shape) {
+    if (shape) {
+      noteShape(t, key);
+    } else {
+      noteRead(t, key, null, false);
+    }
   }
 
   private void reconcileDraft(Object draft, Object incoming, Function<Object, Object> keyFn) {
