@@ -314,7 +314,7 @@ final class Verdict {
         // F-2's producer clause: a pass that asks never derives from the screen's value of a held node. Its
         // isPending of one joins the hold and is answered in the hold's world (S-51, #4677). Not a pass seated in an
         // optimistic lane: it derives from a guess, and is that lane's (S-57).
-        if (tracked && probing && (c.config & CONFIG_ASYNC) != 0 && (c.config & CONFIG_HELD) == 0
+        if (tracked && probing && ((c.config & CONFIG_ASYNC) != 0 || readBy(c, t)) && (c.config & CONFIG_HELD) == 0
           && (q.passLane == null || Lanes.isVerdict(q.passLane))) {
           askerJoins(c, el, t);
           return staged(el);
@@ -368,7 +368,8 @@ final class Verdict {
       if ((owner.statusFlags & STATUS_PENDING) != 0
         && (!uninitialized || (probing && (el.config & CONFIG_STAGED_ERROR) == 0))) {
         pendingVerdict(tracked ? c : null, owner);
-      } else if (tracked && probing && (c.config & CONFIG_ASYNC) != 0 && el.pendingValue != NOT_PENDING
+      } else if (tracked && probing && ((c.config & CONFIG_ASYNC) != 0 || readBy(c, q.flushTransaction))
+        && el.pendingValue != NOT_PENDING
         && (q.passLane == null || Lanes.isVerdict(q.passLane))) {
         // F-2's producer clause (as the held arm): a pass that asks reads the staging and is that frame's (S-51).
         askerJoins(c, el, null);
@@ -496,12 +497,16 @@ final class Verdict {
   private boolean holdStaging(Node c, Node el) {
     Scheduler q = s();
     // No el is a store key's node-less staging: this flush's own sync write to a plain store; the posture decides.
+    Transaction r = c.x != null ? c.x.readIn : null;
     Object a = el != null && el.x != null ? el.x.askedIn : null;
-    if ((c.config & (CONFIG_OWN_PROBE | CONFIG_FRAME)) != 0 || (c.flags & (REACTIVE_WINDOW | REACTIVE_PROBE_UNANSWERED)) != 0
+    Transaction hs = el == null ? null : (el.config & CONFIG_HELD) != 0 ? el.x.transaction : q.flushTransaction;
+    Transaction h = hs != null ? Scheduler.resolveTx(hs) : null;
+    if (r == null
+      || (c.config & (CONFIG_OWN_PROBE | CONFIG_FRAME)) != 0 || (c.flags & (REACTIVE_WINDOW | REACTIVE_PROBE_UNANSWERED)) != 0
       || (el != null && (el.pendingValue == NOT_PENDING || (el.config & (CONFIG_ASYNC | CONFIG_OVERRIDE)) != 0
         || (a instanceof Long && (Long) a == q.clock)
-        || (a instanceof Transaction && Scheduler.resolveTx((Transaction) a)
-          == Scheduler.resolveTx((el.config & CONFIG_HELD) != 0 ? el.x.transaction : q.flushTransaction))))) {
+        || (a instanceof Transaction && Scheduler.resolveTx((Transaction) a) == h)
+        || Scheduler.resolveTx(r) != h))) {
       return false;
     }
     if (q.passLane == null) {
@@ -512,5 +517,11 @@ final class Verdict {
       return true;
     }
     return false;
+  }
+
+  /** #4776: the hold t's own work read memo c: it is that hold's, an asker's posture included (#4778, S-51). */
+  private static boolean readBy(Node c, Transaction t) {
+    Transaction r = c.x != null ? c.x.readIn : null;
+    return r != null && t != null && Scheduler.resolveTx(r) == Scheduler.resolveTx(t);
   }
 }

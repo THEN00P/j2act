@@ -1197,6 +1197,17 @@ final class Lanes {
   }
 
   private boolean adoptParked(Node r) {
+    // A sync memo re-derived at a landing: the held runs of its readers ran on the pass this replaces, reading it
+    // stale beside the landing: void, they re-run on it, in the landing's frame (F-1, A15).
+    if (r.type == 0 && (r.config & CONFIG_ASYNC) == 0) {
+      for (Link s = r.subs; s != null; s = s.nextSub) {
+        Node e = s.sub;
+        if (e.type != 0 && e.modified) {
+          e.modified = false;
+          s().dirtyQueue.enqueueSub(e);
+        }
+      }
+    }
     Object parked = r.x != null ? r.x.parked : null;
     if (parked == null || (r.flags & (REACTIVE_DIRTY | REACTIVE_CHECK | REACTIVE_IN_HEAP)) != 0) {
       return false;

@@ -28,6 +28,8 @@ final class NodeExtension {
   int q;
   /** #4544: the hold (a Transaction) or, before one, the flush clock (a Long) under which a window read this staging. */
   Object askedIn;
+  /** #4776: the hold whose own work read this memo's value (a branch it opened). */
+  Scheduler.Transaction readIn;
   /** Lanes: the node's lane has shown a value of it: a guess is value, and the lane's record holds what it covered. */
   boolean shown;
   /** affects() marks live on this node. */

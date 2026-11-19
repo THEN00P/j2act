@@ -816,13 +816,28 @@ final class Core {
         rt.graph.link(el, c);
         if (el.fn != null) {
           pullComputed(el, c);
-          // #4544 (F-6): a render effect never committed reading a settled verdict reader's value reads ahead.
-          if (q.observeFlightHook != null && c.type == EFFECT_RENDER && (el.config & CONFIG_VERDICT) != 0
-            && (el.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == 0
-            && ((c.statusFlags & STATUS_UNINITIALIZED) != 0
-              ? (c.config & CONFIG_HELD) != 0 || q.flushTransaction != null
-              : (c.config & CONFIG_HELD_FRAME) != 0)) {
-            c.flags |= REACTIVE_AHEAD;
+          if (q.observeFlightHook != null && ((c.statusFlags & STATUS_UNINITIALIZED) != 0
+            ? (c.config & CONFIG_HELD) != 0 || q.flushTransaction != null
+            : (c.config & CONFIG_HELD_FRAME) != 0
+              || ((c.config & CONFIG_ASYNC) != 0 && ((c.config & CONFIG_HELD) != 0 || q.flushTransaction != null)))) {
+            // #4544 (F-6): a render effect never committed reading a settled verdict reader's value reads ahead.
+            if (c.type == EFFECT_RENDER && (el.config & CONFIG_VERDICT) != 0
+              && (el.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == 0) {
+              c.flags |= REACTIVE_AHEAD;
+            }
+            // #4776, #4778 (D-25): a sync verdict memo is display while only the display reads it. A pass of a hold's
+            // own work reading it makes it that hold's: it re-derives now, served the hold's writes, and the reader
+            // reads that. A memo that probes in its own body stays the screen's for a held reader (F-6).
+            if ((el.config & (CONFIG_VERDICT | CONFIG_FRAME | CONFIG_ASYNC
+              | ((c.config & CONFIG_ASYNC) != 0 ? 0 : CONFIG_OWN_PROBE))) == CONFIG_VERDICT) {
+              Transaction held = (c.config & CONFIG_HELD) != 0 ? q.txOf(c) : q.flushTransaction;
+              Transaction t = held != null ? Scheduler.resolveTx(held) : null;
+              NodeExtension x = ext(el);
+              if (x.readIn != t) {
+                x.readIn = t;
+                recompute(el, false);
+              }
+            }
           }
           if (q.observeFlightHook != null && c.type == 0) {
             c.flags |= el.config & CONFIG_VERDICT & ((el.statusFlags & STATUS_PENDING) != 0
