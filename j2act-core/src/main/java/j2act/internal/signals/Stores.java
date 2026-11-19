@@ -1321,6 +1321,15 @@ public final class Stores {
       }
       rt.core.read(fw);
     } else {
+      // #4782: the pull a tracked read makes: the derive brought up to date now and the reader lifted above it (a
+      // leaf has no fn, so a reader of the leaves carries no height from the derive).
+      Owner r = rt.core.context;
+      if (r != null && r.root) {
+        r = r.parentComputed;
+      }
+      if (r instanceof Node) {
+        rt.core.pullComputed(fw, (Node) r);
+      }
       rt.core.untrack(() -> rt.core.read(fw));
       if (q.observeFlightHook != null && (fw.config & CONFIG_VERDICT) != 0 && (fw.flags & (EFFECT_RENDER << 21)) == 0
         && rt.core.tracking) {

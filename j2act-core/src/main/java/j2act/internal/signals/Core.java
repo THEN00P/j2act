@@ -484,8 +484,18 @@ final class Core {
     return el.x;
   }
 
+  /**
+   * #4777: the pass whose plain read made this flush adopt a hold (it had no transaction before): a window that pass
+   * then opens can give the hold back and start over (Verdict.markVerdictReader).
+   */
+  Node adopter;
+
   void joinPass(Node c, Node el) {
     Scheduler q = s();
+    if (q.observeFlightHook != null && q.flushTransaction == null) {
+      adopter = c;
+      q.adopted.clear();
+    }
     c.flags |= REACTIVE_JOINED;
     if ((el.statusFlags & STATUS_UNINITIALIZED) != 0 || c.type != EFFECT_RENDER) {
       q.joinPassTx(q.txOf(el), (c.type == 0 && (c.statusFlags & STATUS_UNINITIALIZED) != 0)

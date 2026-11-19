@@ -171,11 +171,26 @@ final class Verdict {
   private void markVerdictReader() {
     Node c = rt.core.creatorPass(rt.core.context);
     if (c != null && rt.core.tracking) {
+      Scheduler q = s();
+      // #4777 (D-25, A10): a memo's first probing pass that already read a held value plainly, joining the flush to
+      // that hold, starts over as the verdict reader it is, so its two plain reads agree. Only while the join is an
+      // adoption it can give back. Not an asker, a pass born held, nor one whose creator read the future.
+      boolean restart = c == rt.core.adopter && q.flushTransaction != null && (c.flags & REACTIVE_JOINED) != 0
+        && (c.config & (CONFIG_VERDICT | CONFIG_ASYNC)) == 0 && (c.statusFlags & STATUS_UNINITIALIZED) == 0;
       int born = rt.core.creatorReads(c, 0);
       if (born == 0) {
         c.config |= CONFIG_VERDICT;
       }
       c.flags |= REACTIVE_PROBED | REACTIVE_WINDOW | born;
+      if (restart && (c.config & CONFIG_VERDICT) != 0) {
+        // Thrown as a loading window's unready read: the pass parks for this instant with no visible pending, and its
+        // own tail runs it again in this flush.
+        rt.core.adopter = null;
+        q.dropFlushTx();
+        c.flags |= REACTIVE_MISSED_WAKE;
+        c.loading = true;
+        throw new NotReadyError(null);
+      }
     }
   }
 

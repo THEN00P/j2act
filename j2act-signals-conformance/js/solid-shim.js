@@ -354,6 +354,8 @@
     // untracked, as map.ts reads them under its own owner, so no row's node gains the list as a reader.
     const rows = () => {
       const items = list();
+      // A plain list is copied once per pass, as map.ts takes it (#4785): a proxied one answers each slot once.
+      if (Array.isArray(items) && items[$JT] === undefined) return items.slice(0);
       if (!items || typeof items !== "object" || items[$JT] === undefined) return items;
       items[$TRACK];
       const n = items.length;

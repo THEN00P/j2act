@@ -235,11 +235,52 @@ final class Scheduler {
     }
   }
 
+  /** #4777: the merges made since a pass adopted the flush's hold (Core.adopter), as [t, f.acted before]. */
+  final List<Object> adopted = new ArrayList<>();
+
+  /**
+   * #4777: the flush gives back the hold a pass's plain read adopted before that pass starts over, and every hold the
+   * pass's later plain reads merged into it, in reverse: each is its own again, as before the pass.
+   */
+  void dropFlushTx() {
+    for (int i = adopted.size() - 2; i >= 0; i -= 2) {
+      Transaction t = (Transaction) adopted.get(i);
+      Transaction f = t.into;
+      t.into = null;
+      f.open -= t.open;
+      f.acted = (Boolean) adopted.get(i + 1);
+      unappend(f.nodes, t.nodes);
+      unappend(f.queues[0], t.queues[0]);
+      unappend(f.queues[1], t.queues[1]);
+      unappend(f.reruns, t.reruns);
+      unappend(f.marks, t.marks);
+      transactions.add(t);
+    }
+    adopted.clear();
+    flushTransaction = null;
+  }
+
+  private static <T> void unappend(List<T> into, List<T> own) {
+    if (own == null) {
+      return;
+    }
+    for (int j = own.size() - 1; j >= 0; j--) {
+      int k = into.lastIndexOf(own.get(j));
+      if (k >= 0) {
+        into.remove(k);
+      }
+    }
+  }
+
   void merge(Transaction t, Transaction f) {
     t = resolveTx(t);
     f = resolveTx(f);
     if (t == f || t.lane || f.lane) {
       return;
+    }
+    if (observeFlightHook != null && rt.core.adopter != null) {
+      adopted.add(t);
+      adopted.add(f.acted);
     }
     t.into = f;
     f.open += t.open;
@@ -254,7 +295,13 @@ final class Scheduler {
       }
       f.marks.addAll(t.marks);
     }
-    transactions.remove(t);
+    // Solid's transactions.splice(transactions.indexOf(t), 1): with t not listed, the last one goes.
+    int k = transactions.indexOf(t);
+    if (k >= 0) {
+      transactions.remove(k);
+    } else if (!transactions.isEmpty()) {
+      transactions.remove(transactions.size() - 1);
+    }
   }
 
   boolean blocked(Transaction t) {
