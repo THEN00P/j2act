@@ -36,6 +36,8 @@ final class StoreOptimistic implements Stores.OptHooks {
     Set<Object> wk;
     Set<Object> del;
     Set<Object> removed;
+    /** The keys this guess's frame only carries over from another live guess's carrier (#4784). */
+    Set<Object> borrowed;
     /** The rows as written (a List), null for the #4525 re-base, UNSET for no arrangement guess. */
     Object g = UNSET;
   }
@@ -108,7 +110,7 @@ final class StoreOptimistic implements Stores.OptHooks {
         Patch p = patch(g);
         if ((g.config & (CONFIG_OVERRIDE | CONFIG_HELD)) != 0
           && ((p.wk != null && p.wk.contains(key)) || (p.del != null && p.del.contains(key))
-            || (reads && p.g != UNSET && arrangementKey(key)))) {
+            || (reads && p.g != UNSET && !(p.borrowed != null && p.borrowed.contains(key)) && arrangementKey(key)))) {
           return g;
         }
       }
@@ -389,6 +391,38 @@ final class StoreOptimistic implements Stores.OptHooks {
         p.del.addAll(del);
       }
     }
+    // The keys this guess's frame only carries over from another live guess's carrier (#4784): the arrangement read
+    // falls through on those keys, to the lender's carrier while it lives, to the truth once it dissolves. A row the
+    // setter carried over verbatim is not borrowed (#4724).
+    List<Node> kg = kgOf(t);
+    if (kg != null && kg.size() > 1) {
+      for (Node o : kg) {
+        if (o == g) {
+          continue;
+        }
+        boolean live = (o.config & (CONFIG_OVERRIDE | CONFIG_GUESS | CONFIG_HELD)) != 0
+          || rt.lanes.pendingGuessOf(o) != NOT_PENDING;
+        if (!live) {
+          continue;
+        }
+        Patch op = patch(o);
+        List<Object> lent = new ArrayList<>();
+        if (op.wk != null) {
+          lent.addAll(op.wk);
+        }
+        if (op.del != null) {
+          lent.addAll(op.del);
+        }
+        for (Object key : lent) {
+          if (!changed.contains(key) && !(del != null && del.contains(key)) && !carriedVerbatim(t, old, pb, key)) {
+            if (p.borrowed == null) {
+              p.borrowed = new HashSet<>();
+            }
+            p.borrowed.add(key);
+          }
+        }
+      }
+    }
     if (structural && isArr) {
       List<Object> rows = rowsOf(pb);
       // The keys of the view the setter saw that are not the guess's own rows, which a re-base takes from the new
@@ -438,6 +472,19 @@ final class StoreOptimistic implements Stores.OptHooks {
     }
     markOverlaid(t);
     return staged;
+  }
+
+  /**
+   * A keyed arrangement guess carries another guess's row verbatim when the setter returned the view's row unchanged:
+   * the row target decides the row's contents (#4724). Primitives always borrow (#4784).
+   */
+  private boolean carriedVerbatim(StoreTarget t, Object old, Object pb, Object key) {
+    if (!(key instanceof Integer) || t.fam == null || t.fam.key == null) {
+      return false;
+    }
+    Object row = stores.unwrapValue(shape().get(pb, key));
+    // The view of a chained store can hold the inner store's wrapped rows where Solid's holds raws: compared unwrapped.
+    return shape().isWrappable(row) && stores.same(row, stores.unwrapValue(shape().get(old, key)));
   }
 
   /** An array's rows, unwrapped. */
@@ -1044,7 +1091,7 @@ final class StoreOptimistic implements Stores.OptHooks {
       return null;
     }
     // A refresh re-asks the guesses' own question: a leaf lane work reads is kept off the wake (F-11, #4656).
-    if ((fam.node.flags & REACTIVE_REASK) != 0) {
+    if (reasked(fam.node)) {
       return n -> n.subs.sub.x != null && n.subs.sub.x.transaction != null && n.subs.sub.x.transaction.lane;
     }
     long a = ~q.clock;
@@ -1099,8 +1146,32 @@ final class StoreOptimistic implements Stores.OptHooks {
           }
         }
       }
+    } else if (c != null && c.type != EFFECT_RENDER && d.x != null && d.x.reask && d.x.transaction != null
+      && !ownFlight(o, q.txOf(d))) {
+      // #4786: guesses of one action standing in for a refresh another action holds leave the pass derived from that
+      // refetch: a stale reader of it, so the refetch's hold keeps waiting for it (F-11, A15).
+      rt.graph.link(d, c);
+      q.staleReader(c, q.txOf(d));
     }
     return true;
+  }
+
+  /** A guess in o (live or held) belongs to the transaction f that holds the flight it stands in for. */
+  private boolean ownFlight(Set<StoreTarget> o, Transaction f) {
+    Scheduler q = s();
+    for (StoreTarget t : o) {
+      List<Node> all = new ArrayList<>(kgOf(t) != null ? kgOf(t) : Collections.emptyList());
+      all.add(t.dk);
+      for (Node n : all) {
+        if (n != null && n.x != null && n.x.transaction != null) {
+          Transaction l = q.txOf(n);
+          if (Scheduler.resolveTx(l.parent != null ? l.parent : l) == f) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   /** A carrier of t holds a list guess written over a flight (the #4525 mark). */
