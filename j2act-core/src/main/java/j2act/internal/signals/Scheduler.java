@@ -151,7 +151,6 @@ final class Scheduler {
   final List<Transaction> transactions = new ArrayList<>();
   Transaction passLane;
   Transaction flushTransaction;
-  Transaction latestOpened;
   Transaction passTx;
   private Transaction judge;
   private final List<Node> heldTrims = new ArrayList<>();
@@ -457,7 +456,7 @@ final class Scheduler {
       dirtyQueue.runHeap(rt.core::update);
     }
     Transaction joined = flushTransaction;
-    flushTransaction = latestOpened = null;
+    flushTransaction = null;
     if (applyGuessesHook != null) {
       applyGuessesHook.accept(joined);
     }

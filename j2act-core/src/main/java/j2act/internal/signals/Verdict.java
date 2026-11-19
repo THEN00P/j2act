@@ -424,8 +424,11 @@ final class Verdict {
       && (node.config & (CONFIG_REDERIVE | CONFIG_STAGED_ERROR | (EFFECT_TRACKED << 23))) == 0) {
       // Only a node that reads a staging carries it; a memo over an error boundary's output is a plain reader
       // of it (F-3, #4640).
+      // A lane reader of a guess in its own lane reads the guess: the truth staged beneath it is the hold's (#4751).
       for (Node.Link d = node.deps; d != null; d = d.nextDep) {
-        if ((d.dep.config & CONFIG_STAGED_ERROR) != 0) {
+        if ((d.dep.config & CONFIG_STAGED_ERROR) != 0
+          && !((d.dep.config & CONFIG_GUESS) != 0 && node.x != null && node.x.transaction != null
+            && node.x.transaction.lane && d.dep.x.transaction == node.x.transaction)) {
           node.pendingValue = el.pendingValue;
           node.config |= CONFIG_STAGED_ERROR;
           s().queuePendingNode(node);
@@ -471,41 +474,8 @@ final class Verdict {
     }
   }
 
-  /** #4574 (S-46): a render effect born into an open hold, not behind a fallback, that has not run. */
-  private Transaction bornHeldOpen(Owner owner) {
-    Scheduler q = s();
-    for (Owner c = owner != null ? owner.firstChild : null; c != null; c = c.nextSibling) {
-      if ((c.flags & REACTIVE_DISPOSED) != 0 || !(c instanceof Node)
-        || (q.hiddenHook != null && q.hiddenHook.test((Node) c))) {
-        continue;
-      }
-      Node n = (Node) c;
-      if (n.type == EFFECT_RENDER && (n.statusFlags & STATUS_UNINITIALIZED) != 0 && (n.config & CONFIG_HELD) != 0
-        && n.pendingValue != NOT_PENDING) {
-        Transaction t = q.txOf(n);
-        if (!t.lane && q.blocked(t)) {
-          return t;
-        }
-      }
-      Transaction inner = bornHeldOpen(c);
-      if (inner != null) {
-        return inner;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * #4574: a lane or verdict render effect inserting a DOM node whose subtree holds such a hole waits for that
-   * hold. A value here is never a DOM node, as a view's patch carries markup, so nothing inserts; the check stays
-   * where Solid has it.
-   */
-  private static boolean valueInserts(Object v) {
-    return false;
-  }
-
+  /** A run of the frame a landing holds for its re-derivation runs next round, with the landing's held runs. */
   private boolean attachWaits(Node node) {
-    // A run of the frame a landing holds for its re-derivation runs next round, with the landing's held runs.
     if (rt.lanes.waiting != null && rt.lanes.waiting.contains(node)) {
       if (node.boundRunEffect == null) {
         node.boundRunEffect = type -> rt.effects.runEffect(node, type);
@@ -513,27 +483,9 @@ final class Verdict {
       s().enqueue(node.type, node.boundRunEffect);
       return true;
     }
-    if (node.type != EFFECT_RENDER
-      || !((node.config & CONFIG_VERDICT) != 0 || (node.x != null && node.x.transaction != null && node.x.transaction.lane))
-      || !valueInserts(node.pendingValue != NOT_PENDING ? node.pendingValue : node.value)) {
-      return false;
-    }
-    Transaction t = bornHeldOpen(node);
-    for (Node.Link d = node.deps; d != null && t == null; d = d.nextDep) {
-      t = bornHeldOpen(d.dep);
-      if (d == node.depsTail) {
-        break;
-      }
-    }
-    if (t == null) {
-      return false;
-    }
-    if (node.boundRunEffect == null) {
-      node.boundRunEffect = type -> rt.effects.runEffect(node, type);
-    }
-    t.queues[0].add(node.boundRunEffect);
-    return true;
+    return false;
   }
+
 
   /**
    * #4544: a verdict reader whose posture is only inherited (it read a verdict memo, and neither this pass nor its

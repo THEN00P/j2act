@@ -364,21 +364,11 @@ final class Lanes {
       }
     } else if (Scheduler.sameLane(p, l)) {
       q.passLane = l;
-    } else if (!under(p, l)) {
-      if (!under(l, p)) {
-        linkLanes(p, l);
-      }
+    } else {
+      // Lanes never nest: a lane is never the flush's transaction (D-37).
+      linkLanes(p, l);
       q.passLane = l;
     }
-  }
-
-  private boolean under(Transaction l, Transaction a) {
-    for (Transaction t = l.parent; t != null && t.lane; t = t.parent) {
-      if (t == a) {
-        return true;
-      }
-    }
-    return false;
   }
 
   private void linkLanes(Transaction a, Transaction b) {
@@ -581,7 +571,9 @@ final class Lanes {
       } else {
         x.transaction = null;
         if (effect == 0) {
+          // A staged error is a staging too: void with it (#4748).
           n.pendingValue = NOT_PENDING;
+          n.config &= ~CONFIG_STAGED_ERROR;
           if ((n.statusFlags & STATUS_PENDING) != 0) {
             x.inFlight = null;
             q.dirtyQueue.enqueueSub(n);
@@ -1070,31 +1062,6 @@ final class Lanes {
     }
   }
 
-  private boolean heldBy(Transaction t, Node r) {
-    if (t.open != 0 || (t.lane && linkBlocked(t))) {
-      return false;
-    }
-    for (int k = -1; k < lanes.size(); k++) {
-      Transaction u = k < 0 ? t : lanes.get(k);
-      if (u == t || Scheduler.resolveTx(u.parent) == t) {
-        if (u != t && guessFlights(u)) {
-          return false;
-        }
-        for (int i = 0; i < u.nodes.size(); i++) {
-          Node n = u.nodes.get(i);
-          if (n == r || (n.statusFlags & STATUS_PENDING) == 0 || (n.x.transaction != null && s().txOf(n) != u)) {
-            continue;
-          }
-          Set<Node> src = n.x.pendingSources;
-          if (n.type != EFFECT_RENDER || src == null || src.size() != 1 || !src.contains(r)) {
-            return false;
-          }
-        }
-      }
-    }
-    return true;
-  }
-
   private boolean readsHeld(Node r) {
     for (Link d = r.deps; d != null; d = d.nextDep) {
       if ((d.dep.config & CONFIG_HELD) != 0) {
@@ -1133,7 +1100,7 @@ final class Lanes {
         } else if (l != null && l.lane) {
           skip = (l.parent != null && l.parent.verdict == l
               && ((r.config & CONFIG_VERDICT) != 0 ? (r.flags & REACTIVE_PROBE_UNANSWERED) == 0
-                : !q.blocked(t) || heldBy(t, r)))
+                : !q.blocked(t)))
             || overLive(l, t);
         } else {
           skip = l != null && !((r.flags & REACTIVE_PROBE_UNANSWERED) != 0

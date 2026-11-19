@@ -945,11 +945,8 @@ final class Core {
       || (q.observeFlightHook != null && q.holdStagingHook.test(c, el))) {
       return false;
     }
-    if (q.observeFlightHook != null && q.flushTransaction == q.latestOpened && q.passLane == null
-      && (c.config & CONFIG_VERDICT) != 0 && (c.statusFlags & STATUS_UNINITIALIZED) == 0) {
-      q.stagedReaders.add(c);
-      return false;
-    }
+    // The staging is the frame's read for a pass in the frame's seat, and the seam re-derives the pass once only if
+    // the flush parks (D-22, F-10). Lane work sees the screen (D-37).
     q.staleReader(c, q.flushTransaction);
     return true;
   }
