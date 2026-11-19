@@ -42,6 +42,8 @@ const shims = {
     // The one Node built-in a store test asks for, types.isProxy: solid-shim.js answers it for its own proxies.
     b.onResolve({ filter: /^node:util$/ }, () => global("node:util", "globalThis.__nodeUtil"));
     b.onResolve({ filter: /(^|\/)src\// }, args => global(args.path, "globalThis.__solid"));
+    // A few tests run the same steps against each of Solid's built tiers; the port is one tier.
+    b.onResolve({ filter: /^\.\.\/dist\/(prod|observe)\/index\.js$|^\.\.\/dist\/dev\.js$/ }, args => global(args.path, "globalThis.__solid"));
     b.onLoad({ filter: /.*/, namespace: "shim" }, args => ({
       contents: `module.exports = ${args.pluginData};`,
       loader: "js"
@@ -118,6 +120,7 @@ try {
   rmSync(fuzzSource);
 }
 await import(pathToFileURL(join(here, "target", "fuzz-real.mjs")).href);
+if (process.env.FUZZ_SEEDS) globalThis.__seeds = Number(process.env.FUZZ_SEEDS);
 const logged = [];
 const realLog = console.log;
 console.log = line => logged.push(line);
