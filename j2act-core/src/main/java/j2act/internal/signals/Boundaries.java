@@ -241,7 +241,15 @@ final class Boundaries {
         return b;
       }
     }
-    return null;
+    // A boundary output passing a pending by (an error boundary) is on screen only through its readers: read only
+    // behind fallbacks, it holds nothing (F-4, D-14, #4638).
+    Boundary h = null;
+    if ((r.config & CONFIG_REDERIVE) != 0 && r.type == 0) {
+      for (Link s = r.subs; s != null && (h = hiddenBy(s.sub)) != null; s = s.nextSub) {
+        // every reader so far is behind a fallback
+      }
+    }
+    return h;
   }
 
   /**

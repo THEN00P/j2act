@@ -350,15 +350,22 @@ final class Verdict {
 
   private void stageMark(Node node, Node el) {
     if ((el.config & CONFIG_STAGED_ERROR) != 0
-      && (node.config & (CONFIG_REDERIVE | CONFIG_STAGED_ERROR | CONFIG_ASYNC | (EFFECT_TRACKED << 23))) == 0) {
-      node.pendingValue = el.pendingValue;
-      node.config |= CONFIG_STAGED_ERROR;
-      s().queuePendingNode(node);
-      // A derived store's readers are its family's: they re-derive from the staging (#4189).
-      if (node.fam != null) {
-        node.fam.st(STATUS_ERROR, null);
+      && (node.config & (CONFIG_REDERIVE | CONFIG_STAGED_ERROR | (EFFECT_TRACKED << 23))) == 0) {
+      // Only a node that reads a staging carries it; a memo over an error boundary's output is a plain reader
+      // of it (F-3, #4640).
+      for (Node.Link d = node.deps; d != null; d = d.nextDep) {
+        if ((d.dep.config & CONFIG_STAGED_ERROR) != 0) {
+          node.pendingValue = el.pendingValue;
+          node.config |= CONFIG_STAGED_ERROR;
+          s().queuePendingNode(node);
+          // A derived store's readers are its family's: they re-derive from the staging (#4189).
+          if (node.fam != null) {
+            node.fam.st(STATUS_ERROR, null);
+          }
+          rt.async.settlePendingSource(node, null);
+          return;
+        }
       }
-      rt.async.settlePendingSource(node, null);
     }
   }
 
