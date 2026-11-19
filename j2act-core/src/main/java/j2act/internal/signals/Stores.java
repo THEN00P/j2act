@@ -67,6 +67,9 @@ public final class Stores {
 
     void sweep();
 
+    /** A setter's draft read key: a live guess of it is one a guess written next derives from (#4788). */
+    void drafted(StoreTarget t, Object key);
+
     /** S2, the carrier arms: a key read served through the carrier, NOT_PENDING for none. */
     Object read(StoreTarget t, Object key);
 
@@ -1412,10 +1415,15 @@ public final class Stores {
       pullFamily(target);
     }
     // S2: a key a live guess changed reads through the target's carrier, tracked; its own leaf is silent meanwhile.
-    if (optHooks != null && target.o && !inDraft(target) && !writeOverride) {
-      Object v = optHooks.read(target, key);
-      if (v != NOT_PENDING) {
-        return v;
+    // In the user's draft: a read of another action's live guess (#4788).
+    if (optHooks != null && target.o && !writeOverride) {
+      if (inDraft(target)) {
+        optHooks.drafted(target, key);
+      } else {
+        Object v = optHooks.read(target, key);
+        if (v != NOT_PENDING) {
+          return v;
+        }
       }
     }
     Node node0 = target.n != null ? target.n.get(key) : null;

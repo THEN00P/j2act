@@ -537,6 +537,38 @@ final class StoreOptimistic implements Stores.OptHooks {
 
   /** A user's reconcile on an optimistic family: the keyed diff is written into the draft. */
   @Override public void reconcile(Object draft, Object incoming, Function<Object, Object> keyFn) {
+    boolean was = diffing;
+    diffing = true;
+    try {
+      reconcileDraft(draft, incoming, keyFn);
+    } finally {
+      diffing = was;
+    }
+  }
+
+  /** In the keyed diff a returned array is written by: the user's own reads are the setter's, not these (#4788). */
+  private boolean diffing;
+
+  /**
+   * #4788 (D-33): an action read key of t (v, else the writer's view of it): when a live guess wrote that key, a guess
+   * the action writes next derives from it. A row reached through a guessed index is navigation, not a value.
+   */
+  private void noteRead(StoreTarget t, Object key, Object v, boolean hasV) {
+    Scheduler q = s();
+    Node g = q.actionDepth > 0 && !diffing ? guessFor(t, key, false, false) : null;
+    if (g != null && (g.config & CONFIG_OVERRIDE) != 0
+      && !shape().isWrappable(hasV && v != null && v != shape().undefined() ? v
+        : carrierValue(rt.lanes.guessedValueOf(g), key))) {
+      rt.lanes.readGuesses.add(q.txOf(g));
+      rt.lanes.readGuesses.add(q.question);
+    }
+  }
+
+  @Override public void drafted(StoreTarget t, Object key) {
+    noteRead(t, key, null, false);
+  }
+
+  private void reconcileDraft(Object draft, Object incoming, Function<Object, Object> keyFn) {
     StoreShape shape = shape();
     StoreTarget dt = shape.targetOf(draft);
     if (shape.isArray(incoming)) {
@@ -575,7 +607,7 @@ final class StoreOptimistic implements Stores.OptHooks {
         }
         if (match != null) {
           if (!stores.same(stores.unwrapValue(match), nv)) {
-            reconcile(match, nv, keyFn);
+            reconcileDraft(match, nv, keyFn);
           }
           if (!stores.same(stores.get(dt, i), match)) {
             stores.set(dt, i, match);
@@ -596,7 +628,7 @@ final class StoreOptimistic implements Stores.OptHooks {
       if (shape.isWrappable(nv) && shape.isWrappable(curRaw) && shape.isArray(nv) == shape.isArray(curRaw)
         && (keyFn == null || shape.isArray(nv) || Stores.sameKey(keyFn.apply(nv), keyFn.apply(curRaw)))) {
         if (!stores.same(curRaw, nv)) {
-          reconcile(cur, nv, keyFn);
+          reconcileDraft(cur, nv, keyFn);
         }
       } else if (!stores.same(curRaw, nv)) {
         stores.set(dt, k, nv);
@@ -904,7 +936,11 @@ final class StoreOptimistic implements Stores.OptHooks {
     if (obs instanceof Node) {
       rt.graph.link(node, (Node) obs);
     }
-    return stores.serveKeyValue(t, key, carrierValue(frame, key), false, node);
+    Object v = carrierValue(frame, key);
+    if (obs == null) {
+      noteRead(t, key, v, true);
+    }
+    return stores.serveKeyValue(t, key, v, false, node);
   }
 
   /** Presence of a key a live guess changed is the carrier frame's; null for none. */

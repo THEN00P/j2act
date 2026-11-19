@@ -291,6 +291,12 @@ final class Lanes {
     }
     Scheduler q = s();
     pendingGuesses.add(new PendingGuess(n, v, q.question != 0 ? q.question : q.nextQuestion()));
+    // What this action read goes with its guess to the seam (#4788).
+    for (int i = 0; i < readGuesses.size(); i += 2) {
+      if ((Integer) readGuesses.get(i + 1) == q.question) {
+        readFrom.add((Transaction) readGuesses.get(i));
+      }
+    }
     q.guessing = true;
     guessed = true;
     q.schedule();
@@ -535,8 +541,11 @@ final class Lanes {
         marked.add(l);
       }
       // What the screen showed stays the screen until the parent lands: value has it; the truth is the parent's staging.
+      // A commit beneath the flight this answers no longer says the committed value tears: the shown guess is the
+      // screen, and its readers keep it until the commit (#4795).
       if (l.shown && guessed) {
         marked.add(n);
+        n.config &= ~CONFIG_INPUTS_PUBLISHED;
       }
       n.config &= ~(CONFIG_OVERRIDE | CONFIG_GUESS);
       n.x.shown = false;
@@ -662,6 +671,12 @@ final class Lanes {
       return NOT_PENDING;
     }
     if (c == null) {
+      // #4788 (D-33): an action's imperative read of a guess, which a guess it writes next may derive from. A store
+      // target's carrier is noted per key.
+      if (guess && q.actionDepth > 0 && (el.config & CONFIG_SLOT_NODE) == 0) {
+        readGuesses.add(l);
+        readGuesses.add(q.question);
+      }
       return latestOf(el);
     }
     boolean pending = !guess && (status & STATUS_PENDING) != 0;
@@ -1096,11 +1111,39 @@ final class Lanes {
     return q;
   }
 
+  /**
+   * #4788: the lanes whose guesses an action read imperatively, each with the question the reading action asks: a
+   * guess that action writes next derives from them. Kept while the lane read lives.
+   */
+  final List<Object> readGuesses = new ArrayList<>();
+  /** #4788: the lanes this seam's guesses derive from. */
+  private final List<Transaction> readFrom = new ArrayList<>();
+
   private void applyGuessesAt(Transaction parent) {
     judged = lanes.size();
     if (!pendingGuesses.isEmpty()) {
+      // #4788 (D-33): a guess written beside an imperative read of another hold's live guess derives from it: the
+      // frames entangle. A read alone entangles nothing.
+      if (parent != null) {
+        for (Transaction r : readFrom) {
+          if (lanes.contains(r)) {
+            s().merge(parent, r.parent);
+          }
+        }
+      }
       applyGuesses(parent);
     }
+    // A read lasts as long as the guess it read: the reading action may guess from it after a yield.
+    List<Object> kept = new ArrayList<>();
+    for (int i = 0; i < readGuesses.size(); i += 2) {
+      if (lanes.contains((Transaction) readGuesses.get(i))) {
+        kept.add(readGuesses.get(i));
+        kept.add(readGuesses.get(i + 1));
+      }
+    }
+    readFrom.clear();
+    readGuesses.clear();
+    readGuesses.addAll(kept);
   }
 
   private boolean readsHeld(Node r) {
