@@ -236,17 +236,35 @@ final class Boundaries {
   }
 
   private Boundary hiddenBy(Node r) {
+    return hiddenBy(r, null);
+  }
+
+  /** Solid's {@code 1} from hiddenBy: hidden, with no boundary to name. Only ever for a node that is not an effect. */
+  private static final Boundary HIDDEN = new Boundary();
+
+  /**
+   * The nearest boundary on r's chain showing its fallback, if any. A boundary output passing a pending by (an error
+   * boundary) is on screen only through the render effects it reaches, through memos or other error boundaries:
+   * reaching none, or only effects behind fallbacks, it holds nothing (F-4, D-14, #4638). A node already walked is
+   * not walked again.
+   */
+  private Boundary hiddenBy(Node r, Set<Node> seen) {
     for (Boundary b = boundaryOf(r); b != null; b = b.parent) {
       if (b.fallback) {
         return b;
       }
     }
-    // A boundary output passing a pending by (an error boundary) is on screen only through its readers: read only
-    // behind fallbacks, it holds nothing (F-4, D-14, #4638).
     Boundary h = null;
-    if ((r.config & CONFIG_REDERIVE) != 0 && r.type == 0) {
-      for (Link s = r.subs; s != null && (h = hiddenBy(s.sub)) != null; s = s.nextSub) {
-        // every reader so far is behind a fallback
+    if (seen != null || (r.config & CONFIG_REDERIVE) != 0) {
+      if (seen == null) {
+        seen = new HashSet<>();
+      }
+      h = r.type != EFFECT_RENDER ? HIDDEN : null;
+      for (Link s = r.subs; s != null; s = s.nextSub) {
+        h = !seen.add(s.sub) ? HIDDEN : hiddenBy(s.sub, seen);
+        if (h == null) {
+          break;
+        }
       }
     }
     return h;
@@ -335,6 +353,20 @@ final class Boundaries {
     return false;
   }
 
+  /**
+   * {@code n} reads {@code s}, directly or through derivations wherever they live. Each upstream node is walked
+   * once, so a shared upstream graph costs its size, not its paths (#4644).
+   */
+  private static boolean reads(Node n, Node s, Set<Node> seen) {
+    for (Link l = n.deps; l != null; l = l.nextDep) {
+      Node h = l.dep;
+      if (h == s || (seen.add(h) && reads(h, s, seen))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** `pass` is Solid's `boolean | 0`: -1 for undefined or false, 0 for 0, 1 for true. */
   int prune(Boundary b, int pass) {
     Scheduler q = s();
@@ -343,7 +375,8 @@ final class Boundaries {
       Node r = e.getKey();
       Node src = e.getValue();
       if (((r.flags | src.flags) & REACTIVE_DISPOSED) == 0) {
-        if ((((r.statusFlags | src.statusFlags) & mask) != 0 && !((mask & STATUS_ERROR) != 0 && caughtBelow(b, r, src)))
+        if ((((r.statusFlags & mask) != 0 || ((src.statusFlags & mask) != 0 && reads(r, src, new HashSet<>())))
+          && !((mask & STATUS_ERROR) != 0 && caughtBelow(b, r, src)))
           || ((mask & STATUS_ERROR) != 0 && (src.config & CONFIG_STAGED_ERROR) != 0)
           || ((r.config & CONFIG_VERDICT) != 0 && (r.flags & REACTIVE_IN_HEAP) != 0)) {
           if (pass == 0) {
