@@ -161,11 +161,10 @@ Two other models were asked to design this from the constraints alone and then t
 
 ## Built, and not yet
 
-Built: the engine with `reconcile`, projections, optimistic stores, shallow stores, chained backings and `affects()` on a store, running Solid's store tests; and over lists, maps, sets, beans and records `createStore` with its derived form, `update`, `set`, `at(...)` with the processor's check, `createProjection`, `createOptimisticStore`, `createShallowStore` and `createRetainedStore` with `restored()`, what shows while a first answer loads, opaque classes named by the app, one object per record and version, the read path the enhancer compiles to, the dev-mode report of a bean changed outside `update`, and unloaded JPA state kept whole.
+Built: tracked classes and rows that render alone without being components, through the enhancer (ADR 0036); the engine with `reconcile`, projections, optimistic stores, shallow stores, chained backings and `affects()` on a store, running Solid's store tests; and over lists, maps, sets, beans and records `createStore` with its derived form, `update`, `set`, `at(...)` with the processor's check, `createProjection`, `createOptimisticStore`, `createShallowStore` and `createRetainedStore` with `restored()`, what shows while a first answer loads, opaque classes named by the app, one object per record and version, the read path the enhancer compiles to, the dev-mode report of a bean changed outside `update`, and unloaded JPA state kept whole.
 
 Not yet:
 
-- The enhancer itself: tracked classes, and rows that render alone without being components.
 - A draft hands out the store's own collection for a collection field, so a field declared as a class, such as `ArrayList`, says to declare `List`.
 
 Solid's own store tests run against the port in `j2act-signals-conformance` with JavaScript objects behind the seam. Every one passes but the listed, and each listed one says what it asserts that the port does not do:
