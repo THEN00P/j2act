@@ -26,6 +26,7 @@ final class Verdict {
     q.keepReadersHook = this::keepReaders;
     q.attachHook = this::attachWaits;
     q.holdStagingHook = this::holdStaging;
+    q.askerJoinsHook = this::askerJoins;
     q.witnessMarkHook = () -> {
       if (probing) {
         probeFound = true;
@@ -55,10 +56,8 @@ final class Verdict {
 
   private boolean observeFlight(Node c, Node el) {
     Scheduler q = s();
-    // A render effect routed into a verdict lane reads the screen as lane work (D-26, #4661).
-    if (q.passLane != null && c.type != 0 && (c.statusFlags & STATUS_UNINITIALIZED) == 0) {
-      return true;
-    }
+    // A plain read after the pass's window is the frame's read: the reader observes the flight, a render effect
+    // routed into a verdict lane too (S-52).
     if ((el.config & CONFIG_INPUTS_PUBLISHED) != 0
       || ((el.config & CONFIG_HELD) != 0 && rt.core.bornInto(c, q.txOf(el)))) {
       return false;
@@ -73,6 +72,25 @@ final class Verdict {
       verdictRead(c, q.flushTransaction, true);
     }
     return true;
+  }
+
+  /**
+   * A pass that asks leaves the display for the hold it read (F-2's producer clause): un-seated from the holder's
+   * verdict lane, dropped from the re-runs that read scheduled, and joined as a plain read of the staging joins.
+   */
+  void askerJoins(Node c, Node el, Transaction t) {
+    Scheduler q = s();
+    if (q.passLane != null && Lanes.isVerdict(q.passLane)) {
+      q.passLane = null;
+    }
+    c.flags &= ~(REACTIVE_LANE_READ | REACTIVE_PROBE_UNANSWERED);
+    q.stagedReaders.remove(c);
+    if (t == null) {
+      rt.core.stagedRead(c, el);
+      return;
+    }
+    t.reruns.remove(c);
+    rt.core.joinPass(c, el);
   }
 
   private void verdictRead(Node c, Transaction t, boolean plain) {
@@ -153,7 +171,6 @@ final class Verdict {
   private void markVerdictReader() {
     Node c = rt.core.creatorPass(rt.core.context);
     if (c != null && rt.core.tracking) {
-      c.config &= ~CONFIG_ASYNC;
       int born = rt.core.creatorReads(c, 0);
       if (born == 0) {
         c.config |= CONFIG_VERDICT;
@@ -254,27 +271,33 @@ final class Verdict {
       Transaction l = q.txOf(el);
       boolean flying = (owner.statusFlags & STATUS_PENDING) != 0 && !quietPending(owner);
       boolean guess = (el.config & CONFIG_GUESS) != 0;
-      Object v = guess ? Integer.valueOf(0) : latestActive && !flying ? rt.lanes.laneValueOf(el) : rt.lanes.display(el);
+      Object v = guess ? Integer.valueOf(0) : latestActive && !flying ? rt.lanes.latestOf(el) : Lanes.screenOf(el);
       if (v != NOT_PENDING) {
+        // The pass is this lane's work: it reads the lane's latest, which answers the lane's question for it.
+        boolean inLane = q.passLane != null && Scheduler.sameLane(q.passLane, l);
         if (tracked) {
           verdictRead(c, l.parent != null ? l.parent : l, false);
         }
         if (guess) {
           if (probing && (flying || (el.pendingValue != NOT_PENDING
-            && (el.equals == null || !el.equals.test(el.x.lane, el.pendingValue))))) {
+            && (el.equals == null || !el.equals.test(rt.lanes.latestOf(el), el.pendingValue))))) {
             probeFound = true;
           }
           if (latestActive && l.folded != null) {
             return l.folded.read(null, el);
           }
-          return el.x.lane;
+          return rt.lanes.latestOf(el);
         }
-        if (flying && v == el.value && (owner.statusFlags & STATUS_UNINITIALIZED) != 0
-          && (latestActive || owner.x.shownError == null)) {
-          throw Errors.<RuntimeException>sneak(owner.x.error);
-        }
+        // S-54 (D-23): a lane derivation's answer that landed but is not shown, the lane holding on a sibling's
+        // flight, is still a question without a committed answer: pending until it shows, unless it changes nothing.
         if (probing && flying) {
           probeFound = true;
+        } else if (probing && !inLane && l.held && !el.x.shown && el.pendingValue != NOT_PENDING
+          && (el.equals == null || !el.equals.test(el.value, el.pendingValue))) {
+          probeFound = true;
+          if (tracked) {
+            q.staleReader(c, l);
+          }
         }
         return v;
       }
@@ -287,6 +310,14 @@ final class Verdict {
           && t.verdict.held && q.flushTransaction != t) {
           q.staleReader(c, t.verdict);
           return el.value;
+        }
+        // F-2's producer clause: a pass that asks never derives from the screen's value of a held node. Its
+        // isPending of one joins the hold and is answered in the hold's world (S-51, #4677). Not a pass seated in an
+        // optimistic lane: it derives from a guess, and is that lane's (S-57).
+        if (tracked && probing && (c.config & CONFIG_ASYNC) != 0 && (c.config & CONFIG_HELD) == 0
+          && (q.passLane == null || Lanes.isVerdict(q.passLane))) {
+          askerJoins(c, el, t);
+          return staged(el);
         }
         if (tracked) {
           verdictRead(c, t, false);
@@ -315,6 +346,11 @@ final class Verdict {
           }
         }
         if (latestActive && el.pendingValue != NOT_PENDING) {
+          // D-34 (#4689): a shown guess a correction re-homed into the hold keeps the screen's value for latest until
+          // the commit.
+          if (rt.lanes.keptGuess(el) && q.blocked(t)) {
+            return el.value;
+          }
           if (!tracked && q.flushTransaction != null && !q.running) {
             q.joinFuture(t);
           }
@@ -332,6 +368,11 @@ final class Verdict {
       if ((owner.statusFlags & STATUS_PENDING) != 0
         && (!uninitialized || (probing && (el.config & CONFIG_STAGED_ERROR) == 0))) {
         pendingVerdict(tracked ? c : null, owner);
+      } else if (tracked && probing && (c.config & CONFIG_ASYNC) != 0 && el.pendingValue != NOT_PENDING
+        && (q.passLane == null || Lanes.isVerdict(q.passLane))) {
+        // F-2's producer clause (as the held arm): a pass that asks reads the staging and is that frame's (S-51).
+        askerJoins(c, el, null);
+        return staged(el);
       } else if (tracked && q.running) {
         if (q.flushTransaction != null && el.fn == null && rt.core.nets(el)) {
           route(c, q.flushTransaction);
@@ -370,7 +411,7 @@ final class Verdict {
   }
 
   private boolean holdWork(Node n, Node source) {
-    if ((n.config & CONFIG_ASYNC) != 0 && ((n.statusFlags & STATUS_PENDING) == 0
+    if ((n.config & (CONFIG_ASYNC | CONFIG_OWN_PROBE)) == CONFIG_ASYNC && ((n.statusFlags & STATUS_PENDING) == 0
       || (n.x.transaction != null && n.x.transaction.lane) || (source.flags & REACTIVE_REASK) != 0)) {
       n.config &= ~CONFIG_VERDICT;
       return (n.config) != 0;

@@ -713,8 +713,8 @@ public final class Bridge {
   }
 
   public Object optimisticWrite(Object node, Value value, Value fn) {
-    return js(fn != null && fn.canExecute() ? rt.lanes.userGuess((Node) node, null, updater(fn))
-      : rt.lanes.userGuess((Node) node, toJava(value), null));
+    return js(fn != null && fn.canExecute() ? rt.lanes.optimisticWrite((Node) node, null, updater(fn))
+      : rt.lanes.optimisticWrite((Node) node, toJava(value), null));
   }
 
   public Object latest(Value fn) {

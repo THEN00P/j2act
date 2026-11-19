@@ -52,6 +52,8 @@ final class Constants {
   static final int CONFIG_FRESH_READ = 1 << 16;
   static final int CONFIG_PROMOTED = 1 << 22;
   static final int CONFIG_FRAME = 1 << 23;
+  /** A render effect created by a pass that probed: the mount a display-ahead Show opens (S-46, D-25). */
+  static final int CONFIG_MOUNT_AHEAD = 1 << 24;
   static final int CONFIG_ASYNC = 1 << 29;
   /** #4544: the node's last pass opened a verdict window of its own (REACTIVE_WINDOW, kept). */
   static final int CONFIG_OWN_PROBE = REACTIVE_WINDOW << 9;

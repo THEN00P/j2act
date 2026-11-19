@@ -42,6 +42,8 @@ final class Scheduler {
     FoldedRead folded;
     /** Solid's `latest`: opened by a latest() read of an unheld flight. */
     boolean latest;
+    /** On a lane: the flights of it a frame's own passes asked (F-2, S-57); the frame (over) holds on them. */
+    List<Node> waits;
 
     Transaction(boolean lane, Transaction parent) {
       this.lane = lane;
@@ -97,6 +99,12 @@ final class Scheduler {
   Consumer<Node> keepReadersHook;
   Predicate<Node> attachHook;
   java.util.function.BiPredicate<Node, Node> holdStagingHook;
+  /** A pass that asks leaves the display for the hold it read (F-2's producer clause; Verdict.askerJoins). */
+  AskerJoins askerJoinsHook;
+
+  interface AskerJoins {
+    void join(Node c, Node el, Transaction t);
+  }
   java.util.function.Function<Node, Node> laggingHook;
   Predicate<Node> markedHook;
   Runnable witnessMarkHook;
@@ -111,7 +119,7 @@ final class Scheduler {
   /** Solid's GlobalQueue._slotTake; `back` asks for the slot's node now, for a guess that comes back. */
   SlotTake slotTakeHook;
   /** Solid's GlobalQueue._slotCovered: the value a slot node's guess covered. */
-  java.util.function.Function<Node, Object> slotCoveredHook;
+  java.util.function.BiFunction<Node, Object, Object> slotCoveredHook;
   /** Solid's GlobalQueue._echoes: the truth is the guess's echo when reconcile would write nothing into it. */
   java.util.function.BiPredicate<Object, Object> echoesHook;
   /** Solid's GlobalQueue._laneRebase: true when the lane stages the truth beneath a keyed arrangement guess. */
@@ -135,7 +143,8 @@ final class Scheduler {
   // ---- state
 
   private final Runtime rt;
-  private final List<Transaction> transactions = new ArrayList<>();
+  /** Live transactions: opened, unmerged, not landed. */
+  final List<Transaction> transactions = new ArrayList<>();
   Transaction passLane;
   Transaction flushTransaction;
   Transaction latestOpened;
@@ -461,6 +470,8 @@ final class Scheduler {
           }
           if (n.pendingValue != NOT_PENDING && (n.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == 0
             && (n.x == null || (n.x.pendingFirstChild == null && n.x.pendingDisposal == null))
+            // A recovery to the last good value is a change of answer (D-41): held, not netted.
+            && (n.x == null || n.x.shownError == null)
             && rt.core.isSame(n, n.value, n.pendingValue)) {
             n.pendingValue = NOT_PENDING;
             n.config &= ~CONFIG_STAGED;
@@ -699,8 +710,17 @@ final class Scheduler {
 
   void laneDirty(Node node, Transaction l) {
     insertSubs(node);
+    boolean display = l.parent.verdict == l;
     for (Link s = node.subs; s != null; s = s.nextSub) {
       Node c = s.sub;
+      // F-2's producer clause: a reader that asks and is the frame's asked of the truth already; a verdict lane's
+      // re-derivation of what it read would only ask again (S-51).
+      if (display && (c.config & CONFIG_ASYNC) != 0
+        && ((c.config & CONFIG_HELD) != 0 || (c.flags & (REACTIVE_JOINED | REACTIVE_STAGED_READ)) != 0)
+        && !(c.x != null && c.x.transaction != null && c.x.transaction.lane)) {
+        dirtyQueue.deleteFromHeap(c);
+        continue;
+      }
       Transaction t = c.x != null ? c.x.transaction : null;
       // A reader a hold has pending on its re-ask re-derives from the guess as the lane's work (#4629): the hold is
       // the lane's parent's, or any hold whose flights the reader waits on are all refresh() re-asks (#4666).

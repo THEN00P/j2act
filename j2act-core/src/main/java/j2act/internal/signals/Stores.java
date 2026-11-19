@@ -197,19 +197,20 @@ public final class Stores {
       StoreFamily fam = n.host instanceof StoreTarget ? ((StoreTarget) n.host).fam : null;
       return fam != null && fam.node != null && (fam.node.statusFlags & STATUS_PENDING) != 0;
     };
-    q.slotCoveredHook = n -> {
+    q.slotCoveredHook = (n, v) -> {
       // A chained link's committed value is the inner store's, whose commits it never learned of under a guess.
       StoreTarget t = (StoreTarget) n.host;
       if (t.ch) {
         Object key = n.key;
         Object inner = t.v;
         if (t.h != null && t.h.get(key) == n) {
-          n.value = rt.core.untrack(() -> shape.has(inner, key));
-        } else if (t.n != null && t.n.get(key) == n) {
-          n.value = rt.core.untrack(() -> unwrapValue(shape.get(inner, key)));
+          return rt.core.untrack(() -> shape.has(inner, key));
+        }
+        if (t.n != null && t.n.get(key) == n) {
+          return rt.core.untrack(() -> unwrapValue(shape.get(inner, key)));
         }
       }
-      return n.value;
+      return v;
     };
     q.storeNodeHook = (t, key) -> getNode((StoreTarget) t, key);
     q.storeWrappableHook = shape::isWrappable;
@@ -805,7 +806,7 @@ public final class Stores {
       } else if (k.value instanceof LaneView) {
         ((LaneView) k.value).base = t.v;
       } else {
-        k.value = t.v;
+        follow(k, t.v);
       }
     }
     if (!same(t.v, old) && t.u != null) {
@@ -1228,7 +1229,7 @@ public final class Stores {
         Object nv = nodeValue(node, target);
         if (chained) {
           // The link follows the inner store: its value is what was just read through it.
-          node.value = backingValue;
+          follow(node, backingValue);
           if ((node.config & CONFIG_OVERRIDE) != 0) {
             v = nv;
           }
@@ -1329,14 +1330,22 @@ public final class Stores {
     }
   }
 
+  /**
+   * A chained link's committed value follows the inner store's (S4), while it is the screen's: a lane that has
+   * revealed the node shows its own value there, and a revert asks the store.
+   */
+  static void follow(Node n, Object v) {
+    if ((n.config & CONFIG_OVERRIDE) == 0 || !n.x.transaction.shown) {
+      n.value = v;
+    }
+  }
+
   /** A derive's write is its lane's derivation, or held with the derive when the derive is held. */
   private void holdWithDerive(StoreTarget target, Node node, Transaction lane) {
     Scheduler q = s();
     Node fw = target.fam != null ? target.fam.node : null;
     if (q.laneStageHook != null && lane != null && node.pendingValue != NOT_PENDING && (node.config & CONFIG_OVERRIDE) == 0) {
       q.list(node, lane);
-      node.x.lane = node.pendingValue;
-      node.pendingValue = NOT_PENDING;
       node.config |= CONFIG_OVERRIDE;
       return;
     }
@@ -1450,7 +1459,7 @@ public final class Stores {
           return Signals.truthy(nv);
         }
         boolean present = shape.has(src, key);
-        node.value = present;
+        follow(node, present);
         return (node.config & CONFIG_OVERRIDE) != 0 ? Signals.truthy(nv) : present;
       } else if (optHooks != null && optRead(target)) {
         Boolean guessed = optHooks.has(target, key);

@@ -124,7 +124,13 @@ if (process.env.FUZZ_SEEDS) globalThis.__seeds = Number(process.env.FUZZ_SEEDS);
 const logged = [];
 const realLog = console.log;
 console.log = line => logged.push(line);
+// A seed on which Solid itself crashes (an error thrown by a scheduled flush) is marked, and DifferentialTest skips it.
+const crashed = e => {
+  globalThis.__crashed = String(e && e.message).slice(0, 80);
+};
+process.on("uncaughtException", crashed);
 await globalThis.__fuzz();
+process.off("uncaughtException", crashed);
 console.log = realLog;
 writeFileSync(join(here, "target", "fuzz-expected.txt"), logged.join("\n") + "\n");
 console.log(`bundled ${entries.length - failed.length} of ${entries.length} Solid test files`);

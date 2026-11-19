@@ -580,7 +580,8 @@ final class Async {
     Object run() {
       Scheduler q = rt.scheduler;
       rt.core.ext(el).inFlight = result;
-      if (q.holdWorkHook != null && (el.flags & REACTIVE_WINDOW) == 0) {
+      // The derivation asks (F-2's producer clause): its last answer was a flight, window or not.
+      if (q.holdWorkHook != null) {
         el.config |= CONFIG_ASYNC;
       }
       el.x.q = q.question != 0 ? q.question : Scheduler.MAINLINE_QUESTION;

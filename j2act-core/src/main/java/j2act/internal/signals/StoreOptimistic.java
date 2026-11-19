@@ -84,7 +84,7 @@ final class StoreOptimistic implements Stores.OptHooks {
   /** A chained link's node follows the inner store: before a guess its value is what the inner store shows. */
   private void follow(Object inner, Object base, Node node, Object key, boolean presence) {
     if (inner != null) {
-      node.value = presence ? (Object) shape().has(base, key) : stores.unwrapValue(shape().get(base, key));
+      Stores.follow(node, presence ? (Object) shape().has(base, key) : stores.unwrapValue(shape().get(base, key)));
     }
   }
 
@@ -377,10 +377,14 @@ final class StoreOptimistic implements Stores.OptHooks {
     return Boolean.TRUE;
   }
 
-  private static Object laneG(StoreTarget t) {
-    Node k = t != null ? t.k : null;
-    Object lane = k != null && k.x != null ? k.x.lane : null;
+  private Object laneG(StoreTarget t) {
+    Object lane = laneOf(t != null ? t.k : null);
     return lane instanceof LaneView ? ((LaneView) lane).g : LaneView.UNSET;
+  }
+
+  /** A lane's value of a node, NOT_PENDING for a node that is no lane's. */
+  private Object laneOf(Node k) {
+    return k != null && (k.config & CONFIG_OVERRIDE) != 0 ? rt.lanes.latestOf(k) : NOT_PENDING;
   }
 
   /** Solid's GlobalQueue._laneRebase: a truth landing on a guess. */
@@ -395,7 +399,7 @@ final class StoreOptimistic implements Stores.OptHooks {
     if (t == null || el.key != Stores.TRACK) {
       return true;
     }
-    Object lane = el.x.lane;
+    Object lane = rt.lanes.latestOf(el);
     if (!(lane instanceof LaneView)) {
       return false;
     }
@@ -447,7 +451,13 @@ final class StoreOptimistic implements Stores.OptHooks {
       }
     }
     view.rows = rows;
-    view.base = rows;
+    // The base is a backing, read as one under a revealed lane (committed): an array of the store's shape.
+    Object composed = shape.clone(truth);
+    shape.set(composed, StoreShape.LENGTH, rows.size());
+    for (int i = 0; i < rows.size(); i++) {
+      shape.set(composed, i, rows.get(i));
+    }
+    view.base = composed;
     Transaction lane2 = q.txOf(el);
     Object base = stores.committed(t);
     Map<Object, Node> nodes = t.n;
@@ -457,7 +467,7 @@ final class StoreOptimistic implements Stores.OptHooks {
         if (!sameRow(shape.get(base, i), rows.get(i), keyFn)) {
           laneSet(stores.getNode(t, i), rows.get(i), lane2);
         }
-      } else if (!sameRow((node.config & CONFIG_OVERRIDE) != 0 ? node.x.lane : shape.get(base, i), rows.get(i), keyFn)) {
+      } else if (!sameRow((node.config & CONFIG_OVERRIDE) != 0 ? rt.lanes.latestOf(node) : shape.get(base, i), rows.get(i), keyFn)) {
         laneSet(node, rows.get(i), lane2);
       }
     }
@@ -483,12 +493,11 @@ final class StoreOptimistic implements Stores.OptHooks {
     StoreTarget t = el.host instanceof StoreTarget ? (StoreTarget) el.host : null;
     Node k = t != null ? t.k : null;
     Transaction l = q.txOf(el);
-    Object kLane = k != null && k.x != null ? k.x.lane : null;
-    if (!l.shown || k == null || (k.config & CONFIG_OVERRIDE) == 0 || !(kLane instanceof LaneView)
-      || ((LaneView) kLane).removed == null) {
+    Object kLane = laneOf(k);
+    if (!l.shown || !(kLane instanceof LaneView) || ((LaneView) kLane).removed == null) {
       return false;
     }
-    Object guess = el.x.lane;
+    Object guess = rt.lanes.latestOf(el);
     if ((el.equals == null || !el.equals.test(guess, truth)) && !q.echoesHook.test(guess, truth)) {
       l.folded = this::foldedRead;
     } else {
@@ -515,7 +524,7 @@ final class StoreOptimistic implements Stores.OptHooks {
     if (el.pendingValue != NOT_PENDING) {
       return el.pendingValue;
     }
-    return (el.config & CONFIG_SLOT_NODE) != 0 ? q.slotCoveredHook.apply(el) : el.value;
+    return rt.lanes.covered(el);
   }
 
   private boolean sameRow(Object a, Object b, Function<Object, Object> keyFn) {
@@ -531,14 +540,13 @@ final class StoreOptimistic implements Stores.OptHooks {
 
   private void laneSet(Node node, Object value, Transaction lane) {
     Scheduler q = s();
-    NodeExtension x = rt.core.ext(node);
     if ((node.config & CONFIG_OVERRIDE) == 0) {
       node.config |= CONFIG_OVERRIDE;
       q.list(node, lane);
-    } else if (x.lane == value) {
+    } else if (rt.lanes.latestOf(node) == value) {
       return;
     }
-    x.lane = value;
+    rt.lanes.setLaneValue(node, lane, value);
     if (node.subs != null) {
       q.laneDirty(node, lane);
     }
@@ -592,7 +600,7 @@ final class StoreOptimistic implements Stores.OptHooks {
         Node node = e.getValue();
         Object ov;
         if ((node.config & CONFIG_OVERRIDE) != 0) {
-          ov = writer ? rt.lanes.laneValueOf(node) : shown(node);
+          ov = writer ? rt.lanes.latestOf(node) : shown(node);
         } else if (!writer) {
           continue;
         } else if ((ov = rt.lanes.pendingGuessOf(node)) == NOT_PENDING) {
@@ -619,7 +627,7 @@ final class StoreOptimistic implements Stores.OptHooks {
         Node node = e.getValue();
         Object pv;
         if ((node.config & CONFIG_OVERRIDE) != 0) {
-          pv = writer ? rt.lanes.laneValueOf(node) : shown(node);
+          pv = writer ? rt.lanes.latestOf(node) : shown(node);
         } else if (!writer || (pv = rt.lanes.pendingGuessOf(node)) == NOT_PENDING) {
           continue;
         }

@@ -151,11 +151,14 @@ it("fuzz", async () => {
   for (let seed = from; seed < from + count; seed++) {
     const log: string[] = [];
     log.push("=== seed " + seed);
+    (globalThis as any).__crashed = undefined;
     try {
       await runSeed(seed, log);
     } catch (e: any) {
       log.push("THROW " + String(e && e.message).slice(0, 60));
     }
+    // An error a scheduled flush threw, which no try sees: prepare.mjs records it when Solid itself crashes.
+    if ((globalThis as any).__crashed !== undefined) log.push("SOLID CRASHED " + (globalThis as any).__crashed);
     console.log(log.join("\n"));
   }
 }, 600000);

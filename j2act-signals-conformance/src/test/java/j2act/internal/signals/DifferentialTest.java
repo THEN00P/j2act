@@ -52,6 +52,11 @@ class DifferentialTest {
     for (Map.Entry<String, List<String>> seed : solid.entrySet()) {
       List<String> s = seed.getValue();
       List<String> p = port.get(seed.getKey());
+      // Solid itself crashed on this seed: what it shows after is no reference.
+      if (s.stream().anyMatch(line -> line.startsWith("SOLID CRASHED "))) {
+        System.out.println(seed.getKey() + " skipped: " + s.get(s.size() - 1));
+        continue;
+      }
       for (int i = 0; i < Math.max(s.size(), p.size()); i++) {
         String a = i < s.size() ? s.get(i) : "<nothing>";
         String b = i < p.size() ? p.get(i) : "<nothing>";

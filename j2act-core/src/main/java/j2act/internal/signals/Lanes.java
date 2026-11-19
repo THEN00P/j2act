@@ -93,22 +93,43 @@ final class Lanes {
 
   // ---- truth.ts
 
-  Object laneValueOf(Node el) {
-    if ((el.config & CONFIG_GUESS) == 0 && el.pendingValue != NOT_PENDING) {
-      return el.pendingValue;
+  /**
+   * A lane's record of a node beside the node's two slots: its guess until the lane reveals it, and after the reveal
+   * the value the screen showed before (a guess reverts to it). Dropped when the node leaves its lane.
+   */
+  private final java.util.Map<Node, Object> covers = new WeakHashMap<>();
+
+  /**
+   * A lane node's latest value. A guess: the guess, the lane's record of it until the reveal, the screen's value
+   * after. A derivation: its staging under the lane, else what the screen shows; NOT_PENDING for neither.
+   */
+  Object latestOf(Node el) {
+    if ((el.config & CONFIG_GUESS) != 0) {
+      return el.x.shown ? el.value : covers.get(el);
     }
-    Object v = el.x.lane;
-    return v != NOT_PENDING || (el.statusFlags & STATUS_UNINITIALIZED) != 0 ? v : el.value;
+    return el.pendingValue != NOT_PENDING ? el.pendingValue
+      : (el.statusFlags & STATUS_UNINITIALIZED) != 0 ? NOT_PENDING : el.value;
+  }
+
+  /** The value a guess covered: the committed value until the reveal, the lane's record after; a slot's asks the store. */
+  Object covered(Node n) {
+    Object v = n.x.shown ? covers.get(n) : n.value;
+    return (n.config & CONFIG_SLOT_NODE) != 0 && s().slotCoveredHook != null ? s().slotCoveredHook.apply(n, v) : v;
+  }
+
+  /** The truth beneath a guess: a landing staged there, else the value it covered. */
+  Object underOf(Node n) {
+    return n.pendingValue != NOT_PENDING ? n.pendingValue : covered(n);
   }
 
   Object truthRead(Node el) {
     if (truth(el)) {
-      return laneValueOf(el);
+      return latestOf(el);
     }
     if ((el.config & CONFIG_GUESS) == 0) {
       throw new NotReadyError(null);
     }
-    return el.pendingValue != NOT_PENDING ? el.pendingValue : el.value;
+    return underOf(el);
   }
 
   void truthConfirmed(Transaction l) {
@@ -123,10 +144,7 @@ final class Lanes {
 
   private boolean truth(Node n) {
     if ((n.config & CONFIG_GUESS) != 0) {
-      return n.pendingValue != NOT_PENDING && n.equals != null && n.equals.test(n.x.lane, n.pendingValue);
-    }
-    if (n.pendingValue != NOT_PENDING) {
-      return false;
+      return n.pendingValue != NOT_PENDING && n.equals != null && n.equals.test(latestOf(n), n.pendingValue);
     }
     if ((n.config & CONFIG_OVERRIDE) != 0) {
       for (Link d = n.deps; d != null; d = d.nextDep) {
@@ -134,16 +152,52 @@ final class Lanes {
           return false;
         }
       }
+      return true;
     }
-    return true;
+    return n.pendingValue == NOT_PENDING;
   }
 
   // ---- lanes.ts
 
-  Object display(Node el) {
-    Object v = el.x.lane;
-    return el.x.transaction.shown && v != NOT_PENDING ? v
-      : (el.statusFlags & STATUS_UNINITIALIZED) != 0 ? NOT_PENDING : el.value;
+  /**
+   * v is lane l's value of n from now: on screen at once once the lane has revealed (what it covers kept for the
+   * lane's end), staged for the reveal before.
+   */
+  void setLaneValue(Node n, Transaction l, Object v) {
+    NodeExtension x = rt.core.ext(n);
+    if (l.shown || x.shown) {
+      cover(n);
+      n.value = v;
+      x.shown = true;
+      n.statusFlags &= ~STATUS_UNINITIALIZED;
+    } else if ((n.config & CONFIG_GUESS) != 0) {
+      covers.put(n, v);
+    } else {
+      n.pendingValue = v;
+    }
+  }
+
+  /** What the screen shows of a node: NOT_PENDING when nothing (uninitialized). */
+  static Object screenOf(Node el) {
+    return (el.statusFlags & STATUS_UNINITIALIZED) != 0 ? NOT_PENDING : el.value;
+  }
+
+  /** The lane's record of the value the screen showed n before the lane revealed it, kept once. */
+  private void cover(Node n) {
+    if (!covers.containsKey(n)) {
+      covers.put(n, n.value);
+    }
+  }
+
+  /** A truth landed beneath a guess: the parent's staging, held for its landing to commit. The guess stays the value. */
+  private static void landBeneath(Node n, Object truth) {
+    n.pendingValue = truth;
+    n.config |= CONFIG_HELD;
+  }
+
+  /** A shown guess a correction re-homed into its hold: the screen's and latest's value until the commit (#4689). */
+  boolean keptGuess(Node n) {
+    return guessed && marked.contains(n);
   }
 
   Object guessedValueOf(Node n) {
@@ -152,7 +206,7 @@ final class Lanes {
       return g;
     }
     if ((n.config & CONFIG_OVERRIDE) != 0) {
-      g = laneValueOf(n);
+      g = latestOf(n);
       if (g != NOT_PENDING) {
         return g;
       }
@@ -171,14 +225,24 @@ final class Lanes {
 
   void take(Node n, Transaction l, boolean d) {
     NodeExtension x = n.x;
-    kept.add(new Kept(n, x.lane, x.transaction, x.q, l));
+    Object v = latestOf(n);
+    kept.add(new Kept(n, v, x.transaction, x.q, l));
     rerun(n, l);
+    // The guess leaves the node: the screen shows what it covered; a truth that landed beneath it stays its staging.
+    // Without one, the guess is the taker's derivation.
+    if (x.shown) {
+      n.value = covered(n);
+    }
+    covers.remove(n);
+    x.shown = false;
     n.config &= d ? ~(CONFIG_GUESS | CONFIG_OVERRIDE) : ~CONFIG_GUESS;
     if (d) {
       x.transaction = null;
-      x.lane = NOT_PENDING;
     } else {
       s().list(n, l);
+      if (n.pendingValue == NOT_PENDING) {
+        setLaneValue(n, l, v);
+      }
     }
   }
 
@@ -199,12 +263,6 @@ final class Lanes {
     if (source != null && (source.statusFlags & STATUS_UNINITIALIZED) != 0) {
       throw new IllegalStateException(OPTIMISTIC_WRITE_BEFORE_LOAD_MESSAGE);
     }
-  }
-
-  /** The setter createOptimistic returns. */
-  Object userGuess(Node n, Object v, UnaryOperator<Object> fn) {
-    guardOptimisticBeforeLoad(n);
-    return optimisticWrite(n, v, fn);
   }
 
   Object optimisticWrite(Node n, Object v, UnaryOperator<Object> fn) {
@@ -228,11 +286,6 @@ final class Lanes {
       || ((n.config & CONFIG_SLOT_NODE) != 0 && s().slotFlightHook != null && s().slotFlightHook.test(n));
   }
 
-  /** The value a guess covered: the node's committed value, a store slot's asked of the store. */
-  private Object covered(Node n) {
-    return (n.config & CONFIG_SLOT_NODE) != 0 && s().slotCoveredHook != null ? s().slotCoveredHook.apply(n) : n.value;
-  }
-
   private void applyGuesses(Transaction parent) {
     Scheduler q = s();
     Transaction lane = null;
@@ -243,12 +296,12 @@ final class Lanes {
       boolean changed = true;
       Transaction holder = null;
       if ((n.config & CONFIG_OVERRIDE) != 0) {
-        changed = n.equals == null || !n.equals.test(laneValueOf(n), v);
+        changed = n.equals == null || !n.equals.test(latestOf(n), v);
         if ((n.config & CONFIG_GUESS) == 0) {
           n.pendingValue = NOT_PENDING;
           n.config |= CONFIG_GUESS;
         }
-        n.x.lane = v;
+        setLaneValue(n, q.txOf(n), v);
         holder = q.txOf(n).parent;
       } else {
         Transaction l;
@@ -267,9 +320,10 @@ final class Lanes {
           }
           l = lane;
         }
-        rt.core.ext(n).lane = v;
+        // The guess is the lane's until the reveal; a truth the holder staged stays the node's staging beneath it.
         n.config |= CONFIG_OVERRIDE | CONFIG_GUESS;
         q.list(n, l);
+        setLaneValue(n, l, v);
       }
       if (parent != null && holder != null) {
         q.merge(parent, holder);
@@ -381,21 +435,30 @@ final class Lanes {
   /** `errored` is Solid's `boolean | Computed`: false, true, or the node the error came from. */
   boolean laneStage(Node el, Transaction l, boolean create, Object errored) {
     Scheduler q = s();
+    // F-2's producer clause (S-57): a pass this flush dirtied that ran as a lane's and asked: the flush holds on
+    // that flight and reveals with the lane.
+    if (!create && (el.statusFlags & STATUS_PENDING) != 0 && (el.flags & REACTIVE_STAGED_READ) != 0) {
+      laneWait(el, l);
+    }
     if (!(create || truthy(errored) || (el.flags & REACTIVE_LANE_READ) != 0 || (el.config & CONFIG_GUESS) != 0)) {
       NodeExtension x = el.x;
       if (x != null) {
         Transaction tx = x.transaction;
         if (tx != null && tx.lane) {
-          if (tx.shown) {
-            if (q.flushTransaction == null || !q.blocked(Scheduler.resolveTx(tx.parent))) {
-              el.notifiedAt = LEFT_SHOWN;
-            } else {
-              el.value = display(el);
+          // Left a shown lane: judged against the committed value the lane covered, and the seam wakes the readers
+          // (#3892, #4367); while the lane's frame is held, the screen keeps the lane's value until the landing.
+          if (tx.shown && (q.flushTransaction == null || !q.blocked(Scheduler.resolveTx(tx.parent)))) {
+            if (x.shown) {
+              el.value = covers.get(el);
             }
+            el.notifiedAt = LEFT_SHOWN;
           }
+          covers.remove(el);
+          x.shown = false;
           x.transaction = null;
         }
-        x.lane = NOT_PENDING;
+        // The lane's staging of it is void.
+        el.pendingValue = NOT_PENDING;
       }
       el.config &= ~(CONFIG_OVERRIDE | CONFIG_HELD | CONFIG_HELD_FRAME);
       return false;
@@ -430,7 +493,7 @@ final class Lanes {
     Transaction l = q.txOf(n);
     Transaction parent = Scheduler.resolveTx(l.parent != null ? l.parent : l);
     // A store row answered by a new object the store would reconcile into the guessed one unchanged is an echo (#3898).
-    if (changed && (n.config & CONFIG_SLOT_NODE) != 0 && q.echoesHook != null && q.echoesHook.test(n.x.lane, value)) {
+    if (changed && (n.config & CONFIG_SLOT_NODE) != 0 && q.echoesHook != null && q.echoesHook.test(latestOf(n), value)) {
       changed = false;
     }
     if (changed) {
@@ -438,23 +501,22 @@ final class Lanes {
       if (guessed && reverting) {
         marked.add(l);
       }
-      if (l.shown) {
-        n.value = n.x.lane;
-        if (guessed) {
-          marked.add(n);
-        }
+      // What the screen showed stays the screen until the parent lands: value has it; the truth is the parent's staging.
+      if (l.shown && guessed) {
+        marked.add(n);
       }
       n.config &= ~(CONFIG_OVERRIDE | CONFIG_GUESS);
-      n.x.lane = NOT_PENDING;
+      n.x.shown = false;
+      covers.remove(n);
       q.holdNode(n, parent);
+      n.pendingValue = value;
       if (n.subs != null) {
         q.insertSubs(n);
       }
     } else {
-      n.config |= CONFIG_HELD;
+      landBeneath(n, value);
       truthConfirmed(l);
     }
-    n.pendingValue = value;
   }
 
   private void dissolveLane(Transaction l, Transaction into, Node except) {
@@ -468,7 +530,6 @@ final class Lanes {
         dissolveLane(v, null, null);
       }
     }
-    List<Node> loading = new ArrayList<>();
     for (int i = 0; i < l.nodes.size(); i++) {
       Node n = l.nodes.get(i);
       NodeExtension x = n.x;
@@ -477,22 +538,17 @@ final class Lanes {
       }
       int effect = n.type;
       boolean guess = (n.config & CONFIG_GUESS) != 0;
-      Object slot = x.lane;
-      Object shown = l.shown && effect == 0 ? slot : n.value;
-      Object latest = laneValueOf(n);
-      x.lane = NOT_PENDING;
+      // What the screen shows of it, and a guess's truth: a landing held beneath it, else the value it covered.
+      Object shown = n.value;
+      Object truth = guess ? underOf(n) : NOT_PENDING;
       n.config &= ~(CONFIG_OVERRIDE | CONFIG_GUESS);
+      x.shown = false;
+      covers.remove(n);
       if (into == null) {
+        // A first load the lane produced nothing for stays loading until its flight answers: nothing is staged.
         x.transaction = null;
-        if (effect == 0 && !guess) {
-          boolean stillLoading = slot == NOT_PENDING
-            && (n.statusFlags & (STATUS_UNINITIALIZED | STATUS_PENDING)) == (STATUS_UNINITIALIZED | STATUS_PENDING)
-            && (x.inFlight != null || anyPendingSource(x, loading));
-          if (stillLoading) {
-            loading.add(n);
-          } else {
-            n.pendingValue = latest;
-          }
+        if (guess) {
+          n.pendingValue = truth;
         }
         q.commitPendingNode(n);
         if (effect == 0) {
@@ -500,7 +556,7 @@ final class Lanes {
             || (n.statusFlags & STATUS_PENDING) != 0) {
             n.config |= CONFIG_INPUTS_PUBLISHED;
           }
-          if (shown != NOT_PENDING && (n.equals == null || !n.equals.test(shown, n.value))) {
+          if (n.equals == null || !n.equals.test(shown, n.value)) {
             q.insertSubs(n);
           }
         }
@@ -510,23 +566,19 @@ final class Lanes {
         }
       } else if (guess || (guessed && (n.config & CONFIG_SLOT_NODE) != 0 && n.pendingValue != NOT_PENDING)) {
         // A store slot the lane composed (a keyed re-base) over a truth staged on it lands that truth too (#4642).
-        if (n.pendingValue == NOT_PENDING) {
-          n.pendingValue = covered(n);
+        // What the screen showed stays the screen until then: value has it.
+        if (guess) {
+          n.pendingValue = truth;
         }
-        if (l.shown) {
-          n.value = slot;
-          if (guessed) {
-            marked.add(n);
-          }
+        if (l.shown && guessed) {
+          marked.add(n);
         }
         q.holdNode(n, into);
         q.insertSubs(n);
       } else {
         x.transaction = null;
         if (effect == 0) {
-          if (shown != NOT_PENDING && l.shown) {
-            n.pendingValue = shown;
-          }
+          n.pendingValue = NOT_PENDING;
           if ((n.statusFlags & STATUS_PENDING) != 0) {
             x.inFlight = null;
             q.dirtyQueue.enqueueSub(n);
@@ -553,18 +605,6 @@ final class Lanes {
     }
   }
 
-  private static boolean anyPendingSource(NodeExtension x, List<Node> loading) {
-    if (x.pendingSources == null) {
-      return false;
-    }
-    for (Node n : loading) {
-      if (x.pendingSources.contains(n)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   Object laneRead(Node c, Node el) {
     Scheduler q = s();
     boolean guess = (el.config & CONFIG_GUESS) != 0;
@@ -583,15 +623,15 @@ final class Lanes {
       return NOT_PENDING;
     }
     if (c == null) {
-      return laneValueOf(el);
+      return latestOf(el);
     }
     boolean pending = !guess && (status & STATUS_PENDING) != 0;
     if (!rt.core.tracking || (c.config & CONFIG_CHILDREN_FORBIDDEN) != 0) {
       if (q.passLane == null || (c.config & CONFIG_CHILDREN_FORBIDDEN) != 0) {
-        return display(el);
+        return screenOf(el);
       }
     } else if (c.type == EFFECT_RENDER) {
-      boolean never = pending && el.x.lane == NOT_PENDING;
+      boolean never = pending && !el.x.shown;
       Transaction p = q.passLane;
       boolean seated = p != null && p.parent.verdict == p;
       if (seated && (never || p != l)) {
@@ -601,9 +641,9 @@ final class Lanes {
         if (never && l.shown) {
           return NOT_PENDING;
         }
-        // A held leaf reads its frame's staging; not a shown guess lane's, whose staging is the lane's next
-        // reveal (F-11, D-26, #4666).
-        if (!guess && (!l.shown || isVerdict(l)) && el.pendingValue != NOT_PENDING && (c.config & CONFIG_HELD) != 0
+        // A held leaf reads a shown verdict lane's staging as its frame's (#4275, S-39); not a guess lane's, whose
+        // staging is the lane's next reveal (F-11, D-26, #4666).
+        if (!guess && l.shown && isVerdict(l) && el.pendingValue != NOT_PENDING && (c.config & CONFIG_HELD) != 0
           && q.flushTransaction != null
           && Scheduler.resolveTx(q.flushTransaction) == q.txOf(c)) {
           return el.pendingValue;
@@ -613,7 +653,7 @@ final class Lanes {
             c.flags |= REACTIVE_FRAME_READ | REACTIVE_SCREEN_READ;
             l.reruns.add(c);
           }
-          Object v = display(el);
+          Object v = screenOf(el);
           if (v == NOT_PENDING) {
             throw new NotReadyError(null);
           }
@@ -625,7 +665,7 @@ final class Lanes {
       }
     }
     enterLane(l, c);
-    return pending ? NOT_PENDING : laneValueOf(el);
+    return pending ? NOT_PENDING : latestOf(el);
   }
 
   private boolean guessFlights(Transaction l) {
@@ -655,9 +695,9 @@ final class Lanes {
       for (int i = 0; i < l.nodes.size() && lanes.contains(l); i++) {
         Node n = l.nodes.get(i);
         if ((n.config & CONFIG_GUESS) != 0 && n.x.transaction == l) {
-          Object truth = n.pendingValue != NOT_PENDING ? n.pendingValue : covered(n);
+          Object truth = underOf(n);
           reverting = n.pendingValue == NOT_PENDING;
-          supersede(n, truth, n.equals == null || !n.equals.test(n.x.lane, truth));
+          supersede(n, truth, n.equals == null || !n.equals.test(latestOf(n), truth));
           reverting = false;
         }
       }
@@ -700,9 +740,23 @@ final class Lanes {
       if (x.transaction != l) {
         continue;
       }
-      if ((n.config & CONFIG_GUESS) == 0 && n.type == 0 && n.pendingValue != NOT_PENDING) {
-        x.lane = n.pendingValue;
-        n.pendingValue = NOT_PENDING;
+      // The lane's value is the screen's: a guess moves from the lane's record to value (what it covered takes its
+      // place there, for the revert); a derivation's staging commits. A truth held beneath a guess stays its
+      // staging. An effect's value slot is private.
+      if (n.type == 0) {
+        if ((n.config & CONFIG_GUESS) != 0) {
+          if (!x.shown) {
+            Object g = covers.get(n);
+            covers.put(n, n.value);
+            n.value = g;
+            x.shown = true;
+            n.statusFlags &= ~STATUS_UNINITIALIZED;
+          }
+        } else if (n.pendingValue != NOT_PENDING) {
+          cover(n);
+          q.commitPendingNode(n);
+          x.shown = true;
+        }
       }
       if (x.pendingFirstChild != null || x.pendingDisposal != null) {
         rt.owners.disposeChildren(n, false, true);
@@ -790,10 +844,10 @@ final class Lanes {
             NodeExtension x = rt.core.ext(n);
             if (x.transaction == null || q.txOf(n) == u) {
               q.commitPendingNode(n);
-              x.lane = k.lane;
               x.q = k.q;
               n.config |= CONFIG_OVERRIDE | CONFIG_GUESS;
               q.list(n, k.transaction);
+              setLaneValue(n, k.transaction, k.lane);
               rerun(n, u);
             }
           }
@@ -822,7 +876,87 @@ final class Lanes {
         }
       }
     }
+    // A lane flight one of the frame's own passes asked (laneWait, S-57): the frame holds on it.
+    if (!t.lane) {
+      for (int i = 0; i < lanes.size(); i++) {
+        Transaction l = lanes.get(i);
+        if (l.waits != null && l.over != null && s().liveTx(l.over) == t) {
+          for (Node n : l.waits) {
+            if ((n.statusFlags & STATUS_PENDING) != 0) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    // S-46 (D-25): a mount a display-ahead read gates attaches at the landing; its verdict lane reveals with it.
+    if (t.lane && t.parent.verdict == t && mountPending(t)) {
+      return true;
+    }
     return (t.lane && linkBlocked(t)) || nestedBlocked(t);
+  }
+
+  /**
+   * A mount a probing pass opened, born held (CONFIG_MOUNT_AHEAD) under one of l's nodes, on screen, still waiting: on
+   * its own flight, or on a flight its frame holds. Found on the live transactions' node lists.
+   */
+  private boolean mountPending(Transaction l) {
+    Scheduler q = s();
+    for (Transaction t : q.transactions) {
+      List<Node> nodes = t.nodes;
+      for (int i = 0; i < nodes.size(); i++) {
+        Node r = nodes.get(i);
+        if ((r.config & (CONFIG_MOUNT_AHEAD | CONFIG_HELD)) == (CONFIG_MOUNT_AHEAD | CONFIG_HELD)
+          && (r.statusFlags & STATUS_UNINITIALIZED) != 0 && (r.flags & REACTIVE_DISPOSED) == 0
+          && !(q.hiddenHook != null && q.hiddenHook.test(r))
+          && ((r.statusFlags & STATUS_PENDING) != 0 || anyPendingDerivation(nodes))) {
+          for (Owner o = r.parent; o != null; o = o.parent) {
+            if (o.x != null && o.x.transaction == l) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  private static boolean anyPendingDerivation(List<Node> nodes) {
+    for (Node n : nodes) {
+      if (n.type == 0 && (n.statusFlags & STATUS_PENDING) != 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * F-2 (S-57): a pass this flush dirtied ran as a lane's and asked: its flight is the lane's, so the flush would
+   * publish the write beside a stale derivation of it (F-1). The flush joins a frame and holds on the flight instead.
+   */
+  private void laneWait(Node el, Transaction l) {
+    Scheduler q = s();
+    if (!q.running || l.parent.verdict == l) {
+      return;
+    }
+    Transaction t = q.flushTransaction;
+    // The hold's own work: it already waits on its lane.
+    if (t != null && Scheduler.resolveTx(l.parent) == t) {
+      return;
+    }
+    // A lane already over another live frame cannot take a second: the write publishes as before.
+    Transaction o = l.over != null ? q.liveTx(l.over) : null;
+    if (o != null && o != t) {
+      return;
+    }
+    q.joinFuture(null);
+    l.over = q.flushTransaction;
+    if (l.waits == null) {
+      l.waits = new ArrayList<>();
+    }
+    l.waits.add(el);
+    // Not a staged reader to re-derive on the committed world at this seam.
+    q.stagedReaders.remove(el);
   }
 
   private boolean nestedBlocked(Transaction t) {
@@ -847,22 +981,17 @@ final class Lanes {
       && !(guessed && q.slotTakeHook != null && q.slotTakeHook.take(el, false) != null)) {
       boolean older = stale(el, q.question);
       if ((q.laneRebaseHook != null && q.laneRebaseHook.rebase(el, v, older)) || older) {
-        el.pendingValue = v;
-        el.config |= CONFIG_HELD;
+        landBeneath(el, v);
         q.schedule();
         return v;
       }
-      supersede(el, v, el.equals == null || !el.equals.test(el.x.lane, v));
+      supersede(el, v, el.equals == null || !el.equals.test(latestOf(el), v));
     } else {
       Transaction l = q.txOf(el);
-      if (el.equals != null && el.equals.test(laneValueOf(el), v)) {
+      if (el.equals != null && el.equals.test(latestOf(el), v)) {
         return v;
       }
-      if (l.shown) {
-        el.pendingValue = v;
-      } else {
-        el.x.lane = v;
-      }
+      el.pendingValue = v;
       if (el.fn != null) {
         el.time = q.clock;
       }
@@ -877,11 +1006,10 @@ final class Lanes {
       return true;
     }
     if (stale(el, answered(el))) {
-      el.pendingValue = value;
-      el.config |= CONFIG_HELD;
+      landBeneath(el, value);
       return true;
     }
-    supersede(el, value, el.equals == null || !el.equals.test(el.x.lane, value));
+    supersede(el, value, el.equals == null || !el.equals.test(latestOf(el), value));
     return true;
   }
 
