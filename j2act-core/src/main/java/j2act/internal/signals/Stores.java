@@ -598,13 +598,22 @@ public final class Stores {
       if (!directCommit) {
         queueFold(target);
       }
-      pb = target.pb = cloneRaw(target.v, target);
+      try {
+        pb = target.pb = cloneRaw(target.v, target);
+      } catch (Errors.NotReadyError e) {
+        // #4808: a nested write through a chained store still loading its first answer (the clone reads it) is
+        // dropped, as a write to a loading store is: the first answer replaces it (A25).
+        return DROPPED;
+      }
       if (!directCommit) {
         stageOn(target, pb);
       }
     }
     return pb;
   }
+
+  /** What a dropped write writes into: Solid's throwaway {} (#4808). */
+  private static final Object DROPPED = new Object();
 
   /** The committed backing and its ancestors' become the store's own: the path is copied once. */
   private void privatizeCommitted(StoreTarget target) {
@@ -1585,6 +1594,9 @@ public final class Stores {
     }
     Object uv = target.s ? value : unwrapValue(value);
     Object pb = ensurePB(target);
+    if (pb == DROPPED) {
+      return;
+    }
     if (userWrite && target.k != null && (target.k.config & CONFIG_HELD) != 0) {
       deferredReleases.add(getNode(target, key));
     }
@@ -1614,6 +1626,9 @@ public final class Stores {
       return;
     }
     Object pb = ensurePB(target);
+    if (pb == DROPPED) {
+      return;
+    }
     touch(target, key);
     if (shape.has(pb, key)) {
       rawDelete(pb, key);

@@ -332,11 +332,12 @@ final class StoreOptimistic implements Stores.OptHooks {
     Set<Object> changed = new LinkedHashSet<>();
     Set<Object> del = null;
     boolean structural = false;
+    boolean keysChanged = false;
     for (Object key : shape.keys(pb)) {
       Object nv = stores.unwrapValue(shape.get(pb, key));
       if (!shape.has(old, key)) {
         changed.add(key);
-        structural = true;
+        structural = keysChanged = true;
       } else {
         Object previous = shape.get(old, key);
         Object ov = stores.unwrapValue(previous);
@@ -365,7 +366,7 @@ final class StoreOptimistic implements Stores.OptHooks {
         del = new LinkedHashSet<>();
       }
       del.add(key);
-      structural = true;
+      structural = keysChanged = true;
     }
     Object staged = optStaged.remove(t);
     if (changed.isEmpty() && del == null) {
@@ -395,7 +396,8 @@ final class StoreOptimistic implements Stores.OptHooks {
     // falls through on those keys, to the lender's carrier while it lives, to the truth once it dissolves. A row the
     // setter carried over verbatim is not borrowed (#4724).
     List<Node> kg = kgOf(t);
-    if (kg != null && kg.size() > 1) {
+    // Not a guess that changed the keys or the length: it writes the list itself, and entangles with the others (D-33).
+    if (kg != null && kg.size() > 1 && !keysChanged && !changed.contains(StoreShape.LENGTH)) {
       for (Node o : kg) {
         if (o == g) {
           continue;

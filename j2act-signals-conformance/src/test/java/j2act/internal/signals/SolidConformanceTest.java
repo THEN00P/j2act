@@ -27,7 +27,7 @@ class SolidConformanceTest {
     // JS proxies
     "merge", "registerFold",
     // parts of the store with no meaning for Java objects, or not ported yet
-    "storePath", "omit", "mergeView", "viewOf", "omitView",
+    "storePath", "omit", "mergeView", "viewOf", "omitView", "sourceKeys",
     "isStatic", "hasStaticKeys",
 
     // developer tooling

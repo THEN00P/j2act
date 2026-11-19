@@ -120,8 +120,11 @@ final class Core {
       int cf = creator != null ? creator.flags : 0;
       // S-46 (D-25): a first pass under a pass that probed is the mount a display-ahead read gates; so is one its
       // first pass creates: a boundary inside the mount is the mount (S-58).
-      if ((cf & REACTIVE_PROBED) != 0 || (creator != null && (creator.config & CONFIG_MOUNT_AHEAD) != 0
-        && (creator.statusFlags & STATUS_UNINITIALIZED) != 0)) {
+      // #4806: a render effect reading a verdict memo opens the mount the memo hands it (Show's function child).
+      if ((cf & REACTIVE_PROBED) != 0 || (creator != null && (((creator.config & CONFIG_MOUNT_AHEAD) != 0
+        && (creator.statusFlags & STATUS_UNINITIALIZED) != 0)
+        || (creator.type == EFFECT_RENDER && creator.depsTail != null
+          && hasDep(creator, d -> (d.config & CONFIG_VERDICT) != 0, creator.depsTail))))) {
         el.config |= CONFIG_MOUNT_AHEAD;
       }
       Transaction next = null;
@@ -554,6 +557,26 @@ final class Core {
     return false;
   }
 
+  /** A dep of c that f picks: this pass's reads, then its last pass's tail; this pass's reads only with tail. */
+  private static boolean hasDep(Node c, java.util.function.Predicate<Node> f, Link tail) {
+    for (Link d = c.deps; d != null; d = d == tail ? null : d.nextDep) {
+      if (f.test(d.dep)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * #4806 (S-46, D-25): a staging a verdict pass reads for the first time (not on its last pass, not yet on this one)
+   * is content the pass opens, not a value it keeps (stagedScreen).
+   */
+  private boolean fresh;
+
+  private static boolean readsFresh(Node c, Node el) {
+    return el.pendingValue != NOT_PENDING && (c.config & CONFIG_VERDICT) != 0 && !hasDep(c, d -> d == el, null);
+  }
+
   boolean bornInto(Node c, Transaction t) {
     return ((c.statusFlags & STATUS_UNINITIALIZED) != 0 || (c.config & CONFIG_HELD_FRAME) != 0)
       && (c.config & CONFIG_HELD) != 0 && s().txOf(c) == t;
@@ -793,6 +816,10 @@ final class Core {
     }
     if (el.fn == null && (!unflushedStaged || el.pendingValue == NOT_PENDING) && (el.config & CONFIG_OVERRIDE) == 0) {
       if (c != null) {
+        // (Untracked reads count as fresh never: no dep to compare.)
+        if (q.laneStageHook != null) {
+          fresh = tracking && readsFresh(c, el);
+        }
         if (tracking) {
           rt.graph.link(el, c);
         }
@@ -822,6 +849,9 @@ final class Core {
     }
     boolean committed = false;
     if (c != null) {
+      if (q.laneStageHook != null) {
+        fresh = tracking && readsFresh(c, el);
+      }
       if (tracking) {
         rt.graph.link(el, c);
         if (el.fn != null) {
@@ -977,6 +1007,10 @@ final class Core {
     }
     // The staging is the frame's read for a pass in the frame's seat, and the seam re-derives the pass once only if
     // the flush parks (D-22, F-10). Lane work sees the screen (D-37).
+    // #4806: content a display-ahead gate opens is a mount, whatever its shape: its verdict lane reveals with the landing.
+    if (q.laneStageHook != null && el != null && fresh && q.passLane != null) {
+      q.passLane.opened = true;
+    }
     q.staleReader(c, q.flushTransaction);
     return true;
   }

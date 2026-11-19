@@ -46,6 +46,8 @@ final class Scheduler {
     List<Node> waits;
     /** A lane: the clock of the seam a guess re-asked in it, judged with that guess's passes next round (#4775). */
     long reguessed = -1;
+    /** #4806: a verdict lane whose pass opened content over the hold's staging. */
+    boolean opened;
     /** How many of nodes Lanes.collectMounts has looked at (S-58). */
     int scanned;
 

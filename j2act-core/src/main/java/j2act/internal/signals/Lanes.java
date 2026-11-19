@@ -950,7 +950,8 @@ final class Lanes {
       }
     }
     // S-46 (D-25): a mount a display-ahead read gates attaches at the landing; its verdict lane reveals with it.
-    if (t.lane && t.parent.verdict == t && heldMountUnder(null, t)) {
+    if (t.lane && t.parent.verdict == t
+      && ((t.opened && holdsOn(Scheduler.resolveTx(t.parent))) || heldMountUnder(null, t))) {
       return true;
     }
     return (t.lane && linkBlocked(t)) || nestedBlocked(t);
@@ -967,7 +968,7 @@ final class Lanes {
       List<Node> nodes = t.nodes;
       for (int i = t.scanned; i < nodes.size(); i++) {
         Node r = nodes.get(i);
-        if (r.type == EFFECT_RENDER && (r.config & CONFIG_MOUNT_AHEAD) != 0) {
+        if ((r.config & CONFIG_MOUNT_AHEAD) != 0) {
           aheadMounts.add(r);
         }
       }
@@ -990,14 +991,30 @@ final class Lanes {
         continue;
       }
       Transaction t = Scheduler.resolveTx(r.x.transaction);
-      if ((q.hiddenHook != null && q.hiddenHook.test(r))
-        || !((r.statusFlags & STATUS_PENDING) != 0 || t.open != 0 || anyPendingDerivation(t.nodes))) {
+      // A memo mount is on screen through the render effect that reads it (#4806); one a memo reads is that memo's.
+      if ((r.type != 0 ? q.hiddenHook != null && q.hiddenHook.test(r) : !shownBy(r))
+        || !((r.statusFlags & STATUS_PENDING) != 0 || holdsOn(t))) {
         continue;
       }
       for (Owner p = r.parent; p != null; p = p.parent) {
         if (l != null ? p.x != null && p.x.transaction == l : p == o) {
           return true;
         }
+      }
+    }
+    return false;
+  }
+
+  /** The hold t waits: an action open in its frame, or a flight it holds. */
+  private static boolean holdsOn(Transaction t) {
+    return t.open != 0 || anyPendingDerivation(t.nodes);
+  }
+
+  private boolean shownBy(Node r) {
+    Scheduler q = s();
+    for (Link s = r.subs; s != null; s = s.nextSub) {
+      if (s.sub.type == EFFECT_RENDER && !(q.hiddenHook != null && q.hiddenHook.test(s.sub))) {
+        return true;
       }
     }
     return false;
