@@ -38,6 +38,8 @@ final class StoreOptimistic implements Stores.OptHooks {
     Set<Object> removed;
     /** The keys this guess's frame only carries over from another live guess's carrier (#4784). */
     Set<Object> borrowed;
+    /** The questions of every action that guessed on this carrier: its q is only the newest's (#4874). */
+    Set<Integer> qs;
     /** The rows as written (a List), null for the #4525 re-base, UNSET for no arrangement guess. */
     Object g = UNSET;
   }
@@ -379,6 +381,10 @@ final class StoreOptimistic implements Stores.OptHooks {
     }
     Node g = guessCarrier(t, keys);
     Patch p = patch(g);
+    if (p.qs == null) {
+      p.qs = new HashSet<>();
+    }
+    p.qs.add(s().question);
     // The record accumulates across a lane's writes to the same target.
     if (p.wk == null) {
       p.wk = changed;
@@ -852,6 +858,11 @@ final class StoreOptimistic implements Stores.OptHooks {
     Object guess = rt.lanes.latestOf(el);
     if (!older && p.g != null) {
       return fold(el, truth);
+    }
+    // The truth of an action whose own guess is on this carrier, entangled with a later one's: the hold's own
+    // staging, beneath the guess until the hold commits (#4874).
+    if (older && p.qs != null && p.qs.contains(q.question)) {
+      return true;
     }
     if (!shape.isArray(truth) || !isObject(guess) || !shape.isArray(guess)) {
       return true;

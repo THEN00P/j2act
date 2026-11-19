@@ -243,7 +243,10 @@ final class Core {
         }
         el.loading = false;
       }
-      if (el.statusFlags != 0 || el.x != null) {
+      // Lane work this pass served the committed value of a flight still in the air keeps the pending it had: a
+      // boundary waiting on it keeps its fallback (F-4, #4862).
+      if ((el.statusFlags != 0 || el.x != null)
+        && !(q.laneServedHook != null && (el.statusFlags & STATUS_PENDING) != 0 && q.laneServedHook.served(el, null, true))) {
         rt.async.clearStatus(el, create);
       }
     } catch (VirtualMachineError e) {
@@ -355,7 +358,8 @@ final class Core {
             el.pendingValue = value;
           }
           // Born in the lane: no committed value until the lane lands (its correction re-derives it on the truth).
-          if (create) {
+          // Not an effect: its value slot is private and its first run is the lane's (#4871).
+          if (create && isEffect == 0) {
             el.statusFlags |= STATUS_UNINITIALIZED;
           }
         } else if (create

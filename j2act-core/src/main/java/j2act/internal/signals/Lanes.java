@@ -744,8 +744,9 @@ final class Lanes {
         }
       }
     }
+    // A render effect of the lane reading a member that waits on refresh() re-asks only reads what it shows (#4864).
     enterLane(l, c);
-    return pending ? NOT_PENDING : latestOf(el);
+    return pending && !(guessed && c.type == EFFECT_RENDER && Scheduler.reasks(el)) ? NOT_PENDING : latestOf(el);
   }
 
   private boolean guessFlights(Transaction l) {
@@ -1287,6 +1288,10 @@ final class Lanes {
     // write that re-asked the flight, so it waits on it (F-1, F-2; S-57).
     if (el == null) {
       if (served == c && servedGen == c.depGen && (servedFlight.statusFlags & STATUS_PENDING) != 0) {
+        // Asked with flight (Core.recompute): whether it was so served.
+        if (flight) {
+          return true;
+        }
         throw Errors.<RuntimeException>sneak(servedFlight.x.error);
       }
       return false;
