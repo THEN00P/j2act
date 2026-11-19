@@ -108,6 +108,7 @@ final class Core {
     q.bumpNotifyEpoch();
     int isEffect = el.type;
     List<Node> released = null;
+    Object superseded = NOT_PENDING;
     Transaction prevLane = q.passLane;
     Object prevMount = laneRoot;
     Object mount = null;
@@ -150,7 +151,7 @@ final class Core {
           q.joinPassTx(tx, q.freshHook != null && truthy(q.freshHook.fresh(el, (el.statusFlags & STATUS_UNINITIALIZED) != 0)));
         } else if (tx != q.flushTransaction && (el.statusFlags & STATUS_UNINITIALIZED) == 0
           && (el.config & CONFIG_HELD_FRAME) == 0) {
-          if (el.pendingValue != NOT_PENDING) {
+          if ((superseded = el.pendingValue) != NOT_PENDING) {
             q.insertSubs(el);
           }
           el.pendingValue = NOT_PENDING;
@@ -397,6 +398,10 @@ final class Core {
     if (missedWake) {
       q.dirtyQueue.enqueueSub(el);
       q.schedule();
+    }
+    // Re-derived to the staging it superseded (#4417): its held readers keep their pass and children.
+    if (q.keepReadersHook != null && superseded != NOT_PENDING && ValueEquality.same(value, superseded)) {
+      q.keepReadersHook.accept(el);
     }
     if (releaseAfter != 0) {
       rt.async.releaseIfSettledUnobserved(el);

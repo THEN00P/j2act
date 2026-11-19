@@ -79,6 +79,10 @@ final class Effects {
     if (type != 0 && q.heldRunHook != null && q.heldRunHook.test(node)) {
       return;
     }
+    // An attach whose subtree holds a hole born into an open hold waits for that hold (#4574).
+    if (type != 0 && q.attachHook != null && q.attachHook.test(node)) {
+      return;
+    }
     if ((node.statusFlags & STATUS_ERROR) != 0 && node.type == EFFECT_USER) {
       Throwable err = Errors.unwrapStatusError(node.x != null ? node.x.error : null);
       node.prevValue = node.value;

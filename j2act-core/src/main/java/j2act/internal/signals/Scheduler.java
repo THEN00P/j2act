@@ -94,6 +94,8 @@ final class Scheduler {
   java.util.function.BiPredicate<Node, Node> observeFlightHook;
   java.util.function.BiPredicate<Node, Node> holdWorkHook;
   java.util.function.BiConsumer<Node, Node> stageMarkHook;
+  Consumer<Node> keepReadersHook;
+  Predicate<Node> attachHook;
   java.util.function.Function<Node, Node> laggingHook;
   Predicate<Node> markedHook;
   Runnable witnessMarkHook;

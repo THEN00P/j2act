@@ -23,6 +23,8 @@ final class Verdict {
     q.observeFlightHook = this::observeFlight;
     q.holdWorkHook = this::holdWork;
     q.stageMarkHook = this::stageMark;
+    q.keepReadersHook = this::keepReaders;
+    q.attachHook = this::attachWaits;
     q.witnessMarkHook = () -> {
       if (probing) {
         probeFound = true;
@@ -352,5 +354,88 @@ final class Verdict {
       }
       rt.async.settlePendingSource(node, null);
     }
+  }
+
+  /**
+   * #4417: {@code el}, republished mainline at a park re-derive, re-derived the staging it superseded. A held
+   * reader whose only held read was {@code el} read that same value: it keeps its pass and children, its staging
+   * published mainline as it is, instead of re-running.
+   */
+  private void keepReaders(Node el) {
+    Scheduler q = s();
+    for (Node.Link l = el.subs; l != null; l = l.nextSub) {
+      Node r = l.sub;
+      if ((r.config & (CONFIG_HELD | CONFIG_STAGED)) != (CONFIG_HELD | CONFIG_STAGED) || r.type != 0) {
+        continue;
+      }
+      Node.Link d = r.deps;
+      while (d != null && (d.dep == el || (d.dep.config & CONFIG_HELD) == 0)) {
+        d = d.nextDep;
+      }
+      if (d != null) {
+        continue;
+      }
+      q.dirtyQueue.deleteFromHeap(r);
+      r.flags &= ~(REACTIVE_DIRTY | REACTIVE_CHECK);
+      r.config &= ~CONFIG_HELD;
+      q.queuePendingNode(r);
+      q.insertSubs(r);
+    }
+  }
+
+  /** #4574 (S-46): a render effect born into an open hold, not behind a fallback, that has not run. */
+  private Transaction bornHeldOpen(Owner owner) {
+    Scheduler q = s();
+    for (Owner c = owner != null ? owner.firstChild : null; c != null; c = c.nextSibling) {
+      if ((c.flags & REACTIVE_DISPOSED) != 0 || !(c instanceof Node)
+        || (q.hiddenHook != null && q.hiddenHook.test((Node) c))) {
+        continue;
+      }
+      Node n = (Node) c;
+      if (n.type == EFFECT_RENDER && (n.statusFlags & STATUS_UNINITIALIZED) != 0 && (n.config & CONFIG_HELD) != 0
+        && n.pendingValue != NOT_PENDING) {
+        Transaction t = q.txOf(n);
+        if (!t.lane && q.blocked(t)) {
+          return t;
+        }
+      }
+      Transaction inner = bornHeldOpen(c);
+      if (inner != null) {
+        return inner;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * #4574: a lane or verdict render effect inserting a DOM node whose subtree holds such a hole waits for that
+   * hold. A value here is never a DOM node, as a view's patch carries markup, so nothing inserts; the check stays
+   * where Solid has it.
+   */
+  private static boolean valueInserts(Object v) {
+    return false;
+  }
+
+  private boolean attachWaits(Node node) {
+    if (node.type != EFFECT_RENDER
+      || !((node.config & CONFIG_VERDICT) != 0 || (node.x != null && node.x.transaction != null && node.x.transaction.lane))
+      || !valueInserts(node.pendingValue != NOT_PENDING ? node.pendingValue : node.value)) {
+      return false;
+    }
+    Transaction t = bornHeldOpen(node);
+    for (Node.Link d = node.deps; d != null && t == null; d = d.nextDep) {
+      t = bornHeldOpen(d.dep);
+      if (d == node.depsTail) {
+        break;
+      }
+    }
+    if (t == null) {
+      return false;
+    }
+    if (node.boundRunEffect == null) {
+      node.boundRunEffect = type -> rt.effects.runEffect(node, type);
+    }
+    t.queues[0].add(node.boundRunEffect);
+    return true;
   }
 }
