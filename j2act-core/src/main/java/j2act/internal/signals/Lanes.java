@@ -850,7 +850,7 @@ final class Lanes {
           skip = (l.parent != null && l.parent.verdict == l
               && ((r.config & CONFIG_VERDICT) != 0 ? (r.flags & REACTIVE_PROBE_UNANSWERED) == 0
                 : !q.blocked(t) || heldBy(t, r)))
-            || (l.over != null && q.liveTx(l.over) == t);
+            || overLive(l, t);
         } else {
           skip = l != null && !((r.flags & REACTIVE_PROBE_UNANSWERED) != 0
             || (((r.flags & REACTIVE_STAGED_READ) != 0 || readsHeld(r)) && q.blocked(l) && !rt.core.bornInto(r, l)));
@@ -929,5 +929,15 @@ final class Lanes {
         }
       }
     }
+  }
+
+  /** A lane, or one linked to it (one reveal unit), re-based over {@code t}'s answer (#4536, #4643). */
+  private boolean overLive(Transaction l, Transaction t) {
+    for (Transaction u : l.links != null ? l.links : List.of(l)) {
+      if (u.over != null && rt.scheduler.liveTx(u.over) == t) {
+        return true;
+      }
+    }
+    return false;
   }
 }

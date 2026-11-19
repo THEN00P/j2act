@@ -487,25 +487,28 @@ final class Core {
   private boolean frameRead(Node c, Node el) {
     Scheduler q = s();
     boolean verdictReader = q.observeFlightHook != null && (c.config & CONFIG_VERDICT) != 0;
-    // #4544: nor a pass whose posture is only inherited, reading the hold's own write: it is the hold's work.
-    if (verdictReader && q.holdStagingHook.test(c, el)) {
-      return false;
-    }
     boolean lane = q.laneStageHook != null && q.passLane != null;
-    if ((!lane || ((c.statusFlags & STATUS_UNINITIALIZED) != 0 && (el.statusFlags & STATUS_PENDING) != 0))
-      && !verdictReader && ((c.config & (EFFECT_RENDER << 23)) == 0 || (el.config & CONFIG_INPUTS_PUBLISHED) != 0)) {
-      return false;
+    // #4544: not a pass whose posture is only inherited, reading the hold's own write: it is the hold's work.
+    // Not served the screen, the pass reads the staging and joins el's transaction, but for the lane case below.
+    if (!(verdictReader && q.holdStagingHook.test(c, el))
+      && !((!lane || ((c.statusFlags & STATUS_UNINITIALIZED) != 0 && (el.statusFlags & STATUS_PENDING) != 0))
+        && !verdictReader && ((c.config & (EFFECT_RENDER << 23)) == 0 || (el.config & CONFIG_INPUTS_PUBLISHED) != 0))) {
+      Transaction t = q.txOf(el);
+      // A lane re-based over this transaction's answer reads that staging as the lane's render effects do,
+      // joining nothing: lane work never makes a flush the hold's (D-37, #4643).
+      if (lane && q.passLane.over != null && Scheduler.resolveTx(q.passLane.over) == t && !verdictReader) {
+        return false;
+      }
+      if (!((!lane && t == q.flushTransaction && !verdictReader) || bornInto(c, t))) {
+        q.staleReader(c, t);
+        if (lane || verdictReader) {
+          q.laneServedHook.accept(c, el);
+        }
+        return true;
+      }
     }
-    Transaction t = q.txOf(el);
-    if (((lane ? q.passLane.over != null && Scheduler.resolveTx(q.passLane.over) == t : t == q.flushTransaction) && !verdictReader)
-      || bornInto(c, t)) {
-      return false;
-    }
-    q.staleReader(c, t);
-    if (lane || verdictReader) {
-      q.laneServedHook.accept(c, el);
-    }
-    return true;
+    joinPass(c, el);
+    return false;
   }
 
   boolean bornInto(Node c, Transaction t) {
@@ -754,7 +757,6 @@ final class Core {
           if (frameRead(c, el)) {
             return el.value;
           }
-          joinPass(c, el);
         }
       }
       if (c == null || el.pendingValue == NOT_PENDING || (c.config & CONFIG_CHILDREN_FORBIDDEN) != 0) {
@@ -790,10 +792,10 @@ final class Core {
       }
       if ((el.config & CONFIG_HELD) != 0 && (el.config & CONFIG_OVERRIDE) == 0
         && (c.config & CONFIG_CHILDREN_FORBIDDEN) == 0) {
-        if ((el.statusFlags & STATUS_UNINITIALIZED) != 0 || !frameRead(c, el)) {
+        if ((el.statusFlags & STATUS_UNINITIALIZED) != 0) {
           joinPass(c, el);
         } else {
-          committed = true;
+          committed = frameRead(c, el);
         }
       }
     }

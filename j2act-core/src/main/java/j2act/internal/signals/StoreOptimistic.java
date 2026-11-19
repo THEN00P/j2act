@@ -590,7 +590,7 @@ final class StoreOptimistic implements Stores.OptHooks {
           continue;
         }
         if (key == StoreShape.LENGTH && shape.isArray(src)) {
-          if (!Integer.valueOf(shape.length(src)).equals(ov)) {
+          if (!Integer.valueOf(shape.length(out != null ? out : src)).equals(ov)) {
             out = out != null ? out : shape.clone(src);
             shape.set(out, StoreShape.LENGTH, ov);
           }
