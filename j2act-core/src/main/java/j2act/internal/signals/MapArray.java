@@ -2,6 +2,7 @@ package j2act.internal.signals;
 // Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.CONFIG_AUTO_DISPOSE;
+import static j2act.internal.signals.Constants.NOT_PENDING;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -317,7 +318,7 @@ final class MapArray {
       data.nodes[j] = tempNodes[j - start];
       if (data.rows != null) {
         data.rows[j] = rows[j - start];
-        rt.core.setSignal(data.rows[j], newItems.get(j));
+        writeRow(data.rows[j], newItems.get(j));
       }
       if (data.indexes != null) {
         data.indexes[j] = indexes[j - start];
@@ -326,11 +327,18 @@ final class MapArray {
     }
     for (int j = newEnd + 1; j < newLen; j++) {
       if (data.rows != null) {
-        rt.core.setSignal(data.rows[j], newItems.get(j));
+        writeRow(data.rows[j], newItems.get(j));
       }
       if (data.indexes != null && dif != 0) {
         rt.core.setSignal(data.indexes[j], j);
       }
+    }
+  }
+
+  /** Checks the row itself, not the items: an aborted pass can leave a row written or staged. */
+  private void writeRow(Node row, Object v) {
+    if (!(row.value == v && row.pendingValue == NOT_PENDING)) {
+      rt.core.setSignal(row, v);
     }
   }
 
@@ -425,7 +433,7 @@ final class MapArray {
     for (; start < end && (d.sameAt(start, start)
       || (d.rows != null && d.compare(d.items.get(start), newItems.get(start)))); start++) {
       if (d.rows != null) {
-        rt.core.setSignal(d.rows[start], newItems.get(start));
+        writeRow(d.rows[start], newItems.get(start));
       }
     }
     end = d.len - 1;
