@@ -151,6 +151,11 @@ it("fuzz", async () => {
   for (let seed = from; seed < from + count; seed++) {
     const log: string[] = [];
     log.push("=== seed " + seed);
+    // A seed on which Solid itself crashed or hung (prepare.mjs): no reference, so the port skips it.
+    if (((globalThis as any).__skip ?? []).includes(seed)) {
+      console.log(log.join("\n") + "\nSKIPPED");
+      continue;
+    }
     (globalThis as any).__crashed = undefined;
     try {
       await runSeed(seed, log);
@@ -160,5 +165,7 @@ it("fuzz", async () => {
     // An error a scheduled flush threw, which no try sees: prepare.mjs records it when Solid itself crashes.
     if ((globalThis as any).__crashed !== undefined) log.push("SOLID CRASHED " + (globalThis as any).__crashed);
     console.log(log.join("\n"));
+    // A crash leaves Solid's module state broken for every later seed: prepare.mjs goes on in a fresh process.
+    if ((globalThis as any).__crashed !== undefined) break;
   }
 }, 600000);

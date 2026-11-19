@@ -508,6 +508,11 @@ final class Lanes {
     }
     if (el.type == 0) {
       if ((el.config & CONFIG_OVERRIDE) == 0) {
+        // A hold's staging of it is void in a guess lane: the readers that derived from it re-derive, though the
+        // lane's value may equal the screen (#4825). A verdict lane's display-ahead pass leaves the frame's question.
+        if ((el.config & CONFIG_HELD) != 0 && el.pendingValue != NOT_PENDING && !isVerdict(l)) {
+          q.insertSubs(el);
+        }
         el.pendingValue = NOT_PENDING;
         el.config = (el.config & ~(CONFIG_HELD | CONFIG_HELD_FRAME)) | CONFIG_OVERRIDE;
         rt.core.ext(el);
@@ -636,6 +641,10 @@ final class Lanes {
           q.commitPendingNode(n);
           if (effect == 0) {
             n.config |= CONFIG_INPUTS_PUBLISHED;
+          } else if (l.held && n.prevValue == null) {
+            // A render effect born in the lane's frame whose first run the held lane parked: it runs on the committed
+            // world (F-1, #4831).
+            q.dirtyQueue.enqueueSub(n);
           }
         } else {
           if (x.pendingFirstChild != null || x.pendingDisposal != null) {

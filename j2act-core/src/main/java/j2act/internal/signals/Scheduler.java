@@ -339,7 +339,10 @@ final class Scheduler {
     for (int i = 0; i < nodes.size(); i++) {
       Node n = nodes.get(i);
       if ((n.statusFlags & STATUS_PENDING) == 0 || (n.flags & REACTIVE_DISPOSED) != 0 || (n.config & CONFIG_GUESS) != 0
-        || (n.x.transaction != null && txOf(n) != owner) || (own && !ownSource(n, owner))) {
+        || (n.x.transaction != null && txOf(n) != owner) || (own && !ownSource(n, owner))
+        // A guess lane's member waiting on re-asks only keeps what it shows: it does not keep the lane's other work
+        // off the screen (D-34, #4834).
+        || (guessing && owner.lane && n.x.pendingSources != null && reasks(n))) {
         continue;
       }
       if (n.type == EFFECT_RENDER) {
@@ -780,14 +783,18 @@ final class Scheduler {
     for (Link s = node.subs; s != null; s = s.nextSub) {
       Node c = s.sub;
       Transaction t = c.x != null ? c.x.transaction : null;
+      boolean render = c.type == EFFECT_RENDER;
       // A reader a hold has pending on its re-ask re-derives from the guess as the lane's work (#4629): the hold is
-      // the lane's parent's, or any hold whose flights the reader waits on are all refresh() re-asks (#4666).
-      if (t != null && c.type == 0 && (c.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD
-        && (c.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == STATUS_PENDING
-        && (resolveTx(t) == resolveTx(l.parent) || allReasks(c))) {
-        list(c, t = l);
+      // the lane's parent's, or any hold whose flights the reader waits on are all refresh() re-asks (#4666). A render
+      // effect pending on another hold's re-asks, held by it or by none, the same (#4824).
+      if ((c.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == STATUS_PENDING
+        && (t != null ? (c.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD : render)) {
+        boolean same = t != null && resolveTx(t) == resolveTx(l.parent);
+        if (c.type != 0 ? render && !same && reasks(c) : same || reasks(c)) {
+          list(c, t = l);
+        }
       }
-      if (c.type == EFFECT_RENDER && (node.config & CONFIG_VERDICT) != 0) {
+      if (render && (node.config & CONFIG_VERDICT) != 0) {
         c.config |= CONFIG_VERDICT;
         c.flags &= ~REACTIVE_LANE_DIRTY;
       }
@@ -797,17 +804,20 @@ final class Scheduler {
     }
   }
 
-  private static boolean allReasks(Node c) {
+  /** Every flight c waits on is a refresh() re-ask: its own, with no sources, or each source's, through sources (#4824). */
+  static boolean reasks(Node c) {
     if (c.x.pendingSources == null) {
       return c.x.reask;
     }
     for (Node p : c.x.pendingSources) {
-      if (!p.x.reask) {
+      if (p == c ? !p.x.reask : !reasks(p)) {
         return false;
       }
     }
     return true;
   }
+
+
 
   void queueEffectRun(Node node) {
     node.modified = true;

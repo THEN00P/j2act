@@ -752,7 +752,12 @@ final class Async {
         } else {
           q.queuePendingNode(sub);
           if (status == STATUS_PENDING && (sub.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD && sub.type == 0) {
-            q.joinFuture(q.txOf(sub));
+            if (q.guessing && (sub.statusFlags & STATUS_PENDING) != 0 && Scheduler.reasks(sub)) {
+              // A hold that waits on re-asks only holds nothing new (D-34): the memo leaves it (#4828).
+              q.unhold(sub);
+            } else {
+              q.joinFuture(q.txOf(sub));
+            }
           }
         }
         notifyStatus(sub, status, error);

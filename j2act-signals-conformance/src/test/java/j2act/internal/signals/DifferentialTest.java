@@ -53,7 +53,7 @@ class DifferentialTest {
       List<String> s = seed.getValue();
       List<String> p = port.get(seed.getKey());
       // Solid itself crashed on this seed: what it shows after is no reference.
-      if (s.stream().anyMatch(line -> line.startsWith("SOLID CRASHED "))) {
+      if (s.stream().anyMatch(line -> line.startsWith("SOLID CRASHED ") || line.equals("SOLID HUNG"))) {
         System.out.println(seed.getKey() + " skipped: " + s.get(s.size() - 1));
         continue;
       }

@@ -906,7 +906,8 @@ final class Core {
       if (c != null && (c.config & CONFIG_VERDICT) != 0
         && !((c.config & CONFIG_MOUNT_AHEAD) != 0 && (c.statusFlags & STATUS_UNINITIALIZED) != 0)) {
         committed = q.observeFlightHook.test(c, el);
-      } else if (q.passLane != null && !(c != null && (c.statusFlags & STATUS_UNINITIALIZED) != 0)) {
+      } else if (q.passLane != null && (!(c != null && (c.statusFlags & STATUS_UNINITIALIZED) != 0)
+        || bornOfLaneRerun(c))) {
         // Lane work: served the committed value, unless it read a staging of the flush this pass (F-2; S-57).
         committed = q.laneServedHook.served(c, el, true);
       }
@@ -947,6 +948,16 @@ final class Core {
       q.schedule();
     }
     return value;
+  }
+
+  /**
+   * A memo's first pass created by a guess lane's re-run of a memo that has a screen (#4824): it stands where the one
+   * it replaces stood, so lane work's read of a parent's flight is the screen's for it too.
+   */
+  private boolean bornOfLaneRerun(Node c) {
+    Owner p = c.parent;
+    return !Lanes.isVerdict(s().passLane) && p instanceof Node && ((Node) p).fn != null
+      && (((Node) p).statusFlags & STATUS_UNINITIALIZED) == 0 && (p.config & CONFIG_FRAME) == 0;
   }
 
   private void throwShown(Node el) {

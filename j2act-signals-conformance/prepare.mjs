@@ -2,7 +2,7 @@
 // Solid's source and vitest to the globals that js/solid-shim.js and js/vitest-shim.js define, so the tests
 // run against the Java engine.
 import { execSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -119,18 +119,47 @@ try {
 } finally {
   rmSync(fuzzSource);
 }
-await import(pathToFileURL(join(here, "target", "fuzz-real.mjs")).href);
-if (process.env.FUZZ_SEEDS) globalThis.__seeds = Number(process.env.FUZZ_SEEDS);
-const logged = [];
-const realLog = console.log;
-console.log = line => logged.push(line);
-// A seed on which Solid itself crashes (an error thrown by a scheduled flush) is marked, and DifferentialTest skips it.
-const crashed = e => {
-  globalThis.__crashed = String(e && e.message).slice(0, 80);
-};
-process.on("uncaughtException", crashed);
+// Solid's run, in a child process per stretch of seeds: a seed on which Solid itself hangs (a loop of microtasks
+// that no timer can interrupt) is marked SOLID HUNG, and the run goes on from the next seed. A seed on which it
+// crashes (an error thrown by a scheduled flush) is marked SOLID CRASHED by fuzz.test.ts. DifferentialTest skips both.
+const total = process.env.FUZZ_SEEDS ? Number(process.env.FUZZ_SEEDS) : 400;
+const runner = join(here, "target", "fuzz-runner.mjs");
+writeFileSync(runner, `import { pathToFileURL } from "node:url";
+import { writeSync } from "node:fs";
+const [file, from, count] = process.argv.slice(2);
+// Written at once: a run killed for a hang loses nothing it logged.
+console.log = line => writeSync(1, line + "\\n");
+process.on("uncaughtException", e => { globalThis.__crashed = String(e && e.message).slice(0, 80); });
+await import(pathToFileURL(file).href);
+globalThis.__seedFrom = +from;
+globalThis.__seeds = +count;
 await globalThis.__fuzz();
-process.off("uncaughtException", crashed);
-console.log = realLog;
+`);
+const logged = [];
+const skipped = [];
+for (let from = 1; from <= total; ) {
+  const run = spawnSync(process.execPath, [runner, join(here, "target", "fuzz-real.mjs"), String(from), String(total - from + 1)],
+    { encoding: "utf8", timeout: 60000, maxBuffer: 1 << 28 });
+  const out = run.stdout.split("\n").filter(line => line !== "");
+  logged.push(...out);
+  let last = from - 1;
+  for (const line of out) {
+    if (line.startsWith("=== seed ")) last = Number(line.slice(9));
+    else if (line.startsWith("SOLID CRASHED")) skipped.push(last);
+  }
+  if (run.status === 0 && last === total) break;
+  if (run.status === 0) {
+    // It stopped after a seed it crashed on: the rest run in a fresh process.
+    from = last + 1;
+    continue;
+  }
+  if (run.error === undefined) throw new Error(`Solid's fuzz run failed:\n${run.stderr}`);
+  logged.push(`=== seed ${last + 1}`, "SOLID HUNG");
+  skipped.push(last + 1);
+  from = last + 2;
+}
 writeFileSync(join(here, "target", "fuzz-expected.txt"), logged.join("\n") + "\n");
+// The port's bundle skips them too: what Solid shows there is no reference, and a loop only costs time.
+const portBundle = join(here, "target", "fuzz-port.js");
+writeFileSync(portBundle, `globalThis.__skip = ${JSON.stringify(skipped)};\n` + readFileSync(portBundle, "utf8"));
 console.log(`bundled ${entries.length - failed.length} of ${entries.length} Solid test files`);
