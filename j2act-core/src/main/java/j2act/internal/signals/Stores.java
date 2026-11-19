@@ -952,13 +952,24 @@ public final class Stores {
     Object ov = shape.get(old, key);
     Object nv = shape.get(neu, key);
     if (isView(old) || (!same(ov, nv) && !targetsEqual(ov, nv))) {
-      rt.core.setSignal(node, nv);
+      leafSet(node, nv);
     }
   }
 
   void notifyKeyValue(Node node, Object ov, Object nv) {
     if (!same(ov, nv) && !targetsEqual(ov, nv)) {
-      rt.core.setSignal(node, nv);
+      leafSet(node, nv);
+    }
+  }
+
+  /**
+   * An adoption's leaf write. A derive's pass that is a lane's work writes the lane's derivation, as its draft
+   * writes do: the committed value, and a truth a transaction holds beneath, untouched (#4631).
+   */
+  private void leafSet(Node node, Object v) {
+    rt.core.setSignal(node, v);
+    if (s().passLane != null && !userWrite && node.host instanceof StoreTarget && ((StoreTarget) node.host).fam != null) {
+      holdWithDerive((StoreTarget) node.host, node, s().passLane);
     }
   }
 
@@ -969,7 +980,7 @@ public final class Stores {
     if (has != null) {
       for (Object key : new ArrayList<>(has.keySet())) {
         if (live || shape.has(old, key) != shape.has(neu, key)) {
-          rt.core.setSignal(has.get(key), shape.has(neu, key));
+          leafSet(has.get(key), shape.has(neu, key));
         }
       }
     }
