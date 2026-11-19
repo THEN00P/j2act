@@ -1615,7 +1615,9 @@ public final class Stores {
     if (!draft && !writeOverride) {
       return;
     }
-    Object uv = target.s ? value : unwrapValue(value);
+    // A derived store's draft keeps a proxy of another store, and the key chains to it (#4845); its own drafts unwrap.
+    StoreTarget vt = value != null && shape.isObject(value) ? shape.targetOf(value) : null;
+    Object uv = target.s || (target.fam != null && (vt == null || vt.fam != target.fam)) ? value : unwrapValue(value);
     Object pb = ensurePB(target);
     if (pb == DROPPED) {
       return;

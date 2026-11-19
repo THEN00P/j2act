@@ -354,6 +354,10 @@ final class Core {
           } else {
             el.pendingValue = value;
           }
+          // Born in the lane: no committed value until the lane lands (its correction re-derives it on the truth).
+          if (create) {
+            el.statusFlags |= STATUS_UNINITIALIZED;
+          }
         } else if (create
           ? !(tx != null && (joined || creatorJoined(oldcontext)))
           : isEffect != 0 && el.pendingValue == NOT_PENDING) {
@@ -994,8 +998,9 @@ final class Core {
 
   void stagedRead(Node c, Node el) {
     if (el == null || (el.statusFlags & STATUS_UNINITIALIZED) == 0) {
-      // Lane work this pass served the committed value of a flight now reads a staging of the flush: it throws.
-      if (s().passLane != null && (c.flags & REACTIVE_FRAME_READ) != 0) {
+      // Lane work this pass served the committed value of a flight now reads a staging of the flush: it throws, with
+      // or without a transaction to be the flight's stale reader in yet (#4859).
+      if (s().passLane != null) {
         s().laneServedHook.served(c, null, false);
       }
       c.flags |= REACTIVE_STAGED_READ;

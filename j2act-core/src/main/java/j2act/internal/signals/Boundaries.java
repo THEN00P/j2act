@@ -663,6 +663,10 @@ final class Boundaries {
       }
       throw Errors.<RuntimeException>sneak(e);
     }
+    // So is a tree the read itself ran into a pending: an on re-armed by a guess showed the old content (#4856).
+    if (isCollecting(b) && (tree.statusFlags & type & STATUS_PENDING) != 0) {
+      caught(b, tree, null, tree);
+    }
     if (isCollecting(b) && !b.readers.isEmpty()) {
       return fallback(b);
     }

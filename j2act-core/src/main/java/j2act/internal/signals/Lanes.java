@@ -638,9 +638,15 @@ final class Lanes {
           }
         }
         if (l.shown) {
+          // A derivation born in the lane whose frame stays: nothing in the truth may notify it, so it re-derives on
+          // the truth now (D-34, F-1; #4861).
+          boolean born = effect == 0 && (n.statusFlags & STATUS_UNINITIALIZED) != 0;
           q.commitPendingNode(n);
           if (effect == 0) {
             n.config |= CONFIG_INPUTS_PUBLISHED;
+            if (born) {
+              q.dirtyQueue.enqueueSub(n);
+            }
           } else if (l.held && n.prevValue == null) {
             // A render effect born in the lane's frame whose first run the held lane parked: it runs on the committed
             // world (F-1, #4831).
@@ -1272,13 +1278,15 @@ final class Lanes {
   /** The last lane pass served a flight's committed value, and that flight. */
   private Node served;
   private Node servedFlight;
+  /** The pass (depGen) the flight was served in: a later pass of the same node did not read it. */
+  private int servedGen;
 
   private boolean laneServed(Node c, Node el, boolean flight) {
     Scheduler q = s();
     // Lane work read a staging of the flush after it was served the committed value of a flight: it derives from the
     // write that re-asked the flight, so it waits on it (F-1, F-2; S-57).
     if (el == null) {
-      if (served == c && (servedFlight.statusFlags & STATUS_PENDING) != 0) {
+      if (served == c && servedGen == c.depGen && (servedFlight.statusFlags & STATUS_PENDING) != 0) {
         throw Errors.<RuntimeException>sneak(servedFlight.x.error);
       }
       return false;
@@ -1294,6 +1302,7 @@ final class Lanes {
         q.staleReader(c, Scheduler.resolveTx(u));
       }
       served = c;
+      servedGen = c.depGen;
       servedFlight = el;
       return true;
     }
