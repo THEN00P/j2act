@@ -88,7 +88,14 @@ final class Scheduler {
   Supplier<Boolean> laneCorrectionsHook;
   Consumer<Transaction> endLanesHook;
   Predicate<Transaction> lanesBlockedHook;
-  Predicate<Node> laneAdoptHook;
+  /** R5 (Verdict: the seam parks a frame flight of a reader that reads ahead): visit 1 adopts at the reader's turn, 2 is a later pass. */
+  LaneAdopt laneAdoptHook;
+  /** R5 at the seam (Verdict.r5): a reader whose probe is unanswered, a hold's parked flight still up (r null), the seam's end (both null). */
+  java.util.function.BiPredicate<Node, Transaction> r5Hook;
+
+  interface LaneAdopt {
+    boolean adopt(Node r, int visit);
+  }
   LaneServed laneServedHook;
 
   /** lanes.ts laneServed: el null for a staged read after a served flight; flight for a lane pass's read of a flight. */
@@ -110,12 +117,6 @@ final class Scheduler {
   Consumer<Node> keepReadersHook;
   Predicate<Node> attachHook;
   java.util.function.BiPredicate<Node, Node> holdStagingHook;
-  /** A pass that asks leaves the display for the hold it read (F-2's producer clause; Verdict.askerJoins). */
-  AskerJoins askerJoinsHook;
-
-  interface AskerJoins {
-    void join(Node c, Node el, Transaction t);
-  }
   java.util.function.Function<Node, Node> laggingHook;
   Predicate<Node> markedHook;
   Runnable witnessMarkHook;
@@ -678,8 +679,9 @@ final class Scheduler {
         continue;
       }
       if ((r.flags & REACTIVE_FRAME_READ) != 0 || (observeFlightHook != null && (r.config & CONFIG_VERDICT) != 0)) {
-        // So does a memo the landing holds: its staged value is in this frame (F-1, A15, #4648).
-        frame |= r.type != 0 || s == r || (r.config & CONFIG_HELD) != 0;
+        // So does a memo the landing holds, and any other: a memo that asks, or one over it, asks the landed world's
+        // question now; the held runs park with that flight (F-1, A15, F-6, S-51, #4648).
+        frame = true;
         if (!u.lane) {
           r.flags &= ~REACTIVE_FRAME_READ;
         }
@@ -689,9 +691,11 @@ final class Scheduler {
             ((Node) c).modified = false;
           }
         }
-        if (laneAdoptHook == null || !laneAdoptHook.test(r)) {
-          dirtyQueue.enqueueSub(r);
+        // A frame flight the seam parked asked the question this landing would: adopted, it is asked once (F-9).
+        if (laneAdoptHook != null) {
+          laneAdoptHook.adopt(r, 0);
         }
+        dirtyQueue.enqueueSub(r);
       }
     }
     u.reruns.clear();
@@ -773,17 +777,8 @@ final class Scheduler {
     if ((node.config & CONFIG_SLOT_NODE) != 0 && slotDirtyHook != null) {
       slotDirtyHook.accept(node, l);
     }
-    boolean display = l.parent.verdict == l;
     for (Link s = node.subs; s != null; s = s.nextSub) {
       Node c = s.sub;
-      // F-2's producer clause: a reader that asks and is the frame's asked of the truth already; a verdict lane's
-      // re-derivation of what it read would only ask again (S-51).
-      if (display && (c.config & CONFIG_ASYNC) != 0
-        && ((c.config & CONFIG_HELD) != 0 || (c.flags & (REACTIVE_JOINED | REACTIVE_STAGED_READ)) != 0)
-        && !(c.x != null && c.x.transaction != null && c.x.transaction.lane)) {
-        dirtyQueue.deleteFromHeap(c);
-        continue;
-      }
       Transaction t = c.x != null ? c.x.transaction : null;
       // A reader a hold has pending on its re-ask re-derives from the guess as the lane's work (#4629): the hold is
       // the lane's parent's, or any hold whose flights the reader waits on are all refresh() re-asks (#4666).

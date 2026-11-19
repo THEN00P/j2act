@@ -26,7 +26,8 @@ final class Verdict {
     q.keepReadersHook = this::keepReaders;
     q.attachHook = this::attachWaits;
     q.holdStagingHook = this::holdStaging;
-    q.askerJoinsHook = this::askerJoins;
+    q.laneAdoptHook = this::adoptParked;
+    q.r5Hook = this::r5;
     q.witnessMarkHook = () -> {
       if (probing) {
         probeFound = true;
@@ -72,25 +73,6 @@ final class Verdict {
       verdictRead(c, q.flushTransaction, true);
     }
     return true;
-  }
-
-  /**
-   * A pass that asks leaves the display for the hold it read (F-2's producer clause): un-seated from the holder's
-   * verdict lane, dropped from the re-runs that read scheduled, and joined as a plain read of the staging joins.
-   */
-  void askerJoins(Node c, Node el, Transaction t) {
-    Scheduler q = s();
-    if (q.passLane != null && Lanes.isVerdict(q.passLane)) {
-      q.passLane = null;
-    }
-    c.flags &= ~(REACTIVE_LANE_READ | REACTIVE_PROBE_UNANSWERED);
-    q.stagedReaders.remove(c);
-    if (t == null) {
-      rt.core.stagedRead(c, el);
-      return;
-    }
-    t.reruns.remove(c);
-    rt.core.joinPass(c, el);
   }
 
   private void verdictRead(Node c, Transaction t, boolean plain) {
@@ -168,15 +150,21 @@ final class Verdict {
     }
   }
 
-  private void markVerdictReader() {
+  private boolean markVerdictReader() {
     Node c = rt.core.creatorPass(rt.core.context);
     if (c != null && rt.core.tracking) {
       Scheduler q = s();
+      // R5: the frame's pass again of a reader the hold already holds: its windows are answered for the hold's world,
+      // and the seam re-derives it for the screen.
+      if (left.containsKey(c)) {
+        watchVerdict(c, true);
+        return true;
+      }
       // #4777 (D-25, A10): a memo's first probing pass that already read a held value plainly, joining the flush to
       // that hold, starts over as the verdict reader it is, so its two plain reads agree. Only while the join is an
-      // adoption it can give back. Not an asker, a pass born held, nor one whose creator read the future.
+      // adoption it can give back. Not a pass born held, nor one whose creator read the future.
       boolean restart = c == rt.core.adopter && q.flushTransaction != null && (c.flags & REACTIVE_JOINED) != 0
-        && (c.config & (CONFIG_VERDICT | CONFIG_ASYNC)) == 0 && (c.statusFlags & STATUS_UNINITIALIZED) == 0;
+        && (c.config & CONFIG_VERDICT) == 0 && (c.statusFlags & STATUS_UNINITIALIZED) == 0;
       int born = rt.core.creatorReads(c, 0);
       if (born == 0) {
         c.config |= CONFIG_VERDICT;
@@ -192,10 +180,13 @@ final class Verdict {
         throw new NotReadyError(null);
       }
     }
+    return false;
   }
 
   <T> T latest(Supplier<T> fn) {
-    markVerdictReader();
+    if (markVerdictReader()) {
+      return fn.get();
+    }
     boolean prev = latestActive;
     java.util.function.BiFunction<Node, Node, Object> prevVerdict = rt.core.verdict;
     latestActive = true;
@@ -209,13 +200,16 @@ final class Verdict {
   }
 
   boolean isPending(Supplier<?> fn) {
-    markVerdictReader();
+    // (A frame's pass again, reask: the thunk reads plainly and finds nothing, the same swallow below.)
+    boolean plain = markVerdictReader();
     boolean prevProbing = probing;
     boolean prevFound = probeFound;
     java.util.function.BiFunction<Node, Node, Object> prevVerdict = rt.core.verdict;
-    probing = true;
+    probing = !plain;
     probeFound = false;
-    rt.core.verdict = this::verdictValue;
+    if (!plain) {
+      rt.core.verdict = this::verdictValue;
+    }
     try {
       fn.get();
       return probeFound;
@@ -305,7 +299,8 @@ final class Verdict {
         }
         // S-54 (D-23): a lane derivation's answer that landed but is not shown, the lane holding on a sibling's
         // flight, is still a question without a committed answer: pending until it shows, unless it changes nothing.
-        if (probing && flying) {
+        // (Or a frame flight of its hold parked beside the lane's pass: the hold's question, asked, R5.)
+        if (probing && (flying || parkUp(Scheduler.resolveTx(l.parent != null ? l.parent : l)))) {
           probeFound = true;
         } else if (probing && !inLane && l.held && !el.x.shown && el.pendingValue != NOT_PENDING
           && (el.equals == null || !el.equals.test(el.value, el.pendingValue))) {
@@ -326,21 +321,16 @@ final class Verdict {
           q.staleReader(c, t.verdict);
           return el.value;
         }
-        // F-2's producer clause: a pass that asks never derives from the screen's value of a held node. Its
-        // isPending of one joins the hold and is answered in the hold's world (S-51, #4677). Not a pass seated in an
-        // optimistic lane: it derives from a guess, and is that lane's (S-57).
-        if (tracked && probing && ((c.config & CONFIG_ASYNC) != 0 || readBy(c, t)) && (c.config & CONFIG_HELD) == 0
-          && (q.passLane == null || Lanes.isVerdict(q.passLane))) {
-          askerJoins(c, el, t);
-          return staged(el);
-        }
+        // F-6: a pass that asks is a display-ahead reader like any other: it runs on the screen with the probe's
+        // answer, shown now, and asks again on the landed world at the landing (S-51).
         if (tracked) {
           verdictRead(c, t, false);
         }
         if (probing) {
           // #4648: a pass the hold holds is the hold's work, shown at the landing: its probe is final there. It
           // read the committed value, so it is a stale reader of it and re-derives on the landed world (A15, F-1).
-          if (c != null && (c.config & CONFIG_HELD) != 0) {
+          // (Not its lane pass, an async memo the seam seated in the verdict lane beside its parked frame flight, R5.)
+          if (c != null && (c.config & CONFIG_HELD) != 0 && !(c.x.transaction != null && c.x.transaction.lane)) {
             // In the flush that lands the hold, the probe reads the landed world (F-1).
             if (el.pendingValue != NOT_PENDING && !q.blocked(t)) {
               watchVerdict(c, false);
@@ -383,12 +373,6 @@ final class Verdict {
       if ((owner.statusFlags & STATUS_PENDING) != 0
         && (!uninitialized || (probing && (el.config & CONFIG_STAGED_ERROR) == 0))) {
         pendingVerdict(tracked ? c : null, owner);
-      } else if (tracked && probing && ((c.config & CONFIG_ASYNC) != 0 || readBy(c, q.flushTransaction))
-        && el.pendingValue != NOT_PENDING
-        && (q.passLane == null || Lanes.isVerdict(q.passLane))) {
-        // F-2's producer clause (as the held arm): a pass that asks reads the staging and is that frame's (S-51).
-        askerJoins(c, el, null);
-        return staged(el);
       } else if (tracked && q.running) {
         if (q.flushTransaction != null && el.fn == null && rt.core.nets(el)) {
           route(c, q.flushTransaction);
@@ -511,6 +495,12 @@ final class Verdict {
    */
   private boolean holdStaging(Node c, Node el) {
     Scheduler q = s();
+    // D-22 (a window extracted into a memo reads as inline): a sync verdict memo's value staged this flush, no hold's
+    // yet, no lane's, is its window's answer for this frame, and a memo reading it gets what the window inline would.
+    if (el != null && c.type == 0 && q.passLane == null && el.fn != null
+      && (el.config & (CONFIG_VERDICT | CONFIG_ASYNC | CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_VERDICT) {
+      return true;
+    }
     // No el is a store key's node-less staging: this flush's own sync write to a plain store; the posture decides.
     Transaction r = c.x != null ? c.x.readIn : null;
     Object a = el != null && el.x != null ? el.x.askedIn : null;
@@ -534,9 +524,221 @@ final class Verdict {
     return false;
   }
 
-  /** #4776: the hold t's own work read memo c: it is that hold's, an asker's posture included (#4778, S-51). */
-  private static boolean readBy(Node c, Transaction t) {
-    Transaction r = c.x != null ? c.x.readIn : null;
-    return r != null && t != null && Scheduler.resolveTx(r) == Scheduler.resolveTx(t);
+
+
+  // ---- R5: the seam parks a frame flight of a reader that reads ahead; the landing adopts it (F-9)
+
+  /** The readers the last landing armed: adopted at their own turn in the round it queues them for. */
+  private final java.util.List<Node> armed = new java.util.ArrayList<>();
+  /** The readers whose parked frame flight is still up: the hold's question, asked; the hold waits on its answer. */
+  private final java.util.List<Node> parks = new java.util.ArrayList<>();
+  /** The passes that are the frame's again (reask): true for one whose lane pass was still unanswered. */
+  private final java.util.Map<Node, Boolean> left = new java.util.HashMap<>();
+
+  @SuppressWarnings("unchecked")
+  private void park(Node r, Transaction t) {
+    Object p = r.x.parked = r.x.inFlight;
+    // Only a flight the frame waits on, as blockedBy judges one: a render effect pending on it, or served the screen
+    // of it beside a verdict, or a boundary showing content. One nothing on screen reads holds nothing (F-2, #4504).
+    boolean holds = false;
+    for (Node n : t.nodes) {
+      if ((n.statusFlags & STATUS_PENDING) == 0
+        || !(n == r || (n.x != null && n.x.pendingSources != null && n.x.pendingSources.contains(r)))) {
+        continue;
+      }
+      if (n.type == EFFECT_RENDER) {
+        holds = true;
+        break;
+      }
+      for (Node.Link s = n.subs; s != null && !holds; s = s.nextSub) {
+        Node e = s.sub;
+        holds = e.type == EFFECT_RENDER
+          ? (e.statusFlags & STATUS_PENDING) != 0 || (e.flags & REACTIVE_FRAME_READ) != 0
+          : (e.config & CONFIG_REDERIVE) != 0 && e.statusFlags == STATUS_PENDING;
+      }
+      if (holds) {
+        break;
+      }
+    }
+    if (holds) {
+      if (!parks.contains(r)) {
+        parks.add(r);
+      }
+      if (p instanceof java.util.concurrent.CompletionStage) {
+        rt.async.whenSettled((java.util.concurrent.CompletionStage<Object>) p, () -> {
+          int i = parks.indexOf(r);
+          if (i != -1 && r.x.parked == p) {
+            parks.remove(i);
+            s().schedule();
+          }
+        });
+      }
+    }
+  }
+
+  /** A parked frame flight of hold t is still up. */
+  private boolean parkUp(Transaction t) {
+    for (int i = parks.size() - 1; i >= 0; i--) {
+      Node r = parks.get(i);
+      Transaction l = r.x.transaction;
+      if (r.x.parked == null || (r.flags & REACTIVE_DISPOSED) != 0) {
+        parks.remove(i);
+      } else if (l != null && l.lane && Scheduler.resolveTx(l.parent) == t) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * A write the hold took reached c, a member of its verdict lane l: if the hold waits on a parked flight of c or of a
+   * reader over it, that flight answers a superseded question. The reader's pass is the frame's again, as the one that
+   * opened the hold was, and so are those of the lane's members it reads (F-2, F-9, #3884).
+   */
+  private void reask(Node c, Transaction l, Node cur) {
+    if (left.containsKey(c)) {
+      return;
+    }
+    int i = parks.indexOf(c);
+    if (i == -1) {
+      if (c.type == 0 && c.x != null && c.x.transaction == l) {
+        for (Node.Link s = c.subs; s != null; s = s.nextSub) {
+          reask(s.sub, l, cur);
+        }
+      }
+      return;
+    }
+    parks.remove(i);
+    leave(c, l, cur);
+  }
+
+  /** The seam's seat for a lane pass that must be the lane's from its first read. */
+  private void seat(Node r, Transaction t) {
+    s().list(r, rt.lanes.verdictLane(t));
+    r.flags |= REACTIVE_LANE_DIRTY;
+  }
+
+  private void leave(Node c, Transaction l, Node cur) {
+    NodeExtension x = c.x;
+    left.put(c, !x.shown && (c.statusFlags & STATUS_PENDING) != 0);
+    rt.lanes.uncover(c);
+    x.shown = false;
+    x.transaction = null;
+    x.parked = null;
+    c.pendingValue = NOT_PENDING;
+    c.config &= ~(CONFIG_OVERRIDE | CONFIG_VERDICT);
+    if (c != cur) {
+      c.flags |= REACTIVE_DIRTY;
+      s().dirtyQueue.enqueueSub(c);
+    }
+    for (Node.Link d = c.deps; d != null; d = d.nextDep) {
+      Node n = d.dep;
+      if (n.fn != null && n.x != null && n.x.transaction == l && !left.containsKey(n)) {
+        leave(n, l, cur);
+      }
+    }
+  }
+
+  /**
+   * The landing's re-derive of a reader whose frame flight the seam parked (R5): the flight asked the question the
+   * landing would, so it is adopted, asked once (F-9), at the reader's own turn in the round (visit 1). Visit 2 is a
+   * later pass of such a reader, or a frame's write dirtying a derivation of the lane (reask).
+   */
+  private boolean adoptParked(Node r, int visit) {
+    Scheduler q = s();
+    if (visit == 2) {
+      Transaction l = r.x.transaction;
+      if (!parks.isEmpty() && Lanes.isVerdict(l)) {
+        reask(r, l, r);
+      }
+      return false;
+    }
+    if (visit == 1) {
+      int i = armed.indexOf(r);
+      if (i < 0) {
+        return false;
+      }
+      armed.remove(i);
+      Object parked = r.x.parked;
+      q.dirtyQueue.deleteFromHeap(r);
+      r.flags &= ~(REACTIVE_DIRTY | REACTIVE_CHECK);
+      r.x.parked = null;
+      rt.async.releaseFlightTeardown(r);
+      try {
+        rt.async.handleAsync(r, rt.async.continuation(parked), null, null);
+      } catch (RuntimeException | Error e) {
+        // the flight's own failure reaches the node through handleAsync
+      }
+      r.x.blocked = true;
+      rt.async.notifyStatus(r, STATUS_PENDING, new NotReadyError(r));
+      return true;
+    }
+    // A sync memo re-derived at a landing: the held runs of its readers ran on the pass this replaces, reading it
+    // stale beside the landing: void, they re-run on it, in the landing's frame (F-1, A15).
+    if (r.type == 0 && (r.config & CONFIG_ASYNC) == 0) {
+      for (Node.Link s = r.subs; s != null; s = s.nextSub) {
+        Node e = s.sub;
+        if (e.type != 0 && e.modified) {
+          e.modified = false;
+          q.dirtyQueue.enqueueSub(e);
+        }
+        // (A memo over it the seam parked with it.)
+        arm(e);
+      }
+    }
+    arm(r);
+    return false;
+  }
+
+  private void arm(Node r) {
+    if (r.x != null && r.x.parked != null && (r.flags & (REACTIVE_DIRTY | REACTIVE_CHECK | REACTIVE_IN_HEAP)) == 0
+      && !armed.contains(r)) {
+      armed.add(r);
+    }
+  }
+
+  /**
+   * R5 at the seam: r's probe is unanswered, true when it has nothing to re-derive; r null, hold t waits on a parked
+   * flight; both null, the seam's end: the readers the last landing armed took their turn, and the frame passes a
+   * superseding write re-ran have run.
+   */
+  private boolean r5(Node r, Transaction t) {
+    Scheduler q = s();
+    if (r == null) {
+      if (t != null) {
+        return parkUp(t);
+      }
+      armed.clear();
+      left.clear();
+      return false;
+    }
+    if (Async.isThenable(r.x != null ? r.x.inFlight : null)) {
+      if (!q.blocked(t)) {
+        return true;
+      }
+      park(r, t);
+      // Its lane pass, seated from its first read: a plain read ahead of its window read the frame's staging.
+      seat(r, t);
+    } else if (q.blocked(t)) {
+      // A frame's pass again: its lane pass is seated like an asker's.
+      if (left.containsKey(r)) {
+        seat(r, t);
+      }
+      // A sync reader's lane pass re-derives the async memos over it: the flight each asked over its frame staging,
+      // up and held by t, is the frame's answer too: the landing adopts it (F-9).
+      for (Node.Link s = r.subs; s != null; s = s.nextSub) {
+        Node n = s.sub;
+        if (n.x != null && Async.isThenable(n.x.inFlight) && n.x.pendingSources != null
+          && n.x.pendingSources.contains(n) && (n.config & CONFIG_HELD) != 0 && q.txOf(n) == t
+          && (n.flags & REACTIVE_FRAME_READ) == 0) {
+          park(n, t);
+          if (Boolean.TRUE.equals(left.get(n))) {
+            seat(n, t);
+            q.dirtyQueue.enqueueSub(n);
+          }
+        }
+      }
+    }
+    return false;
   }
 }

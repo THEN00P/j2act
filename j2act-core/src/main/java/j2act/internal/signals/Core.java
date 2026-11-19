@@ -79,7 +79,8 @@ final class Core {
     } else if (q.laneStageHook != null && (el.flags & REACTIVE_ZOMBIE) != 0 && laneFrameMember(el)) {
       q.dirtyQueue.deleteFromHeap(el);
       el.flags &= ~(REACTIVE_DIRTY | REACTIVE_CHECK | REACTIVE_LANE_DIRTY);
-    } else {
+    } else if (!(q.laneAdoptHook != null && el.x != null && el.x.parked != null && q.laneAdoptHook.adopt(el, 1))) {
+      // A reader the landing re-derives whose frame flight the seam parked adopts it at its turn (R5, F-9).
       recompute(el, false);
     }
   }
@@ -115,6 +116,25 @@ final class Core {
     if (q.laneStageHook != null) {
       laneRoot = create ? (prevLane != null ? prevLane : prevMount) : null;
       mount = laneRoot;
+    }
+    // R5: the seam's re-derive runs with the flight it parked still current; a later pass asks its own question, the
+    // hold's if the hold waits on it; so does a pass of a lane's derivation a frame's write dirtied (Verdict.reask).
+    if (q.laneAdoptHook != null && !create && el.x != null) {
+      Object p = el.x.parked;
+      boolean visit;
+      if (p != null) {
+        visit = p != el.x.inFlight;
+        if (visit) {
+          el.x.parked = null;
+        }
+      } else {
+        visit = (el.config & CONFIG_OVERRIDE) != 0 && (el.flags & REACTIVE_LANE_DIRTY) == 0;
+      }
+      if (visit) {
+        q.laneAdoptHook.adopt(el, 2);
+      }
+    }
+    if (q.laneStageHook != null) {
       // The creator's flags on a first pass (0 with no creator running).
       Node creator = create ? creatorPass(context) : null;
       int cf = creator != null ? creator.flags : 0;
@@ -144,10 +164,6 @@ final class Core {
         el.config &= ~CONFIG_VERDICT;
       }
       if (el.x != null) {
-        Object p = q.laneStageHook != null ? el.x.parked : null;
-        if (p != null && p != el.x.inFlight) {
-          el.x.parked = null;
-        }
         el.x.inFlight = null;
         rt.async.releaseFlightTeardown(el);
       }
@@ -273,9 +289,7 @@ final class Core {
         : REACTIVE_JOINED;
       joined = (el.flags & joinMask) != 0;
       if (q.observeFlightHook != null) {
-        // F-2's producer clause (S-51): a pass that asks is a verdict reader only by a window of its own.
-        el.config = (el.config & ~(CONFIG_VERDICT | CONFIG_OWN_PROBE | CONFIG_AHEAD))
-          | ((el.config & CONFIG_ASYNC) != 0 && (el.flags & REACTIVE_WINDOW) == 0 ? 0 : el.flags & REACTIVE_PROBED)
+        el.config = (el.config & ~(CONFIG_VERDICT | CONFIG_OWN_PROBE | CONFIG_AHEAD)) | (el.flags & REACTIVE_PROBED)
           | ((el.flags & REACTIVE_WINDOW) << 9) | ((el.flags & REACTIVE_AHEAD) << 11);
       }
       el.flags = el.flags & (REACTIVE_ZOMBIE | REACTIVE_DISPOSED | REACTIVE_FRAME_READ | REACTIVE_STAGED_READ
@@ -517,13 +531,6 @@ final class Core {
     Scheduler q = s();
     boolean verdictReader = q.observeFlightHook != null && (c.config & CONFIG_VERDICT) != 0;
     boolean lane = q.laneStageHook != null && q.passLane != null;
-    // F-2's producer clause: a pass that asks is never served the screen's value of a held node; it reads the
-    // staging and is the hold's. Not from an optimistic lane's seat: a derivation of a guess is that lane's (S-57).
-    if ((verdictReader || lane) && (c.config & CONFIG_ASYNC) != 0 && q.askerJoinsHook != null
-      && (!lane || Lanes.isVerdict(q.passLane))) {
-      q.askerJoinsHook.join(c, el, q.txOf(el));
-      return false;
-    }
     // S-46 (D-25): a render effect a probing pass is mounting is not a leaf of the screen: its first pass reading the
     // hold's staging or flight is born held, whatever else it read (S-58). Not lane work reading a held node that is
     // not pending: a lane never makes a flush the hold's (D-37).
@@ -833,18 +840,11 @@ final class Core {
         return el.value;
       }
       boolean netted = nets(el);
-      // F-2's producer clause: a pass that asks is never served the screen's value of a staging.
-      boolean asks = q.askerJoinsHook != null && (c.config & CONFIG_ASYNC) != 0
-        && (q.passLane == null || Lanes.isVerdict(q.passLane));
-      if (netted || (!asks && ((q.observeFlightHook != null && (c.config & CONFIG_VERDICT) != 0)
+      if (netted || (((q.observeFlightHook != null && (c.config & CONFIG_VERDICT) != 0)
         || (q.laneStageHook != null && q.passLane != null && q.passLane.folded != null)) && stagedScreen(c, el))) {
         return el.value;
       }
-      if (asks) {
-        q.askerJoinsHook.join(c, el, null);
-      } else {
-        stagedRead(c, null);
-      }
+      stagedRead(c, null);
       return el.pendingValue;
     }
     boolean committed = false;
@@ -858,8 +858,7 @@ final class Core {
           pullComputed(el, c);
           if (q.observeFlightHook != null && ((c.statusFlags & STATUS_UNINITIALIZED) != 0
             ? (c.config & CONFIG_HELD) != 0 || q.flushTransaction != null
-            : (c.config & CONFIG_HELD_FRAME) != 0
-              || ((c.config & CONFIG_ASYNC) != 0 && ((c.config & CONFIG_HELD) != 0 || q.flushTransaction != null)))) {
+            : (c.config & CONFIG_HELD_FRAME) != 0)) {
             // #4544 (F-6): a render effect never committed reading a settled verdict reader's value reads ahead.
             if (c.type == EFFECT_RENDER && (el.config & CONFIG_VERDICT) != 0
               && (el.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == 0) {
@@ -868,8 +867,8 @@ final class Core {
             // #4776, #4778 (D-25): a sync verdict memo is display while only the display reads it. A pass of a hold's
             // own work reading it makes it that hold's: it re-derives now, served the hold's writes, and the reader
             // reads that. A memo that probes in its own body stays the screen's for a held reader (F-6).
-            if ((el.config & (CONFIG_VERDICT | CONFIG_FRAME | CONFIG_ASYNC
-              | ((c.config & CONFIG_ASYNC) != 0 ? 0 : CONFIG_OWN_PROBE))) == CONFIG_VERDICT) {
+            // A pass that asks is display like any other (S-51).
+            if ((el.config & (CONFIG_VERDICT | CONFIG_FRAME | CONFIG_ASYNC | CONFIG_OWN_PROBE)) == CONFIG_VERDICT) {
               Transaction held = (c.config & CONFIG_HELD) != 0 ? q.txOf(c) : q.flushTransaction;
               Transaction t = held != null ? Scheduler.resolveTx(held) : null;
               NodeExtension x = ext(el);

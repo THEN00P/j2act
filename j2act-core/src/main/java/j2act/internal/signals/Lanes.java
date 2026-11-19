@@ -77,7 +77,6 @@ final class Lanes {
     q.laneCorrectionsHook = () -> !lanes.isEmpty() && laneCorrections();
     q.endLanesHook = this::landing;
     q.lanesBlockedHook = this::lanesBlocked;
-    q.laneAdoptHook = this::adoptParked;
     q.laneServedHook = this::laneServed;
   }
 
@@ -192,6 +191,11 @@ final class Lanes {
     }
     return s != null && !revealed && (el.config & CONFIG_GUESS) != 0 && el.x.shown && el.x.transaction == s[1]
       ? s[0] : el.value;
+  }
+
+  /** The lane's record of n goes: it leaves its lane. */
+  void uncover(Node n) {
+    covers.remove(n);
   }
 
   /** The lane's record of the value the screen showed n before the lane revealed it, kept once. */
@@ -954,6 +958,10 @@ final class Lanes {
       && ((t.opened && holdsOn(Scheduler.resolveTx(t.parent))) || heldMountUnder(null, t))) {
       return true;
     }
+    // A frame flight the seam parked beside its reader's lane pass (R5) is the hold's question still: it waits on it.
+    if (!t.lane && s().r5Hook != null && s().r5Hook.test(null, t)) {
+      return true;
+    }
     return (t.lane && linkBlocked(t)) || nestedBlocked(t);
   }
 
@@ -1213,19 +1221,9 @@ final class Lanes {
         if (l != null && l.lane && r.type != 0) {
           r.flags |= REACTIVE_LANE_DIRTY;
         } else if (!(l != null && l.lane) && (r.flags & REACTIVE_PROBE_UNANSWERED) != 0) {
-          if (Async.isThenable(r.x != null ? r.x.inFlight : null)) {
-            if (!q.blocked(t)) {
-              continue;
-            }
-            r.x.parked = r.x.inFlight;
-          } else if (q.blocked(t)) {
-            for (Link s = r.subs; s != null; s = s.nextSub) {
-              Node n = s.sub;
-              if (n.x != null && Async.isThenable(n.x.inFlight) && n.x.pendingSources != null
-                && n.x.pendingSources.contains(n) && (n.config & CONFIG_HELD) != 0 && q.txOf(n) == t) {
-                n.x.parked = n.x.inFlight;
-              }
-            }
+          // (Verdict.r5: only the verdict engine leaves a probe unanswered.)
+          if (q.r5Hook.test(r, t)) {
+            continue;
           }
           if (t.verdict != null && !leaked.contains(t.verdict)) {
             leaked.add(t.verdict);
@@ -1254,34 +1252,10 @@ final class Lanes {
         q.dirtyQueue.enqueueSub(r);
       }
     }
-  }
-
-  private boolean adoptParked(Node r) {
-    // A sync memo re-derived at a landing: the held runs of its readers ran on the pass this replaces, reading it
-    // stale beside the landing: void, they re-run on it, in the landing's frame (F-1, A15).
-    if (r.type == 0 && (r.config & CONFIG_ASYNC) == 0) {
-      for (Link s = r.subs; s != null; s = s.nextSub) {
-        Node e = s.sub;
-        if (e.type != 0 && e.modified) {
-          e.modified = false;
-          s().dirtyQueue.enqueueSub(e);
-        }
-      }
+    // (Verdict.r5: the round's armed readers and re-asked passes ran.)
+    if (q.r5Hook != null) {
+      q.r5Hook.test(null, null);
     }
-    Object parked = r.x != null ? r.x.parked : null;
-    if (parked == null || (r.flags & (REACTIVE_DIRTY | REACTIVE_CHECK | REACTIVE_IN_HEAP)) != 0) {
-      return false;
-    }
-    r.x.parked = null;
-    rt.async.releaseFlightTeardown(r);
-    try {
-      rt.async.handleAsync(r, rt.async.continuation(parked), null, null);
-    } catch (RuntimeException | Error e) {
-      // the flight's own failure reaches the node through handleAsync
-    }
-    r.x.blocked = true;
-    rt.async.notifyStatus(r, STATUS_PENDING, new NotReadyError(r));
-    return true;
   }
 
   /** The last lane pass served a flight's committed value, and that flight. */

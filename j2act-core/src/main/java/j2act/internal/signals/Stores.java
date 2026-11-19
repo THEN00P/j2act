@@ -1336,6 +1336,16 @@ public final class Stores {
       if (c instanceof Node && (fw.config & CONFIG_STAGED_ERROR) != 0) {
         rt.graph.link(fw, (Node) c);
       }
+      // D-30: a derive that is a verdict reader only through what it reads, waiting on a flight it read as a lane's
+      // work: its reader reads that flight as the memo's reader would (S-46).
+      if (q.observeFlightHook != null && (fw.config & CONFIG_VERDICT) != 0 && (fw.flags & (EFFECT_RENDER << 21)) == 0
+        && rt.core.tracking) {
+        for (Link l = fw.deps; l != null; l = l.nextDep) {
+          if ((l.dep.statusFlags & STATUS_PENDING) != 0) {
+            rt.core.read(l.dep);
+          }
+        }
+      }
       rt.core.read(fw);
     } else {
       // #4782: the pull a tracked read makes: the derive brought up to date now and the reader lifted above it (a
@@ -2120,6 +2130,10 @@ public final class Stores {
     if (q.observeFlightHook != null && (fam.woke || fam.w != 0)) {
       fam.w = 0;
       owner.config &= ~CONFIG_VERDICT;
+      // Out of the hold's verdict lane too, where its seat put the pass; never out of a guess's lane (F-6).
+      if (q.passLane != null && q.passLane.parent.verdict == q.passLane) {
+        q.passLane = null;
+      }
     }
     // Open loading window (seedLoadingValue): the observable store is commit #0 for the whole first flight, so
     // the derive works a detached shadow of the seed and draft writes cannot tear through to readers (#2988).
