@@ -460,6 +460,14 @@ final class Verdict {
   }
 
   private boolean attachWaits(Node node) {
+    // A run of the frame a landing holds for its re-derivation runs next round, with the landing's held runs.
+    if (rt.lanes.waiting != null && rt.lanes.waiting.contains(node)) {
+      if (node.boundRunEffect == null) {
+        node.boundRunEffect = type -> rt.effects.runEffect(node, type);
+      }
+      s().enqueue(node.type, node.boundRunEffect);
+      return true;
+    }
     if (node.type != EFFECT_RENDER
       || !((node.config & CONFIG_VERDICT) != 0 || (node.x != null && node.x.transaction != null && node.x.transaction.lane))
       || !valueInserts(node.pendingValue != NOT_PENDING ? node.pendingValue : node.value)) {

@@ -564,6 +564,11 @@ final class Scheduler {
     }
   }
 
+  /** Solid's globalQueue._queues[index].push(fn): no schedule. */
+  void pushGlobal(int index, IntConsumer fn) {
+    queues[index].add(fn);
+  }
+
   void enqueue(int type, IntConsumer fn) {
     enqueue(type, fn, passLane);
   }

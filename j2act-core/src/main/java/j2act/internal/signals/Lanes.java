@@ -27,7 +27,11 @@ final class Lanes {
   private final List<PendingGuess> pendingGuesses = new ArrayList<>();
   private boolean guessed;
   private final List<Kept> kept = new ArrayList<>();
-  private final Set<Transaction> reverted = Collections.newSetFromMap(new WeakHashMap<>());
+  /**
+   * Two kinds of member, one set: lanes a revert dissolved (their guesses come back at their parent's landing), and
+   * shown guesses a correction re-homed into their hold, each keeping it open on its own flight (#4690).
+   */
+  private final Set<Object> marked = Collections.newSetFromMap(new WeakHashMap<>());
   private boolean reverting;
   private final List<Transaction> revealing = new ArrayList<>();
   private final List<Node> entered = new ArrayList<>();
@@ -71,7 +75,7 @@ final class Lanes {
     q.applyGuessesHook = this::applyGuessesAt;
     q.laneSeamsHook = this::laneSeams;
     q.laneCorrectionsHook = () -> !lanes.isEmpty() && laneCorrections();
-    q.endLanesHook = this::endLanes;
+    q.endLanesHook = this::landing;
     q.lanesBlockedHook = this::lanesBlocked;
     q.laneAdoptHook = this::adoptParked;
     q.laneServedHook = this::laneServed;
@@ -432,10 +436,13 @@ final class Lanes {
     if (changed) {
       dissolveLane(l, parent, n);
       if (guessed && reverting) {
-        reverted.add(l);
+        marked.add(l);
       }
       if (l.shown) {
         n.value = n.x.lane;
+        if (guessed) {
+          marked.add(n);
+        }
       }
       n.config &= ~(CONFIG_OVERRIDE | CONFIG_GUESS);
       n.x.lane = NOT_PENDING;
@@ -508,6 +515,9 @@ final class Lanes {
         }
         if (l.shown) {
           n.value = slot;
+          if (guessed) {
+            marked.add(n);
+          }
         }
         q.holdNode(n, into);
         q.insertSubs(n);
@@ -663,8 +673,23 @@ final class Lanes {
     }
     l.held = false;
     l.shown = true;
+    Transaction p = Scheduler.resolveTx(l.parent);
+    List<Node> v = new ArrayList<>();
+    for (Node r : p.reruns) {
+      if (r.modified && r.x != null && r.x.transaction == l) {
+        v.add(r);
+      }
+    }
     if (q.reruns(l)) {
-      revealing.add(Scheduler.resolveTx(l.parent));
+      revealing.add(p);
+    } else if (l.queues[0].size() > v.size()) {
+      // The parent lands this seam and voids runs the lane stashed; beside other runs of the lane they show first:
+      // the lane's readers show its answer together (F-6, #4677).
+      l.queues[0].add(0, type -> {
+        for (Node r : v) {
+          r.modified = true;
+        }
+      });
     }
     for (int i = 0; i < l.nodes.size(); i++) {
       Node n = l.nodes.get(i);
@@ -697,16 +722,70 @@ final class Lanes {
     return back instanceof Node ? (Node) back : null;
   }
 
+  /**
+   * The effects that derive plainly from a landing this round that re-derives a stale reader reading it as
+   * committed: they wait with the landing's held runs (F-1, F-7, #4677). The walk stops at verdict readers. Dropped
+   * at the end of the round's effect phase.
+   */
+  Set<Node> waiting;
+
+  /** A transaction lands: its lanes end, nested first. */
+  private void landing(Transaction u) {
+    walk(u);
+    endLanes(u);
+  }
+
+  /** Read before the lanes end: a lane's runs are its reveal's (F-6). */
+  private void walk(Transaction u) {
+    boolean stale = false;
+    boolean held = false;
+    for (Node r : u.reruns) {
+      stale |= r.type == 0 && (r.flags & REACTIVE_FRAME_READ) != 0;
+      held |= ((r.flags & REACTIVE_FRAME_READ) != 0 || (r.config & CONFIG_VERDICT) != 0)
+        && (r.type != 0 || (r.config & CONFIG_HELD) != 0);
+    }
+    if (!stale || !held) {
+      return;
+    }
+    if (waiting == null) {
+      waiting = new java.util.HashSet<>();
+      s().pushGlobal(1, type -> waiting = null);
+    }
+    List<Node> work = new ArrayList<>();
+    for (Node n : u.nodes) {
+      if ((n.config & CONFIG_VERDICT) == 0) {
+        work.add(n);
+      }
+    }
+    while (!work.isEmpty()) {
+      Node n = work.remove(work.size() - 1);
+      for (Link s = n.subs; s != null; s = s.nextSub) {
+        Node c = s.sub;
+        if (waiting.contains(c) || (c.config & CONFIG_VERDICT) != 0
+          || (c.x != null && c.x.transaction != null && c.x.transaction.lane)) {
+          continue;
+        }
+        waiting.add(c);
+        if (c.type == 0) {
+          work.add(c);
+        }
+      }
+    }
+  }
+
   private void endLanes(Transaction u) {
     Scheduler q = s();
     if (guessed) {
+      for (Node n : u.nodes) {
+        marked.remove(n);
+      }
       for (int i = kept.size() - 1; i >= 0; i--) {
         Kept k = kept.get(i);
         if (Scheduler.resolveTx(k.taker.parent) == u) {
           kept.remove(i);
           // (A store slot's node now: the one taken, or a read's since.)
           Node n = k.node;
-          if (reverted.contains(k.taker) && lanes.contains(k.transaction)
+          if (marked.contains(k.taker) && lanes.contains(k.transaction)
             && ((n.config & CONFIG_SLOT_NODE) == 0 || (n = slotBack(n)) != null)) {
             NodeExtension x = rt.core.ext(n);
             if (x.transaction == null || q.txOf(n) == u) {
@@ -735,6 +814,14 @@ final class Lanes {
   }
 
   private boolean lanesBlocked(Transaction t) {
+    // A shown guess a correction re-homed into t keeps t open on its own flight, as before the correction (#4690).
+    if (guessed && !t.lane) {
+      for (Node n : t.nodes) {
+        if (marked.contains(n) && inFlight(n)) {
+          return true;
+        }
+      }
+    }
     return (t.lane && linkBlocked(t)) || nestedBlocked(t);
   }
 
