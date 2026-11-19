@@ -1629,6 +1629,13 @@ public final class Stores {
     Object result;
     try {
       result = fn.apply(view);
+      // A returned replacement on an optimistic family is a user's edit whose slot is the point of write (S-59):
+      // written into the draft as the keyed diff, so it makes the writes the field edit would.
+      if (optHooks != null && guard && target.o && !writeOverride && result != null && !same(result, view)
+        && shape.isWrappable(result)) {
+        optHooks.reconcile(view, unwrapValue(result), target.fam != null ? target.fam.key : null);
+        result = null;
+      }
     } finally {
       writing--;
       writeScopes = prevScopes;
@@ -1654,18 +1661,9 @@ public final class Stores {
     if (guard && result instanceof java.util.concurrent.CompletionStage) {
       throw new IllegalStateException(ASYNC_STORE_SETTER_MESSAGE);
     }
+    // A returned replacement off the optimistic path is adopted as the incoming truth.
     if (result != null && !same(result, view) && shape.isWrappable(result)) {
-      if (optHooks != null && guard && target.o && !writeOverride) {
-        boolean was = userWrite;
-        userWrite = guard;
-        try {
-          optHooks.writes(target, unwrapValue(result));
-        } finally {
-          userWrite = was;
-        }
-      } else {
-        adoptPB(target, unwrapValue(result), true);
-      }
+      adoptPB(target, unwrapValue(result), true);
     }
     if (guard && heldDerivationHit) {
       heldDerivationHit = false;

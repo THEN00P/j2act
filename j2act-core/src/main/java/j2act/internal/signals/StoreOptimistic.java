@@ -866,6 +866,30 @@ final class StoreOptimistic implements Stores.OptHooks {
         stores.reconcileState(nv, c.px, keyFn, true);
       }
     }
+    // While guesses are out, every row of a keyed list keeps its target under the derive's new object with its key
+    // (#4738): a row whose guess settled can be guessed again, on the committed row's target.
+    if (keyFn != null && shape.isArray(pb) && !t.fam.overlaid.isEmpty()) {
+      Map<Object, Object> byKey = null;
+      for (Object ov : rowsOf(stores.committed(t))) {
+        StoreTarget rt0 = shape.isWrappable(ov) ? stores.lookupTarget(ov, t.fam) : null;
+        if (rt0 == null) {
+          continue;
+        }
+        if (byKey == null) {
+          byKey = new HashMap<>();
+          for (Object r : rowsOf(pb)) {
+            if (shape.isWrappable(r)) {
+              byKey.put(keyFn.apply(r), r);
+            }
+          }
+        }
+        Object k = keyFn.apply(ov);
+        Object nv = k == null ? null : byKey.get(k);
+        if (nv != null && stores.lookupTarget(nv, t.fam) == null) {
+          stores.reconcileState(nv, rt0.px, keyFn, true);
+        }
+      }
+    }
   }
 
   /** A key a live guess changed reads through the carrier, tracked; NOT_PENDING for none. */
