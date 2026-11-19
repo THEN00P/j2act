@@ -105,23 +105,19 @@ final class MapArray {
     int budget = 256;
     int i = start;
     int j = start;
-    boolean inRun = false;
     while (i <= oldEnd && j <= newLen - 1) {
       Object oldItem = oldItems.get(i);
       Object newItem = newItems.get(j);
       if (Objects.equals(oldItem, newItem)) {
-        if (!inRun) {
-          runs.add(i);
-          runs.add(j);
-          runs.add(0);
-          inRun = true;
-        }
-        runs.set(runs.size() - 1, runs.get(runs.size() - 1) + 1);
-        i++;
-        j++;
+        int from = i;
+        do {
+          j++;
+        } while (++i <= oldEnd && j < newLen && Objects.equals(oldItems.get(i), newItems.get(j)));
+        runs.add(from);
+        runs.add(j - i + from);
+        runs.add(i - from);
         continue;
       }
-      inRun = false;
       int del = -1;
       int lim = Math.min(Math.min(32 - srcPos.size(), oldEnd - i), budget);
       for (int a = 1; a <= lim; a++) {
@@ -170,10 +166,10 @@ final class MapArray {
       }
       dstPos.add(j);
     }
-    return commitSmallMove(data, newItems, newLen, srcPos, dstPos, runs);
+    return commitSmallMove(data, newItems, newLen, start, srcPos, dstPos, runs);
   }
 
-  private boolean commitSmallMove(MapData data, List<Object> newItems, int newLen, List<Integer> srcPos,
+  private boolean commitSmallMove(MapData data, List<Object> newItems, int newLen, int start, List<Integer> srcPos,
     List<Integer> dstPos, List<Integer> runs) {
     List<Object> oldItems = data.items;
     boolean[] consumed = null;
@@ -194,20 +190,15 @@ final class MapArray {
         dstPos.set(j, (dstPos.get(j) << 6) | found);
       }
     }
-    if (!srcPos.isEmpty() || !dstPos.isEmpty()) {
-      Set<Object> displaced = new HashSet<>();
-      for (int i = 0; i < srcPos.size(); i++) {
-        displaced.add(oldItems.get(srcPos.get(i)));
+    // Every displaced identity is a srcPos item; any other one in the window sits in a run: decline that case.
+    for (int i = 0; i < srcPos.size(); i++) {
+      Object item = oldItems.get(srcPos.get(i));
+      if (item == null) {
+        return false;
       }
-      for (int j = 0; j < dstPos.size(); j++) {
-        displaced.add(newItems.get(dstPos.get(j) >> 6));
-      }
-      for (int r = 0; r < runs.size(); r += 3) {
-        int ro = runs.get(r);
-        for (int a = 0, n = runs.get(r + 2); a < n; a++) {
-          if (displaced.contains(oldItems.get(ro + a))) {
-            return false;
-          }
+      for (int k = start; k < oldItems.size(); k++) {
+        if (Objects.equals(oldItems.get(k), item) && !srcPos.contains(k)) {
+          return false;
         }
       }
     }

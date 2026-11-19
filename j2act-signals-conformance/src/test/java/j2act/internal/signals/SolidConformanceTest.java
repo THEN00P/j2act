@@ -35,6 +35,8 @@ class SolidConformanceTest {
     "asyncTailFlights", "enforceLoadingBoundary",
     // hydration
     "setSnapshotCapture", "markSnapshotScope", "clearSnapshots", "getNextChildId", "peekNextChildId",
+    // ref callbacks, which run in the DOM's attribute effects: a view here sends markup
+    "runRefCallback",
     // bridging foreign reactive systems, which Java has none of
     "enableExternalSource", "_resetExternalSourceConfig",
     // reaching into modules by name rather than through the surface

@@ -271,7 +271,7 @@ final class Verdict {
       Transaction l = q.txOf(el);
       boolean flying = (owner.statusFlags & STATUS_PENDING) != 0 && !quietPending(owner);
       boolean guess = (el.config & CONFIG_GUESS) != 0;
-      Object v = guess ? Integer.valueOf(0) : latestActive && !flying ? rt.lanes.latestOf(el) : Lanes.screenOf(el);
+      Object v = guess ? Integer.valueOf(0) : latestActive && !flying ? rt.lanes.latestOf(el) : rt.lanes.screenOf(el);
       if (v != NOT_PENDING) {
         // The pass is this lane's work: it reads the lane's latest, which answers the lane's question for it.
         boolean inLane = q.passLane != null && Scheduler.sameLane(q.passLane, l);

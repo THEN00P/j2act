@@ -177,8 +177,21 @@ final class Lanes {
   }
 
   /** What the screen shows of a node: NOT_PENDING when nothing (uninitialized). */
-  static Object screenOf(Node el) {
-    return (el.statusFlags & STATUS_UNINITIALIZED) != 0 ? NOT_PENDING : el.value;
+  Object screenOf(Node el) {
+    return (el.statusFlags & STATUS_UNINITIALIZED) != 0 ? NOT_PENDING : guessScreen(el, false);
+  }
+
+  /** A shown guess re-asked: what the screen showed of it, and its lane, until that lane's next reveal (#4775). */
+  private final java.util.Map<Node, Object[]> screens = new WeakHashMap<>();
+
+  /** The guess layer's screen of a node: a shown guess re-asked keeps the shown one until its lane's next reveal. */
+  private Object guessScreen(Node el, boolean revealed) {
+    Object[] s = screens.get(el);
+    if (revealed) {
+      screens.remove(el);
+    }
+    return s != null && !revealed && (el.config & CONFIG_GUESS) != 0 && el.x.shown && el.x.transaction == s[1]
+      ? s[0] : el.value;
   }
 
   /** The lane's record of the value the screen showed n before the lane revealed it, kept once. */
@@ -303,6 +316,10 @@ final class Lanes {
         if ((n.config & CONFIG_GUESS) == 0) {
           n.pendingValue = NOT_PENDING;
           n.config |= CONFIG_GUESS;
+        } else if (n.x.shown) {
+          // A shown guess re-asked: the screen keeps the shown one until the lane's next reveal (#4775; S-30, F-1).
+          screens.putIfAbsent(n, new Object[] {n.value, n.x.transaction});
+          q.txOf(n).reguessed = q.clock;
         }
         setLaneValue(n, q.txOf(n), v);
         holder = q.txOf(n).parent;
@@ -772,6 +789,7 @@ final class Lanes {
       // staging. An effect's value slot is private.
       if (n.type == 0) {
         if ((n.config & CONFIG_GUESS) != 0) {
+          guessScreen(n, true);
           if (!x.shown) {
             Object g = covers.get(n);
             covers.put(n, n.value);
@@ -1164,7 +1182,8 @@ final class Lanes {
         continue;
       }
       Transaction l = lanes.get(k);
-      if (k < judged || (l.parent != null && l.parent.verdict == l)) {
+      // A lane a guess re-asked at this seam is judged with that guess's passes, next round (#4775).
+      if ((k < judged && l.reguessed != q.clock) || (l.parent != null && l.parent.verdict == l)) {
         laneSeam(l, leaked.contains(l));
       }
     }
