@@ -113,8 +113,7 @@ final class Lanes {
 
   /** The value a guess covered: the committed value until the reveal, the lane's record after; a slot's asks the store. */
   Object covered(Node n) {
-    Object v = n.x.shown ? covers.get(n) : n.value;
-    return (n.config & CONFIG_SLOT_NODE) != 0 && s().slotCoveredHook != null ? s().slotCoveredHook.apply(n, v) : v;
+    return n.x.shown ? covers.get(n) : n.value;
   }
 
   /** The truth beneath a guess: a landing staged there, else the value it covered. */
@@ -249,6 +248,10 @@ final class Lanes {
   private void rerun(Node n, Transaction t) {
     for (Link l = n.subs; l != null; l = l.nextSub) {
       s().staleReader(l.sub, t);
+    }
+    // A store's guess carrier: the readers of the keys it changed read their leaves.
+    if ((n.config & CONFIG_SLOT_NODE) != 0 && s().slotRerunHook != null) {
+      s().slotRerunHook.accept(n, t);
     }
   }
 

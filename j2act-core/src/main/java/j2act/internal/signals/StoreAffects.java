@@ -81,7 +81,7 @@ final class StoreAffects implements Stores.AffectsHooks {
       if (t.pb != null) {
         entry.scope.put(t.v, Boolean.TRUE);
       }
-      if (stores.optHooks != null && t.fam != null && t.fam.opt) {
+      if (stores.optHooks != null && t.o) {
         raw = stores.optHooks.view(t, raw, true);
       }
       if (t.n != null) {

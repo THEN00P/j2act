@@ -120,8 +120,10 @@ final class Scheduler {
   Predicate<Node> slotFlightHook;
   /** Solid's GlobalQueue._slotTake; `back` asks for the slot's node now, for a guess that comes back. */
   SlotTake slotTakeHook;
-  /** Solid's GlobalQueue._slotCovered: the value a slot node's guess covered. */
-  java.util.function.BiFunction<Node, Object, Object> slotCoveredHook;
+  /** A lane dirtied a store's guess carrier: the readers of the leaves of the keys it changed re-derive as its work. */
+  java.util.function.BiConsumer<Node, Transaction> slotDirtyHook;
+  /** A lane re-derives a store's guess carrier's readers at t's landing. */
+  java.util.function.BiConsumer<Node, Transaction> slotRerunHook;
   /** Solid's GlobalQueue._echoes: the truth is the guess's echo when reconcile would write nothing into it. */
   java.util.function.BiPredicate<Object, Object> echoesHook;
   /** Solid's GlobalQueue._laneRebase: true when the lane stages the truth beneath a keyed arrangement guess. */
@@ -712,6 +714,10 @@ final class Scheduler {
 
   void laneDirty(Node node, Transaction l) {
     insertSubs(node);
+    // A store's guess carrier: the readers of the keys it changed read their leaves, dirtied as the lane's work too.
+    if ((node.config & CONFIG_SLOT_NODE) != 0 && slotDirtyHook != null) {
+      slotDirtyHook.accept(node, l);
+    }
     boolean display = l.parent.verdict == l;
     for (Link s = node.subs; s != null; s = s.nextSub) {
       Node c = s.sub;

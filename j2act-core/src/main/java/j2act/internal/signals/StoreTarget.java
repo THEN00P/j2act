@@ -43,6 +43,8 @@ public final class StoreTarget implements Node.Host {
   boolean d;
   /** Projection family, null for plain stores. */
   StoreFamily fam;
+  /** An optimistic family's target (S2): the guess carrier arms apply. Set once at creation. */
+  boolean o;
   /** A shallow store: its keys are reactive and its values are served raw, by reference. */
   boolean s;
   BiPredicate<Object, Object> slotEquals;
