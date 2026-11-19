@@ -695,6 +695,11 @@ final class Scheduler {
     for (Link s = node.subs; s != null; s = s.nextSub) {
       Node c = s.sub;
       Transaction t = c.x != null ? c.x.transaction : null;
+      // A reader the parent holds pending on its re-ask re-derives from the guess as the lane's work (#4629).
+      if (t != null && l.parent != null && c.type == 0 && (c.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD
+        && (c.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == STATUS_PENDING && resolveTx(t) == resolveTx(l.parent)) {
+        list(c, t = l);
+      }
       if (c.type == EFFECT_RENDER && (node.config & CONFIG_VERDICT) != 0) {
         c.config |= CONFIG_VERDICT;
         c.flags &= ~REACTIVE_LANE_DIRTY;

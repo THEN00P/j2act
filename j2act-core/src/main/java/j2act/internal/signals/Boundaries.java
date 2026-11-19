@@ -86,8 +86,17 @@ final class Boundaries {
     return (Boundary) node.ctx.get(BOUNDARY);
   }
 
+  /** An error boundary at or above {@code b} shows its fallback: content under it is not on screen. */
+  private static boolean behindError(Boundary b) {
+    return b != null && ((b.type == STATUS_ERROR && b.fallback) || behindError(b.parent));
+  }
+
+  /**
+   * Catches what reaches it: an error boundary always; a loading one until it has shown content, or while re-armed.
+   * Behind an error fallback nothing is on screen, so the error boundary's recovery re-arms the subtree (#4627).
+   */
   private boolean isCollecting(Boundary b) {
-    return b.type == STATUS_ERROR || !b.initialized || b.armed || b.detached;
+    return b.type == STATUS_ERROR || !b.initialized || b.armed || b.detached || behindError(b.parent);
   }
 
   /**
@@ -145,13 +154,13 @@ final class Boundaries {
       Throwable cause = Errors.unwrapStatusError(error);
       rt.core.setSignal(b.error, cause);
       rt.reportClientError(cause, b.owner, source);
+    } else if (!b.detached) {
+      // A loading boundary that catches has not shown content: fresh until it does (D-39, #4627). A tab's root
+      // only catches while nobody can see it, and stays shown.
+      b.initialized = false;
     }
     record(b, node, source);
-    for (Boundary p = b.parent; p != null; p = p.parent) {
-      if (p.fallback && p.type > b.type) {
-        record(p, node, node);
-      }
-    }
+    // A loading boundary behind an error fallback that catches a pending holds nothing above it (D-39, #4627).
     if (b.armed) {
       flip(b);
     }
@@ -302,6 +311,22 @@ final class Boundaries {
     b.runs = null;
   }
 
+  /**
+   * {@code r}, held by error boundary {@code b} for the error {@code s} threw, is pending again after {@code s}
+   * answered, and a loading boundary between them that has not shown content catches it: that boundary is its
+   * display, beside the recovered content (D-39, F-4, #4627). Not while that boundary's swap is staged in a hold.
+   */
+  private boolean caughtBelow(Boundary b, Node r, Node s) {
+    if ((s.statusFlags & (STATUS_ERROR | STATUS_PENDING)) == 0 && (r.statusFlags & STATUS_ERROR) == 0) {
+      for (Boundary l = boundaryOf(r); l != null && l != b; l = l.parent) {
+        if ((l.type & STATUS_PENDING) != 0 && isCollecting(l)) {
+          return (l.output.config & CONFIG_HELD) == 0;
+        }
+      }
+    }
+    return false;
+  }
+
   /** `pass` is Solid's `boolean | 0`: -1 for undefined or false, 0 for 0, 1 for true. */
   int prune(Boundary b, int pass) {
     Scheduler q = s();
@@ -310,7 +335,7 @@ final class Boundaries {
       Node r = e.getKey();
       Node src = e.getValue();
       if (((r.flags | src.flags) & REACTIVE_DISPOSED) == 0) {
-        if (((r.statusFlags | src.statusFlags) & mask) != 0
+        if ((((r.statusFlags | src.statusFlags) & mask) != 0 && !((mask & STATUS_ERROR) != 0 && caughtBelow(b, r, src)))
           || ((mask & STATUS_ERROR) != 0 && (src.config & CONFIG_STAGED_ERROR) != 0)
           || ((r.config & CONFIG_VERDICT) != 0 && (r.flags & REACTIVE_IN_HEAP) != 0)) {
           if (pass == 0) {
