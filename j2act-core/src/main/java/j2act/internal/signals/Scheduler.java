@@ -85,7 +85,12 @@ final class Scheduler {
   Consumer<Transaction> endLanesHook;
   Predicate<Transaction> lanesBlockedHook;
   Predicate<Node> laneAdoptHook;
-  java.util.function.BiConsumer<Node, Node> laneServedHook;
+  LaneServed laneServedHook;
+
+  /** lanes.ts laneServed: el null for a staged read after a served flight; flight for a lane pass's read of a flight. */
+  interface LaneServed {
+    boolean served(Node c, Node el, boolean flight);
+  }
   boolean guessing;
   boolean inTrackedQueueCallback;
   Caught catchHook;

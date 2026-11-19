@@ -535,7 +535,7 @@ final class Core {
       if (!((!lane && t == q.flushTransaction && !verdictReader) || bornInto(c, t))) {
         q.staleReader(c, t);
         if (lane || verdictReader) {
-          q.laneServedHook.accept(c, el);
+          q.laneServedHook.served(c, el, false);
         }
         return true;
       }
@@ -853,7 +853,8 @@ final class Core {
         && !((c.config & CONFIG_MOUNT_AHEAD) != 0 && (c.statusFlags & STATUS_UNINITIALIZED) != 0)) {
         committed = q.observeFlightHook.test(c, el);
       } else if (q.passLane != null && !(c != null && (c.statusFlags & STATUS_UNINITIALIZED) != 0)) {
-        committed = true;
+        // Lane work: served the committed value, unless it read a staging of the flush this pass (F-2; S-57).
+        committed = q.laneServedHook.served(c, el, true);
       }
     }
     if ((el.statusFlags & STATUS_PENDING) != 0 && !committed) {
@@ -928,6 +929,10 @@ final class Core {
 
   void stagedRead(Node c, Node el) {
     if (el == null || (el.statusFlags & STATUS_UNINITIALIZED) == 0) {
+      // Lane work this pass served the committed value of a flight now reads a staging of the flush: it throws.
+      if (s().passLane != null && (c.flags & REACTIVE_FRAME_READ) != 0) {
+        s().laneServedHook.served(c, null, false);
+      }
       c.flags |= REACTIVE_STAGED_READ;
       Scheduler q = s();
       if (q.laneSeamsHook != null && (q.passLane != null || (c.type != 0 && (c.config & CONFIG_VERDICT) != 0))) {

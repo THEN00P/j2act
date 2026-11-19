@@ -1410,7 +1410,8 @@ public final class Stores {
       }
     }
     Node node0 = target.n != null ? target.n.get(key) : null;
-    if (writeScopes == null && !writeOverride && node0 != null && (!target.ch || (node0.config & CONFIG_OVERRIDE) != 0)) {
+    // A chained target's node is a subscription point and reads through below, a lane value on it included (#4762).
+    if (writeScopes == null && !writeOverride && node0 != null && !target.ch) {
       Object nv = nodeValue(node0, target);
       if (nv == null || !shape.isObject(nv)) {
         return nv;
@@ -1519,7 +1520,7 @@ public final class Stores {
       Node node = getHasNode(target, key);
       boolean present = Signals.truthy(rt.core.read(node));
       src = readSource(target, key, true, true);
-      if (!present && (!target.ch || (node.config & CONFIG_OVERRIDE) != 0 || !shape.has(src, key))) {
+      if (!present && (!target.ch || !shape.has(src, key))) {
         return null;
       }
     } else {

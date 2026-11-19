@@ -224,7 +224,11 @@ public final class Signals {
 
   void onFlush(Runnable callback) {
     rt.scheduler.schedule();
-    microtask(callback);
+    // Each callback flushes before the next runs, so async work one starts never holds another's writes.
+    microtask(() -> {
+      callback.run();
+      rt.scheduler.flush();
+    });
   }
 
   /** createReaction: tracks what its returned function is given, once, and runs effectFn when that changes. */

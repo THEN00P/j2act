@@ -431,7 +431,13 @@ final class Lanes {
     // F-2's producer clause (S-57): a pass this flush dirtied that ran as a lane's and asked: the flush holds on
     // that flight and reveals with the lane.
     if (!create && (el.statusFlags & STATUS_PENDING) != 0 && (el.flags & REACTIVE_STAGED_READ) != 0) {
-      laneWait(el, l);
+      // Pending on a flight it waits on as the frame's work, with none of the lane's world read: it left the lane,
+      // its pending the frame's (F-4).
+      if ((el.flags & REACTIVE_LANE_READ) == 0 && (el.config & CONFIG_ASYNC) == 0) {
+        errored = Boolean.FALSE;
+      } else {
+        laneWait(el, l);
+      }
     }
     if (!(create || truthy(errored) || (el.flags & REACTIVE_LANE_READ) != 0 || (el.config & CONFIG_GUESS) != 0)) {
       NodeExtension x = el.x;
@@ -440,7 +446,8 @@ final class Lanes {
         if (tx != null && tx.lane) {
           // Left a shown lane: judged against the committed value the lane covered, and the seam wakes the readers
           // (#3892, #4367); while the lane's frame is held, the screen keeps the lane's value until the landing.
-          if (tx.shown && (q.flushTransaction == null || !q.blocked(Scheduler.resolveTx(tx.parent)))) {
+          if (tx.shown && (el.statusFlags & STATUS_PENDING) == 0
+            && (q.flushTransaction == null || !q.blocked(Scheduler.resolveTx(tx.parent)))) {
             if (x.shown) {
               el.value = covers.get(el);
             }
@@ -454,6 +461,22 @@ final class Lanes {
         el.pendingValue = NOT_PENDING;
       }
       el.config &= ~(CONFIG_OVERRIDE | CONFIG_HELD | CONFIG_HELD_FRAME);
+      // A store derive's pass: the leaves it wrote in the lane's seat leave with it, what it wrote this pass the
+      // frame's staging (F-1, D-33).
+      if (guessed) {
+        for (int i = 0; i < l.nodes.size(); i++) {
+          Node n = l.nodes.get(i);
+          if (n.host instanceof StoreTarget && ((StoreTarget) n.host).fam != null && ((StoreTarget) n.host).fam.node == el
+            && n.x.transaction == l) {
+            Object v = n.pendingValue;
+            laneStage(n, l, false, Boolean.FALSE);
+            if (v != NOT_PENDING) {
+              q.queuePendingNode(n);
+              n.pendingValue = v;
+            }
+          }
+        }
+      }
       return false;
     }
     if (el.type == 0) {
@@ -1171,7 +1194,34 @@ final class Lanes {
     return true;
   }
 
-  private void laneServed(Node c, Node el) {
+  /** The last lane pass served a flight's committed value, and that flight. */
+  private Node served;
+  private Node servedFlight;
+
+  private boolean laneServed(Node c, Node el, boolean flight) {
+    Scheduler q = s();
+    // Lane work read a staging of the flush after it was served the committed value of a flight: it derives from the
+    // write that re-asked the flight, so it waits on it (F-1, F-2; S-57).
+    if (el == null) {
+      if (served == c && (servedFlight.statusFlags & STATUS_PENDING) != 0) {
+        throw Errors.<RuntimeException>sneak(servedFlight.x.error);
+      }
+      return false;
+    }
+    // Lane work reading a flight that is not the lane's own: served its committed value, unless the pass read a
+    // staging of the flush, which makes it that write's work. Served, the pass is the flight's stale reader (A15).
+    if (flight) {
+      if ((c.flags & REACTIVE_STAGED_READ) != 0) {
+        return false;
+      }
+      Transaction u = el.x != null && el.x.transaction != null ? el.x.transaction : q.flushTransaction;
+      if (u != null) {
+        q.staleReader(c, Scheduler.resolveTx(u));
+      }
+      served = c;
+      servedFlight = el;
+      return true;
+    }
     Set<Node> from = el.x != null ? el.x.pendingSources : null;
     if (from != null && c.x != null && c.x.pendingSources != null) {
       for (Node src : new ArrayList<>(from)) {
@@ -1180,6 +1230,7 @@ final class Lanes {
         }
       }
     }
+    return false;
   }
 
   /** A lane, or one linked to it (one reveal unit), re-based over {@code t}'s answer (#4536, #4643). */
