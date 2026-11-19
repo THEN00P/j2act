@@ -8,6 +8,7 @@ async-chain-supersession :: a second write while an async chain is in flight > A
 attribution-current-origin :: currentOrigin > is undefined with no engine installed, and outside any frame with one	tooling: attribution, left out
 attribution-engine-cost :: <file>	tooling: attribution, left out
 attribution-navigation :: withOrigin — navigation provenance > is a plain call when no engine is installed	tooling: attribution, left out
+attribution-retention :: <file>	tooling: attribution, left out
 boundary-not-born-held-3540 :: Loading `on` beside a keyed Show around the boundary (#3540) > on over committed: mid-flight holds	tooling: the assertion is on the dev warning LOADING_ON_OUTSIDE_HOLD; the frames match
 createLoadingBoundary :: createLoadingBoundary > throws dev error when pending async value is read outside tracking scope with strictRead	tooling: strictRead dev error, left out
 createRoot :: should reset child ids when computations rerun	hydration ids, left out

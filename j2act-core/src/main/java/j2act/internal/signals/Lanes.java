@@ -721,7 +721,9 @@ final class Lanes {
           if (pending && (c.config & CONFIG_MOUNT_AHEAD) != 0 && (c.statusFlags & STATUS_UNINITIALIZED) != 0) {
             return NOT_PENDING;
           }
-          if ((c.flags & REACTIVE_SCREEN_READ) == 0) {
+          // Not a member's own flight in a lane that showed and is not held: re-queued at every reveal, the flush
+          // never settled (#4840).
+          if ((c.flags & REACTIVE_SCREEN_READ) == 0 && (l.held || !l.shown)) {
             c.flags |= REACTIVE_FRAME_READ | REACTIVE_SCREEN_READ;
             l.reruns.add(c);
           }

@@ -563,7 +563,8 @@ public final class Stores {
 
   private void notifyContainer(Node k, Object pb) {
     Scheduler q = s();
-    if ((k.config & CONFIG_OVERRIDE) != 0) {
+    // Not a derive's lane pass that listed the container already: there is no guess to land on (#4843).
+    if ((k.config & (CONFIG_OVERRIDE | CONFIG_GUESS)) == (CONFIG_OVERRIDE | CONFIG_GUESS)) {
       rt.core.setSignal(k, pb);
     } else {
       if ((k.config & CONFIG_HELD) != 0) {

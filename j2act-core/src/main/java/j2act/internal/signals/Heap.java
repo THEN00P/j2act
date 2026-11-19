@@ -167,8 +167,28 @@ final class Heap {
     }
     if (el.height != newHeight) {
       el.height = newHeight;
+      liftOwned(el, newHeight);
       for (Link s = el.subs; s != null; s = s.nextSub) {
         insertIntoHeapHeight(s.sub);
+      }
+    }
+  }
+
+  /**
+   * A raised node's owned computations (through roots) move above it (#4848): an owner raised after its children's
+   * birth left a grandchild at or below it, to run before the owner whose run disposes it. A child waiting in the heap
+   * keeps its seat this pass; what it owns moves either way.
+   */
+  private static void liftOwned(Owner o, int h) {
+    for (Owner c = o.firstChild; c != null; c = c.nextSibling) {
+      if (c.root || !(c instanceof Node)) {
+        liftOwned(c, h);
+      } else if (((Node) c).height <= h) {
+        Node n = (Node) c;
+        if ((n.flags & (REACTIVE_IN_HEAP | REACTIVE_IN_HEAP_HEIGHT)) == 0) {
+          n.height = h + 1;
+        }
+        liftOwned(n, h + 1);
       }
     }
   }

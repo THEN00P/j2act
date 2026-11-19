@@ -427,8 +427,9 @@ final class Verdict {
       // A lane reader of a guess in its own lane reads the guess: the truth staged beneath it is the hold's (#4751).
       for (Node.Link d = node.deps; d != null; d = d.nextDep) {
         if ((d.dep.config & CONFIG_STAGED_ERROR) != 0
-          && !((d.dep.config & CONFIG_GUESS) != 0 && node.x != null && node.x.transaction != null
-            && node.x.transaction.lane && d.dep.x.transaction == node.x.transaction)) {
+          // Nor does a lane reader carry a truth's staging: that is the hold's too, shown at its reveal (F-1, #4841).
+          && !(node.x != null && node.x.transaction != null && node.x.transaction.lane
+            && ((d.dep.config & CONFIG_GUESS) == 0 || d.dep.x.transaction == node.x.transaction))) {
           node.pendingValue = el.pendingValue;
           node.config |= CONFIG_STAGED_ERROR;
           s().queuePendingNode(node);
