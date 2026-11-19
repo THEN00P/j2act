@@ -620,6 +620,10 @@ final class Lanes {
     }
     int status = el.statusFlags;
     if (!guess && (status & STATUS_ERROR) != 0) {
+      // The error still belongs to this lane: a downstream memo selects the same update before read() throws.
+      if (c != null && rt.core.tracking && (c.config & CONFIG_CHILDREN_FORBIDDEN) == 0) {
+        enterLane(l, c);
+      }
       return NOT_PENDING;
     }
     if (c == null) {

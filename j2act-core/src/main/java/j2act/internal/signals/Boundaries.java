@@ -142,6 +142,16 @@ final class Boundaries {
 
   private void caught(Boundary b, Node node, Throwable error, Node source) {
     if (b.type == STATUS_ERROR) {
+      // The reader's selected outcome owns publication: a latest or optimistic lane is not lost converting its error
+      // into fallback content.
+      Scheduler q = s();
+      Transaction lane = q.laneStageHook != null
+        ? (q.passLane != null ? q.passLane
+          : node.x != null && node.x.transaction != null && node.x.transaction.lane ? q.txOf(node) : null)
+        : null;
+      if (q.laneStageHook != null && !b.fallback) {
+        b.lane = lane;
+      }
       if (error == null && node.x != null) {
         error = node.x.error;
       }
@@ -152,6 +162,10 @@ final class Boundaries {
         source = node;
       }
       Throwable cause = Errors.unwrapStatusError(error);
+      // Later errors update the shown fallback through this signal: its message publishes with the swap.
+      if (q.laneStageHook != null && lane != null) {
+        q.laneStageHook.stage(b.error, lane, true, false);
+      }
       rt.core.setSignal(b.error, cause);
       rt.reportClientError(cause, b.owner, source);
     } else if (!b.detached) {
@@ -585,6 +599,18 @@ final class Boundaries {
 
   private Object outputPass(Boundary b, Node tree, int type) throws Exception {
     Node self = (Node) rt.core.context;
+    Scheduler q = s();
+    // Keep the ahead swap's lane for recovery as well as for the fallback: else the answer parks in the input's hold.
+    if (q.laneStageHook != null && b.type == STATUS_ERROR) {
+      if (b.fallback && (self.config & CONFIG_OVERRIDE) != 0 && b.lane == null) {
+        b.lane = q.txOf(self);
+      }
+      if (b.lane != null) {
+        q.passLane = b.lane;
+        self.flags |= REACTIVE_LANE_READ;
+        b.lane = null;
+      }
+    }
     if (!b.armed && (self.config & CONFIG_HELD) == 0) {
       self.config |= CONFIG_FRAME;
     }
