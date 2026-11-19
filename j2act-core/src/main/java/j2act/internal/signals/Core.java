@@ -342,10 +342,12 @@ final class Core {
             }
           }
         }
+        // Lane work re-staged: the lane's members re-derive as its work (laneDirty notifies them first).
         if (el.subs != null) {
-          q.insertSubs(el);
           if (lane != null) {
             q.laneDirty(el, lane);
+          } else {
+            q.insertSubs(el);
           }
         }
       } else if (el.height != oldHeight) {

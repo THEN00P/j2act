@@ -693,12 +693,15 @@ final class Scheduler {
   }
 
   void laneDirty(Node node, Transaction l) {
+    insertSubs(node);
     for (Link s = node.subs; s != null; s = s.nextSub) {
       Node c = s.sub;
       Transaction t = c.x != null ? c.x.transaction : null;
-      // A reader the parent holds pending on its re-ask re-derives from the guess as the lane's work (#4629).
-      if (t != null && l.parent != null && c.type == 0 && (c.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD
-        && (c.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == STATUS_PENDING && resolveTx(t) == resolveTx(l.parent)) {
+      // A reader a hold has pending on its re-ask re-derives from the guess as the lane's work (#4629): the hold is
+      // the lane's parent's, or any hold whose flights the reader waits on are all refresh() re-asks (#4666).
+      if (t != null && c.type == 0 && (c.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD
+        && (c.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == STATUS_PENDING
+        && (resolveTx(t) == resolveTx(l.parent) || allReasks(c))) {
         list(c, t = l);
       }
       if (c.type == EFFECT_RENDER && (node.config & CONFIG_VERDICT) != 0) {
@@ -709,6 +712,18 @@ final class Scheduler {
         c.flags |= REACTIVE_LANE_DIRTY;
       }
     }
+  }
+
+  private static boolean allReasks(Node c) {
+    if (c.x.pendingSources == null) {
+      return c.x.reask;
+    }
+    for (Node p : c.x.pendingSources) {
+      if (!p.x.reask) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void queueEffectRun(Node node) {

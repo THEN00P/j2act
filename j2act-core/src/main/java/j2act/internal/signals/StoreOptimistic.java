@@ -540,7 +540,6 @@ final class StoreOptimistic implements Stores.OptHooks {
     }
     x.lane = value;
     if (node.subs != null) {
-      q.insertSubs(node);
       q.laneDirty(node, lane);
     }
   }

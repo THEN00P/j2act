@@ -272,7 +272,6 @@ final class Lanes {
       }
       rt.core.ext(n).q = g.question;
       if (changed) {
-        q.insertSubs(n);
         q.laneDirty(n, q.txOf(n));
       }
     }
@@ -592,7 +591,10 @@ final class Lanes {
         if (never && l.shown) {
           return NOT_PENDING;
         }
-        if (!guess && el.pendingValue != NOT_PENDING && (c.config & CONFIG_HELD) != 0 && q.flushTransaction != null
+        // A held leaf reads its frame's staging; not a shown guess lane's, whose staging is the lane's next
+        // reveal (F-11, D-26, #4666).
+        if (!guess && (!l.shown || isVerdict(l)) && el.pendingValue != NOT_PENDING && (c.config & CONFIG_HELD) != 0
+          && q.flushTransaction != null
           && Scheduler.resolveTx(q.flushTransaction) == q.txOf(c)) {
           return el.pendingValue;
         }
@@ -777,7 +779,6 @@ final class Lanes {
       if (el.fn != null) {
         el.time = q.clock;
       }
-      q.insertSubs(el);
       q.laneDirty(el, l);
     }
     q.schedule();
@@ -973,5 +974,10 @@ final class Lanes {
       }
     }
     return false;
+  }
+
+  /** Is {@code l} a verdict lane (its parent's verdict)? False for none. */
+  static boolean isVerdict(Transaction l) {
+    return l != null && l.parent != null && l.parent.verdict == l;
   }
 }
