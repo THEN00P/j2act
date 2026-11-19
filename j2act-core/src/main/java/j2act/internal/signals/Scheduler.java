@@ -603,7 +603,8 @@ final class Scheduler {
         continue;
       }
       if ((r.flags & REACTIVE_FRAME_READ) != 0 || (observeFlightHook != null && (r.config & CONFIG_VERDICT) != 0)) {
-        frame |= r.type != 0 || s == r;
+        // So does a memo the landing holds: its staged value is in this frame (F-1, A15, #4648).
+        frame |= r.type != 0 || s == r || (r.config & CONFIG_HELD) != 0;
         if (!u.lane) {
           r.flags &= ~REACTIVE_FRAME_READ;
         }

@@ -55,6 +55,10 @@ final class Verdict {
 
   private boolean observeFlight(Node c, Node el) {
     Scheduler q = s();
+    // A render effect routed into a verdict lane reads the screen as lane work (D-26, #4661).
+    if (q.passLane != null && c.type != 0 && (c.statusFlags & STATUS_UNINITIALIZED) == 0) {
+      return true;
+    }
     if ((el.config & CONFIG_INPUTS_PUBLISHED) != 0
       || ((el.config & CONFIG_HELD) != 0 && rt.core.bornInto(c, q.txOf(el)))) {
       return false;
@@ -65,6 +69,7 @@ final class Verdict {
       if ((el.config & CONFIG_HELD) == 0) {
         q.queuePendingNode(el);
       }
+      rt.lanes.ahead.remove(c);
       verdictRead(c, q.flushTransaction, true);
     }
     return true;
@@ -115,7 +120,6 @@ final class Verdict {
       return true;
     }
     return owner.pendingValue != NOT_PENDING && !latestActive && !owner.x.reask
-      && (owner.statusFlags & STATUS_UNINITIALIZED) == 0
       && (owner.x.shownError != null || owner.equals == null || !owner.equals.test(owner.value, owner.pendingValue));
   }
 
@@ -129,6 +133,10 @@ final class Verdict {
         verdictRead(c, q.txOf(el), false);
       } else if (q.running) {
         if (!probing) {
+          // Read ahead of, by a pass no plain read of a flight routed yet: no frame read of it (F-6, #4661).
+          if ((c.flags & REACTIVE_LANE_READ) == 0) {
+            rt.lanes.ahead.add(c);
+          }
           if (q.flushTransaction == null) {
             q.joinFuture(null);
             q.flushTransaction.latest = true;
@@ -283,12 +291,32 @@ final class Verdict {
         if (tracked) {
           verdictRead(c, t, false);
         }
-        if (probing && heldNotFinal(owner)) {
-          probeFound = true;
+        if (probing) {
+          // #4648: a pass the hold holds is the hold's work, shown at the landing: its probe is final there. It
+          // read the committed value, so it is a stale reader of it and re-derives on the landed world (A15, F-1).
+          if (c != null && (c.config & CONFIG_HELD) != 0) {
+            // In the flush that lands the hold, the probe reads the landed world (F-1).
+            if (el.pendingValue != NOT_PENDING && !q.blocked(t)) {
+              watchVerdict(c, false);
+              return staged(el);
+            }
+            if (c.x.q == 0) {
+              q.staleReader(c, t);
+            }
+          } else {
+            if (heldNotFinal(owner)) {
+              probeFound = true;
+            }
+            // A pass that first reads the held node in this flush is not held yet: if the flush parks with it, it
+            // runs again next round, held, and its probe is final there (D-23). Not an async memo or a first pass.
+            if (owned && !tracked && !(c.x != null && c.x.q != 0) && (c.statusFlags & STATUS_UNINITIALIZED) == 0) {
+              watchVerdict(c, false);
+            }
+          }
         }
         if (latestActive && el.pendingValue != NOT_PENDING) {
           if (!tracked && q.flushTransaction != null && !q.running) {
-            q.joinFuture(q.txOf(el));
+            q.joinFuture(t);
           }
           return heldLatest(el, tracked ? c : null);
         }
@@ -313,7 +341,9 @@ final class Verdict {
       } else if (tracked && probing) {
         watchVerdict(c, false);
       }
-      if (latestActive) {
+      // A probe in a pass reads as its plain read does (#4648): a first value staged this flush has no committed
+      // value, and an untracked read sees the flush's staging. If the flush parks, that is the hold's frame.
+      if (latestActive || uninitialized || (owned && !tracked)) {
         if (q.running) {
           return staged(el);
         }

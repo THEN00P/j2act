@@ -854,9 +854,23 @@ final class Lanes {
     return false;
   }
 
+  /** This flush's verdict readers that read a flight ahead of the frame (#4661, the seam). */
+  final List<Node> ahead = new ArrayList<>();
+
   private void laneSeams(Transaction t) {
     Scheduler q = s();
     revealing.clear();
+    // #4661 (F-6): a verdict reader whose pass read a flight of the frame ahead of it, before any plain read of one,
+    // is no frame reader of it: the mark comes off and the reader holds nothing. It keeps the committed value.
+    for (Node c : new ArrayList<>(ahead)) {
+      if ((c.flags & REACTIVE_FRAME_READ) != 0) {
+        c.flags ^= REACTIVE_FRAME_READ;
+        if (t != null) {
+          t.reruns.remove(c);
+        }
+      }
+    }
+    ahead.clear();
     List<Transaction> leaked = new ArrayList<>();
     if (t != null) {
       for (int i = 0; i < q.stagedReaders.size(); i++) {

@@ -807,10 +807,11 @@ final class Core {
     }
     if (q.laneStageHook != null && (el.statusFlags & STATUS_PENDING) != 0 && !committed
       && (el.config & CONFIG_OVERRIDE) == 0 && (el.statusFlags & STATUS_UNINITIALIZED) == 0) {
-      if (q.passLane != null && !(c != null && (c.statusFlags & STATUS_UNINITIALIZED) != 0)) {
-        committed = true;
-      } else if (c != null && (c.config & CONFIG_VERDICT) != 0) {
+      // A verdict reader first, in a lane or not: a memo's plain read of a flight observes it (A10, #4661).
+      if (c != null && (c.config & CONFIG_VERDICT) != 0) {
         committed = q.observeFlightHook.test(c, el);
+      } else if (q.passLane != null && !(c != null && (c.statusFlags & STATUS_UNINITIALIZED) != 0)) {
+        committed = true;
       }
     }
     if ((el.statusFlags & STATUS_PENDING) != 0 && !committed) {
