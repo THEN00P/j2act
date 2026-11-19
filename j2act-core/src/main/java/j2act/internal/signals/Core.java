@@ -264,7 +264,8 @@ final class Core {
         : REACTIVE_JOINED;
       joined = (el.flags & joinMask) != 0;
       if (q.observeFlightHook != null) {
-        el.config = (el.config & ~CONFIG_VERDICT) | (el.flags & REACTIVE_PROBED);
+        el.config = (el.config & ~(CONFIG_VERDICT | CONFIG_OWN_PROBE | CONFIG_AHEAD)) | (el.flags & REACTIVE_PROBED)
+          | ((el.flags & REACTIVE_WINDOW) << 9) | ((el.flags & REACTIVE_AHEAD) << 11);
       }
       el.flags = el.flags & (REACTIVE_ZOMBIE | REACTIVE_DISPOSED | REACTIVE_FRAME_READ | REACTIVE_STAGED_READ
         | REACTIVE_LANE_READ | REACTIVE_SCREEN_READ | REACTIVE_PROBE_UNANSWERED);
@@ -486,6 +487,10 @@ final class Core {
   private boolean frameRead(Node c, Node el) {
     Scheduler q = s();
     boolean verdictReader = q.observeFlightHook != null && (c.config & CONFIG_VERDICT) != 0;
+    // #4544: nor a pass whose posture is only inherited, reading the hold's own write: it is the hold's work.
+    if (verdictReader && q.holdStagingHook.test(c, el)) {
+      return false;
+    }
     boolean lane = q.laneStageHook != null && q.passLane != null;
     if ((!lane || ((c.statusFlags & STATUS_UNINITIALIZED) != 0 && (el.statusFlags & STATUS_PENDING) != 0))
       && !verdictReader && ((c.config & (EFFECT_RENDER << 23)) == 0 || (el.config & CONFIG_INPUTS_PUBLISHED) != 0)) {
@@ -769,6 +774,14 @@ final class Core {
         rt.graph.link(el, c);
         if (el.fn != null) {
           pullComputed(el, c);
+          // #4544 (F-6): a render effect never committed reading a settled verdict reader's value reads ahead.
+          if (q.observeFlightHook != null && c.type == EFFECT_RENDER && (el.config & CONFIG_VERDICT) != 0
+            && (el.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == 0
+            && ((c.statusFlags & STATUS_UNINITIALIZED) != 0
+              ? (c.config & CONFIG_HELD) != 0 || q.flushTransaction != null
+              : (c.config & CONFIG_HELD_FRAME) != 0)) {
+            c.flags |= REACTIVE_AHEAD;
+          }
           if (q.observeFlightHook != null && c.type == 0) {
             c.flags |= el.config & CONFIG_VERDICT & ((el.statusFlags & STATUS_PENDING) != 0
               && ((c.config & CONFIG_STAGED) != 0 || (c.statusFlags & STATUS_UNINITIALIZED) != 0) ? c.config : -1);
@@ -880,7 +893,9 @@ final class Core {
   boolean stagedScreen(Node c, Node el) {
     Scheduler q = s();
     if (q.flushTransaction == null || bornInto(c, q.flushTransaction)
-      || (el != null && (el.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD)) {
+      || (el != null && (el.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD)
+      // #4544: this flush's own write, read by a pass whose posture is only inherited, is the frame's derivation.
+      || (q.observeFlightHook != null && el != null && q.holdStagingHook.test(c, el))) {
       return false;
     }
     if (q.observeFlightHook != null && q.flushTransaction == q.latestOpened && q.passLane == null

@@ -27,6 +27,8 @@ final class Constants {
   static final int REACTIVE_SCREEN_READ = 1 << 18;
   static final int REACTIVE_PROBE_UNANSWERED = 1 << 19;
   static final int REACTIVE_WINDOW = 1 << 21;
+  /** #4544: a render effect born into a hold read a settled verdict reader's value this pass. */
+  static final int REACTIVE_AHEAD = 1 << 20;
   static final int REACTIVE_RELEASE_AFTER = 1 << 22;
 
   static final int CONFIG_OWNED_WRITE = 1 << 0;
@@ -51,6 +53,10 @@ final class Constants {
   static final int CONFIG_PROMOTED = 1 << 22;
   static final int CONFIG_FRAME = 1 << 23;
   static final int CONFIG_ASYNC = 1 << 29;
+  /** #4544: the node's last pass opened a verdict window of its own (REACTIVE_WINDOW, kept). */
+  static final int CONFIG_OWN_PROBE = REACTIVE_WINDOW << 9;
+  /** #4544 (F-6): the effect's last pass read a display-ahead value; the sign bit, tested by {@code &} only. */
+  static final int CONFIG_AHEAD = REACTIVE_AHEAD << 11;
 
   static final int STATUS_NONE = 0;
   static final int STATUS_PENDING = 1 << 0;

@@ -96,6 +96,7 @@ final class Scheduler {
   java.util.function.BiConsumer<Node, Node> stageMarkHook;
   Consumer<Node> keepReadersHook;
   Predicate<Node> attachHook;
+  java.util.function.BiPredicate<Node, Node> holdStagingHook;
   java.util.function.Function<Node, Node> laggingHook;
   Predicate<Node> markedHook;
   Runnable witnessMarkHook;
@@ -273,14 +274,18 @@ final class Scheduler {
         continue;
       }
       if (n.type == EFFECT_RENDER) {
-        if (onScreen(n, judge != null ? judge : owner)) {
+        // #4544 (F-6): a frame pending on what a display-ahead value asked for does not hold; a lane's reveal waits.
+        if (!(observeFlightHook != null && (n.config & CONFIG_AHEAD) != 0 && !owner.lane)
+          && onScreen(n, judge != null ? judge : owner)) {
           return true;
         }
         continue;
       }
       for (Link s = n.subs; s != null; s = s.nextSub) {
         Node r = s.sub;
-        if (((r.type == EFFECT_RENDER && (r.statusFlags & STATUS_PENDING) != 0) || (r.flags & REACTIVE_FRAME_READ) != 0
+        if (((r.type == EFFECT_RENDER && (r.statusFlags & STATUS_PENDING) != 0
+          && !(observeFlightHook != null && (r.config & CONFIG_AHEAD) != 0 && !owner.lane))
+          || (r.flags & REACTIVE_FRAME_READ) != 0
           || ((r.config & CONFIG_REDERIVE) != 0 && r.statusFlags == STATUS_PENDING))
           && (s.gen == r.depGen || (r.x != null && r.x.error != null)) && (r.flags & REACTIVE_DISPOSED) == 0
           && onScreen(r, judge != null ? judge : owner)) {

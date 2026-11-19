@@ -25,6 +25,7 @@ final class Verdict {
     q.stageMarkHook = this::stageMark;
     q.keepReadersHook = this::keepReaders;
     q.attachHook = this::attachWaits;
+    q.holdStagingHook = this::holdStaging;
     q.witnessMarkHook = () -> {
       if (probing) {
         probeFound = true;
@@ -222,6 +223,11 @@ final class Verdict {
     rt.core.prepareComputed(owner, false);
     if (c != null && rt.core.tracking) {
       rt.graph.link(el, c);
+      // #4544: asked of this staging, under its hold or this flush.
+      if (el.pendingValue != NOT_PENDING) {
+        rt.core.ext(el).askedIn = (el.config & CONFIG_HELD) != 0 ? q.txOf(el)
+          : q.flushTransaction != null ? q.flushTransaction : (Object) q.clock;
+      }
       if (el.fn != null) {
         rt.core.pullComputed(owner, c);
       }
@@ -437,5 +443,31 @@ final class Verdict {
     }
     t.queues[0].add(node.boundRunEffect);
     return true;
+  }
+
+  /**
+   * #4544: a verdict reader whose posture is only inherited (it read a verdict memo, and neither this pass nor its
+   * last opened a window) is the hold's work where it reads the hold's own sync write: not an async memo's answer,
+   * not a lane's, and not a staging a window asked of under the hold that holds it, or in this flush. It is served
+   * that staging, leaving the verdict lane an earlier read of the verdict memo seated it in.
+   */
+  private boolean holdStaging(Node c, Node el) {
+    Scheduler q = s();
+    Object a = el.x != null ? el.x.askedIn : null;
+    if ((c.config & (CONFIG_OWN_PROBE | CONFIG_FRAME)) != 0 || (c.flags & (REACTIVE_WINDOW | REACTIVE_PROBE_UNANSWERED)) != 0
+      || el.pendingValue == NOT_PENDING || (el.config & (CONFIG_ASYNC | CONFIG_OVERRIDE)) != 0
+      || (a instanceof Long && (Long) a == q.clock)
+      || (a instanceof Transaction && Scheduler.resolveTx((Transaction) a)
+        == Scheduler.resolveTx((el.config & CONFIG_HELD) != 0 ? el.x.transaction : q.flushTransaction))) {
+      return false;
+    }
+    if (q.passLane == null) {
+      return true;
+    }
+    if (q.passLane.parent.verdict == q.passLane) {
+      q.passLane = null;
+      return true;
+    }
+    return false;
   }
 }

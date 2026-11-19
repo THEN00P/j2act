@@ -26,6 +26,8 @@ final class NodeExtension {
   long flushedAt = -1;
   /** Provenance (A18): the question this node's guess or latest flight answers. */
   int q;
+  /** #4544: the hold (a Transaction) or, before one, the flush clock (a Long) under which a window read this staging. */
+  Object askedIn;
   /** Lanes: the lane's value while CONFIG_OVERRIDE is set. */
   Object lane = Constants.NOT_PENDING;
   /** affects() marks live on this node. */
