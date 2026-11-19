@@ -459,6 +459,10 @@ final class Verdict {
       if (d != null) {
         continue;
       }
+      // Not a pass whose frame holds a mount a probing pass opened: it attaches at the landing, as the mount does.
+      if (rt.lanes.heldMountUnder(r, null)) {
+        continue;
+      }
       q.dirtyQueue.deleteFromHeap(r);
       r.flags &= ~(REACTIVE_DIRTY | REACTIVE_CHECK);
       r.config &= ~CONFIG_HELD;

@@ -118,8 +118,10 @@ final class Core {
       // The creator's flags on a first pass (0 with no creator running).
       Node creator = create ? creatorPass(context) : null;
       int cf = creator != null ? creator.flags : 0;
-      // S-46 (D-25): a first pass under a pass that probed is the mount a display-ahead read gates.
-      if ((cf & REACTIVE_PROBED) != 0) {
+      // S-46 (D-25): a first pass under a pass that probed is the mount a display-ahead read gates; so is one its
+      // first pass creates: a boundary inside the mount is the mount (S-58).
+      if ((cf & REACTIVE_PROBED) != 0 || (creator != null && (creator.config & CONFIG_MOUNT_AHEAD) != 0
+        && (creator.statusFlags & STATUS_UNINITIALIZED) != 0)) {
         el.config |= CONFIG_MOUNT_AHEAD;
       }
       Transaction next = null;
@@ -310,6 +312,8 @@ final class Core {
       // A recovery to the last good value in a flush that has joined a hold is a change of answer (D-41, S-53).
       boolean valueChanged = (unstaged && wasUninitialized != 0 && isEffect == 0)
         || (el.x != null && el.x.shownError != null) || (outgoingError != null && tx != null) || replaced
+        // Lane work on a node a held pass created has no screen: the lane's value is a change (#3835, F-11).
+        || (lane != null && el.parent instanceof Node && (el.parent.config & CONFIG_HELD) != 0)
         || !isSame(el, compareValue, value);
       if (isEffect != 0 && valueChanged
         && !((el.flags & REACTIVE_SCREEN_READ) != 0 && !el.modified && ValueEquality.same(el.prevValue, value))
@@ -507,13 +511,21 @@ final class Core {
       q.askerJoinsHook.join(c, el, q.txOf(el));
       return false;
     }
+    // S-46 (D-25): a render effect a probing pass is mounting is not a leaf of the screen: its first pass reading the
+    // hold's staging or flight is born held, whatever else it read (S-58). Not lane work reading a held node that is
+    // not pending: a lane never makes a flush the hold's (D-37).
+    if (q.laneStageHook != null && (c.config & CONFIG_MOUNT_AHEAD) != 0 && (c.statusFlags & STATUS_UNINITIALIZED) != 0
+      && (!lane || (el.statusFlags & STATUS_PENDING) != 0)) {
+      joinPass(c, el);
+      return false;
+    }
     // #4544: not a pass whose posture is only inherited, reading the hold's own write: it is the hold's work.
     // Not served the screen, the pass reads the staging and joins el's transaction, but for the lane case below.
     if (!(verdictReader && q.holdStagingHook.test(c, el))
       && !((!lane || ((c.statusFlags & STATUS_UNINITIALIZED) != 0 && (el.statusFlags & STATUS_PENDING) != 0))
         && !verdictReader && ((c.config & (EFFECT_RENDER << 23)) == 0 || (el.config & CONFIG_INPUTS_PUBLISHED) != 0
           // S-46 (D-25): a render effect a probing pass is mounting is born held, not a leaf of the screen.
-          || ((c.config & CONFIG_MOUNT_AHEAD) != 0 && (c.statusFlags & STATUS_UNINITIALIZED) != 0)))) {
+))) {
       Transaction t = q.txOf(el);
       // A lane re-based over this transaction's answer reads that staging as the lane's render effects do,
       // joining nothing: lane work never makes a flush the hold's (D-37, #4643).
@@ -836,7 +848,9 @@ final class Core {
     if (q.laneStageHook != null && (el.statusFlags & STATUS_PENDING) != 0 && !committed
       && (el.config & CONFIG_OVERRIDE) == 0 && (el.statusFlags & STATUS_UNINITIALIZED) == 0) {
       // A verdict reader first, in a lane or not: a memo's plain read of a flight observes it (A10, #4661).
-      if (c != null && (c.config & CONFIG_VERDICT) != 0) {
+      // A mount a probing pass opened observes the flight on its first pass whatever it read ahead (S-46, S-58).
+      if (c != null && (c.config & CONFIG_VERDICT) != 0
+        && !((c.config & CONFIG_MOUNT_AHEAD) != 0 && (c.statusFlags & STATUS_UNINITIALIZED) != 0)) {
         committed = q.observeFlightHook.test(c, el);
       } else if (q.passLane != null && !(c != null && (c.statusFlags & STATUS_UNINITIALIZED) != 0)) {
         committed = true;
@@ -858,7 +872,8 @@ final class Core {
       }
     }
     if (el.fn != null && (el.statusFlags & STATUS_ERROR) != 0) {
-      if (tracking && el.time < q.clock) {
+      // Not a zombie: its fate is the seam's (L2); its retry livelocked with the live frame's readers (S-58).
+      if (tracking && el.time < q.clock && (el.flags & REACTIVE_ZOMBIE) == 0) {
         recompute(el, false);
         return read(el);
       }

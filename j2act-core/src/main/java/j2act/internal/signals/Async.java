@@ -731,8 +731,9 @@ final class Async {
         || (q.holdWorkHook != null && ((sub.config & CONFIG_VERDICT) != 0 || (pendingSource != null && (sub.config & CONFIG_STAGED_ERROR) != 0))
           && !(pendingSource != null && q.holdWorkHook.test(sub, el)))
         || (status == STATUS_PENDING && link.gen != sub.depGen)) {
-        if (status != STATUS_PENDING) {
-          removePendingSource(sub, el);
+        // Its dependents carry the entry too: a re-derive to the same value notifies none of them, so it is retired.
+        if (status != STATUS_PENDING && removePendingSource(sub, el)) {
+          settlePendingSource(sub, el);
         }
         q.dirtyQueue.enqueueSub(sub);
         q.schedule();

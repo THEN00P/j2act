@@ -649,6 +649,11 @@ final class Lanes {
           return el.pendingValue;
         }
         if (l.held || pending) {
+          // S-58 (D-25): a mount a probing pass opened is born held on its first pass's plain read of the lane's
+          // flight, not served the screen.
+          if (pending && (c.config & CONFIG_MOUNT_AHEAD) != 0 && (c.statusFlags & STATUS_UNINITIALIZED) != 0) {
+            return NOT_PENDING;
+          }
           if ((c.flags & REACTIVE_SCREEN_READ) == 0) {
             c.flags |= REACTIVE_FRAME_READ | REACTIVE_SCREEN_READ;
             l.reruns.add(c);
@@ -890,31 +895,53 @@ final class Lanes {
       }
     }
     // S-46 (D-25): a mount a display-ahead read gates attaches at the landing; its verdict lane reveals with it.
-    if (t.lane && t.parent.verdict == t && mountPending(t)) {
+    if (t.lane && t.parent.verdict == t && heldMountUnder(null, t)) {
       return true;
     }
     return (t.lane && linkBlocked(t)) || nestedBlocked(t);
   }
 
   /**
-   * A mount a probing pass opened, born held (CONFIG_MOUNT_AHEAD) under one of l's nodes, on screen, still waiting: on
-   * its own flight, or on a flight its frame holds. Found on the live transactions' node lists.
+   * Mounts a probing pass opened and a hold holds (CONFIG_MOUNT_AHEAD, born held render effects): collected from the
+   * live transactions' node lists, each scanned once past where it was last scanned, and pruned as they attach or go.
    */
-  private boolean mountPending(Transaction l) {
-    Scheduler q = s();
-    for (Transaction t : q.transactions) {
+  private final List<Node> aheadMounts = new ArrayList<>();
+
+  private void collectMounts() {
+    for (Transaction t : s().transactions) {
       List<Node> nodes = t.nodes;
-      for (int i = 0; i < nodes.size(); i++) {
+      for (int i = t.scanned; i < nodes.size(); i++) {
         Node r = nodes.get(i);
-        if ((r.config & (CONFIG_MOUNT_AHEAD | CONFIG_HELD)) == (CONFIG_MOUNT_AHEAD | CONFIG_HELD)
-          && (r.statusFlags & STATUS_UNINITIALIZED) != 0 && (r.flags & REACTIVE_DISPOSED) == 0
-          && !(q.hiddenHook != null && q.hiddenHook.test(r))
-          && ((r.statusFlags & STATUS_PENDING) != 0 || anyPendingDerivation(nodes))) {
-          for (Owner o = r.parent; o != null; o = o.parent) {
-            if (o.x != null && o.x.transaction == l) {
-              return true;
-            }
-          }
+        if (r.type == EFFECT_RENDER && (r.config & CONFIG_MOUNT_AHEAD) != 0) {
+          aheadMounts.add(r);
+        }
+      }
+      t.scanned = nodes.size();
+    }
+  }
+
+  /**
+   * A collected mount still held, uninitialized, on screen and waiting (on its own flight, an action open in its
+   * frame, or a flight its frame holds) under o, or under one of lane l's nodes (S-58).
+   */
+  boolean heldMountUnder(Owner o, Transaction l) {
+    Scheduler q = s();
+    collectMounts();
+    for (int i = aheadMounts.size() - 1; i >= 0; i--) {
+      Node r = aheadMounts.get(i);
+      if ((r.statusFlags & STATUS_UNINITIALIZED) == 0 || (r.config & CONFIG_HELD) == 0
+        || (r.flags & REACTIVE_DISPOSED) != 0) {
+        aheadMounts.remove(i);
+        continue;
+      }
+      Transaction t = Scheduler.resolveTx(r.x.transaction);
+      if ((q.hiddenHook != null && q.hiddenHook.test(r))
+        || !((r.statusFlags & STATUS_PENDING) != 0 || t.open != 0 || anyPendingDerivation(t.nodes))) {
+        continue;
+      }
+      for (Owner p = r.parent; p != null; p = p.parent) {
+        if (l != null ? p.x != null && p.x.transaction == l : p == o) {
+          return true;
         }
       }
     }

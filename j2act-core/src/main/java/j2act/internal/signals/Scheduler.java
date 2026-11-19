@@ -44,6 +44,8 @@ final class Scheduler {
     boolean latest;
     /** On a lane: the flights of it a frame's own passes asked (F-2, S-57); the frame (over) holds on them. */
     List<Node> waits;
+    /** How many of nodes Lanes.collectMounts has looked at (S-58). */
+    int scanned;
 
     Transaction(boolean lane, Transaction parent) {
       this.lane = lane;
