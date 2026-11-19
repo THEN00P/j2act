@@ -86,6 +86,14 @@ final class Boundaries {
     return (Boundary) node.ctx.get(BOUNDARY);
   }
 
+  /**
+   * The statuses that keep reader r of b: b's own and pending and, for a loading boundary behind an error fallback,
+   * the error of a reader directly under it: there is nothing to reveal, the error shows above (#4870).
+   */
+  private int keeps(Boundary b, Node r) {
+    return b.type | STATUS_PENDING | (behindError(b.parent) && boundaryOf(r) == b ? STATUS_ERROR : 0);
+  }
+
   /** An error boundary at or above {@code b} shows its fallback: content under it is not on screen. */
   private static boolean behindError(Boundary b) {
     return b != null && ((b.type == STATUS_ERROR && b.fallback) || behindError(b.parent));
@@ -211,7 +219,7 @@ final class Boundaries {
       if (!collecting.isEmpty()) {
         for (Boundary b = boundaryOf(node); b != null; b = b.parent) {
           Node r = b.readers.get(node);
-          if ((r == null || (r.statusFlags & (b.type | STATUS_PENDING)) == 0) && b.readers.remove(node) != null
+          if ((r == null || (r.statusFlags & keeps(b, node)) == 0) && b.readers.remove(node) != null
             && prune(b, 0) == 0) {
             if (b.fallback) {
               redraw(b);
@@ -389,7 +397,8 @@ final class Boundaries {
       Node r = e.getKey();
       Node src = e.getValue();
       if (((r.flags | src.flags) & REACTIVE_DISPOSED) == 0) {
-        if ((((r.statusFlags & mask) != 0 || ((src.statusFlags & mask) != 0 && reads(r, src, new HashSet<>())))
+        int k = keeps(b, r);
+        if ((((r.statusFlags & k) != 0 || ((src.statusFlags & k) != 0 && reads(r, src, new HashSet<>())))
           && !((mask & STATUS_ERROR) != 0 && caughtBelow(b, r, src)))
           || ((mask & STATUS_ERROR) != 0 && (src.config & CONFIG_STAGED_ERROR) != 0)
           || ((r.config & CONFIG_VERDICT) != 0 && (r.flags & REACTIVE_IN_HEAP) != 0)) {

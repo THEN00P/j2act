@@ -569,7 +569,7 @@
   globalThis.afterAll = afterAll;
   globalThis.__vitest = { it, test, describe, expect, vi, beforeEach, afterEach, beforeAll, afterAll };
   globalThis.queueMicrotask ??= f => void Promise.resolve().then(f);
-  globalThis.process ??= { env: {}, on() {}, off() {}, removeListener() {}, emit() {} };
+  globalThis.process ??= { env: {}, on() {}, off() {}, removeListener() {}, emit() {}, stdout: { write() {} }, stderr: { write() {} } };
   globalThis.AbortController ??= class {
     constructor() {
       const listeners = [];

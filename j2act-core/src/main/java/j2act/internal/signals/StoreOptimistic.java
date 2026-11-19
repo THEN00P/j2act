@@ -211,10 +211,12 @@ final class StoreOptimistic implements Stores.OptHooks {
     for (int i = kg.size() - 1; i >= 0; i--) {
       Node g = kg.get(i);
       boolean live = (g.config & (CONFIG_OVERRIDE | CONFIG_GUESS)) != 0;
-      if (!live && rt.lanes.pendingGuessOf(g) == NOT_PENDING) {
+      // A corrected guess whose screen stays until its hold lands counts for its keys: the setter composed on that
+      // screen (#4869).
+      if (!live && rt.lanes.pendingGuessOf(g) == NOT_PENDING && !((g.config & CONFIG_HELD) != 0 && keys != null)) {
         continue;
       }
-      if (rt.lanes.pendingGuessOf(g) != NOT_PENDING || keys == null) {
+      if (rt.lanes.pendingGuessOf(g) != NOT_PENDING || (live && keys == null)) {
         return entangle(t, g, keys);
       }
       Patch p = patch(g);
