@@ -435,7 +435,7 @@
   globalThis.__nodeUtil = { types: { isProxy: v => typeof v === "object" && v !== null && shimProxies.has(v) } };
   const wrappableProtos = new WeakMap();
   function isWrappable(obj) {
-    if (obj == null || typeof obj !== "object" || Object.isFrozen(obj)) return false;
+    if (obj == null || typeof obj !== "object") return false;
     const proto = Object.getPrototypeOf(obj);
     if (proto === Object.prototype || proto === null) return true;
     if (Array.isArray(obj)) return true;

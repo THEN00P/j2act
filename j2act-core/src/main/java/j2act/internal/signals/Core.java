@@ -883,12 +883,14 @@ final class Core {
       return el.pendingValue;
     }
     boolean committed = false;
+    // A re-read: link reused the link this pass's last pass made to el. Only a re-read retries an errored source.
+    boolean reread = false;
     if (c != null) {
       if (q.laneStageHook != null) {
         fresh = tracking && readsFresh(c, el);
       }
       if (tracking) {
-        rt.graph.link(el, c);
+        reread = rt.graph.link(el, c);
         if (el.fn != null) {
           pullComputed(el, c);
           if (q.observeFlightHook != null && ((c.statusFlags & STATUS_UNINITIALIZED) != 0
@@ -967,7 +969,9 @@ final class Core {
     }
     if (el.fn != null && (el.statusFlags & STATUS_ERROR) != 0) {
       // Not a zombie: its fate is the seam's (L2); its retry livelocked with the live frame's readers (S-58).
-      if (tracking && el.time < q.clock && (el.flags & REACTIVE_ZOMBIE) == 0) {
+      // A reader's first read is no question: a boundary its memo re-creates, or a mount, reads the error and asks
+      // nothing (F-9, #5002).
+      if (reread && el.time < q.clock && (el.flags & REACTIVE_ZOMBIE) == 0) {
         recompute(el, false);
         return read(el);
       }

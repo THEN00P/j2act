@@ -139,7 +139,9 @@ final class Async {
   boolean retryReaches(Node el, Node source) {
     for (Link d = el.deps; d != null; d = d.nextDep) {
       Node dep = d.dep;
-      if (dep == source || (dep.x != null && dep.x.pendingSources != null && dep.x.pendingSources.contains(source))) {
+      // A disposed dep carries nothing (#5003): it is unlinked, so no settle walk reaches it.
+      if ((dep.flags & REACTIVE_DISPOSED) == 0
+        && (dep == source || (dep.x != null && dep.x.pendingSources != null && dep.x.pendingSources.contains(source)))) {
         return true;
       }
     }
