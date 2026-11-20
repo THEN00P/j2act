@@ -435,7 +435,7 @@ final class StoreOptimistic implements Stores.OptHooks {
       }
     }
     if (structural && isArr) {
-      List<Object> rows = rowsOf(pb);
+      List<Object> rows = arrangementOf(pb, t.fam);
       // The keys of the view the setter saw that are not the guess's own rows, which a re-base takes from the new
       // truth: rows the setter removed, and rows it only carried over from the truth beneath.
       Set<Object> removed = null;
@@ -505,6 +505,22 @@ final class StoreOptimistic implements Stores.OptHooks {
     List<Object> rows = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
       rows.add(stores.unwrapValue(shape.get(array, i)));
+    }
+    return rows;
+  }
+
+  /**
+   * An arrangement's rows: a borrowed row (another family's proxy) keeps following its source through a re-base, so it
+   * stays the proxy; unwrapping it kept its old backing after the source adopted a new answer (#4931).
+   */
+  private List<Object> arrangementOf(Object array, StoreFamily fam) {
+    StoreShape shape = shape();
+    int n = shape.length(array);
+    List<Object> rows = new ArrayList<>(n);
+    for (int i = 0; i < n; i++) {
+      Object row = shape.get(array, i);
+      StoreTarget rt0 = shape.isObject(row) ? shape.targetOf(row) : null;
+      rows.add(rt0 != null && rt0.fam != fam && stores.same(rt0.px, row) ? row : stores.unwrapValue(row));
     }
     return rows;
   }
@@ -896,7 +912,7 @@ final class StoreOptimistic implements Stores.OptHooks {
       q.txOf(el).over = t.fam.node.x.transaction;
     }
     if (p.g == null || p.g == UNSET) {
-      p.g = rowsOf(guess);
+      p.g = arrangementOf(guess, t.fam);
     }
     List<Object> guessedRows = (List<Object>) p.g;
     for (Object g : guessedRows) {

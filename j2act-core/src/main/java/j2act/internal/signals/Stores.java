@@ -2197,7 +2197,12 @@ public final class Stores {
             write.run();
           }
         }
-        if (!first || (owner.statusFlags & STATUS_UNINITIALIZED) == 0) {
+        // A landing (not the sync pass's own commit): the readers held pending on the derive settle, unless core keeps
+        // the derive pending: lane work this pass served the committed value of a flight still in the air (#4862). The
+        // lane breaks out of the flight, the family's readers do not (F-4, #4927); they settle at its landing.
+        if ((!first || (owner.statusFlags & STATUS_UNINITIALIZED) == 0)
+            && !(q.laneServedHook != null && (owner.statusFlags & STATUS_PENDING) != 0
+              && q.laneServedHook.served(owner, null, true))) {
           settleFamily(fam);
         }
         if (wake) {

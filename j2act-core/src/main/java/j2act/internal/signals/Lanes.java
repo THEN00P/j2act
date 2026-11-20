@@ -10,6 +10,7 @@ import j2act.internal.signals.Scheduler.Transaction;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.function.UnaryOperator;
@@ -1277,23 +1278,35 @@ final class Lanes {
     }
   }
 
-  /** The last lane pass served a flight's committed value, and that flight. */
-  private Node served;
-  private Node servedFlight;
-  /** The pass (depGen) the flight was served in: a later pass of the same node did not read it. */
-  private int servedGen;
+  /**
+   * Each lane pass served a flight's committed value: that flight, and the pass (depGen), so a later pass of the same
+   * node did not read it. Kept per node: a pass that runs another node's pass inside its own (a nested memo created
+   * or pulled mid-body) still finds its own record after the inner one recorded (#4927).
+   */
+  private final Map<Node, Served> served = new WeakHashMap<>();
+
+  private static final class Served {
+    final Node flight;
+    final int gen;
+
+    Served(Node flight, int gen) {
+      this.flight = flight;
+      this.gen = gen;
+    }
+  }
 
   private boolean laneServed(Node c, Node el, boolean flight) {
     Scheduler q = s();
     // Lane work read a staging of the flush after it was served the committed value of a flight: it derives from the
     // write that re-asked the flight, so it waits on it (F-1, F-2; S-57).
     if (el == null) {
-      if (served == c && servedGen == c.depGen && (servedFlight.statusFlags & STATUS_PENDING) != 0) {
+      Served sv = served.get(c);
+      if (sv != null && sv.gen == c.depGen && (sv.flight.statusFlags & STATUS_PENDING) != 0) {
         // Asked with flight (Core.recompute): whether it was so served.
         if (flight) {
           return true;
         }
-        throw Errors.<RuntimeException>sneak(servedFlight.x.error);
+        throw Errors.<RuntimeException>sneak(sv.flight.x.error);
       }
       return false;
     }
@@ -1307,9 +1320,7 @@ final class Lanes {
       if (u != null) {
         q.staleReader(c, Scheduler.resolveTx(u));
       }
-      served = c;
-      servedGen = c.depGen;
-      servedFlight = el;
+      served.put(c, new Served(el, c.depGen));
       return true;
     }
     Set<Node> from = el.x != null ? el.x.pendingSources : null;
