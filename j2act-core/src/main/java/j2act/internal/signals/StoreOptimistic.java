@@ -304,7 +304,8 @@ final class StoreOptimistic implements Stores.OptHooks {
     }
     StoreFamily fam = ((StoreTarget) self.host).fam;
     Patch p = patch(self);
-    if (p.g != UNSET && !arrangementEqual(a, b, fam)) {
+    // A structural guess (a list's, the only kind that records g): the arrangement, rows by identity or key.
+    if (p.g != UNSET && !rowsSame(a, b, fam)) {
       return false;
     }
     if (p.wk != null) {
@@ -519,30 +520,18 @@ final class StoreOptimistic implements Stores.OptHooks {
     return out;
   }
 
-  /** Two arrangements (a guess's rows or keys against a truth's) by row identity, by key when the family has one. */
-  private boolean arrangementEqual(Object a, Object b, StoreFamily fam) {
+  /** A keyed list's arrangement against another's, row by row. */
+  private boolean rowsSame(Object a, Object b, StoreFamily fam) {
     StoreShape shape = shape();
-    if (shape.isArray(a) != shape.isArray(b)) {
+    if (!shape.isArray(a) || !shape.isArray(b)) {
+      return shape.isArray(a) == shape.isArray(b);
+    }
+    int n = shape.length(a);
+    if (n != shape.length(b)) {
       return false;
     }
-    if (shape.isArray(a)) {
-      int n = shape.length(a);
-      if (n != shape.length(b)) {
-        return false;
-      }
-      for (int i = 0; i < n; i++) {
-        if (!rowSame(shape.get(a, i), shape.get(b, i), fam)) {
-          return false;
-        }
-      }
-      return true;
-    }
-    List<Object> ak = shape.keys(a);
-    if (ak.size() != shape.keys(b).size()) {
-      return false;
-    }
-    for (Object k : ak) {
-      if (!shape.has(b, k)) {
+    for (int i = 0; i < n; i++) {
+      if (!rowSame(shape.get(a, i), shape.get(b, i), fam)) {
         return false;
       }
     }
@@ -1019,67 +1008,44 @@ final class StoreOptimistic implements Stores.OptHooks {
     return rt.lanes.covered(el);
   }
 
-  /** A derive's landing meets the rows the guesses hold: each is reconciled into its row (D-34, #4329). */
+  /**
+   * A derive's landing meets the rows the guesses hold (Q-D): a row with a target keeps it under the landing's new
+   * object at its slot (in a keyed list, the one with its key; an unkeyed list pairs nothing). The target adopts the
+   * object; a row another store lent keeps its proxy in the slot (D-34, #4329, #4738, #4902, #4904).
+   */
   @Override public void pair(StoreTarget t, Object pb) {
     StoreShape shape = shape();
-    Function<Object, Object> keyFn = t.fam.key;
-    if (t.fam.overlaid == null) {
+    StoreFamily fam = t.fam;
+    Function<Object, Object> keyFn = fam.key;
+    boolean list = shape.isArray(pb);
+    Map<Object, Integer>[] at = new Map[1];
+    // A guessed row, or its ancestor directly under t.
+    if (fam.overlaid != null) {
+      for (StoreTarget o : new ArrayList<>(fam.overlaid)) {
+        StoreTarget c = o;
+        while (c != null && c.u != t) {
+          c = c.u;
+        }
+        if (c != null) {
+          pairOne(t, pb, list, at, list ? (keyFn != null ? keyFn.apply(c.v) : null) : c.pk, c.px, false);
+        }
+      }
+    }
+    if (keyFn == null || !list) {
       return;
     }
-    for (StoreTarget o : new ArrayList<>(t.fam.overlaid)) {
-      StoreTarget c = o;
-      while (c != null && c.u != t) {
-        c = c.u;
-      }
-      if (c == null) {
-        continue;
-      }
-      Object k = keyFn != null ? keyFn.apply(c.v) : null;
-      Object nv = null;
-      if (shape.isArray(pb)) {
-        if (k != null) {
-          for (Object r : rowsOf(pb)) {
-            if (shape.isWrappable(r) && Stores.sameKey(keyFn.apply(r), k)) {
-              nv = r;
-              break;
-            }
-          }
-        }
-      } else {
-        nv = shape.get(pb, c.pk);
-      }
-      if (shape.isWrappable(nv) && stores.lookupTarget(nv, t.fam) == null) {
-        stores.reconcileState(nv, c.px, keyFn, true);
-      }
-    }
-    // While guesses are out, every row of a keyed list keeps its target under the derive's new object with its key
-    // (#4738): a row whose guess settled can be guessed again, on the committed row's target.
-    if (keyFn != null && shape.isArray(pb) && !t.fam.overlaid.isEmpty()) {
-      Map<Object, Object> byKey = null;
+    // While guesses are out, every committed row: a row whose guess settled can be guessed again (#4738).
+    if (fam.overlaid != null && !fam.overlaid.isEmpty()) {
       for (Object ov : rowsOf(stores.committed(t))) {
-        StoreTarget rt0 = shape.isWrappable(ov) ? stores.lookupTarget(ov, t.fam) : null;
-        if (rt0 == null) {
-          continue;
-        }
-        if (byKey == null) {
-          byKey = new HashMap<>();
-          for (Object r : rowsOf(pb)) {
-            if (shape.isWrappable(r)) {
-              byKey.put(keyFn.apply(r), r);
-            }
-          }
-        }
-        Object k = keyFn.apply(ov);
-        Object nv = k == null ? null : byKey.get(k);
-        if (nv != null && stores.lookupTarget(nv, t.fam) == null) {
-          stores.reconcileState(nv, rt0.px, keyFn, true);
+        StoreTarget rt0 = shape.isWrappable(ov) ? stores.lookupTarget(ov, fam) : null;
+        if (rt0 != null) {
+          pairOne(t, pb, true, at, keyFn.apply(ov), rt0.px, false);
         }
       }
     }
-    // A row another store's guess added as it is (that store's proxy) keeps its proxy when the landing returns its
-    // key: the lent row's target adopts the server object (F-11, #4902).
+    // A row another store's guess added as it is: a guess of that store's still out on the row shows on (#4902).
     List<Node> kg = kgOf(t);
-    if (keyFn != null && shape.isArray(pb) && kg != null) {
+    if (kg != null) {
       for (Node c : new ArrayList<>(kg)) {
         Object f = rt.lanes.guessedValueOf(c);
         if (!isObject(f) || !shape.isArray(f)) {
@@ -1088,21 +1054,38 @@ final class StoreOptimistic implements Stores.OptHooks {
         for (int j = 0, fn = shape.length(f); j < fn; j++) {
           Object r = shape.get(f, j);
           StoreTarget ft = isObject(r) ? shape.targetOf(r) : null;
-          if (ft == null || !stores.same(ft.px, r) || ft.fam == t.fam) {
-            continue;
-          }
-          Object rk = keyFn.apply(r);
-          for (int i = 0, n = shape.length(pb); i < n; i++) {
-            Object x = shape.get(pb, i);
-            if (shape.isWrappable(x) && Stores.sameKey(keyFn.apply(x), rk)) {
-              if (stores.lookupTarget(x, t.fam) == null) {
-                stores.reconcileState(x, r, keyFn, true);
-                shape.set(pb, i, r);
-              }
-              break;
-            }
+          if (ft != null && stores.same(ft.px, r) && ft.fam != fam) {
+            pairOne(t, pb, true, at, keyFn.apply(r), r, true);
           }
         }
+      }
+    }
+  }
+
+  private void pairOne(StoreTarget t, Object pb, boolean list, Map<Object, Integer>[] at, Object k, Object px,
+      boolean lent) {
+    StoreShape shape = shape();
+    Function<Object, Object> keyFn = t.fam.key;
+    if (k == null) {
+      return;
+    }
+    if (list && at[0] == null) {
+      at[0] = new HashMap<>();
+      for (int i = 0, n = shape.length(pb); i < n; i++) {
+        Object r = shape.get(pb, i);
+        Object rk = shape.isWrappable(r) && keyFn != null ? keyFn.apply(r) : null;
+        if (rk != null && !at[0].containsKey(rk)) {
+          at[0].put(rk, i);
+        }
+      }
+    }
+    Object i = list ? at[0].get(k) : k;
+    Object nv = i == null ? null : shape.get(pb, i);
+    // A new object only: not the row's own, nor one another row serves.
+    if (shape.isWrappable(nv) && stores.lookupTarget(nv, t.fam) == null) {
+      stores.reconcileState(nv, px, keyFn, true);
+      if (lent) {
+        shape.set(pb, i, px);
       }
     }
   }

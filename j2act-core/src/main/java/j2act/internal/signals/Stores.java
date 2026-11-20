@@ -875,7 +875,7 @@ public final class Stores {
         }
         // A key a live guess covers: the carrier's judgement of this landing tells its readers; the leaf records (S2).
         if (optHooks != null && t.o && optHooks.covers(t, key, false)) {
-          node.value = shape.get(pb, key);
+          coveredSet(node, shape.get(pb, key));
           continue;
         }
         rt.core.setSignal(node, shape.get(pb, key));
@@ -896,7 +896,7 @@ public final class Stores {
         Node node = has.get(key);
         if (node != null) {
           if (optHooks != null && t.o && optHooks.covers(t, key, true)) {
-            node.value = shape.has(pb, key);
+            coveredSet(node, shape.has(pb, key));
             continue;
           }
           rt.core.setSignal(node, shape.has(pb, key));
@@ -976,6 +976,17 @@ public final class Stores {
   }
 
   /**
+   * A covered leaf records the truth and says nothing (S2). A staging it was born with or held from an older landing is
+   * that older truth: the hold's commit lands this one (#4904).
+   */
+  private static void coveredSet(Node node, Object v) {
+    node.value = v;
+    if (node.pendingValue != NOT_PENDING) {
+      node.pendingValue = v;
+    }
+  }
+
+  /**
    * An adoption's leaf write. A derive's pass that is a lane's work writes the lane's derivation, as its draft
    * writes do: the committed value, and a truth a transaction holds beneath, untouched (#4631).
    */
@@ -983,7 +994,7 @@ public final class Stores {
     // A key a live guess covers: the carrier's judgement of this landing tells its readers; the leaf records (S2).
     StoreTarget t = (StoreTarget) node.host;
     if (optHooks != null && t.o && optHooks.covers(t, node.key, t.h != null && t.h.get(node.key) == node)) {
-      node.value = v;
+      coveredSet(node, v);
       return;
     }
     rt.core.setSignal(node, v);
