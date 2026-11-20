@@ -41,6 +41,8 @@ const shims = {
     b.onResolve({ filter: /^vitest$/ }, () => global("vitest", "globalThis.__vitest"));
     // The one Node built-in a store test asks for, types.isProxy: solid-shim.js answers it for its own proxies.
     b.onResolve({ filter: /^node:util$/ }, () => global("node:util", "globalThis.__nodeUtil"));
+    // A model probe writes its report file only when asked by environment variables, which the harness never sets.
+    b.onResolve({ filter: /^node:fs$/ }, () => global("node:fs", "{ writeFileSync() {} }"));
     b.onResolve({ filter: /(^|\/)src\// }, args => global(args.path, "globalThis.__solid"));
     // A few tests run the same steps against each of Solid's built tiers; the port is one tier.
     b.onResolve({ filter: /^\.\.\/dist\/(prod|observe)\/index\.js$|^\.\.\/dist\/dev\.js$/ }, args => global(args.path, "globalThis.__solid"));

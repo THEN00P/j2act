@@ -174,6 +174,8 @@
   const stubs = [];
   const vi = {
     fn: fnImpl,
+    // One runtime per test file: a test that asks for fresh modules shares it (its cases each make their own roots).
+    resetModules() {},
     spyOn(obj, key) {
       const original = obj[key];
       const spy = fnImpl(function (...a) {

@@ -442,7 +442,8 @@
     let wrappable = wrappableProtos.get(proto);
     if (wrappable === undefined) {
       wrappable = Object.prototype.toString.call(obj) === "[object Object]" &&
-        (typeof Node === "undefined" || !(obj instanceof Node));
+        (typeof Node === "undefined" || !(obj instanceof Node)) &&
+        isWrappable(proto);
       wrappableProtos.set(proto, wrappable);
     }
     return wrappable;
@@ -647,7 +648,14 @@
     createStore,
     createOptimisticStore,
     createProjection,
-    markRaw: guard(value => b.markRaw(value)),
+    // A class keeps all instances of it and its subclasses raw (#5055).
+    markRaw: guard(value => {
+      if (typeof value === "function") {
+        if (value.prototype) wrappableProtos.set(value.prototype, false);
+        return value;
+      }
+      return b.markRaw(value);
+    }),
     storeIsShallow: guard(value => b.storeIsShallow(value)),
     reconcile,
     snapshot,

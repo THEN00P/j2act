@@ -16,11 +16,11 @@ createRoot :: transparent owners > should delegate child IDs through transparent
 createRoot :: transparent owners > should delegate child IDs to the nearest non-transparent ancestor	hydration ids, left out
 createRoot :: transparent owners > should handle nested transparent owners delegating to non-transparent ancestor	hydration ids, left out
 createRoot :: transparent owners > should inherit parent id on the transparent owner itself	hydration ids, left out
-createRoot :: transparent owners > should not consume a _childCount slot from parent	hydration ids, left out
 createRoot :: transparent owners > should not consume _childCount with transparent computed	hydration ids, left out
-createStore :: getters > supports Object.defineProperty inside a setter	JavaScript property semantics: property descriptors (writable, enumerable, defineProperty), which the store port has no notion of; a Java field is plain data
+createRoot :: transparent owners > should not consume a _childCount slot from parent	hydration ids, left out
 createStore :: Proxy invariant correctness > writes preserve the base descriptor's structure, matching plain assignment semantics	JavaScript property semantics: property descriptors (writable, enumerable, defineProperty), which the store port has no notion of; a Java field is plain data
 createStore :: Proxy invariant correctness > written accessor properties keep accessor descriptors	JavaScript property semantics: accessor properties (getters and setters), which the store port has no notion of; a Java object's fields are read as values
+createStore :: getters > supports Object.defineProperty inside a setter	JavaScript property semantics: property descriptors (writable, enumerable, defineProperty), which the store port has no notion of; a Java field is plain data
 delete-key-count :: the store's key count follows deletes > delete and re-add in one draft leaves the count unchanged	store overlay left out: reads the target's key counter kc, which only the overlay keeps. The values, keys and notifications pass with that assertion removed
 delete-key-count :: the store's key count follows deletes > delete-then-set selection keeps the count at the object's own keys and never drafts as an overlay	store overlay left out: reads the target's key counter kc, which only the overlay keeps. The values, keys and notifications pass with that assertion removed
 delete-key-count :: the store's key count follows deletes > deleting a never-committed key of a draft does not go below the real count	store overlay left out: reads the target's key counter kc, which only the overlay keeps. The values, keys and notifications pass with that assertion removed
@@ -35,7 +35,11 @@ dev :: Phase 1b: Notification hooks > onOwner > fires when createRoot creates an
 dev :: Phase 1b: Notification hooks > onStoreNodeUpdate > fires on store property mutation with old and new values	tooling: dev diagnostics and warnings, left out
 dev :: Phase 1b: Notification hooks > onUpdate > fires once even with multiple signal writes	tooling: dev diagnostics and warnings, left out
 dev :: Phase 1b: Notification hooks > onUpdate > fires once per flush	tooling: dev diagnostics and warnings, left out
-diagnostics :: <file>	tooling: dev diagnostics and warnings, left out
+diagnostics :: diagnostics console footer > every diagnostic code has a section in the repair skill (the footer's agent line anchors to it)	tooling: dev diagnostics and warnings, left out
+diagnostics :: diagnostics owner path > defaults the subject to the ambient context and omits the path when there is none	tooling: dev diagnostics and warnings, left out
+diagnostics :: diagnostics owner path > is public as OBSERVE.ownerPath, the same labelling the events carry	tooling: dev diagnostics and warnings, left out
+diagnostics :: diagnostics owner path > reportDiagnostic prints the path as an `in` line under the message	tooling: dev diagnostics and warnings, left out
+diagnostics :: diagnostics source locations > the innermost located node wins: an effect's own loc over the component's	tooling: dev diagnostics and warnings, left out
 effect-phase-writes :: warns in dev when flush() is called from a createEffect callback	tooling: dev diagnostics and warnings, left out
 equals-comparator-errors :: equals comparator errors (#2837, A3: comparator throws are compute-phase errors) > a setter's comparator throw is the signal's error: the boundary contains it	JS: asserts V8's wording of a TypeError; GraalJS words it differently
 equals-comparator-errors :: equals comparator errors (#2837, A3: comparator throws are compute-phase errors) > async resolution: comparator throw routes to the boundary, not an unhandled rejection	JS: asserts V8's wording of a TypeError; GraalJS words it differently
@@ -80,6 +84,6 @@ strictRead :: strictRead > warns on store property read under strict + untracked
 untracked-async-read :: untracked async read after await (#2987) > memo form errors identically	difference: the Java message says the read came off the lane, not after an await
 untracked-async-read :: untracked async read after await (#2987) > post-await first-read of an unready source errors instead of wedging	difference: the Java message says the read came off the lane, not after an await
 utilities-no-proxy :: merge/omit without Proxy > the flag is off and nothing wears the proxy mark	merge and omit are left out, and the test expects a JavaScript environment without Proxy, which the shim cannot give it
-write-floor :: narrow store writes (#3360) > an accessor installed through the draft stays live	JavaScript property semantics: accessor properties (getters and setters), which the store port has no notion of; a Java object's fields are read as values
 write-floor :: narrow store writes (#3360) > a non-enumerable own key keeps its attributes through a write (descriptor clone)	JavaScript property semantics: property descriptors (writable, enumerable, defineProperty), which the store port has no notion of; a Java field is plain data
 write-floor :: narrow store writes (#3360) > a non-plain defineProperty through the draft is preserved by later writes	JavaScript property semantics: property descriptors (writable, enumerable, defineProperty), which the store port has no notion of; a Java field is plain data
+write-floor :: narrow store writes (#3360) > an accessor installed through the draft stays live	JavaScript property semantics: accessor properties (getters and setters), which the store port has no notion of; a Java object's fields are read as values

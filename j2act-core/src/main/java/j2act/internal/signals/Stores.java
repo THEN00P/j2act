@@ -155,6 +155,8 @@ public final class Stores {
   private Map<StoreTarget, Integer> foldIndex;
   private boolean directCommit;
   private boolean userWrite;
+  /** A hold whose staging the outermost user setter read from its draft (#5046). */
+  private Transaction draftReadTx;
   private boolean heldDerivationHit;
   private int writing;
   private Set<Object> writeScopes;
@@ -1116,16 +1118,16 @@ public final class Stores {
       return target.v;
     }
     if (inDraft(target) || writeOverride) {
-      if (writeOverride && !userWrite) {
+      // A user's setter reading its draft is no pass: it notes the hold, and its writes join it at the setter's exit
+      // (#5046, as D-33's guess written after reading another hold's guess does).
+      if (userWrite != writeOverride) {
         Node leaf = hasKey && target.n != null ? target.n.get(key) : null;
-        if (leaf != null) {
-          if ((leaf.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD) {
-            q.joinPassTx(q.txOf(leaf), false);
-          }
-        } else {
-          Node k = target.k;
-          if (k != null && (k.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD
-            && (!hasKey || heldKeyChanged(target, key, true))) {
+        Node k = leaf != null ? leaf : target.k;
+        if (k != null && (k.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD
+          && (leaf != null || !hasKey || heldKeyChanged(target, key, true))) {
+          if (userWrite) {
+            draftReadTx = q.txOf(k);
+          } else {
             q.joinPassTx(q.txOf(k), false);
           }
         }
@@ -1751,6 +1753,9 @@ public final class Stores {
       writeScopes = prevScopes;
       try {
         if (writing == 0 && !pendingNotify.isEmpty()) {
+          if (draftReadTx != null) {
+            s().joinFuture(draftReadTx);
+          }
           List<StoreTarget> touched = new ArrayList<>(pendingNotify);
           pendingNotify.clear();
           for (StoreTarget t : touched) {
@@ -1766,6 +1771,9 @@ public final class Stores {
         }
       } finally {
         userWrite = prevUser;
+        if (writing == 0) {
+          draftReadTx = null;
+        }
       }
     }
     if (guard && result instanceof java.util.concurrent.CompletionStage) {
