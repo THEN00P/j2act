@@ -483,6 +483,11 @@ final class Scheduler {
   void resetErrorHalt() {
     halted = false;
     haltNotified = false;
+    // A throw out of the pure phase skips the scheduled recompute; re-arm it (#4882).
+    if (scheduled) {
+      scheduled = false;
+      schedule();
+    }
   }
 
   // ---- GlobalQueue

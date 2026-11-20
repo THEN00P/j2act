@@ -207,7 +207,9 @@ final class Core {
     boolean wasPendingSource = el.x != null && el.x.pendingSources != null && el.x.pendingSources.contains(el);
     boolean stagedErr = false;
     boolean reask = (el.flags & REACTIVE_REASK) != 0
-      && !(((el.statusFlags & STATUS_PENDING) != 0 || (q.guessing && el.pendingValue != NOT_PENDING))
+      && !(((el.statusFlags & STATUS_PENDING) != 0 || (q.guessing && el.pendingValue != NOT_PENDING
+        // A held user write is not an answer: the refresh over it asks the same question (D-34, #4887, #4888).
+        && (el.flags & REACTIVE_MANUAL_WRITE) == 0))
         && el.x != null && !el.x.reask);
     Owner oldcontext = context;
     context = el;

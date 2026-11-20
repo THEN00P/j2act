@@ -866,6 +866,20 @@ final class StoreOptimistic implements Stores.OptHooks {
     if (older && p.qs != null && p.qs.contains(q.question)) {
       return true;
     }
+    // The truth answers another carrier's guess: the rows this guess carried over from that guess are judged by it
+    // (#4897). Entangled with this guess's hold, that truth is the hold's own staging, as above.
+    List<Object> by = null;
+    if (older) {
+      for (Node o : kgOf(t)) {
+        Patch op = patch(o);
+        if (o != el && op.qs != null && op.qs.contains(q.question)) {
+          if (sameAction(q.txOf(o), q.txOf(el))) {
+            return true;
+          }
+          by = op.g instanceof List ? (List<Object>) op.g : null;
+        }
+      }
+    }
     if (!shape.isArray(truth) || !isObject(guess) || !shape.isArray(guess)) {
       return true;
     }
@@ -907,7 +921,7 @@ final class StoreOptimistic implements Stores.OptHooks {
         }
         rows.add(tr);
         used.add(k);
-      } else if (!removed.contains(k)) {
+      } else if (!removed.contains(k) && !containsSame(by, g)) {
         rows.add(g);
       }
     }
@@ -933,6 +947,17 @@ final class StoreOptimistic implements Stores.OptHooks {
       q.laneDirty(el, l);
     }
     return true;
+  }
+
+  private boolean containsSame(List<Object> rows, Object row) {
+    if (rows != null) {
+      for (Object r : rows) {
+        if (stores.same(r, row)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /** Two row lists show the same through the proxies: each slot the same target or the same primitive. */
@@ -1051,16 +1076,56 @@ final class StoreOptimistic implements Stores.OptHooks {
         }
       }
     }
+    // A row another store's guess added as it is (that store's proxy) keeps its proxy when the landing returns its
+    // key: the lent row's target adopts the server object (F-11, #4902).
+    List<Node> kg = kgOf(t);
+    if (keyFn != null && shape.isArray(pb) && kg != null) {
+      for (Node c : new ArrayList<>(kg)) {
+        Object f = rt.lanes.guessedValueOf(c);
+        if (!isObject(f) || !shape.isArray(f)) {
+          continue;
+        }
+        for (int j = 0, fn = shape.length(f); j < fn; j++) {
+          Object r = shape.get(f, j);
+          StoreTarget ft = isObject(r) ? shape.targetOf(r) : null;
+          if (ft == null || !stores.same(ft.px, r) || ft.fam == t.fam) {
+            continue;
+          }
+          Object rk = keyFn.apply(r);
+          for (int i = 0, n = shape.length(pb); i < n; i++) {
+            Object x = shape.get(pb, i);
+            if (shape.isWrappable(x) && Stores.sameKey(keyFn.apply(x), rk)) {
+              if (stores.lookupTarget(x, t.fam) == null) {
+                stores.reconcileState(x, r, keyFn, true);
+                shape.set(pb, i, r);
+              }
+              break;
+            }
+          }
+        }
+      }
+    }
   }
 
   /** A key a live guess changed reads through the carrier, tracked; NOT_PENDING for none. */
   @Override public Object read(StoreTarget t, Object key) {
     Node g = guessFor(t, key, false, true);
+    Owner obs = rt.owners.getObserver();
     if (g == null) {
+      // A key an arrangement guess only borrowed, its lender gone, reads the truth, but that guess still orders the
+      // rows read beside it: its end must reach this reader (#4897).
+      List<Node> kg = kgOf(t);
+      if (obs instanceof Node && kg != null) {
+        for (Node c : kg) {
+          Patch p = patch(c);
+          if (p.borrowed != null && p.borrowed.contains(key)) {
+            rt.graph.link(c, (Node) obs);
+          }
+        }
+      }
       return NOT_PENDING;
     }
     Object frame = rt.core.read(g);
-    Owner obs = rt.owners.getObserver();
     Node node = obs != null ? stores.getNode(t, key) : t.n != null ? t.n.get(key) : null;
     if (obs instanceof Node) {
       rt.graph.link(node, (Node) obs);

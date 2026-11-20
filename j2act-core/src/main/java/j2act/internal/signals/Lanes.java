@@ -704,7 +704,8 @@ final class Lanes {
         return screenOf(el);
       }
     } else if (c.type == EFFECT_RENDER) {
-      boolean never = pending && !el.x.shown;
+      // Not a member pending only on refresh() re-asks: another lane's leaf reads its screen (F-11, #4889).
+      boolean never = pending && !el.x.shown && !Scheduler.reasks(el);
       Transaction p = q.passLane;
       boolean seated = p != null && p.parent.verdict == p;
       if (seated && (never || p != l)) {
