@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -14,7 +14,7 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
- * Port of @solidjs/signals core/scheduler.ts at 9449845, with GlobalQueue as this class: events only mark,
+ * Port of @solidjs/signals core/scheduler.ts at 68406c2, with GlobalQueue as this class: events only mark,
  * one pass recomputes in height order, and settle() is the one place that decides what commits, parks or
  * lands. Hooks stay null until what needs them is installed, as in Solid. Left out: attribution,
  * and dev checks that only warn.

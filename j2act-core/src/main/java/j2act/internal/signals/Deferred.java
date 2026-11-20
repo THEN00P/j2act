@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -9,7 +9,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
 
-/** Port of @solidjs/signals deferred.ts at 9449845: a memo whose later answers do not hold the screen. */
+/** Port of @solidjs/signals deferred.ts at 68406c2: a memo whose later answers do not hold the screen. */
 final class Deferred {
   private final Runtime rt;
   private final Set<Node> lagging = new HashSet<>();

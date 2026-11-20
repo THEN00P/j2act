@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -19,7 +19,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
- * Port of @solidjs/signals store/optimistic.ts at 9449845: optimistic stores on lanes (S2: a guess is a patch). A
+ * Port of @solidjs/signals store/optimistic.ts at 68406c2: optimistic stores on lanes (S2: a guess is a patch). A
  * user write to an optimistic store is one guess per target: the user's draft, carried by the target's guess carrier
  * (a slot node keyed {@link Stores#PATCH}), with the keys the draft changed recorded on it. Lanes do the rest on that
  * one node: the guess shows under the action's hold, a landing beneath it stages as truth and confirms it when

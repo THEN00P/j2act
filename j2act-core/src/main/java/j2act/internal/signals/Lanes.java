@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -16,8 +16,8 @@ import java.util.WeakHashMap;
 import java.util.function.UnaryOperator;
 
 /**
- * Port of @solidjs/signals core/lanes.ts and core/truth.ts at 9449845: a guess or a held read shows ahead of
- * the truth, in its own transaction, the lane. What is keyed on CONFIG_SLOT_NODE asks the store through the
+ * Port of @solidjs/signals core/lanes.ts, core/guesses.ts and core/truth.ts at 68406c2: a guess or a held read shows
+ * ahead of the truth, in its own transaction, the lane. What is keyed on CONFIG_SLOT_NODE asks the store through the
  * scheduler's store hooks.
  */
 final class Lanes {

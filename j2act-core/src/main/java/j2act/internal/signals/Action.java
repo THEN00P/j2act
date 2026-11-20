@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.CONFIG_CHILDREN_FORBIDDEN;
 
@@ -9,7 +9,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
 
 /**
- * Port of @solidjs/signals core/action.ts at 9449845. Solid's body is a generator, so this is too: each
+ * Port of @solidjs/signals core/action.ts at 68406c2. Solid's body is a generator, so this is too: each
  * step runs in the action's transaction, and a yielded future's landing starts the next step. Bodies that
  * run on a thread are built on this one step at a time.
  */

@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import j2act.internal.signals.StoreTarget.StoreFamily;
 import java.util.ArrayList;
@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Port of @solidjs/signals store/affects.ts at 9449845: affects() on a store. A mark on a record covers the
+ * Port of @solidjs/signals store/affects.ts at 68406c2: affects() on a store. A mark on a record covers the
  * records and nodes under it, a mark on a key that key, and a node born under a live mark inherits it.
  */
 final class StoreAffects implements Stores.AffectsHooks {

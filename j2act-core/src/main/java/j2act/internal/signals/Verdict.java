@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -8,7 +8,7 @@ import j2act.internal.signals.Scheduler.Transaction;
 import java.util.function.Supplier;
 
 /**
- * Port of @solidjs/signals core/verdict.ts at 9449845: isPending and latest. Left out: hydration snapshots
+ * Port of @solidjs/signals core/verdict.ts at 68406c2: isPending and latest. Left out: hydration snapshots
  * and strict-read warnings.
  */
 final class Verdict {

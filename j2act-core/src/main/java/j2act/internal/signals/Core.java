@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 /**
- * Port of @solidjs/signals core/core.ts at 9449845: recompute, read, and write. Left out: the shadow seat,
+ * Port of @solidjs/signals core/core.ts at 68406c2: recompute, read, and write. Left out: the shadow seat,
  * strict reads and other dev-only checks, attribution, hydration snapshots and ids.
  */
 final class Core {

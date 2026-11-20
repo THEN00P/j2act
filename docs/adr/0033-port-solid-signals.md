@@ -2,7 +2,7 @@
 
 ADR 0031 adopted Solid 2's API and semantics, and the first implementation wrote its own engine to provide them: first a cell class per primitive, then one `Node` with three places. Each round found bugs at a similar rate, because the rules were decided separately at every event: a write, a landing, a guess, a merge and a commit each walked the graph and decided for themselves. Solid's engine does not work that way, and it has written down why: events only mark, one pass recomputes in height order, and one place decides what commits, parks or reveals. A hold comes from a render effect's read throwing `NotReady` during that pass, where ours tried to predict who would reload.
 
-So j2act stops writing its own engine. It ports `@solidjs/signals` file by file, at commit `9449845` on `next` (`2.0.0-rc.20`), and builds on top of it.
+So j2act stops writing its own engine. It ports `@solidjs/signals` file by file, and builds on top of it. The port was written against commit `9449845` on `next` (`2.0.0-rc.20`), and is now pinned at `68406c2` on `main` (`2.0.3`, the stable release).
 
 Status: done. The port lives in `j2act.internal.signals`, and j2act runs on it. "How it was checked" says what backs that.
 
@@ -92,7 +92,7 @@ These are on the backlog. `Reveal`, `Loading`'s `on`, `createDeferred` and `from
 Done means Solid's tests pass, every one that does not is listed with a reason, and the table below has no unexplained row. Hand-porting 100,000 lines of tests would have taken far too long and would have copied any misreading into the tests, so they run as they are. `j2act-signals-conformance` fetches Solid at the pinned commit, bundles its test files, and runs them in GraalJS with Solid's imports pointing at the Java classes. The module is not published.
 
 - **Solid's tests.** Of 4,578 in the files that run: 2,681 pass, 1,851 reach something left out on purpose, and 46 fail for a reason listed beside them in `known-failures.txt`. `docs/spikes/solid-port-tests.md` has the groups. A listed test that starts passing fails the build, so the list cannot go stale.
-- **Solid itself.** `js/fuzz.test.ts` builds random graphs and drives them with random writes, refreshes, actions and landings. The build runs it on Solid's own source in Node and on the port in GraalJS, and compares every frame of 400 seeds. 1,800 more seeds were compared by hand during the work. They all matched.
+- **Solid itself.** `js/fuzz.test.ts` builds random graphs and drives them with random writes, refreshes, actions and landings. The build runs it on Solid's own source in Node and on the port in GraalJS, and compares every frame of 400 seeds. 1,800 more seeds were compared by hand during the work. They all matched. At 2.0.3, Solid crashes on seed 306, which both sides skip.
 - **j2act.** `ConsistencyTest`, the existing tests, and the browser checks on Spring and WildFly.
 
 That order of evidence also settled an argument with `ConsistencyTest`, which said some frames were inconsistent. They are, and Solid shows the same ones: with a guess out, a page can show `n4=g4` beside a value derived from the truth, and a first read during a hold gets a load's committed value (A10). So the test does not check those pages, and it says why. Whether the first of these is a bug in Solid is worth asking upstream.

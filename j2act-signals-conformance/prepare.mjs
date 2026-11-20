@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const COMMIT = "944984541982df9a0133c042cbc886ad8aaedb7e";
+const COMMIT = "68406c2077eff22c67f71db4a16bf7026ddceee1";
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, "target", "solid-bundles");
 const cache = process.env.SOLID_SRC ?? join(homedir(), ".cache", "j2act", `solid-${COMMIT}`);

@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -19,7 +19,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * Port of @solidjs/signals boundaries.ts at 9449845: Loading and Errored. Left out: the dev reports of an
+ * Port of @solidjs/signals boundaries.ts at 68406c2: Loading and Errored. Left out: the dev reports of an
  * `on` that can never show its fallback and of an accessor passed to `on`.
  */
 final class Boundaries {

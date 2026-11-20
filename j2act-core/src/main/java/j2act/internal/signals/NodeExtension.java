@@ -1,10 +1,10 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import java.util.List;
 import java.util.Set;
 
-/** Port of NodeExtension in @solidjs/signals core/types.ts at 9449845: machinery most nodes never touch. */
+/** Port of NodeExtension in @solidjs/signals core/types.ts at 68406c2: machinery most nodes never touch. */
 final class NodeExtension {
   /** The current flight; `inFlightSet` is false for Solid's onSupersede-only `undefined`. */
   Object inFlight;

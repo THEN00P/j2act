@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -7,7 +7,7 @@ import j2act.internal.signals.Errors.StatusError;
 import j2act.internal.signals.Node.Link;
 import java.util.function.Supplier;
 
-/** Port of @solidjs/signals core/effect.ts at 9449845, without dev warnings. */
+/** Port of @solidjs/signals core/effect.ts at 68406c2, without dev warnings. */
 final class Effects {
   private final Runtime rt;
 

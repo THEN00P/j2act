@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.CONFIG_AUTO_DISPOSE;
 import static j2act.internal.signals.Constants.CONFIG_SLOT_NODE;
@@ -13,7 +13,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Port of @solidjs/signals core/graph.ts at 9449845. */
+/** Port of @solidjs/signals core/graph.ts at 68406c2. */
 final class Graph {
   private final Runtime rt;
   /** Last-one-out releases held back while a pass tears down an earlier pass's frame (#4142). */

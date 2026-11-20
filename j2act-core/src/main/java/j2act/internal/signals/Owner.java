@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Port of the Owner and Root shapes in @solidjs/signals core/types.ts at 9449845. Solid tells a root by
+ * Port of the Owner and Root shapes in @solidjs/signals core/types.ts at 68406c2. Solid tells a root by
  * its `_root` field; here that is the `root` flag. Hydration ids and context are left out for now.
  */
 public class Owner {

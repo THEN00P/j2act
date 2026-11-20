@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.CONFIG_AUTO_DISPOSE;
 import static j2act.internal.signals.Constants.NOT_PENDING;
@@ -18,7 +18,7 @@ import java.util.function.IntFunction;
 import java.util.function.Supplier;
 
 /**
- * Port of @solidjs/signals map.ts at 9449845: mapArray and repeat, which keep a row's owner across re-runs
+ * Port of @solidjs/signals map.ts at 68406c2: mapArray and repeat, which keep a row's owner across re-runs
  * and dispose only rows that left. Item/key matching keeps Java equals consistently with the
  * HashMap/HashSet indexes below. This selects row ownership; row signal writes use ValueEquality.
  */

@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -20,7 +20,7 @@ import java.util.Set;
 import java.util.function.Function;
 
 /**
- * Port of @solidjs/signals store/store.ts at 9449845: plain stores. A store is a tree of slot nodes and
+ * Port of @solidjs/signals store/store.ts at 68406c2: plain stores. A store is a tree of slot nodes and
  * nothing else carries reactive state: a leaf node per tracked or written key, presence nodes, the deep
  * witness, and the container node, whose value is the committed backing and whose staging is the pending
  * backing the draft writes. The committed backing is shared with the application until the first write

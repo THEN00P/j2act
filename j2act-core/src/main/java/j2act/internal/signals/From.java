@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.CONFIG_CHILDREN_FORBIDDEN;
 
@@ -12,7 +12,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 
-/** Port of @solidjs/signals from.ts at 9449845: a subscription as an async iterable that keeps the latest value. */
+/** Port of @solidjs/signals from.ts at 68406c2: a subscription as an async iterable that keeps the latest value. */
 public final class From {
   /** Solid's subscribe function; its Observable and `{unsubscribe}` forms are the caller's to adapt. */
   @FunctionalInterface

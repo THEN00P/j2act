@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.REACTIVE_CHECK;
 import static j2act.internal.signals.Constants.REACTIVE_DIRTY;
@@ -11,7 +11,7 @@ import j2act.internal.signals.Node.Link;
 import java.util.Arrays;
 import java.util.function.Consumer;
 
-/** Port of @solidjs/signals core/heap.ts at 9449845. Nodes run in height order, parents before children. */
+/** Port of @solidjs/signals core/heap.ts at 68406c2. Nodes run in height order, parents before children. */
 final class Heap {
   private Node[] heap = new Node[2000];
   boolean marked;
