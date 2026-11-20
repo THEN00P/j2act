@@ -1632,6 +1632,11 @@ public final class Stores {
     }
     if (!inDraft(target) && rt.owners.getObserver() != null) {
       rt.core.read(getContainerNode(target));
+      // Link the optimistic carrier as enumerationSource does: else a $TRACK-only reader never sees structural guesses
+      // and is not re-run on revert (#5007).
+      if (optHooks != null && target.o && !writeOverride) {
+        optHooks.frame(target);
+      }
       Object src = readSource(target);
       if (isView(src)) {
         track(shape.targetOf(src));

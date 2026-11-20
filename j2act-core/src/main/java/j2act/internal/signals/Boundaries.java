@@ -337,7 +337,8 @@ final class Boundaries {
     Boundary b = hiddenBy(node);
     // A swap to the fallback still staged in a hold (an on re-arm the frame holds) has not reached the screen: the
     // content is still the display, and a run there applies now (D-17, F-1, #4987).
-    if (b == null || (b.output.config & CONFIG_HELD) != 0) {
+    // So is one whose content a guess lane carries beside it (#4999; lanes only).
+    if (b == null || (b.output.config & (s().laneStageHook != null ? CONFIG_HELD | CONFIG_OVERRIDE : CONFIG_HELD)) != 0) {
       return false;
     }
     if (b.runs == null) {
@@ -617,6 +618,10 @@ final class Boundaries {
     Node self = (Node) rt.core.context;
     Scheduler q = s();
     // Keep the ahead swap's lane for recovery as well as for the fallback: else the answer parks in the input's hold.
+    // A swap to the fallback staged in a hold, the content still on screen (D-17): a lane pass derives that content with
+    // its guesses (D-33, F-1), the swap left staged (#4999). Lanes only.
+    boolean shown = q.laneStageHook != null && !b.initialized && (self.config & CONFIG_HELD) != 0
+      && !ValueEquality.same(self.value, b.fb != null ? b.fb.value : null);
     if (q.laneStageHook != null && b.type == STATUS_ERROR) {
       if (b.fallback && (self.config & CONFIG_OVERRIDE) != 0 && b.lane == null) {
         b.lane = q.txOf(self);
@@ -668,7 +673,7 @@ final class Boundaries {
         rt.graph.link(tree, self);
         return fallback(b);
       }
-      if (prune(b, 1) != 0) {
+      if (prune(b, 1) != 0 && !shown) {
         rt.graph.link(tree, self);
         return fallback(b);
       }
@@ -691,7 +696,7 @@ final class Boundaries {
       caught(b, tree, null, tree);
     }
     if (isCollecting(b) && !b.readers.isEmpty()) {
-      return fallback(b);
+      return shown && q.passLane != null ? value : fallback(b);
     }
     b.initialized = true;
     b.fallback = false;

@@ -165,6 +165,47 @@ final class StoreOptimistic implements Stores.OptHooks {
     return plain ? src : view(t, src, true);
   }
 
+  /** A carrier's frame as the writer sees it: the unflushed guess or the lane's value, a corrected guess's screen. */
+  private Object writerFrame(Node g) {
+    if ((g.config & CONFIG_OVERRIDE) != 0 || rt.lanes.pendingGuessOf(g) != NOT_PENDING) {
+      Object v = rt.lanes.guessedValueOf(g);
+      if (v != NOT_PENDING) {
+        return v;
+      }
+    }
+    return (g.config & CONFIG_HELD) != 0 ? g.value : NOT_PENDING;
+  }
+
+  /**
+   * The newest carrier's frame with each key another carrier owns taken from that carrier, as a read of the key finds
+   * it (guessFor): the newest frame only copied those keys when it was written, and an older carrier a later guess on
+   * the same key went to has moved on since (#4988). A list's frame is its arrangement, taken whole.
+   */
+  private Object ownedKeys(StoreTarget t, Node g, List<Node> kg, Object v) {
+    StoreShape shape = shape();
+    Object out = v;
+    if (!shape.isArray(v)) {
+      for (Node o : new ArrayList<>(kg)) {
+        Patch p = patch(o);
+        if (o == g || p.wk == null) {
+          continue;
+        }
+        for (Object key : new ArrayList<>(p.wk)) {
+          if (guessFor(t, key, false, false) == o) {
+            Object f = writerFrame(o);
+            if (f != NOT_PENDING && !stores.same(shape.get(f, key), shape.get(out, key))) {
+              if (out == v) {
+                out = shape.clone(v);
+              }
+              shape.set(out, key, shape.get(f, key));
+            }
+          }
+        }
+      }
+    }
+    return out;
+  }
+
   /** src with the target's guess over it: the carrier's unflushed guess or lane value when it carries one. */
   @Override public Object view(StoreTarget t, Object src, boolean writer) {
     List<Node> kg = kgOf(t);
@@ -173,14 +214,9 @@ final class StoreOptimistic implements Stores.OptHooks {
         Node g = kg.get(i);
         if (writer) {
           // The writer composes on the screen with the tick's own guesses (D-34, D-37).
-          if ((g.config & CONFIG_OVERRIDE) != 0 || rt.lanes.pendingGuessOf(g) != NOT_PENDING) {
-            Object v = rt.lanes.guessedValueOf(g);
-            if (v != NOT_PENDING) {
-              return v;
-            }
-          }
-          if ((g.config & CONFIG_HELD) != 0) {
-            return g.value;
+          Object v = writerFrame(g);
+          if (v != NOT_PENDING) {
+            return ownedKeys(t, g, kg, v);
           }
         } else if ((g.config & (CONFIG_OVERRIDE | CONFIG_HELD)) != 0) {
           // A snapshot, deep(), a reconcile's key matching: the carrier as core reads it for this reader.

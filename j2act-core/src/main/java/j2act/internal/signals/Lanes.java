@@ -530,8 +530,10 @@ final class Lanes {
         el.config &= ~CONFIG_GUESS;
       }
     } else if (truthy(errored)) {
-      if (!Boolean.TRUE.equals(errored) && (((Node) errored).statusFlags & STATUS_UNINITIALIZED) == 0
-        && ((el.config & CONFIG_HELD) != 0 || (el.flags & REACTIVE_RECOMPUTING_DEPS) != 0)
+      // A held leaf stays its frame's even when the node reached it has no value yet: a mount born held whose
+      // derivation now waits on a lane's flight (#4998, D-2, F-1).
+      if (!Boolean.TRUE.equals(errored) && ((el.config & CONFIG_HELD) != 0
+          || ((((Node) errored).statusFlags & STATUS_UNINITIALIZED) == 0 && (el.flags & REACTIVE_RECOMPUTING_DEPS) != 0))
         && !(el.x != null && el.x.transaction != null && el.x.transaction.lane)) {
         q.queuePendingNode(el);
         return false;
@@ -758,7 +760,10 @@ final class Lanes {
     }
     // A render effect of the lane reading a member that waits on refresh() re-asks only reads what it shows (#4864).
     enterLane(l, c);
-    return pending && !(guessed && c.type == EFFECT_RENDER && Scheduler.reasks(el)) ? NOT_PENDING : latestOf(el);
+    // A boundary's tree (CONFIG_FRAME, not an effect) flattens what its insert effects would show: a shown member reads
+    // as it shows, the lane's guesses on the screen (D-33, #4999).
+    return pending && !(guessed && c.type == EFFECT_RENDER && Scheduler.reasks(el))
+      && !((c.config & CONFIG_FRAME) != 0 && c.type == 0 && el.x.shown) ? NOT_PENDING : latestOf(el);
   }
 
   private boolean guessFlights(Transaction l) {
