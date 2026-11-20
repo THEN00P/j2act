@@ -30,6 +30,8 @@ final class Constants {
   /** #4544: a render effect born into a hold read a settled verdict reader's value this pass. */
   static final int REACTIVE_AHEAD = 1 << 20;
   static final int REACTIVE_RELEASE_AFTER = 1 << 22;
+  /** A computed its own owner reads: a wake of it wakes the owner too, whose pass re-creates it. */
+  static final int REACTIVE_OWNER_READS = 1 << 23;
 
   static final int CONFIG_OWNED_WRITE = 1 << 0;
   static final int CONFIG_CHILDREN_FORBIDDEN = 1 << 4;

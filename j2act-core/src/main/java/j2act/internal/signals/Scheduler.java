@@ -90,6 +90,16 @@ final class Scheduler {
   Predicate<Transaction> lanesBlockedHook;
   /** R5 (Verdict: the seam parks a frame flight of a reader that reads ahead): visit 1 adopts at the reader's turn, 2 is a later pass. */
   LaneAdopt laneAdoptHook;
+  /** D-8 (Verdict.revert), at the flush: the readers a tick netting to its starting value woke are let go. */
+  Runnable revertHook;
+  /** Verdict.pass: a pass's head (the held error latest keeps showing) and, with tail, its end (a re-ask). */
+  PassHook passHook;
+  /** Held slots rewritten since the last flush, with the verdict engine (D-8). */
+  final List<Node> heldRewrites = new ArrayList<>();
+
+  interface PassHook {
+    boolean pass(Node el, boolean tail);
+  }
   /** R5 at the seam (Verdict.r5): a reader whose probe is unanswered, a hold's parked flight still up (r null), the seam's end (both null). */
   java.util.function.BiPredicate<Node, Transaction> r5Hook;
 
@@ -502,6 +512,9 @@ final class Scheduler {
     passTx = null;
     try {
       rt.graph.sweepDormant();
+      if (revertHook != null) {
+        revertHook.run();
+      }
       dirtyQueue.runHeap(rt.core::update);
       settle();
       clock++;
@@ -772,10 +785,15 @@ final class Scheduler {
     node.notifiedAt = notifyEpoch;
     for (Link s = node.subs; s != null; s = s.nextSub) {
       Node sub = s.sub;
-      if ((sub.flags & REACTIVE_RECOMPUTING_DEPS) != 0 && s.gen == sub.depGen && s != sub.depsTail) {
+      // A signal's read returned before any write to it: the pass's own owned write to what it just read is a
+      // missed wake too (F-10).
+      if ((sub.flags & REACTIVE_RECOMPUTING_DEPS) != 0 && s.gen == sub.depGen && (s != sub.depsTail || node.fn == null)) {
         sub.flags |= REACTIVE_MISSED_WAKE;
       }
       dirtyQueue.enqueueSub(sub);
+      if ((sub.flags & REACTIVE_OWNER_READS) != 0 && sub.parent instanceof Node) {
+        dirtyQueue.markNode((Node) sub.parent, REACTIVE_CHECK);
+      }
     }
   }
 
@@ -845,13 +863,23 @@ final class Scheduler {
     return false;
   }
 
+  private static boolean superseded(Node n) {
+    if ((n.statusFlags & STATUS_UNINITIALIZED) == 0 && n.x != null && n.x.inFlight != null && !n.x.reask) {
+      n.pendingValue = NOT_PENDING;
+      return true;
+    }
+    return false;
+  }
+
   void commitPendingNode(Node n) {
     if (n.fn == null) {
       n.config &= ~(CONFIG_STAGED | CONFIG_HELD);
       applyStaged(n);
       return;
     }
-    boolean inFlight = n.pendingValue == NOT_PENDING && (n.statusFlags & STATUS_PENDING) != 0;
+    // A staged answer to a question a later pass of this hold replaced, its own flight up for the new one, is not the
+    // frame's: the node stays in flight on the committed value, and the stale staging goes (F-2).
+    boolean inFlight = (n.statusFlags & STATUS_PENDING) != 0 && (n.pendingValue == NOT_PENDING || superseded(n));
     // A value can land over a staged error with the flag left on. Solid then reports the value as the error, which
     // JS allows; a value is not a Throwable here, and it is what happened, so it commits as one (ADR 0033).
     int err = n.pendingValue instanceof Throwable ? n.config & CONFIG_STAGED_ERROR : 0;

@@ -157,6 +157,7 @@ final class Core {
       q.passLane = next;
     }
     boolean replaced = (el.config & CONFIG_STAGED_ERROR) != 0;
+    boolean linked = false;
     if (!create) {
       q.dirtyQueue.deleteFromHeap(el);
       if (q.laneStageHook != null && isEffect == 0 && ((el.statusFlags & STATUS_PENDING) != 0
@@ -192,6 +193,14 @@ final class Core {
       } else if (el.firstChild != null || el.disposal != null) {
         parkChildren(el);
       }
+      // A held staged error stays the newest answer latest shows while this pass's flight is up (D-22, D-41).
+      // linked: whether the pass had sources (a first pass did not: it asks no question its committed value answers).
+      if (q.passHook != null) {
+        linked = el.deps != null;
+        if (el.x != null && ((el.config & CONFIG_STAGED_ERROR) != 0 || el.x.aheadError != null)) {
+          q.passHook.pass(el, false);
+        }
+      }
       if ((el.config & CONFIG_STAGED_ERROR) != 0) {
         el.pendingValue = NOT_PENDING;
         el.config ^= CONFIG_STAGED_ERROR;
@@ -207,7 +216,7 @@ final class Core {
     boolean wasPendingSource = el.x != null && el.x.pendingSources != null && el.x.pendingSources.contains(el);
     boolean stagedErr = false;
     boolean reask = (el.flags & REACTIVE_REASK) != 0
-      && !(((el.statusFlags & STATUS_PENDING) != 0 || (q.guessing && el.pendingValue != NOT_PENDING
+      && !(((el.statusFlags & STATUS_PENDING) != 0 || (el.pendingValue != NOT_PENDING
         // A held user write is not an answer: the refresh over it asks the same question (D-34, #4887, #4888).
         && (el.flags & REACTIVE_MANUAL_WRITE) == 0))
         && el.x != null && !el.x.reask);
@@ -304,6 +313,10 @@ final class Core {
         for (Node node : released) {
           rt.async.releaseIfSettledUnobserved(node);
         }
+      }
+      // A pass that read only committed values asks the committed question again (A24, A19 exc. 2): a re-ask too.
+      if (linked && !reask && (el.statusFlags & STATUS_PENDING) != 0) {
+        reask = q.passHook.pass(el, true);
       }
       if (el.x != null) {
         el.x.reask = reask && (el.statusFlags & STATUS_PENDING) != 0;
@@ -765,10 +778,19 @@ final class Core {
   void stashFlushed(Node el) {
     NodeExtension x = el.x;
     if (x.flushedAt != s().clock) {
+      // D-8: the flush checks whether the rewrite nets (Verdict.revert), once per node per flush.
+      if (s().revertHook != null) {
+        s().heldRewrites.add(el);
+      }
       x.flushed = el.pendingValue;
       x.flushedAt = s().clock;
       unflushedStaged = true;
     }
+  }
+
+  /** The value a signal had when this tick began writing it: the flushed staging of a held slot, else committed. */
+  Object tickBase(Node el) {
+    return (el.config & CONFIG_HELD) != 0 && el.x != null && el.x.flushedAt == s().clock ? el.x.flushed : el.value;
   }
 
   boolean markLateLinker(Node c) {
@@ -788,7 +810,7 @@ final class Core {
 
   void pullComputed(Node owner, Node c) {
     Heap heap = s().dirtyQueue;
-    if (owner.height >= heap.min) {
+    if (owner.height >= heap.min || (owner.flags & REACTIVE_CHECK) != 0) {
       heap.markNode(c, REACTIVE_DIRTY);
       heap.markHeap();
       updateIfNecessary(owner);
@@ -796,8 +818,11 @@ final class Core {
       updateIfNecessary(owner);
     }
     int height = owner.height;
-    if (height >= c.height && owner.parent != c) {
+    if (owner.parent == c) {
+      owner.flags |= REACTIVE_OWNER_READS;
+    } else if (height >= c.height) {
       c.height = height + 1;
+      heap.liftOwned(c, c.height);
     }
   }
 

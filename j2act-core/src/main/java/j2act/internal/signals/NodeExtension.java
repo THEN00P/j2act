@@ -36,6 +36,8 @@ final class NodeExtension {
   int marks;
   /** D-41: the error a node showed when a re-ask made it pending. */
   Throwable shownError;
+  /** D-22, D-41: an error a hold staged that a re-ask replaced before it showed: latest's newest answer meanwhile. */
+  Object aheadError;
   /** R5: the frame pass's flight of a latest()/isPending() reader. */
   Object parked;
 }

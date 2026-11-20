@@ -1013,7 +1013,7 @@ final class StoreOptimistic implements Stores.OptHooks {
    * object at its slot (in a keyed list, the one with its key; an unkeyed list pairs nothing). The target adopts the
    * object; a row another store lent keeps its proxy in the slot (D-34, #4329, #4738, #4902, #4904).
    */
-  @Override public void pair(StoreTarget t, Object pb) {
+  @Override public void pair(StoreTarget t, Object pb, boolean viewed) {
     StoreShape shape = shape();
     StoreFamily fam = t.fam;
     Function<Object, Object> keyFn = fam.key;
@@ -1044,7 +1044,7 @@ final class StoreOptimistic implements Stores.OptHooks {
       }
     }
     // A row another store's guess added as it is: a guess of that store's still out on the row shows on (#4902).
-    List<Node> kg = kgOf(t);
+    List<Node> kg = viewed ? null : kgOf(t);
     if (kg != null) {
       for (Node c : new ArrayList<>(kg)) {
         Object f = rt.lanes.guessedValueOf(c);

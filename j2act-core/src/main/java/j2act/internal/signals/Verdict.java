@@ -28,6 +28,8 @@ final class Verdict {
     q.holdStagingHook = this::holdStaging;
     q.laneAdoptHook = this::adoptParked;
     q.r5Hook = this::r5;
+    q.revertHook = this::revert;
+    q.passHook = this::pass;
     q.witnessMarkHook = () -> {
       if (probing) {
         probeFound = true;
@@ -116,16 +118,39 @@ final class Verdict {
   }
 
   private boolean heldNotFinal(Node owner) {
-    if ((owner.statusFlags & STATUS_PENDING) != 0 && !quietPending(owner)) {
+    if ((owner.statusFlags & STATUS_PENDING) != 0 && (!quietPending(owner) || heldBeneath(owner))) {
       return true;
     }
     return owner.pendingValue != NOT_PENDING && !latestActive && !owner.x.reask
       && (owner.x.shownError != null || owner.equals == null || !owner.equals.test(owner.value, owner.pendingValue));
   }
 
+  /** D-22, D-41: an error is an answer: re-asked, it is still the newest one latest shows, while the re-ask flies. */
+  private static void aheadError(Node el) {
+    if ((el.statusFlags & STATUS_PENDING) == 0 || el.x == null) {
+      return;
+    }
+    Object e = el.x.aheadError != null ? el.x.aheadError : el.x.shownError;
+    if (e instanceof Throwable) {
+      throw Errors.<RuntimeException>sneak((Throwable) e);
+    }
+  }
+
+  /** A source of el holds an answer to a new question: a quiet re-ask elsewhere does not make el final (A19, F-9). */
+  private boolean heldBeneath(Node el) {
+    for (Node.Link d = el.deps; d != null; d = d.nextDep) {
+      Node dep = d.dep;
+      if ((dep.config & CONFIG_HELD) != 0 && dep.pendingValue != NOT_PENDING && !(dep.x != null && dep.x.reask)
+        && !rt.core.isSame(dep, dep.value, dep.pendingValue)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private void pendingVerdict(Node c, Node el) {
     Scheduler q = s();
-    if (probing && !quietPending(el)) {
+    if (probing && (!quietPending(el) || heldBeneath(el))) {
       probeFound = true;
     }
     if (c != null && rt.core.tracking) {
@@ -361,9 +386,13 @@ final class Verdict {
           }
           return heldLatest(el, tracked ? c : null);
         }
+        if (latestActive) {
+          aheadError(owner);
+        }
         return el.value;
       }
-      if (el.pendingValue != NOT_PENDING && (owner.statusFlags & STATUS_PENDING) == 0) {
+      // Re-asked, the staging is still the newest answer it produced: latest shows it (D-22).
+      if (el.pendingValue != NOT_PENDING && ((owner.statusFlags & STATUS_PENDING) == 0 || (latestActive && !probing))) {
         if (probing && owned) {
           rt.core.joinPass(c, el);
         }
@@ -397,6 +426,10 @@ final class Verdict {
     if ((owner.statusFlags & STATUS_PENDING) != 0) {
       if (!uninitialized) {
         pendingVerdict(tracked ? c : null, owner);
+        // D-22, D-41: an error is an answer: re-asked, it is still the newest one, not the value it replaced.
+        if (latestActive) {
+          aheadError(owner);
+        }
         return el.value;
       }
       if (c != null && !rt.core.tracking && !rt.core.spectating && el != c) {
@@ -741,5 +774,79 @@ final class Verdict {
       }
     }
     return false;
+  }
+
+  /**
+   * D-8, at the flush: a node this tick staged that nets to the value the tick began with made no change. A reader it
+   * woke whose every source is unchanged has nothing to re-derive: out of the heap, so an async one asks nothing
+   * again (F-9). A verdict reader re-runs: what it probes is the pending, not the value.
+   */
+  private void revert() {
+    Scheduler q = s();
+    for (Node n : new java.util.ArrayList<>(q.pendingNodes)) {
+      // A rewrite netting to the committed value is staged as that value itself; a derivation's staging is its answer.
+      if (n.pendingValue == n.value && (n.fn == null || (n.flags & REACTIVE_MANUAL_WRITE) != 0)) {
+        unwake(n);
+      }
+    }
+    // A held slot rewritten since the last flush nets to its flushed staging (A28).
+    if (!q.heldRewrites.isEmpty()) {
+      java.util.List<Node> rewrites = new java.util.ArrayList<>(q.heldRewrites);
+      q.heldRewrites.clear();
+      for (Node n : rewrites) {
+        unwake(n);
+      }
+    }
+  }
+
+  private void unwake(Node n) {
+    Scheduler q = s();
+    if (n.pendingValue == NOT_PENDING || !rt.core.isSame(n, rt.core.tickBase(n), n.pendingValue)) {
+      return;
+    }
+    for (Node.Link s = n.subs; s != null; s = s.nextSub) {
+      Node sub = s.sub;
+      if ((sub.flags & REACTIVE_IN_HEAP) == 0 || (sub.flags & REACTIVE_MISSED_WAKE) != 0
+        || (sub.config & CONFIG_VERDICT) != 0) {
+        continue;
+      }
+      boolean same = true;
+      for (Node.Link d = sub.deps; d != null && same; d = d.nextDep) {
+        Node dep = d.dep;
+        same = dep.fn != null ? (dep.flags & (REACTIVE_IN_HEAP | REACTIVE_DIRTY | REACTIVE_CHECK)) == 0
+          : dep.pendingValue == NOT_PENDING || rt.core.isSame(dep, rt.core.tickBase(dep), dep.pendingValue);
+      }
+      if (same) {
+        q.dirtyQueue.deleteFromHeap(sub);
+        sub.flags &= ~(REACTIVE_DIRTY | REACTIVE_CHECK);
+      }
+    }
+  }
+
+  /**
+   * The pass head (tail false): the held staged error latest keeps showing. The tail (A19 exc. 2): a pass whose every
+   * source is at its committed value asked the committed question again, a re-ask. Not over a guess or in a lane.
+   */
+  private boolean pass(Node el, boolean tail) {
+    Scheduler q = s();
+    if (!tail) {
+      el.x.aheadError = (el.config & (CONFIG_STAGED_ERROR | CONFIG_HELD)) == (CONFIG_STAGED_ERROR | CONFIG_HELD)
+        ? el.pendingValue : null;
+      return false;
+    }
+    if (q.guessing || q.passLane != null || (el.statusFlags & STATUS_UNINITIALIZED) != 0) {
+      return false;
+    }
+    for (Node.Link d = el.deps; d != null; d = d.nextDep) {
+      Node dep = d.dep;
+      if (dep.pendingValue != NOT_PENDING ? !rt.core.isSame(dep, dep.value, dep.pendingValue)
+        : dep.fn != null && (dep.statusFlags & STATUS_PENDING) != 0) {
+        return false;
+      }
+      if (d == el.depsTail) {
+        break;
+      }
+    }
+    return true;
   }
 }

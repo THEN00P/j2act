@@ -168,8 +168,11 @@ final class Heap {
     if (el.height != newHeight) {
       el.height = newHeight;
       liftOwned(el, newHeight);
+      // Not an owner reading it: it sits below its child by construction (REACTIVE_OWNER_READS).
       for (Link s = el.subs; s != null; s = s.nextSub) {
-        insertIntoHeapHeight(s.sub);
+        if (s.sub != el.parent) {
+          insertIntoHeapHeight(s.sub);
+        }
       }
     }
   }
@@ -179,14 +182,20 @@ final class Heap {
    * birth left a grandchild at or below it, to run before the owner whose run disposes it. A child waiting in the heap
    * keeps its seat this pass; what it owns moves either way.
    */
-  private static void liftOwned(Owner o, int h) {
+  void liftOwned(Owner o, int h) {
     for (Owner c = o.firstChild; c != null; c = c.nextSibling) {
       if (c.root || !(c instanceof Node)) {
         liftOwned(c, h);
       } else if (((Node) c).height <= h) {
+        // A child waiting in the heap moves with it: left at its seat it runs before the owner that disposes it.
         Node n = (Node) c;
-        if ((n.flags & (REACTIVE_IN_HEAP | REACTIVE_IN_HEAP_HEIGHT)) == 0) {
-          n.height = h + 1;
+        int f = n.flags & (REACTIVE_IN_HEAP | REACTIVE_IN_HEAP_HEIGHT);
+        deleteFromHeap(n);
+        n.height = h + 1;
+        if ((f & REACTIVE_IN_HEAP) != 0) {
+          insertIntoHeap(n);
+        } else if (f != 0) {
+          insertIntoHeapHeight(n);
         }
         liftOwned(n, h + 1);
       }

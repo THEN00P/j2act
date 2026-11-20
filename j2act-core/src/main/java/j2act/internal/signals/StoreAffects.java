@@ -69,6 +69,27 @@ final class StoreAffects implements Stores.AffectsHooks {
       return;
     }
     StoreTarget t = shape.targetOf(value);
+    // Another store's proxy the record holds: the mark covers this store's view of it (the chained target, keyed by
+    // that proxy) and never that store's own records (#4914). Its children are walked as that store's proxies.
+    if (t != null && fam != null && t.fam != fam && stores.same(t.px, value)) {
+      if (visited.put(value, Boolean.TRUE) != null) {
+        return;
+      }
+      entry.scope.put(value, Boolean.TRUE);
+      StoreTarget ct = stores.lookupTarget(value, fam);
+      if (ct != null) {
+        nodesOf(ct, found);
+      }
+      Object raw = t.pb != null ? t.pb : t.v;
+      for (Object k : shape.keys(raw)) {
+        Object v = shape.get(raw, k);
+        StoreTarget ot = shape.isWrappable(v) ? stores.lookupTarget(v, t.fam) : null;
+        if (ot != null) {
+          walk(ot.px, entry, found, fam, visited);
+        }
+      }
+      return;
+    }
     if (t == null) {
       t = stores.lookupTarget(value, fam);
     }
@@ -84,26 +105,31 @@ final class StoreAffects implements Stores.AffectsHooks {
       if (stores.optHooks != null && t.o) {
         raw = stores.optHooks.view(t, raw, true);
       }
-      if (t.n != null) {
-        for (Map.Entry<Object, Node> e : t.n.entrySet()) {
-          if (e.getKey() != AFFECTS) {
-            found.add(e.getValue());
-          }
-        }
-      }
-      if (t.h != null) {
-        found.addAll(t.h.values());
-      }
-      if (t.k != null) {
-        found.add(t.k);
-      }
-      if (t.dk != null) {
-        found.add(t.dk);
-      }
+      nodesOf(t, found);
       fam = t.fam != null ? t.fam : fam;
     }
     for (Object k : shape.keys(raw)) {
       walk(shape.get(raw, k), entry, found, fam, visited);
+    }
+  }
+
+  /** Every live node of t into found. Another mark's carrier is its own channel. */
+  private static void nodesOf(StoreTarget t, List<Node> found) {
+    if (t.n != null) {
+      for (Map.Entry<Object, Node> e : t.n.entrySet()) {
+        if (e.getKey() != AFFECTS) {
+          found.add(e.getValue());
+        }
+      }
+    }
+    if (t.h != null) {
+      found.addAll(t.h.values());
+    }
+    if (t.k != null) {
+      found.add(t.k);
+    }
+    if (t.dk != null) {
+      found.add(t.dk);
     }
   }
 

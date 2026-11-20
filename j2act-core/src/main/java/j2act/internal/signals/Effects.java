@@ -55,6 +55,15 @@ final class Effects {
         return;
       }
       escalate(self, Errors.unwrapStatusError(actualError));
+    } else if (self.type == EFFECT_USER) {
+      // A user effect's run owed for a pass a new question has since made pending is for a world that will not
+      // commit: void, it re-runs when that question settles. A quiet re-ask keeps it (F-1, F-2, F-9).
+      Node src = actualError instanceof Errors.NotReadyError ? ((Errors.NotReadyError) actualError).source
+        : actualError instanceof StatusError ? ((StatusError) actualError).source : null;
+      if ((actualStatus & STATUS_PENDING) != 0 && self.modified && !(src != null && src.x != null && src.x.reask)) {
+        self.modified = false;
+        rt.core.ext(self).blocked = true;
+      }
     } else if (self.type == EFFECT_RENDER) {
       q.notify(self, STATUS_PENDING | STATUS_ERROR, actualStatus, actualError);
     }

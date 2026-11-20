@@ -93,7 +93,8 @@ public final class Stores {
 
     void reconcile(Object draft, Object incoming, Function<Object, Object> keyFn);
 
-    void pair(StoreTarget t, Object pb);
+    /** viewed: a returned landing, diffed against the view, which holds a lent row already (#4918). */
+    void pair(StoreTarget t, Object pb, boolean viewed);
 
     /** Returns, for a refresh, the leaves its wake skips. */
     java.util.function.Predicate<Node> ask(StoreFamily fam);
@@ -851,7 +852,7 @@ public final class Stores {
         return;
       }
       // The derive's draft: new rows under guessed rows are paired first; the frame then reaches each live carrier.
-      optHooks.pair(t, pb);
+      optHooks.pair(t, pb, false);
       optHooks.judge(t, pb);
     }
     Object old = t.v;
@@ -1835,7 +1836,12 @@ public final class Stores {
     if (same(incoming, old) && !isOwned(old)) {
       return;
     }
-    Object prevView = optHooks != null && t.o ? optHooks.view(t, old, false) : old;
+    // A returned landing pairs its new objects with the row targets first, as the derive's draft does (#4907).
+    Object prevView = old;
+    if (optHooks != null && t.o) {
+      optHooks.pair(t, incoming, true);
+      prevView = optHooks.view(t, old, false);
+    }
     boolean nextArr = shape.isArray(incoming);
     boolean shallow = t.s;
     adoptPB(t, incoming, false);

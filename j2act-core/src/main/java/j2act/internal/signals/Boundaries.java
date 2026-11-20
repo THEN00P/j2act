@@ -646,6 +646,11 @@ final class Boundaries {
         }
         record(b, tree, tree);
       }
+      // An error boundary on its fallback is the display of everything under it: a retry pending there keeps the
+      // fallback and holds nothing outside it (F-3, F-12).
+      if (status == STATUS_PENDING && b.fallback && type == STATUS_ERROR) {
+        return fallback(b);
+      }
       throw Errors.<RuntimeException>sneak(tree.x.error);
     }
     if (isCollecting(b)) {
