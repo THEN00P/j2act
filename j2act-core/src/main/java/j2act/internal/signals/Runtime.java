@@ -14,7 +14,7 @@ import java.util.function.UnaryOperator;
  * on the owner's lane. It knows nothing of tabs, HTML or threads: `lane` is where a landing from another
  * thread goes, and `microtasks` is what runs a scheduled flush, Solid's queueMicrotask.
  *
- * Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+ * Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
  */
 public final class Runtime {
   final Scheduler scheduler;

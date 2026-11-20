@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -16,7 +16,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
 
 /**
- * Port of @solidjs/signals core/async.ts at 9449845. A flight is a CompletionStage or an AsyncIterable. JS
+ * Port of @solidjs/signals core/async.ts at 68406c2. A flight is a CompletionStage or an AsyncIterable. JS
  * promises always land a tick later; a Java future can land on another thread, so a landing is posted to the
  * runtime's lane, and one already complete when asked is read synchronously, as Solid does for a sync thenable.
  */
@@ -139,7 +139,11 @@ final class Async {
   boolean retryReaches(Node el, Node source) {
     for (Link d = el.deps; d != null; d = d.nextDep) {
       Node dep = d.dep;
-      if (dep == source || (dep.x != null && dep.x.pendingSources != null && dep.x.pendingSources.contains(source))) {
+      // A disposed dep carries nothing (#5003): it is unlinked, so no settle walk reaches it.
+      if ((dep.flags & REACTIVE_DISPOSED) == 0
+        // A source that has settled has no walk to come: linked directly, it holds nothing (F-2, #5041).
+        && (dep == source ? (dep.statusFlags & STATUS_PENDING) != 0
+          : dep.x != null && dep.x.pendingSources != null && dep.x.pendingSources.contains(source))) {
         return true;
       }
     }
@@ -276,7 +280,8 @@ final class Async {
         if (!errored) {
           setPendingError(node, null, null);
         }
-        if ((node.config & CONFIG_HELD) != 0) {
+        // A source still in flight has not landed: a reader that stopped carrying it joins nothing (F-2, #5019).
+        if ((node.config & CONFIG_HELD) != 0 && (source.statusFlags & STATUS_PENDING) == 0) {
           q.joinFuture(q.txOf(node));
         }
         if (node.x != null && node.x.blocked) {
@@ -580,7 +585,8 @@ final class Async {
     Object run() {
       Scheduler q = rt.scheduler;
       rt.core.ext(el).inFlight = result;
-      if (q.holdWorkHook != null && (el.flags & REACTIVE_WINDOW) == 0) {
+      // The derivation asks (F-2's producer clause): its last answer was a flight, window or not.
+      if (q.holdWorkHook != null) {
         el.config |= CONFIG_ASYNC;
       }
       el.x.q = q.question != 0 ? q.question : Scheduler.MAINLINE_QUESTION;
@@ -730,8 +736,9 @@ final class Async {
         || (q.holdWorkHook != null && ((sub.config & CONFIG_VERDICT) != 0 || (pendingSource != null && (sub.config & CONFIG_STAGED_ERROR) != 0))
           && !(pendingSource != null && q.holdWorkHook.test(sub, el)))
         || (status == STATUS_PENDING && link.gen != sub.depGen)) {
-        if (status != STATUS_PENDING) {
-          removePendingSource(sub, el);
+        // Its dependents carry the entry too: a re-derive to the same value notifies none of them, so it is retired.
+        if (status != STATUS_PENDING && removePendingSource(sub, el)) {
+          settlePendingSource(sub, el);
         }
         q.dirtyQueue.enqueueSub(sub);
         q.schedule();
@@ -750,7 +757,12 @@ final class Async {
         } else {
           q.queuePendingNode(sub);
           if (status == STATUS_PENDING && (sub.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD && sub.type == 0) {
-            q.joinFuture(q.txOf(sub));
+            if (q.guessing && (sub.statusFlags & STATUS_PENDING) != 0 && Scheduler.reasks(sub)) {
+              // A hold that waits on re-asks only holds nothing new (D-34): the memo leaves it (#4828).
+              q.unhold(sub);
+            } else {
+              q.joinFuture(q.txOf(sub));
+            }
           }
         }
         notifyStatus(sub, status, error);

@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.CONFIG_AUTO_DISPOSE;
 import static j2act.internal.signals.Constants.CONFIG_SLOT_NODE;
@@ -13,7 +13,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Port of @solidjs/signals core/graph.ts at 9449845. */
+/** Port of @solidjs/signals core/graph.ts at 68406c2. */
 final class Graph {
   private final Runtime rt;
   /** Last-one-out releases held back while a pass tears down an earlier pass's frame (#4142). */
@@ -104,10 +104,11 @@ final class Graph {
     dormantNodes.clear();
   }
 
-  void link(Node dep, Node sub) {
+  /** True when it reuses the link sub's last pass made: a re-read (#5002). */
+  boolean link(Node dep, Node sub) {
     Link prevDep = sub.depsTail;
     if (prevDep != null && prevDep.dep == dep) {
-      return;
+      return false;
     }
     Link nextDep = null;
     boolean isRecomputing = (sub.flags & REACTIVE_RECOMPUTING_DEPS) != 0;
@@ -116,13 +117,13 @@ final class Graph {
       if (nextDep != null && nextDep.dep == dep) {
         nextDep.gen = sub.depGen;
         sub.depsTail = nextDep;
-        return;
+        return true;
       }
     }
     // A link stamped with the current pass generation already sits in the validated prefix.
     Link prevSub = dep.subsTail;
     if (prevSub != null && prevSub.sub == sub && (!isRecomputing || prevSub.gen == sub.depGen)) {
-      return;
+      return false;
     }
     Link newLink = new Link(dep, sub, nextDep, prevSub, sub.depGen);
     sub.depsTail = newLink;
@@ -139,5 +140,6 @@ final class Graph {
     }
     // New subscriber edge: staged-rewrite skips (section 12d) must not miss it.
     rt.scheduler.bumpNotifyEpoch();
+    return false;
   }
 }

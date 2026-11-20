@@ -1,32 +1,54 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
 import j2act.internal.signals.Node.Link;
 import j2act.internal.signals.Scheduler.Transaction;
 import j2act.internal.signals.StoreTarget.StoreFamily;
-import j2act.internal.signals.Stores.LaneView;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
- * Port of @solidjs/signals store/optimistic.ts at 9449845: optimistic stores on lanes. A user's write to an
- * optimistic store is a guess on the written key's node, a presence guess on its presence node and, when
- * membership or order changed, an arrangement guess on the container node. Lanes do the rest: the guess
- * shows under the action's hold, a landing beneath it stages as truth and confirms it when equal, and the
- * action's end dissolves it. The committed backing is never touched by a guess.
+ * Port of @solidjs/signals store/optimistic.ts at 68406c2: optimistic stores on lanes (S2: a guess is a patch). A
+ * user write to an optimistic store is one guess per target: the user's draft, carried by the target's guess carrier
+ * (a slot node keyed {@link Stores#PATCH}), with the keys the draft changed recorded on it. Lanes do the rest on that
+ * one node: the guess shows under the action's hold, a landing beneath it stages as truth and confirms it when
+ * equal, and the action's settle dissolves it. The committed backing is never touched by a guess. Reads find the
+ * carrier by key: a key the guess changed reads through it, tracked; presence, descriptors and enumeration are the
+ * carrier frame's.
  */
 final class StoreOptimistic implements Stores.OptHooks {
+  /** Solid's `g` left undefined: not an arrangement guess. */
+  private static final Object UNSET = new Object();
+
+  /** What Solid keeps on a carrier node: the keys the guess changed and, for a keyed list, its rows and removed keys. */
+  private static final class Patch {
+    Set<Object> wk;
+    Set<Object> del;
+    Set<Object> removed;
+    /** The keys this guess's frame only carries over from another live guess's carrier (#4784). */
+    Set<Object> borrowed;
+    /** The questions of every action that guessed on this carrier: its q is only the newest's (#4874). */
+    Set<Integer> qs;
+    /** The rows as written (a List), null for the #4525 re-base, UNSET for no arrangement guess. */
+    Object g = UNSET;
+  }
+
   private final Runtime rt;
   private final Stores stores;
+  /** A target's guess carriers, one per lane, oldest first. */
+  private final Map<StoreTarget, List<Node>> carriers = new WeakHashMap<>();
+  private final Map<Node, Patch> patches = new WeakHashMap<>();
   /** An optimistic setter's targets whose staging was set aside, restored when its writes become guesses. */
   private final Map<StoreTarget, Object> optStaged = new HashMap<>();
   private final Set<StoreFamily> overlaidFamilies = new LinkedHashSet<>();
@@ -48,6 +70,12 @@ final class StoreOptimistic implements Stores.OptHooks {
     };
     q.slotTakeHook = this::slotTake;
     q.laneRebaseHook = this::laneRebase;
+    q.slotDirtyHook = (n, l) -> readersOf(n, node -> q.laneDirty(node, l));
+    q.slotRerunHook = (n, t) -> readersOf(n, node -> {
+      for (Link s = node.subs; s != null; s = s.nextSub) {
+        q.staleReader(s.sub, t);
+      }
+    });
   }
 
   private Scheduler s() {
@@ -58,126 +86,452 @@ final class StoreOptimistic implements Stores.OptHooks {
     return stores.shape();
   }
 
+  private List<Node> kgOf(StoreTarget t) {
+    return carriers.get(t);
+  }
+
+  private Patch patch(Node g) {
+    return patches.get(g);
+  }
+
+  /** A key Solid's INDEX regex or "length" names: an array slot of a keyed list's arrangement. */
+  private static boolean arrangementKey(Object key) {
+    return key == StoreShape.LENGTH || key instanceof Integer;
+  }
+
+  /**
+   * The newest live guess carrier for key: a lane's guess, or one a correction re-homed into its hold. Its record has
+   * the key, or, for a read, the key is an index or the length of a keyed list's arrangement guess. A landing asks
+   * without reads: a key the guess only carried over is the truth's.
+   */
+  private Node guessFor(StoreTarget t, Object key, boolean shape, boolean reads) {
+    List<Node> kg = kgOf(t);
+    if (kg != null) {
+      for (int i = kg.size() - 1; i >= 0; i--) {
+        Node g = kg.get(i);
+        Patch p = patch(g);
+        if ((g.config & (CONFIG_OVERRIDE | CONFIG_HELD)) != 0
+          && ((p.wk != null && p.wk.contains(key)) || (p.del != null && p.del.contains(key))
+            || (reads && p.g != UNSET && !(p.borrowed != null && p.borrowed.contains(key)) && arrangementKey(key)))) {
+          return g;
+        }
+      }
+    }
+    return null;
+  }
+
+  /** The newest live guess carrier: the frame a structural read sees. */
+  private Node newestGuess(StoreTarget t) {
+    List<Node> kg = kgOf(t);
+    if (kg != null) {
+      for (int i = kg.size() - 1; i >= 0; i--) {
+        if ((kg.get(i).config & (CONFIG_OVERRIDE | CONFIG_HELD)) != 0) {
+          return kg.get(i);
+        }
+      }
+    }
+    return null;
+  }
+
+  /** The hold's carrier of a truth staged beneath the screen: the container node while a transaction holds its staging. */
+  private static Node heldCarrier(StoreTarget t) {
+    Node k = t.k;
+    return k != null && (k.config & CONFIG_HELD) != 0 && k.pendingValue != NOT_PENDING ? k : null;
+  }
+
+  /** A guessed key's value from the carrier's frame. */
+  private Object carrierValue(Object frame, Object key) {
+    StoreShape shape = shape();
+    return key == StoreShape.LENGTH && shape.isArray(frame) ? (Object) shape.length(frame) : shape.get(frame, key);
+  }
+
+  private boolean frameHas(Object frame, Object key) {
+    StoreShape shape = shape();
+    return key == StoreShape.LENGTH ? shape.isArray(frame) : shape.has(frame, key);
+  }
+
   private boolean isObject(Object v) {
     return v != null && shape().isObject(v);
   }
 
-  /** The backing a writer composes on: the committed one, a chained store's as its own writer sees it. */
-  private Object writerBacking(StoreTarget t) {
+  /**
+   * The view the setter composes on (writer): the committed frame, a chained backing resolved through the inner
+   * store's, with the lane's value and the tick's own guess over it; plain: the committed frame alone.
+   */
+  private Object writerBacking(StoreTarget t, boolean plain) {
     Object base = stores.committed(t);
-    StoreTarget inner = base != null && shape().isObject(base) ? shape().targetOf(base) : null;
-    return inner == null ? base : view(inner, writerBacking(inner), true);
+    StoreTarget inner = isObject(base) ? shape().targetOf(base) : null;
+    Object src = inner == null ? base : writerBacking(inner, plain);
+    return plain ? src : view(t, src, true);
   }
 
-  /** The user's draft: a clone of the view the user saw, the committed frame with the lanes' values and the tick's own guesses. */
+  /** A carrier's frame as the writer sees it: the unflushed guess or the lane's value, a corrected guess's screen. */
+  private Object writerFrame(Node g) {
+    if ((g.config & CONFIG_OVERRIDE) != 0 || rt.lanes.pendingGuessOf(g) != NOT_PENDING) {
+      Object v = rt.lanes.guessedValueOf(g);
+      if (v != NOT_PENDING) {
+        return v;
+      }
+    }
+    return (g.config & CONFIG_HELD) != 0 ? g.value : NOT_PENDING;
+  }
+
+  /**
+   * The newest carrier's frame with each key another carrier owns taken from that carrier, as a read of the key finds
+   * it (guessFor): the newest frame only copied those keys when it was written, and an older carrier a later guess on
+   * the same key went to has moved on since (#4988). A list's frame is its arrangement, taken whole.
+   */
+  private Object ownedKeys(StoreTarget t, Node g, List<Node> kg, Object v) {
+    StoreShape shape = shape();
+    Object out = v;
+    if (!shape.isArray(v)) {
+      for (Node o : new ArrayList<>(kg)) {
+        Patch p = patch(o);
+        if (o == g || p.wk == null) {
+          continue;
+        }
+        for (Object key : new ArrayList<>(p.wk)) {
+          if (guessFor(t, key, false, false) == o) {
+            Object f = writerFrame(o);
+            if (f != NOT_PENDING && !stores.same(shape.get(f, key), shape.get(out, key))) {
+              if (out == v) {
+                out = shape.clone(v);
+              }
+              shape.set(out, key, shape.get(f, key));
+            }
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  /** src with the target's guess over it: the carrier's unflushed guess or lane value when it carries one. */
+  @Override public Object view(StoreTarget t, Object src, boolean writer) {
+    List<Node> kg = kgOf(t);
+    if (kg != null) {
+      for (int i = kg.size() - 1; i >= 0; i--) {
+        Node g = kg.get(i);
+        if (writer) {
+          // The writer composes on the screen with the tick's own guesses (D-34, D-37).
+          Object v = writerFrame(g);
+          if (v != NOT_PENDING) {
+            return ownedKeys(t, g, kg, v);
+          }
+        } else if ((g.config & (CONFIG_OVERRIDE | CONFIG_HELD)) != 0) {
+          // A snapshot, deep(), a reconcile's key matching: the carrier as core reads it for this reader.
+          Object v = rt.core.untrack(() -> rt.core.read(g));
+          if (v != NOT_PENDING) {
+            return v;
+          }
+        }
+      }
+    }
+    return src;
+  }
+
+  /** The user's draft: a clone of the view the user saw (#3665); a staging already on the target is set aside. */
   @Override public Object draft(StoreTarget t) {
     if (t.pb != null) {
       optStaged.put(t, t.pb);
     }
-    return stores.cloneRaw(view(t, writerBacking(t), true), t);
+    return stores.cloneRaw(writerBacking(t, false), t);
   }
 
-  private void guess(Node node, Object nv) {
-    rt.lanes.optimisticWrite(node, nv, null);
-  }
-
-  /** A chained link's node follows the inner store: before a guess its value is what the inner store shows. */
-  private void follow(Object inner, Object base, Node node, Object key, boolean presence) {
-    if (inner != null) {
-      node.value = presence ? (Object) shape().has(base, key) : stores.unwrapValue(shape().get(base, key));
-    }
-  }
-
-  private Object resolved(StoreTarget t, Object inner, Object key, Object raw) {
-    return stores.unwrapValue(inner != null && isObject(raw) ? stores.resolveChainedRaw(t, key, raw) : raw);
-  }
-
-  /** A user setter's writes on an optimistic family, as guesses. */
-  @Override public Object writes(StoreTarget t, Object pb) {
-    StoreShape shape = shape();
-    Object base = writerBacking(t);
-    Object old = view(t, base, true);
-    boolean isArr = shape.isArray(pb);
-    Object inner = t.ch ? t.v : null;
-    boolean structural = false;
-    for (Object key : shape.keys(pb)) {
-      Object nv = resolved(t, inner, key, shape.get(pb, key));
-      if (!shape.has(old, key)) {
-        Node node = stores.getNode(t, key);
-        follow(inner, base, node, key, false);
-        guess(node, nv);
-        Node hasNode = stores.getHasNode(t, key);
-        follow(inner, base, hasNode, key, true);
-        guess(hasNode, true);
-        structural = true;
-      } else {
-        Object ov = resolved(t, inner, key, shape.get(old, key));
-        if (!stores.same(ov, nv) && !stores.targetsEqual(ov, nv)) {
-          Node node = stores.getNode(t, key);
-          follow(inner, base, node, key, false);
-          guess(node, nv);
-          if (isArr) {
-            structural = true;
+  /**
+   * The target's guess carrier, made at the first guess: its committed value the frame the guess is shown over. A
+   * guess goes on one with a guess still unflushed, or a live one whose record shares a key; else a new one.
+   */
+  private Node guessCarrier(StoreTarget t, Set<Object> keys) {
+    List<Node> kg = carriers.computeIfAbsent(t, k -> new ArrayList<>());
+    for (int i = kg.size() - 1; i >= 0; i--) {
+      Node g = kg.get(i);
+      boolean live = (g.config & (CONFIG_OVERRIDE | CONFIG_GUESS)) != 0;
+      // A corrected guess whose screen stays until its hold lands counts for its keys: the setter composed on that
+      // screen (#4869).
+      if (!live && rt.lanes.pendingGuessOf(g) == NOT_PENDING && !((g.config & CONFIG_HELD) != 0 && keys != null)) {
+        continue;
+      }
+      if (rt.lanes.pendingGuessOf(g) != NOT_PENDING || (live && keys == null)) {
+        return entangle(t, g, keys);
+      }
+      Patch p = patch(g);
+      if (p.wk != null) {
+        for (Object key : keys) {
+          if (p.wk.contains(key) || (p.del != null && p.del.contains(key))) {
+            return g;
           }
         }
       }
+    }
+    Node[] self = new Node[1];
+    Node g = rt.core.slotSignal(stores.committed(t), (a, b) -> patchEquals(self[0], a, b), t, Stores.PATCH, false);
+    self[0] = g;
+    // Written over a held truth: that truth is the one beneath the guess, judged at the body's end (A18, #3330).
+    Node p = heldCarrier(t);
+    if (p != null) {
+      g.pendingValue = p.pendingValue;
+      s().holdNode(g, s().txOf(p));
+    }
+    patches.put(g, new Patch());
+    kg.add(g);
+    return g;
+  }
+
+  /** This flush's carrier writes a key another action's live guess holds: their frames entangle (A34 (1)). */
+  private Node entangle(StoreTarget t, Node g, Set<Object> keys) {
+    Scheduler q = s();
+    if (keys != null) {
+      outer:
+      for (Node o : kgOf(t)) {
+        Patch op = patch(o);
+        if (o != g && (o.config & CONFIG_OVERRIDE) != 0 && op.wk != null) {
+          for (Object key : keys) {
+            if (op.wk.contains(key) || (op.del != null && op.del.contains(key))) {
+              Transaction holder = Scheduler.resolveTx(q.txOf(o).parent);
+              if ((g.config & CONFIG_OVERRIDE) != 0) {
+                q.merge(Scheduler.resolveTx(q.txOf(g).parent), holder);
+              } else if ((g.config & CONFIG_HELD) == 0) {
+                q.holdNode(g, holder);
+              }
+              break outer;
+            }
+          }
+        }
+      }
+    }
+    return g;
+  }
+
+  /** The derive's open question is a re-ask of the same one (D-34): its own refresh, or every source it waits on re-asked. */
+  private static boolean reasked(Node d) {
+    if ((d.flags & REACTIVE_REASK) != 0 || (d.x != null && d.x.reask)) {
+      return true;
+    }
+    Set<Node> ps = d.x != null ? d.x.pendingSources : null;
+    if (ps == null || ps.isEmpty()) {
+      return false;
+    }
+    for (Node s : ps) {
+      if (s == d || !((s.flags & REACTIVE_REASK) != 0 || (s.x != null && s.x.reask))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** The carrier's comparator: a truth judged against the guess over the keys the guess changed. */
+  private boolean patchEquals(Node self, Object a, Object b) {
+    if (stores.same(a, b)) {
+      return true;
+    }
+    if (!isObject(a) || !isObject(b)) {
+      return false;
+    }
+    StoreShape shape = shape();
+    // A chained backing is judged as the inner store's committed frame.
+    StoreTarget at = shape.targetOf(a);
+    if (at != null) {
+      a = writerBacking(at, true);
+    }
+    StoreTarget bt = shape.targetOf(b);
+    if (bt != null) {
+      b = writerBacking(bt, true);
+    }
+    StoreFamily fam = ((StoreTarget) self.host).fam;
+    Patch p = patch(self);
+    // A structural guess (a list's, the only kind that records g): the arrangement, rows by identity or key.
+    if (p.g != UNSET && !rowsSame(a, b, fam)) {
+      return false;
+    }
+    if (p.wk != null) {
+      for (Object key : p.wk) {
+        if (frameHas(a, key) != frameHas(b, key)) {
+          return false;
+        }
+        if (!s().echoesHook.test(carrierValue(a, key), carrierValue(b, key))) {
+          return false;
+        }
+      }
+    }
+    if (p.del != null) {
+      for (Object key : p.del) {
+        if (frameHas(a, key) != frameHas(b, key)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /** A user setter's writes on an optimistic family, as one guess on the target's carrier. */
+  @Override public Object writes(StoreTarget t, Object pb) {
+    StoreShape shape = shape();
+    // The view the user saw: the committed frame with the lane's value and the tick's own guess over it.
+    Object old = writerBacking(t, false);
+    boolean isArr = shape.isArray(pb);
+    Set<Object> changed = new LinkedHashSet<>();
+    Set<Object> del = null;
+    boolean structural = false;
+    boolean keysChanged = false;
+    for (Object key : shape.keys(pb)) {
+      Object nv = stores.unwrapValue(shape.get(pb, key));
+      if (!shape.has(old, key)) {
+        changed.add(key);
+        structural = keysChanged = true;
+      } else {
+        Object previous = shape.get(old, key);
+        Object ov = stores.unwrapValue(previous);
+        // A row the setter carried over is not a write (#4724): the draft's rows are clones of the view's.
+        if (!stores.same(ov, nv) && !stores.targetsEqual(ov, nv)) {
+          if (isArr && echoes(ov, nv)) {
+            // The frame carries the row the view showed: the same object wraps as the same proxy.
+            shape.set(pb, key, previous);
+          } else {
+            changed.add(key);
+            if (isArr) {
+              structural = true;
+            }
+          }
+        }
+      }
+    }
+    if (isArr && shape.isArray(old) && shape.length(old) != shape.length(pb)) {
+      changed.add(StoreShape.LENGTH);
     }
     for (Object key : shape.keys(old)) {
       if (shape.has(pb, key)) {
         continue;
       }
-      Node node = stores.getNode(t, key);
-      follow(inner, base, node, key, false);
-      guess(node, shape.undefined());
-      Node hasNode = stores.getHasNode(t, key);
-      follow(inner, base, hasNode, key, true);
-      guess(hasNode, false);
-      structural = true;
+      if (del == null) {
+        del = new LinkedHashSet<>();
+      }
+      del.add(key);
+      structural = keysChanged = true;
     }
-    if (isArr && shape.length(old) != shape.length(pb)) {
-      Node len = stores.getNode(t, StoreShape.LENGTH);
-      follow(inner, base, len, StoreShape.LENGTH, false);
-      guess(len, shape.length(pb));
-      structural = true;
+    Object staged = optStaged.remove(t);
+    if (changed.isEmpty() && del == null) {
+      return staged;
     }
-    if (structural) {
-      Object rows = isArr ? rowsOf(pb) : new LinkedHashSet<>(shape.keys(pb));
+    Set<Object> keys = changed;
+    if (del != null) {
+      keys = new LinkedHashSet<>(changed);
+      keys.addAll(del);
+    }
+    Node g = guessCarrier(t, keys);
+    Patch p = patch(g);
+    if (p.qs == null) {
+      p.qs = new HashSet<>();
+    }
+    p.qs.add(s().question);
+    // The record accumulates across a lane's writes to the same target.
+    if (p.wk == null) {
+      p.wk = changed;
+    } else {
+      p.wk.addAll(changed);
+    }
+    if (del != null) {
+      if (p.del == null) {
+        p.del = del;
+      } else {
+        p.del.addAll(del);
+      }
+    }
+    // The keys this guess's frame only carries over from another live guess's carrier (#4784): the arrangement read
+    // falls through on those keys, to the lender's carrier while it lives, to the truth once it dissolves. A row the
+    // setter carried over verbatim is not borrowed (#4724).
+    List<Node> kg = kgOf(t);
+    // Not a guess that changed the keys or the length: it writes the list itself, and entangles with the others (D-33).
+    if (kg != null && kg.size() > 1 && !keysChanged && !changed.contains(StoreShape.LENGTH)) {
+      for (Node o : kg) {
+        if (o == g) {
+          continue;
+        }
+        boolean live = (o.config & (CONFIG_OVERRIDE | CONFIG_GUESS | CONFIG_HELD)) != 0
+          || rt.lanes.pendingGuessOf(o) != NOT_PENDING;
+        if (!live) {
+          continue;
+        }
+        Patch op = patch(o);
+        List<Object> lent = new ArrayList<>();
+        if (op.wk != null) {
+          lent.addAll(op.wk);
+        }
+        if (op.del != null) {
+          lent.addAll(op.del);
+        }
+        for (Object key : lent) {
+          if (!changed.contains(key) && !(del != null && del.contains(key)) && !carriedVerbatim(t, old, pb, key)) {
+            if (p.borrowed == null) {
+              p.borrowed = new HashSet<>();
+            }
+            p.borrowed.add(key);
+          }
+        }
+      }
+    }
+    if (structural && isArr) {
+      List<Object> rows = arrangementOf(pb, t.fam);
+      // The keys of the view the setter saw that are not the guess's own rows, which a re-base takes from the new
+      // truth: rows the setter removed, and rows it only carried over from the truth beneath.
       Set<Object> removed = null;
       Function<Object, Object> keyFn = t.fam.key;
-      if (isArr && keyFn != null) {
+      if (keyFn != null) {
         removed = new HashSet<>();
         Set<Object> kept = new HashSet<>();
+        Object base = stores.committed(t);
         Map<Object, Boolean> truth = shape.identityMap();
         for (Object r : rowsOf(base)) {
           if (isObject(r)) {
             truth.put(r, Boolean.TRUE);
           }
         }
-        for (Object r : rowsOf(pb)) {
+        for (Object r : rows) {
           Object k = shape.isWrappable(r) ? keyFn.apply(r) : null;
           if (k != null) {
             kept.add(k);
           }
         }
-        for (Object raw : rowsOf(old)) {
+        // The view's rows, then the truth's: a truth row the view lacked was removed by another action's guess (F-11).
+        List<Object> all = new ArrayList<>(rowsOf(old));
+        int n = all.size();
+        all.addAll(rowsOf(base));
+        for (int i = 0; i < all.size(); i++) {
+          Object raw = all.get(i);
           Object k = shape.isWrappable(raw) ? keyFn.apply(raw) : null;
-          if (k != null && (!kept.contains(k) || truth.containsKey(raw))) {
+          if (k != null && (!kept.contains(k) || (i < n && truth.containsKey(raw)))) {
             removed.add(k);
           }
         }
       }
-      LaneView view = new LaneView(rows, base, removed);
+      p.removed = removed;
+      p.g = rows;
+      // Written while the derive asks a new question (not a refresh): the new answer re-bases it (#4525, #4656).
       Node d = t.fam.node;
-      if (removed != null && d != null && (d.statusFlags & STATUS_PENDING) != 0 && (d.flags & REACTIVE_REASK) == 0) {
-        view.g = null;
+      if (removed != null && d != null && (d.statusFlags & STATUS_PENDING) != 0 && !reasked(d)) {
+        p.g = null;
       }
-      guess(stores.getContainerNode(t), view);
     }
+    // By value: the draft is the guess as written.
+    rt.lanes.optimisticWrite(g, pb, null);
     if (t.dk != null) {
-      guess(t.dk, new Object());
+      rt.lanes.optimisticWrite(t.dk, new Object(), null);
     }
     markOverlaid(t);
-    return optStaged.remove(t);
+    return staged;
+  }
+
+  /**
+   * A keyed arrangement guess carries another guess's row verbatim when the setter returned the view's row unchanged:
+   * the row target decides the row's contents (#4724). Primitives always borrow (#4784).
+   */
+  private boolean carriedVerbatim(StoreTarget t, Object old, Object pb, Object key) {
+    if (!(key instanceof Integer) || t.fam == null || t.fam.key == null) {
+      return false;
+    }
+    Object row = stores.unwrapValue(shape().get(pb, key));
+    // The view of a chained store can hold the inner store's wrapped rows where Solid's holds raws: compared unwrapped.
+    return shape().isWrappable(row) && stores.same(row, stores.unwrapValue(shape().get(old, key)));
   }
 
   /** An array's rows, unwrapped. */
@@ -191,19 +545,49 @@ final class StoreOptimistic implements Stores.OptHooks {
     return rows;
   }
 
-  /** An arrangement as rows or keys, from a guess or from a backing. */
-  private Object arrangementOf(Object x) {
-    if (x instanceof LaneView) {
-      return ((LaneView) x).rows;
+  /**
+   * An arrangement's rows: a borrowed row (another family's proxy) keeps following its source through a re-base, so it
+   * stays the proxy; unwrapping it kept its old backing after the source adopted a new answer (#4931).
+   */
+  private List<Object> arrangementOf(Object array, StoreFamily fam) {
+    StoreShape shape = shape();
+    int n = shape.length(array);
+    List<Object> rows = new ArrayList<>(n);
+    for (int i = 0; i < n; i++) {
+      Object row = shape.get(array, i);
+      StoreTarget rt0 = shape.isObject(row) ? shape.targetOf(row) : null;
+      rows.add(rt0 != null && rt0.fam != fam && stores.same(rt0.px, row) ? row : stores.unwrapValue(row));
     }
-    return shape().isArray(x) ? (Object) rowsOf(x) : new LinkedHashSet<>(shape().keys(x));
+    return rows;
   }
 
-  @Override public boolean arrangement(StoreTarget t, Object a, Object b) {
-    if (!(a instanceof LaneView) && !(b instanceof LaneView)) {
+  /** An array of the store's shape holding rows, built over like (an array). */
+  private Object arrayOf(List<Object> rows, Object like) {
+    StoreShape shape = shape();
+    Object out = shape.clone(like);
+    shape.set(out, StoreShape.LENGTH, rows.size());
+    for (int i = 0; i < rows.size(); i++) {
+      shape.set(out, i, rows.get(i));
+    }
+    return out;
+  }
+
+  /** A keyed list's arrangement against another's, row by row. */
+  private boolean rowsSame(Object a, Object b, StoreFamily fam) {
+    StoreShape shape = shape();
+    if (!shape.isArray(a) || !shape.isArray(b)) {
+      return shape.isArray(a) == shape.isArray(b);
+    }
+    int n = shape.length(a);
+    if (n != shape.length(b)) {
       return false;
     }
-    return arrangementEqual(arrangementOf(a), arrangementOf(b), t.fam);
+    for (int i = 0; i < n; i++) {
+      if (!rowSame(shape.get(a, i), shape.get(b, i), fam)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /** Two rows are the same row: identical, one target, or one key. */
@@ -249,31 +633,107 @@ final class StoreOptimistic implements Stores.OptHooks {
     return true;
   }
 
-  @SuppressWarnings("unchecked")
-  private boolean arrangementEqual(Object a, Object b, StoreFamily fam) {
-    if (a instanceof List != b instanceof List) {
-      return false;
-    }
-    if (a instanceof List) {
-      List<Object> la = (List<Object>) a;
-      List<Object> lb = (List<Object>) b;
-      if (la.size() != lb.size()) {
-        return false;
-      }
-      for (int i = 0; i < la.size(); i++) {
-        if (!rowSame(la.get(i), lb.get(i), fam)) {
-          return false;
-        }
-      }
-      return true;
-    }
-    Set<Object> ka = (Set<Object>) a;
-    Set<Object> kb = (Set<Object>) b;
-    return ka.size() == kb.size() && kb.containsAll(ka);
-  }
-
   /** A user's reconcile on an optimistic family: the keyed diff is written into the draft. */
   @Override public void reconcile(Object draft, Object incoming, Function<Object, Object> keyFn) {
+    boolean was = diffing;
+    diffing = true;
+    try {
+      reconcileDraft(draft, incoming, keyFn);
+    } finally {
+      diffing = was;
+    }
+  }
+
+  /** In the keyed diff a returned array is written by: the user's own reads are the setter's, not these (#4788). */
+  private boolean diffing;
+
+  /**
+   * #4788 (D-33): an action read key of t (v, else the writer's view of it): when a live guess wrote that key, a guess
+   * the action writes next derives from it. A row reached through a guessed index is navigation, not a value.
+   */
+  private void noteRead(StoreTarget t, Object key, Object v, boolean hasV) {
+    Scheduler q = s();
+    StoreShape shape = shape();
+    if (q.actionDepth == 0 || diffing) {
+      return;
+    }
+    Node g = guessFor(t, key, false, false);
+    boolean live = g != null && (g.config & CONFIG_OVERRIDE) != 0;
+    Object[] p = live ? null : placed().get(t.v);
+    if (p == null && !live) {
+      return;
+    }
+    Transaction l = p != null ? (Transaction) p[0] : q.txOf(g);
+    Object old = stores.unwrapValue(p != null ? (p[1] != null && isObject(p[1]) ? shape.get(p[1], key) : shape.undefined())
+      : shape.get(t.v, key));
+    boolean given = hasV && v != null && v != shape.undefined();
+    Object r = stores.unwrapValue(given ? v : g != null ? carrierValue(rt.lanes.guessedValueOf(g), key) : shape.get(t.v, key));
+    if (shape.isWrappable(r)) {
+      if (!stores.same(r, old)) {
+        placed().put(r, new Object[] {l, old});
+      }
+    } else if (p == null || !ValueEquality.same(r, old)) {
+      rt.lanes.readGuesses.add(l);
+      rt.lanes.readGuesses.add(q.question);
+    }
+  }
+
+  /**
+   * #4812: a record a live guess put in place (a replaced child), with the record it replaced: what the setter reads
+   * under it derives from that guess, however deep, where it differs from what the replaced record holds.
+   */
+  private Map<Object, Object[]> placed;
+
+  private Map<Object, Object[]> placed() {
+    if (placed == null) {
+      placed = shape().identityMap();
+    }
+    return placed;
+  }
+
+  /** #4812: presence and enumeration in a setter's draft read the key set a live guess changed. */
+  private void noteShape(StoreTarget t, Object key) {
+    Scheduler q = s();
+    List<Node> kg = q.actionDepth > 0 && !diffing ? kgOf(t) : null;
+    if (kg == null) {
+      return;
+    }
+    for (int i = kg.size() - 1; i >= 0; i--) {
+      Node g = kg.get(i);
+      Patch p = patch(g);
+      if ((g.config & CONFIG_OVERRIDE) == 0) {
+        continue;
+      }
+      boolean hit;
+      if (key != null) {
+        hit = (p.del != null && p.del.contains(key)) || (p.wk != null && p.wk.contains(key) && !shape().has(t.v, key));
+      } else {
+        hit = (p.del != null && !p.del.isEmpty());
+        if (!hit && p.wk != null) {
+          for (Object k : p.wk) {
+            if (!shape().has(t.v, k)) {
+              hit = true;
+              break;
+            }
+          }
+        }
+      }
+      if (hit) {
+        rt.lanes.readGuesses.add(q.txOf(g));
+        rt.lanes.readGuesses.add(q.question);
+      }
+    }
+  }
+
+  @Override public void drafted(StoreTarget t, Object key, boolean shape) {
+    if (shape) {
+      noteShape(t, key);
+    } else {
+      noteRead(t, key, null, false);
+    }
+  }
+
+  private void reconcileDraft(Object draft, Object incoming, Function<Object, Object> keyFn) {
     StoreShape shape = shape();
     StoreTarget dt = shape.targetOf(draft);
     if (shape.isArray(incoming)) {
@@ -312,7 +772,7 @@ final class StoreOptimistic implements Stores.OptHooks {
         }
         if (match != null) {
           if (!stores.same(stores.unwrapValue(match), nv)) {
-            reconcile(match, nv, keyFn);
+            reconcileDraft(match, nv, keyFn);
           }
           if (!stores.same(stores.get(dt, i), match)) {
             stores.set(dt, i, match);
@@ -333,7 +793,7 @@ final class StoreOptimistic implements Stores.OptHooks {
       if (shape.isWrappable(nv) && shape.isWrappable(curRaw) && shape.isArray(nv) == shape.isArray(curRaw)
         && (keyFn == null || shape.isArray(nv) || Stores.sameKey(keyFn.apply(nv), keyFn.apply(curRaw)))) {
         if (!stores.same(curRaw, nv)) {
-          reconcile(cur, nv, keyFn);
+          reconcileDraft(cur, nv, keyFn);
         }
       } else if (!stores.same(curRaw, nv)) {
         stores.set(dt, k, nv);
@@ -346,13 +806,49 @@ final class StoreOptimistic implements Stores.OptHooks {
     }
   }
 
-  /** Solid's GlobalQueue._slotTake. */
+  /** The nodes the readers of a guess carrier's keys link: the leaves and presence nodes of the keys it changed, and the container. */
+  private void readersOf(Node n, Consumer<Node> fn) {
+    Patch p = n.key == Stores.PATCH ? patch(n) : null;
+    if (p == null) {
+      return;
+    }
+    StoreTarget t = (StoreTarget) n.host;
+    List<Object> keys = new ArrayList<>();
+    if (p.wk != null) {
+      keys.addAll(p.wk);
+    }
+    if (p.del != null) {
+      keys.addAll(p.del);
+    }
+    for (Object key : keys) {
+      Node leaf = t.n != null ? t.n.get(key) : null;
+      if (leaf != null && leaf.subs != null) {
+        fn.accept(leaf);
+      }
+      Node has = t.h != null ? t.h.get(key) : null;
+      if (has != null && has.subs != null) {
+        fn.accept(has);
+      }
+    }
+    Node k = t.k;
+    if (k != null && k.subs != null) {
+      fn.accept(k);
+    }
+  }
+
+  /**
+   * Solid's GlobalQueue._slotTake: the family's derive, re-asking in a lane of another action than the one that
+   * guessed this target, takes the target's guess whole; back, the guess comes back on the target's carrier.
+   */
   private Object slotTake(Node n, boolean back) {
     StoreTarget t = n.host instanceof StoreTarget ? (StoreTarget) n.host : null;
     if (back) {
-      Object k = n.key;
       markOverlaid(t);
-      return k == Stores.TRACK ? stores.getContainerNode(t) : n.equals == Node.IS_EQUAL ? stores.getHasNode(t, k) : stores.getNode(t, k);
+      List<Node> kg = carriers.computeIfAbsent(t, k -> new ArrayList<>());
+      if (!kg.contains(n)) {
+        kg.add(n);
+      }
+      return n;
     }
     Scheduler q = s();
     Node derive = t != null && t.fam != null ? t.fam.node : null;
@@ -361,7 +857,9 @@ final class StoreOptimistic implements Stores.OptHooks {
     if (d == null || !d.lane || sameAction(d, g)) {
       return null;
     }
-    for (Node m : nodesOf(t)) {
+    List<Node> all = new ArrayList<>(kgOf(t) != null ? kgOf(t) : Collections.emptyList());
+    all.add(t.dk);
+    for (Node m : all) {
       if (m != null && (m.config & CONFIG_GUESS) != 0 && q.txOf(m) == g) {
         rt.lanes.take(m, d, m != n);
       }
@@ -369,32 +867,62 @@ final class StoreOptimistic implements Stores.OptHooks {
     return Boolean.TRUE;
   }
 
-  private static Object laneG(StoreTarget t) {
-    Node k = t != null ? t.k : null;
-    Object lane = k != null && k.x != null ? k.x.lane : null;
-    return lane instanceof LaneView ? ((LaneView) lane).g : LaneView.UNSET;
-  }
-
-  /** Solid's GlobalQueue._laneRebase: a truth landing on a guess. */
+  /**
+   * Solid's GlobalQueue._laneRebase (Q-D): an older question's truth landed beneath a guess. The guess's edit is
+   * re-based over it: a keyed list's order from the guess, rows from the truth by key, rows the guess added kept,
+   * truth rows the guess lacks appended unless it removed them. A current truth folds beneath a shown keyed
+   * arrangement guess (D-34), else is held beneath the guess. True: the lane holds the landing.
+   */
   @SuppressWarnings("unchecked")
   private boolean laneRebase(Node el, Object truth, boolean older) {
     Scheduler q = s();
     StoreShape shape = shape();
     StoreTarget t = el.host instanceof StoreTarget ? (StoreTarget) el.host : null;
-    if (!older && laneG(t) != null) {
+    // Not a store's: the lane judges the write.
+    if (t == null) {
+      return false;
+    }
+    if (el.key != Stores.PATCH) {
+      // The deep witness's guess: a bump beneath a shown keyed arrangement guess folds that lane, else the lane judges it.
+      if (older) {
+        return true;
+      }
+      List<Node> kg = kgOf(t);
+      if (kg != null) {
+        for (Node c : kg) {
+          if ((c.config & CONFIG_OVERRIDE) != 0 && patch(c).removed != null) {
+            return patch(c).g != null && fold(c, truth);
+          }
+        }
+      }
+      return false;
+    }
+    Patch p = patch(el);
+    Object guess = rt.lanes.latestOf(el);
+    if (!older && p.g != null) {
       return fold(el, truth);
     }
-    if (t == null || el.key != Stores.TRACK) {
+    // The truth of an action whose own guess is on this carrier, entangled with a later one's: the hold's own
+    // staging, beneath the guess until the hold commits (#4874).
+    if (older && p.qs != null && p.qs.contains(q.question)) {
       return true;
     }
-    Object lane = el.x.lane;
-    if (!(lane instanceof LaneView)) {
-      return false;
+    // The truth answers another carrier's guess: the rows this guess carried over from that guess are judged by it
+    // (#4897). Entangled with this guess's hold, that truth is the hold's own staging, as above.
+    List<Object> by = null;
+    if (older) {
+      for (Node o : kgOf(t)) {
+        Patch op = patch(o);
+        if (o != el && op.qs != null && op.qs.contains(q.question)) {
+          if (sameAction(q.txOf(o), q.txOf(el))) {
+            return true;
+          }
+          by = op.g instanceof List ? (List<Object>) op.g : null;
+        }
+      }
     }
-    LaneView view = (LaneView) lane;
-    if (!shape.isArray(truth) || !(view.rows instanceof List)) {
-      view.base = truth;
-      return false;
+    if (!shape.isArray(truth) || !isObject(guess) || !shape.isArray(guess)) {
+      return true;
     }
     Function<Object, Object> keyFn = t.fam != null ? t.fam.key : null;
     if (keyFn == null) {
@@ -413,22 +941,28 @@ final class StoreOptimistic implements Stores.OptHooks {
       }
     }
     Set<Object> used = new HashSet<>();
-    Set<Object> removed = view.removed;
+    Set<Object> removed = p.removed != null ? p.removed : new HashSet<>();
     List<Object> rows = new ArrayList<>();
-    if (view.g == null) {
+    // The #4525 re-base: the lane's rows are the new question's answer now (F-1, #4536).
+    if (p.g == null) {
       q.txOf(el).over = t.fam.node.x.transaction;
     }
-    if (view.g == null || view.g == LaneView.UNSET) {
-      view.g = view.rows;
+    if (p.g == null || p.g == UNSET) {
+      p.g = arrangementOf(guess, t.fam);
     }
-    List<Object> guessed = (List<Object>) view.g;
-    for (Object g : guessed) {
+    List<Object> guessedRows = (List<Object>) p.g;
+    for (Object g : guessedRows) {
       Object k = shape.isWrappable(g) ? keyFn.apply(g) : null;
       Object tr = k != null ? byKey.get(k) : null;
       if (tr != null) {
+        // The truth's row under the guessed one's key: the guessed row's target adopts it.
+        StoreTarget gt = shape.isWrappable(g) ? stores.lookupTarget(stores.unwrapValue(g), t.fam) : null;
+        if (gt != null && stores.lookupTarget(tr, t.fam) == null) {
+          stores.reconcileState(tr, gt.px, keyFn, true);
+        }
         rows.add(tr);
         used.add(k);
-      } else if (!removed.contains(k)) {
+      } else if (!removed.contains(k) && !containsSame(by, g)) {
         rows.add(g);
       }
     }
@@ -438,49 +972,65 @@ final class StoreOptimistic implements Stores.OptHooks {
         rows.add(r);
       }
     }
-    view.rows = rows;
-    view.base = rows;
-    Transaction lane2 = q.txOf(el);
-    Object base = stores.committed(t);
-    Map<Object, Node> nodes = t.n;
-    for (int i = 0; i < rows.size(); i++) {
-      Node node = nodes != null ? nodes.get(i) : null;
-      if (node == null) {
-        if (!sameRow(shape.get(base, i), rows.get(i), keyFn)) {
-          laneSet(stores.getNode(t, i), rows.get(i), lane2);
+    // Every index of the composition is the guess's from here: the record covers the frame.
+    if (p.wk == null) {
+      p.wk = new LinkedHashSet<>();
+    }
+    int n = Math.max(rows.size(), Math.max(shape.length(guess), shape.length(stores.committed(t))));
+    for (int i = 0; i < n; i++) {
+      p.wk.add(i);
+    }
+    p.wk.add(StoreShape.LENGTH);
+    Transaction l = q.txOf(el);
+    rt.lanes.setLaneValue(el, l, arrayOf(rows, truth));
+    // The composition changed what the lane shows: the carrier's readers re-derive as the lane's work.
+    if (!sameRows(rowsOf(guess), rows, t.fam)) {
+      q.laneDirty(el, l);
+    }
+    return true;
+  }
+
+  private boolean containsSame(List<Object> rows, Object row) {
+    if (rows != null) {
+      for (Object r : rows) {
+        if (stores.same(r, row)) {
+          return true;
         }
-      } else if (!sameRow((node.config & CONFIG_OVERRIDE) != 0 ? node.x.lane : shape.get(base, i), rows.get(i), keyFn)) {
-        laneSet(node, rows.get(i), lane2);
       }
     }
-    if (nodes != null) {
-      for (int i = rows.size();; i++) {
-        Node node = nodes.get(i);
-        if (node == null) {
-          break;
+    return false;
+  }
+
+  /** Two row lists show the same through the proxies: each slot the same target or the same primitive. */
+  private boolean sameRows(List<Object> a, List<Object> b, StoreFamily fam) {
+    if (a.size() != b.size()) {
+      return false;
+    }
+    StoreShape shape = shape();
+    for (int i = 0; i < a.size(); i++) {
+      Object x = stores.unwrapValue(a.get(i));
+      Object y = stores.unwrapValue(b.get(i));
+      if (shape.isWrappable(x)) {
+        StoreTarget xt = stores.lookupTarget(x, fam);
+        if (xt == null || xt != stores.lookupTarget(y, fam)) {
+          return false;
         }
-        laneSet(node, shape.undefined(), lane2);
-      }
-      Node len = nodes.get(StoreShape.LENGTH);
-      if (len != null && ((len.config & CONFIG_OVERRIDE) != 0 || shape.length(base) != rows.size())) {
-        laneSet(len, rows.size(), lane2);
+      } else if (!stores.same(x, y)) {
+        return false;
       }
     }
     return true;
   }
 
-  /** A current truth differing from a shown keyed arrangement guess folds beneath it instead of voiding it (D-34). */
+  /** D-34 for a keyed arrangement guess: a current truth that differs folds into the hold beneath it. */
   private boolean fold(Node el, Object truth) {
     Scheduler q = s();
-    StoreTarget t = el.host instanceof StoreTarget ? (StoreTarget) el.host : null;
-    Node k = t != null ? t.k : null;
     Transaction l = q.txOf(el);
-    Object kLane = k != null && k.x != null ? k.x.lane : null;
-    if (!l.shown || k == null || (k.config & CONFIG_OVERRIDE) == 0 || !(kLane instanceof LaneView)
-      || ((LaneView) kLane).removed == null) {
+    // A guess the screen never showed is void at the correction; a keyed arrangement guess carries its removed keys.
+    if (!l.shown || patch(el).removed == null) {
       return false;
     }
-    Object guess = el.x.lane;
+    Object guess = rt.lanes.latestOf(el);
     if ((el.equals == null || !el.equals.test(guess, truth)) && !q.echoesHook.test(guess, truth)) {
       l.folded = this::foldedRead;
     } else {
@@ -507,148 +1057,179 @@ final class StoreOptimistic implements Stores.OptHooks {
     if (el.pendingValue != NOT_PENDING) {
       return el.pendingValue;
     }
-    return (el.config & CONFIG_SLOT_NODE) != 0 ? q.slotCoveredHook.apply(el) : el.value;
+    return rt.lanes.covered(el);
   }
 
-  private boolean sameRow(Object a, Object b, Function<Object, Object> keyFn) {
-    if (stores.same(a, b)) {
-      return true;
+  /**
+   * A derive's landing meets the rows the guesses hold (Q-D): a row with a target keeps it under the landing's new
+   * object at its slot (in a keyed list, the one with its key; an unkeyed list pairs nothing). The target adopts the
+   * object; a row another store lent keeps its proxy in the slot (D-34, #4329, #4738, #4902, #4904).
+   */
+  @Override public void pair(StoreTarget t, Object pb, boolean viewed) {
+    StoreShape shape = shape();
+    StoreFamily fam = t.fam;
+    Function<Object, Object> keyFn = fam.key;
+    boolean list = shape.isArray(pb);
+    Map<Object, Integer>[] at = new Map[1];
+    // A guessed row, or its ancestor directly under t.
+    if (fam.overlaid != null) {
+      for (StoreTarget o : new ArrayList<>(fam.overlaid)) {
+        StoreTarget c = o;
+        while (c != null && c.u != t) {
+          c = c.u;
+        }
+        if (c != null) {
+          pairOne(t, pb, list, at, list ? (keyFn != null ? keyFn.apply(c.v) : null) : c.pk, c.px, false, viewed);
+        }
+      }
     }
-    if (!shape().isWrappable(a) || !shape().isWrappable(b)) {
-      return false;
-    }
-    Object ka = keyFn.apply(stores.unwrapValue(a));
-    return ka != null && Stores.sameKey(ka, keyFn.apply(stores.unwrapValue(b)));
-  }
-
-  private void laneSet(Node node, Object value, Transaction lane) {
-    Scheduler q = s();
-    NodeExtension x = rt.core.ext(node);
-    if ((node.config & CONFIG_OVERRIDE) == 0) {
-      node.config |= CONFIG_OVERRIDE;
-      q.list(node, lane);
-    } else if (x.lane == value) {
+    if (keyFn == null || !list) {
       return;
     }
-    x.lane = value;
-    if (node.subs != null) {
-      q.insertSubs(node);
-      q.laneDirty(node, lane);
+    // While guesses are out, every committed row: a row whose guess settled can be guessed again (#4738).
+    if (fam.overlaid != null && !fam.overlaid.isEmpty()) {
+      for (Object ov : rowsOf(stores.committed(t))) {
+        StoreTarget rt0 = shape.isWrappable(ov) ? stores.lookupTarget(ov, fam) : null;
+        if (rt0 != null) {
+          pairOne(t, pb, true, at, keyFn.apply(ov), rt0.px, false, viewed);
+        }
+      }
+    }
+    // A row another store's guess added as it is: a guess of that store's still out on the row shows on (#4902).
+    List<Node> kg = viewed ? null : kgOf(t);
+    if (kg != null) {
+      for (Node c : new ArrayList<>(kg)) {
+        Object f = rt.lanes.guessedValueOf(c);
+        if (!isObject(f) || !shape.isArray(f)) {
+          continue;
+        }
+        for (int j = 0, fn = shape.length(f); j < fn; j++) {
+          Object r = shape.get(f, j);
+          StoreTarget ft = isObject(r) ? shape.targetOf(r) : null;
+          if (ft != null && stores.same(ft.px, r) && ft.fam != fam) {
+            pairOne(t, pb, true, at, keyFn.apply(r), r, true, viewed);
+          }
+        }
+      }
     }
   }
 
-  /** A derive's landing meets the rows the guesses hold: each is reconciled into its row. */
-  @Override public void pair(StoreTarget t, Object pb) {
+  private void pairOne(StoreTarget t, Object pb, boolean list, Map<Object, Integer>[] at, Object k, Object px,
+      boolean lent, boolean viewed) {
     StoreShape shape = shape();
     Function<Object, Object> keyFn = t.fam.key;
-    if (t.fam.overlaid == null) {
+    if (k == null) {
       return;
     }
-    for (StoreTarget o : new ArrayList<>(t.fam.overlaid)) {
-      StoreTarget c = o;
-      while (c != null && c.u != t) {
-        c = c.u;
+    if (list && at[0] == null) {
+      at[0] = new HashMap<>();
+      for (int i = 0, n = shape.length(pb); i < n; i++) {
+        Object r = shape.get(pb, i);
+        Object rk = shape.isWrappable(r) && keyFn != null ? keyFn.apply(r) : null;
+        if (rk != null && !at[0].containsKey(rk)) {
+          at[0].put(rk, i);
+        }
       }
-      if (c == null) {
-        continue;
+    }
+    // A returned landing leaves a row another store lent alone (its target here is chained over that store's
+    // proxy): reconciling the answer into it tied the lender's row to this landing (#4928).
+    StoreTarget pt = shape.isObject(px) ? shape.targetOf(px) : null;
+    if (viewed && pt != null && pt.ch) {
+      return;
+    }
+    Object i = list ? at[0].get(k) : k;
+    Object nv = i == null ? null : shape.get(pb, i);
+    // A new object only: not the row's own, nor one another row serves.
+    if (shape.isWrappable(nv) && stores.lookupTarget(nv, t.fam) == null) {
+      stores.reconcileState(nv, px, keyFn, true);
+      if (lent) {
+        shape.set(pb, i, px);
       }
-      Object k = keyFn != null ? keyFn.apply(c.v) : null;
-      Object nv = null;
-      if (shape.isArray(pb)) {
-        if (k != null) {
-          for (Object r : rowsOf(pb)) {
-            if (shape.isWrappable(r) && Stores.sameKey(keyFn.apply(r), k)) {
-              nv = r;
-              break;
-            }
+    }
+  }
+
+  /** A key a live guess changed reads through the carrier, tracked; NOT_PENDING for none. */
+  @Override public Object read(StoreTarget t, Object key) {
+    Node g = guessFor(t, key, false, true);
+    Owner obs = rt.owners.getObserver();
+    if (g == null) {
+      // A key an arrangement guess only borrowed, its lender gone, reads the truth, but that guess still orders the
+      // rows read beside it: its end must reach this reader (#4897).
+      List<Node> kg = kgOf(t);
+      if (obs instanceof Node && kg != null) {
+        for (Node c : kg) {
+          Patch p = patch(c);
+          if (p.borrowed != null && p.borrowed.contains(key)) {
+            rt.graph.link(c, (Node) obs);
           }
         }
-      } else {
-        nv = shape.get(pb, c.pk);
       }
-      if (shape.isWrappable(nv) && stores.lookupTarget(nv, t.fam) == null) {
-        stores.reconcileState(nv, c.px, keyFn, true);
-      }
+      return NOT_PENDING;
     }
+    Object frame = rt.core.read(g);
+    Node node = obs != null ? stores.getNode(t, key) : t.n != null ? t.n.get(key) : null;
+    if (obs instanceof Node) {
+      rt.graph.link(node, (Node) obs);
+    }
+    Object v = carrierValue(frame, key);
+    if (obs == null) {
+      noteRead(t, key, v, true);
+    }
+    return stores.serveKeyValue(t, key, v, false, node);
   }
 
-  @Override public Object view(StoreTarget t, Object src, boolean writer) {
-    StoreShape shape = shape();
-    if (!writer && !overlaid(t)) {
-      return src;
-    }
-    Object out = null;
-    Map<Object, Node> nodes = t.n;
-    if (nodes != null) {
-      for (Map.Entry<Object, Node> e : new ArrayList<>(nodes.entrySet())) {
-        Object key = e.getKey();
-        Node node = e.getValue();
-        Object ov;
-        if ((node.config & CONFIG_OVERRIDE) != 0) {
-          ov = writer ? rt.lanes.laneValueOf(node) : shown(node);
-        } else if (!writer || (ov = rt.lanes.pendingGuessOf(node)) == NOT_PENDING) {
-          continue;
-        }
-        if (key == StoreShape.LENGTH && shape.isArray(src)) {
-          if (!Integer.valueOf(shape.length(src)).equals(ov)) {
-            out = out != null ? out : shape.clone(src);
-            shape.set(out, StoreShape.LENGTH, ov);
-          }
-        } else if (!stores.same(shape.get(src, key), ov) || !shape.has(src, key)) {
-          out = out != null ? out : shape.clone(src);
-          shape.set(out, key, ov);
-        }
-      }
-    }
-    Map<Object, Node> has = t.h;
-    if (has != null) {
-      for (Map.Entry<Object, Node> e : new ArrayList<>(has.entrySet())) {
-        Node node = e.getValue();
-        Object pv;
-        if ((node.config & CONFIG_OVERRIDE) != 0) {
-          pv = writer ? rt.lanes.laneValueOf(node) : shown(node);
-        } else if (!writer || (pv = rt.lanes.pendingGuessOf(node)) == NOT_PENDING) {
-          continue;
-        }
-        Object current = out != null ? out : src;
-        if (!Signals.truthy(pv) && shape.has(current, e.getKey())) {
-          out = out != null ? out : shape.clone(src);
-          shape.delete(out, e.getKey());
-        }
-      }
-    }
-    return out != null ? out : src;
-  }
-
-  private Object shown(Node n) {
-    return rt.core.untrack(() -> rt.core.read(n));
-  }
-
+  /** Presence of a key a live guess changed is the carrier frame's; null for none. */
   @Override public Boolean has(StoreTarget t, Object key) {
-    if (!overlaid(t)) {
+    Node g = guessFor(t, key, true, true);
+    if (g == null) {
       return null;
     }
-    Node h = t.h != null ? t.h.get(key) : null;
-    if (h != null && (h.config & CONFIG_OVERRIDE) != 0) {
-      return Signals.truthy(shown(h));
+    Owner obs = rt.owners.getObserver();
+    if (obs instanceof Node) {
+      rt.graph.link(stores.getHasNode(t, key), (Node) obs);
     }
-    Node n = t.n != null ? t.n.get(key) : null;
-    if (n != null && (n.config & CONFIG_OVERRIDE) != 0) {
-      return shown(n) != shape().undefined();
-    }
-    return null;
+    return frameHas(rt.core.read(g), key);
   }
 
   @Override public Object descriptor(StoreTarget t, Object key) {
-    Boolean present = has(t, key);
-    if (present == null) {
+    Node g = guessFor(t, key, true, true);
+    if (g == null) {
       return Stores.NO_GUESS;
     }
-    if (!present) {
+    Owner obs = rt.owners.getObserver();
+    if (obs instanceof Node) {
+      rt.graph.link(stores.getHasNode(t, key), (Node) obs);
+    }
+    Object frame = rt.core.read(g);
+    if (!frameHas(frame, key)) {
       return null;
     }
-    Node n = t.n != null ? t.n.get(key) : null;
-    return new Object[] {n != null && (n.config & CONFIG_OVERRIDE) != 0 ? shown(n) : shape().get(t.v, key)};
+    return new Object[] {carrierValue(frame, key)};
+  }
+
+  /** The frame an enumeration reads: the newest carrier's, tracked; NOT_PENDING for none. */
+  @Override public Object frame(StoreTarget t) {
+    Node g = newestGuess(t);
+    return g == null ? NOT_PENDING : rt.core.read(g);
+  }
+
+  /** A key a live guess changed: its leaf is silent at a landing, the carrier's judgement tells its readers. */
+  @Override public boolean covers(StoreTarget t, Object key, boolean shape) {
+    return guessFor(t, key, shape, false) != null;
+  }
+
+  /** A landing reaches each live carrier as the truth it is judged against: the frame as landed. */
+  @Override public void judge(StoreTarget t, Object truth) {
+    List<Node> kg = kgOf(t);
+    if (kg == null) {
+      return;
+    }
+    Object frame = shape().clone(truth);
+    for (Node g : new ArrayList<>(kg)) {
+      if ((g.config & (CONFIG_OVERRIDE | CONFIG_HELD)) != 0) {
+        rt.core.setSignal(g, frame);
+      }
+    }
   }
 
   @Override public void sweep() {
@@ -658,15 +1239,31 @@ final class StoreOptimistic implements Stores.OptHooks {
     for (StoreFamily fam : new ArrayList<>(overlaidFamilies)) {
       Set<StoreTarget> set = fam.overlaid;
       for (StoreTarget t : new ArrayList<>(set)) {
+        List<Node> kg = kgOf(t);
+        List<Node> live = new ArrayList<>();
         if (laneNodeOf(t, false) == null) {
           set.remove(t);
-          if (t.ch) {
-            rebaseChained(t);
+          if (kg != null) {
+            for (Node g : kg) {
+              if ((g.config & CONFIG_HELD) != 0 || g.pendingValue != NOT_PENDING) {
+                live.add(g);
+              }
+            }
           }
-          Node k = t.k;
-          if (k != null && k.value instanceof LaneView) {
-            k.value = ((LaneView) k.value).base;
+        } else if (kg != null) {
+          // A carrier that is no lane's and no hold's is done.
+          for (Node g : kg) {
+            if ((g.config & (CONFIG_OVERRIDE | CONFIG_GUESS | CONFIG_HELD)) != 0 || g.pendingValue != NOT_PENDING) {
+              live.add(g);
+            }
           }
+        } else {
+          continue;
+        }
+        if (live.isEmpty()) {
+          carriers.remove(t);
+        } else {
+          carriers.put(t, live);
         }
       }
       if (set.isEmpty()) {
@@ -675,58 +1272,15 @@ final class StoreOptimistic implements Stores.OptHooks {
     }
   }
 
-  /** A chained target's guesses ended: its nodes take the inner store's values again, and tell whoever read a difference. */
-  private void rebaseChained(StoreTarget t) {
-    Scheduler q = s();
-    StoreShape shape = shape();
-    Object inner = t.v;
-    boolean changed = false;
-    if (t.n != null) {
-      for (Map.Entry<Object, Node> e : new ArrayList<>(t.n.entrySet())) {
-        Node node = e.getValue();
-        Object cur = rt.core.untrack(() -> stores.unwrapValue(shape.get(inner, e.getKey())));
-        if (node.equals != null && node.equals.test(node.value, cur)) {
-          continue;
-        }
-        node.value = cur;
-        if (node.subs != null && node.notifiedAt != q.notifyEpoch) {
-          q.insertSubs(node);
-          changed = true;
-        }
-      }
-    }
-    if (t.h != null) {
-      for (Map.Entry<Object, Node> e : new ArrayList<>(t.h.entrySet())) {
-        Node node = e.getValue();
-        Object cur = rt.core.untrack(() -> shape.has(inner, e.getKey()));
-        if (cur.equals(node.value)) {
-          continue;
-        }
-        node.value = cur;
-        if (node.subs != null && node.notifiedAt != q.notifyEpoch) {
-          q.insertSubs(node);
-          changed = true;
-        }
-      }
-    }
-    Node k = t.k;
-    if (k != null && k.subs != null && k.value instanceof LaneView && k.notifiedAt != q.notifyEpoch) {
-      Object rows = rt.core.untrack(() -> arrangementOf(inner));
-      if (!arrangementEqual(((LaneView) k.value).rows, rows, t.fam)) {
-        q.insertSubs(k);
-        changed = true;
-      }
-    }
-    if (changed) {
-      q.schedule();
-    }
-  }
-
   /** The derive asks a new question over the family's guesses. */
-  @Override public void ask(StoreFamily fam) {
+  @Override public java.util.function.Predicate<Node> ask(StoreFamily fam) {
     Scheduler q = s();
-    if ((fam.node.flags & REACTIVE_REASK) != 0 || fam.overlaid == null || fam.overlaid.isEmpty()) {
-      return;
+    if (fam.overlaid == null || fam.overlaid.isEmpty()) {
+      return null;
+    }
+    // A refresh re-asks the guesses' own question: a leaf lane work reads is kept off the wake (F-11, #4656).
+    if (reasked(fam.node)) {
+      return n -> n.subs.sub.x != null && n.subs.sub.x.transaction != null && n.subs.sub.x.transaction.lane;
     }
     long a = ~q.clock;
     for (StoreTarget g : fam.overlaid) {
@@ -735,7 +1289,7 @@ final class StoreOptimistic implements Stores.OptHooks {
         if (q.passLane == null) {
           a = q.clock + 1;
         } else if (sameAction(q.txOf(n), q.passLane)) {
-          return;
+          return null;
         }
       }
     }
@@ -743,6 +1297,7 @@ final class StoreOptimistic implements Stores.OptHooks {
     if (a > 0) {
       q.joinFuture(null);
     }
+    return null;
   }
 
   /** A read of an optimistic family whose derive is pending is served the guesses that stand. */
@@ -753,14 +1308,16 @@ final class StoreOptimistic implements Stores.OptHooks {
     long a = f.asked;
     Node d = f.node;
     Node c = rt.core.context instanceof Node ? (Node) rt.core.context : null;
-    if (o == null || o.isEmpty() || (a == q.clock + 1 && q.passLane == null && !o.contains(t)) || a == ~q.clock) {
+    // Whoever asked: a reader that joined another action's lane over mainline's new question waits for its answer (#4929).
+    if (o == null || o.isEmpty() || (a == q.clock + 1 && (q.passLane == null ? !o.contains(t) : !laneOfAction(o, q.passLane)))
+      || a == ~q.clock) {
       return false;
     }
     boolean j = heldC == c && heldAt == q.clock;
     if (c != null && Stores.linkedTo(c, d)) {
       return j && heldV > 1;
     }
-    if (laneG(t) == null && c != null && (c.statusFlags & STATUS_PENDING) != 0) {
+    if (rebasing(t) && c != null && (c.statusFlags & STATUS_PENDING) != 0) {
       if (c.type == EFFECT_RENDER) {
         rt.core.read(d);
       } else {
@@ -779,8 +1336,55 @@ final class StoreOptimistic implements Stores.OptHooks {
           }
         }
       }
+    } else if (c != null && c.type != EFFECT_RENDER && d.x != null && d.x.reask && d.x.transaction != null
+      && !ownFlight(o, q.txOf(d))) {
+      // #4786: guesses of one action standing in for a refresh another action holds leave the pass derived from that
+      // refetch: a stale reader of it, so the refetch's hold keeps waiting for it (F-11, A15).
+      rt.graph.link(d, c);
+      q.staleReader(c, q.txOf(d));
     }
     return true;
+  }
+
+  /** A guess in o (live or held) belongs to the transaction f that holds the flight it stands in for. */
+  private boolean ownFlight(Set<StoreTarget> o, Transaction f) {
+    Scheduler q = s();
+    for (StoreTarget t : o) {
+      List<Node> all = new ArrayList<>(kgOf(t) != null ? kgOf(t) : Collections.emptyList());
+      all.add(t.dk);
+      for (Node n : all) {
+        if (n != null && n.x != null && n.x.transaction != null) {
+          Transaction l = q.txOf(n);
+          if (Scheduler.resolveTx(l.parent != null ? l.parent : l) == f) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  private boolean laneOfAction(Set<StoreTarget> o, Transaction lane) {
+    for (StoreTarget g : o) {
+      Node n = laneNodeOf(g, false);
+      if (n != null && sameAction(s().txOf(n), lane)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** A carrier of t holds a list guess written over a flight (the #4525 mark). */
+  private boolean rebasing(StoreTarget t) {
+    List<Node> kg = kgOf(t);
+    if (kg != null) {
+      for (Node g : kg) {
+        if (patch(g).g == null) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   @Override public void park(Transaction t) {
@@ -809,7 +1413,8 @@ final class StoreOptimistic implements Stores.OptHooks {
   }
 
   private static boolean sameAction(Transaction a, Transaction b) {
-    return Scheduler.resolveTx(a.parent) == Scheduler.resolveTx(b.parent);
+    // Either may be mainline's transaction, with no parent (#5029).
+    return Scheduler.resolveTx(a.parent != null ? a.parent : a) == Scheduler.resolveTx(b.parent != null ? b.parent : b);
   }
 
   private void markOverlaid(StoreTarget t) {
@@ -821,21 +1426,11 @@ final class StoreOptimistic implements Stores.OptHooks {
     overlaidFamilies.add(fam);
   }
 
-  private static List<Node> nodesOf(StoreTarget t) {
-    List<Node> all = new ArrayList<>();
-    all.add(t.k);
+  /** The node of t carrying a lane value, if any: a guess carrier or the deep witness (read: one a reader's last pass read). */
+  private Node laneNodeOf(StoreTarget t, boolean read) {
+    List<Node> all = new ArrayList<>(kgOf(t) != null ? kgOf(t) : Collections.emptyList());
     all.add(t.dk);
-    if (t.n != null) {
-      all.addAll(t.n.values());
-    }
-    if (t.h != null) {
-      all.addAll(t.h.values());
-    }
-    return all;
-  }
-
-  private static Node laneNodeOf(StoreTarget t, boolean read) {
-    for (Node n : nodesOf(t)) {
+    for (Node n : all) {
       if (n != null && (n.config & CONFIG_OVERRIDE) != 0) {
         if (!read) {
           return n;
@@ -848,15 +1443,5 @@ final class StoreOptimistic implements Stores.OptHooks {
       }
     }
     return null;
-  }
-
-  private static boolean overlaid(StoreTarget t) {
-    StoreFamily fam = t.fam;
-    return fam != null && fam.opt && fam.overlaid != null && fam.overlaid.contains(t);
-  }
-
-  /** `latest()`'s view: the lanes' latest values. */
-  Object latestView(StoreTarget t, Object src) {
-    return view(t, src, true);
   }
 }

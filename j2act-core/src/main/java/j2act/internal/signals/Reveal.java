@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import j2act.internal.signals.Boundaries.Boundary;
 import java.util.ArrayList;
@@ -10,7 +10,7 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
-/** Port of @solidjs/signals reveal.ts at 9449845: an order in which sibling boundaries show their content. */
+/** Port of @solidjs/signals reveal.ts at 68406c2: an order in which sibling boundaries show their content. */
 final class Reveal {
   private final Runtime rt;
 

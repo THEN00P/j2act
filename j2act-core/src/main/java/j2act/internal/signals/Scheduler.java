@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -14,7 +14,7 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
- * Port of @solidjs/signals core/scheduler.ts at 9449845, with GlobalQueue as this class: events only mark,
+ * Port of @solidjs/signals core/scheduler.ts at 68406c2, with GlobalQueue as this class: events only mark,
  * one pass recomputes in height order, and settle() is the one place that decides what commits, parks or
  * lands. Hooks stay null until what needs them is installed, as in Solid. Left out: attribution,
  * and dev checks that only warn.
@@ -42,6 +42,14 @@ final class Scheduler {
     FoldedRead folded;
     /** Solid's `latest`: opened by a latest() read of an unheld flight. */
     boolean latest;
+    /** On a lane: the flights of it a frame's own passes asked (F-2, S-57); the frame (over) holds on them. */
+    List<Node> waits;
+    /** A lane: the clock of the seam a guess re-asked in it, judged with that guess's passes next round (#4775). */
+    long reguessed = -1;
+    /** #4806: a verdict lane whose pass opened content over the hold's staging. */
+    boolean opened;
+    /** How many of nodes Lanes.collectMounts has looked at (S-58). */
+    int scanned;
 
     Transaction(boolean lane, Transaction parent) {
       this.lane = lane;
@@ -80,8 +88,30 @@ final class Scheduler {
   Supplier<Boolean> laneCorrectionsHook;
   Consumer<Transaction> endLanesHook;
   Predicate<Transaction> lanesBlockedHook;
-  Predicate<Node> laneAdoptHook;
-  java.util.function.BiConsumer<Node, Node> laneServedHook;
+  /** R5 (Verdict: the seam parks a frame flight of a reader that reads ahead): visit 1 adopts at the reader's turn, 2 is a later pass. */
+  LaneAdopt laneAdoptHook;
+  /** D-8 (Verdict.revert), at the flush: the readers a tick netting to its starting value woke are let go. */
+  Runnable revertHook;
+  /** Verdict.pass: a pass's head (the held error latest keeps showing) and, with tail, its end (a re-ask). */
+  PassHook passHook;
+  /** Held slots rewritten since the last flush, with the verdict engine (D-8). */
+  final List<Node> heldRewrites = new ArrayList<>();
+
+  interface PassHook {
+    boolean pass(Node el, boolean tail);
+  }
+  /** R5 at the seam (Verdict.r5): a reader whose probe is unanswered, a hold's parked flight still up (r null), the seam's end (both null). */
+  java.util.function.BiPredicate<Node, Transaction> r5Hook;
+
+  interface LaneAdopt {
+    boolean adopt(Node r, int visit);
+  }
+  LaneServed laneServedHook;
+
+  /** lanes.ts laneServed: el null for a staged read after a served flight; flight for a lane pass's read of a flight. */
+  interface LaneServed {
+    boolean served(Node c, Node el, boolean flight);
+  }
   boolean guessing;
   boolean inTrackedQueueCallback;
   Caught catchHook;
@@ -94,6 +124,9 @@ final class Scheduler {
   java.util.function.BiPredicate<Node, Node> observeFlightHook;
   java.util.function.BiPredicate<Node, Node> holdWorkHook;
   java.util.function.BiConsumer<Node, Node> stageMarkHook;
+  Consumer<Node> keepReadersHook;
+  Predicate<Node> attachHook;
+  java.util.function.BiPredicate<Node, Node> holdStagingHook;
   java.util.function.Function<Node, Node> laggingHook;
   Predicate<Node> markedHook;
   Runnable witnessMarkHook;
@@ -107,8 +140,10 @@ final class Scheduler {
   Predicate<Node> slotFlightHook;
   /** Solid's GlobalQueue._slotTake; `back` asks for the slot's node now, for a guess that comes back. */
   SlotTake slotTakeHook;
-  /** Solid's GlobalQueue._slotCovered: the value a slot node's guess covered. */
-  java.util.function.Function<Node, Object> slotCoveredHook;
+  /** A lane dirtied a store's guess carrier: the readers of the leaves of the keys it changed re-derive as its work. */
+  java.util.function.BiConsumer<Node, Transaction> slotDirtyHook;
+  /** A lane re-derives a store's guess carrier's readers at t's landing. */
+  java.util.function.BiConsumer<Node, Transaction> slotRerunHook;
   /** Solid's GlobalQueue._echoes: the truth is the guess's echo when reconcile would write nothing into it. */
   java.util.function.BiPredicate<Object, Object> echoesHook;
   /** Solid's GlobalQueue._laneRebase: true when the lane stages the truth beneath a keyed arrangement guess. */
@@ -132,10 +167,10 @@ final class Scheduler {
   // ---- state
 
   private final Runtime rt;
-  private final List<Transaction> transactions = new ArrayList<>();
+  /** Live transactions: opened, unmerged, not landed. */
+  final List<Transaction> transactions = new ArrayList<>();
   Transaction passLane;
   Transaction flushTransaction;
-  Transaction latestOpened;
   Transaction passTx;
   private Transaction judge;
   private final List<Node> heldTrims = new ArrayList<>();
@@ -213,11 +248,52 @@ final class Scheduler {
     }
   }
 
+  /** #4777: the merges made since a pass adopted the flush's hold (Core.adopter), as [t, f.acted before]. */
+  final List<Object> adopted = new ArrayList<>();
+
+  /**
+   * #4777: the flush gives back the hold a pass's plain read adopted before that pass starts over, and every hold the
+   * pass's later plain reads merged into it, in reverse: each is its own again, as before the pass.
+   */
+  void dropFlushTx() {
+    for (int i = adopted.size() - 2; i >= 0; i -= 2) {
+      Transaction t = (Transaction) adopted.get(i);
+      Transaction f = t.into;
+      t.into = null;
+      f.open -= t.open;
+      f.acted = (Boolean) adopted.get(i + 1);
+      unappend(f.nodes, t.nodes);
+      unappend(f.queues[0], t.queues[0]);
+      unappend(f.queues[1], t.queues[1]);
+      unappend(f.reruns, t.reruns);
+      unappend(f.marks, t.marks);
+      transactions.add(t);
+    }
+    adopted.clear();
+    flushTransaction = null;
+  }
+
+  private static <T> void unappend(List<T> into, List<T> own) {
+    if (own == null) {
+      return;
+    }
+    for (int j = own.size() - 1; j >= 0; j--) {
+      int k = into.lastIndexOf(own.get(j));
+      if (k >= 0) {
+        into.remove(k);
+      }
+    }
+  }
+
   void merge(Transaction t, Transaction f) {
     t = resolveTx(t);
     f = resolveTx(f);
     if (t == f || t.lane || f.lane) {
       return;
+    }
+    if (observeFlightHook != null && rt.core.adopter != null) {
+      adopted.add(t);
+      adopted.add(f.acted);
     }
     t.into = f;
     f.open += t.open;
@@ -232,7 +308,13 @@ final class Scheduler {
       }
       f.marks.addAll(t.marks);
     }
-    transactions.remove(t);
+    // Solid's transactions.splice(transactions.indexOf(t), 1): with t not listed, the last one goes.
+    int k = transactions.indexOf(t);
+    if (k >= 0) {
+      transactions.remove(k);
+    } else if (!transactions.isEmpty()) {
+      transactions.remove(transactions.size() - 1);
+    }
   }
 
   boolean blocked(Transaction t) {
@@ -267,18 +349,25 @@ final class Scheduler {
     for (int i = 0; i < nodes.size(); i++) {
       Node n = nodes.get(i);
       if ((n.statusFlags & STATUS_PENDING) == 0 || (n.flags & REACTIVE_DISPOSED) != 0 || (n.config & CONFIG_GUESS) != 0
-        || (n.x.transaction != null && txOf(n) != owner) || (own && !ownSource(n, owner))) {
+        || (n.x.transaction != null && txOf(n) != owner) || (own && !ownSource(n, owner))
+        // A guess lane's member waiting on re-asks only keeps what it shows: it does not keep the lane's other work
+        // off the screen (D-34, #4834).
+        || (guessing && owner.lane && n.x.pendingSources != null && reasks(n))) {
         continue;
       }
       if (n.type == EFFECT_RENDER) {
-        if (onScreen(n, judge != null ? judge : owner)) {
+        // #4544 (F-6): a frame pending on what a display-ahead value asked for does not hold; a lane's reveal waits.
+        if (!(observeFlightHook != null && (n.config & CONFIG_AHEAD) != 0 && !owner.lane)
+          && onScreen(n, judge != null ? judge : owner)) {
           return true;
         }
         continue;
       }
       for (Link s = n.subs; s != null; s = s.nextSub) {
         Node r = s.sub;
-        if (((r.type == EFFECT_RENDER && (r.statusFlags & STATUS_PENDING) != 0) || (r.flags & REACTIVE_FRAME_READ) != 0
+        if (((r.type == EFFECT_RENDER && (r.statusFlags & STATUS_PENDING) != 0
+          && !(observeFlightHook != null && (r.config & CONFIG_AHEAD) != 0 && !owner.lane))
+          || (r.flags & REACTIVE_FRAME_READ) != 0
           || ((r.config & CONFIG_REDERIVE) != 0 && r.statusFlags == STATUS_PENDING))
           && (s.gen == r.depGen || (r.x != null && r.x.error != null)) && (r.flags & REACTIVE_DISPOSED) == 0
           && onScreen(r, judge != null ? judge : owner)) {
@@ -404,6 +493,11 @@ final class Scheduler {
   void resetErrorHalt() {
     halted = false;
     haltNotified = false;
+    // A throw out of the pure phase skips the scheduled recompute; re-arm it (#4882).
+    if (scheduled) {
+      scheduled = false;
+      schedule();
+    }
   }
 
   // ---- GlobalQueue
@@ -418,6 +512,9 @@ final class Scheduler {
     passTx = null;
     try {
       rt.graph.sweepDormant();
+      if (revertHook != null) {
+        revertHook.run();
+      }
       dirtyQueue.runHeap(rt.core::update);
       settle();
       clock++;
@@ -437,7 +534,7 @@ final class Scheduler {
       dirtyQueue.runHeap(rt.core::update);
     }
     Transaction joined = flushTransaction;
-    flushTransaction = latestOpened = null;
+    flushTransaction = null;
     if (applyGuessesHook != null) {
       applyGuessesHook.accept(joined);
     }
@@ -454,6 +551,8 @@ final class Scheduler {
           }
           if (n.pendingValue != NOT_PENDING && (n.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == 0
             && (n.x == null || (n.x.pendingFirstChild == null && n.x.pendingDisposal == null))
+            // A recovery to the last good value is a change of answer (D-41): held, not netted.
+            && (n.x == null || n.x.shownError == null)
             && rt.core.isSame(n, n.value, n.pendingValue)) {
             n.pendingValue = NOT_PENDING;
             n.config &= ~CONFIG_STAGED;
@@ -557,6 +656,11 @@ final class Scheduler {
     }
   }
 
+  /** Solid's globalQueue._queues[index].push(fn): no schedule. */
+  void pushGlobal(int index, IntConsumer fn) {
+    queues[index].add(fn);
+  }
+
   void enqueue(int type, IntConsumer fn) {
     enqueue(type, fn, passLane);
   }
@@ -596,7 +700,9 @@ final class Scheduler {
         continue;
       }
       if ((r.flags & REACTIVE_FRAME_READ) != 0 || (observeFlightHook != null && (r.config & CONFIG_VERDICT) != 0)) {
-        frame |= r.type != 0 || s == r;
+        // So does a memo the landing holds, and any other: a memo that asks, or one over it, asks the landed world's
+        // question now; the held runs park with that flight (F-1, A15, F-6, S-51, #4648).
+        frame = true;
         if (!u.lane) {
           r.flags &= ~REACTIVE_FRAME_READ;
         }
@@ -606,9 +712,11 @@ final class Scheduler {
             ((Node) c).modified = false;
           }
         }
-        if (laneAdoptHook == null || !laneAdoptHook.test(r)) {
-          dirtyQueue.enqueueSub(r);
+        // A frame flight the seam parked asked the question this landing would: adopted, it is asked once (F-9).
+        if (laneAdoptHook != null) {
+          laneAdoptHook.adopt(r, 0);
         }
+        dirtyQueue.enqueueSub(r);
       }
     }
     u.reruns.clear();
@@ -655,11 +763,13 @@ final class Scheduler {
     }
   }
 
+  /**
+   * A15's stale reader: c was served the committed value of a node t holds, re-run at t's landing. Listed on each hold
+   * the pass reads committed from, each landing re-running it (#4932); reruns skips repeats by the cleared flag.
+   */
   void staleReader(Node c, Transaction t) {
-    if ((c.flags & REACTIVE_FRAME_READ) == 0) {
-      c.flags |= REACTIVE_FRAME_READ;
-      t.reruns.add(c);
-    }
+    t.reruns.add(c);
+    c.flags |= REACTIVE_FRAME_READ;
   }
 
   void queuePendingNode(Node node) {
@@ -677,18 +787,39 @@ final class Scheduler {
     node.notifiedAt = notifyEpoch;
     for (Link s = node.subs; s != null; s = s.nextSub) {
       Node sub = s.sub;
-      if ((sub.flags & REACTIVE_RECOMPUTING_DEPS) != 0 && s.gen == sub.depGen && s != sub.depsTail) {
+      // A signal's read returned before any write to it: the pass's own owned write to what it just read is a
+      // missed wake too (F-10).
+      if ((sub.flags & REACTIVE_RECOMPUTING_DEPS) != 0 && s.gen == sub.depGen && (s != sub.depsTail || node.fn == null)) {
         sub.flags |= REACTIVE_MISSED_WAKE;
       }
       dirtyQueue.enqueueSub(sub);
+      if ((sub.flags & REACTIVE_OWNER_READS) != 0 && sub.parent instanceof Node) {
+        dirtyQueue.markNode((Node) sub.parent, REACTIVE_CHECK);
+      }
     }
   }
 
   void laneDirty(Node node, Transaction l) {
+    insertSubs(node);
+    // A store's guess carrier: the readers of the keys it changed read their leaves, dirtied as the lane's work too.
+    if ((node.config & CONFIG_SLOT_NODE) != 0 && slotDirtyHook != null) {
+      slotDirtyHook.accept(node, l);
+    }
     for (Link s = node.subs; s != null; s = s.nextSub) {
       Node c = s.sub;
       Transaction t = c.x != null ? c.x.transaction : null;
-      if (c.type == EFFECT_RENDER && (node.config & CONFIG_VERDICT) != 0) {
+      boolean render = c.type == EFFECT_RENDER;
+      // A reader a hold has pending on its re-ask re-derives from the guess as the lane's work (#4629): the hold is
+      // the lane's parent's, or any hold whose flights the reader waits on are all refresh() re-asks (#4666). A render
+      // effect pending on another hold's re-asks, held by it or by none, the same (#4824).
+      if ((c.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == STATUS_PENDING
+        && (t != null ? (c.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD : render)) {
+        boolean same = t != null && resolveTx(t) == resolveTx(l.parent);
+        if (c.type != 0 ? render && !same && reasks(c) : same || reasks(c)) {
+          list(c, t = l);
+        }
+      }
+      if (render && (node.config & CONFIG_VERDICT) != 0) {
         c.config |= CONFIG_VERDICT;
         c.flags &= ~REACTIVE_LANE_DIRTY;
       }
@@ -697,6 +828,29 @@ final class Scheduler {
       }
     }
   }
+
+  /**
+   * Every flight c waits on is a refresh() re-ask: its own, with no sources, or each source's, through sources (#4824).
+   * The propagated copies can form a cycle (two keyed projections whose derives each read a row lent from the other's
+   * store, #4969): a source already walked adds no flight of its own.
+   */
+  static boolean reasks(Node c) {
+    return reasks(c, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+  }
+
+  private static boolean reasks(Node c, Set<Node> seen) {
+    if (c.x.pendingSources == null) {
+      return c.x.reask;
+    }
+    for (Node p : new ArrayList<>(c.x.pendingSources)) {
+      if (p == c ? !p.x.reask : !(!seen.add(p) || reasks(p, seen))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+
 
   void queueEffectRun(Node node) {
     node.modified = true;
@@ -719,13 +873,23 @@ final class Scheduler {
     return false;
   }
 
+  private static boolean superseded(Node n) {
+    if ((n.statusFlags & STATUS_UNINITIALIZED) == 0 && n.x != null && n.x.inFlight != null && !n.x.reask) {
+      n.pendingValue = NOT_PENDING;
+      return true;
+    }
+    return false;
+  }
+
   void commitPendingNode(Node n) {
     if (n.fn == null) {
       n.config &= ~(CONFIG_STAGED | CONFIG_HELD);
       applyStaged(n);
       return;
     }
-    boolean inFlight = n.pendingValue == NOT_PENDING && (n.statusFlags & STATUS_PENDING) != 0;
+    // A staged answer to a question a later pass of this hold replaced, its own flight up for the new one, is not the
+    // frame's: the node stays in flight on the committed value, and the stale staging goes (F-2).
+    boolean inFlight = (n.statusFlags & STATUS_PENDING) != 0 && (n.pendingValue == NOT_PENDING || superseded(n));
     // A value can land over a staged error with the flag left on. Solid then reports the value as the error, which
     // JS allows; a value is not a Throwable here, and it is what happened, so it commits as one (ADR 0033).
     int err = n.pendingValue instanceof Throwable ? n.config & CONFIG_STAGED_ERROR : 0;

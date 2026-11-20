@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -7,7 +7,7 @@ import j2act.internal.signals.Errors.StatusError;
 import j2act.internal.signals.Node.Link;
 import java.util.function.Supplier;
 
-/** Port of @solidjs/signals core/effect.ts at 9449845, without dev warnings. */
+/** Port of @solidjs/signals core/effect.ts at 68406c2, without dev warnings. */
 final class Effects {
   private final Runtime rt;
 
@@ -55,6 +55,15 @@ final class Effects {
         return;
       }
       escalate(self, Errors.unwrapStatusError(actualError));
+    } else if (self.type == EFFECT_USER) {
+      // A user effect's run owed for a pass a new question has since made pending is for a world that will not
+      // commit: void, it re-runs when that question settles. A quiet re-ask keeps it (F-1, F-2, F-9).
+      Node src = actualError instanceof Errors.NotReadyError ? ((Errors.NotReadyError) actualError).source
+        : actualError instanceof StatusError ? ((StatusError) actualError).source : null;
+      if ((actualStatus & STATUS_PENDING) != 0 && self.modified && !(src != null && src.x != null && src.x.reask)) {
+        self.modified = false;
+        rt.core.ext(self).blocked = true;
+      }
     } else if (self.type == EFFECT_RENDER) {
       q.notify(self, STATUS_PENDING | STATUS_ERROR, actualStatus, actualError);
     }
@@ -77,6 +86,10 @@ final class Effects {
     }
     Scheduler q = rt.scheduler;
     if (type != 0 && q.heldRunHook != null && q.heldRunHook.test(node)) {
+      return;
+    }
+    // An attach whose subtree holds a hole born into an open hold waits for that hold (#4574).
+    if (type != 0 && q.attachHook != null && q.attachHook.test(node)) {
       return;
     }
     if ((node.statusFlags & STATUS_ERROR) != 0 && node.type == EFFECT_USER) {

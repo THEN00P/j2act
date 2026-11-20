@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.CONFIG_AUTO_DISPOSE;
 import static j2act.internal.signals.Constants.CONFIG_CHILDREN_FORBIDDEN;
@@ -11,7 +11,7 @@ import static j2act.internal.signals.Constants.STATUS_PENDING;
 import java.util.List;
 import java.util.function.Function;
 
-/** Port of @solidjs/signals core/owner.ts at 9449845, without hydration ids. */
+/** Port of @solidjs/signals core/owner.ts at 68406c2, without hydration ids. */
 final class Owners {
   private final Runtime rt;
   private Throwable cleanupError;

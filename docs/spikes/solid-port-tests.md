@@ -1,45 +1,48 @@
 # Solid's tests against the port
 
-ADR 0033 says done means the ported tests pass and every test not ported is listed with a reason. They were not ported: `j2act-signals-conformance` runs Solid's own test files, unchanged, at commit `9449845`, against the Java classes. `SolidConformanceTest` fails on anything that differs from this page.
+ADR 0033 says done means the ported tests pass and every test not ported is listed with a reason. They were not ported. `j2act-signals-conformance` runs Solid's own test files unchanged against the Java classes, at commit `68406c2` (`@solidjs/signals` 2.0.3). `SolidConformanceTest` fails on anything that differs from this page.
 
 ```
 ./mvnw -pl j2act-core,j2act-signals-conformance test -Dtest=SolidConformanceTest -Dsolid.file=createMemo -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
+Add `-Dsolid.why=true` to print what each left-out test reaches.
+
 | | Tests |
 |---|---|
-| Pass | 2,681 |
-| Reach something left out, which names itself when reached | 1,851 |
-| Fail for a reason listed in `known-failures.txt` | 46 |
-| Skipped by Solid | 1 |
+| Pass | 6,384 |
+| Reach something left out, which names itself when reached | 700 |
+| Fail for a reason listed in `known-failures.txt` | 87 |
 
 ## Left out
 
-What a test reaches is in `LEFT_OUT` in `SolidConformanceTest`. A test reaching anything else fails the build.
+What a test reaches is in `LEFT_OUT` in `SolidConformanceTest`. A test that reaches anything else fails the build.
 
 | Reaches | Tests | Why |
 |---|---|---|
-| `createStore`, `createOptimisticStore`, `createProjection` and what goes with them | 1,349 | Deep stores need JS proxies. On the backlog |
-| `attribution`, `OBSERVE`, `DEV`, `graphSize` and the like | 454 | Developer tooling. On the backlog |
-| `setSnapshotCapture`, `getNextChildId` and the like | 34 | Hydration, which a server-rendered page does not do this way |
+| `attribution`, `OBSERVE`, `DEV`, `graphSize`, `setConsoleFooter`, `emitDiagnostic`, `ownerPath` and the like | 528 | Developer tooling. On the backlog |
+| `merge`, `omit`, `storePath`, `isStatic`, `sourceKeys`, `registerFold` | 108 | Store utilities that need JS proxies or have no meaning for Java objects |
+| `setSnapshotCapture`, `clearSnapshots`, `getNextChildId` and the like | 48 | Hydration, which a server-rendered page does not do this way |
 | `enableExternalSource` | 10 | Bridges to other reactive systems, which Java does not have |
-| Internal functions imported by name | 4 | Tests of Solid's module layout |
-
-Many of those files also have tests that do not reach any of this, and those run: 555 rows of the visibility oracle's posture matrix pass, and only its store rows do not.
+| Internal functions imported by name (`signal`, `dirtyQueue`, `settlePendingSource`) | 5 | Tests of Solid's module layout |
+| `runRefCallback` | 1 | Ref callbacks run in the DOM's attribute effects, and a view here sends markup |
 
 ## Listed
 
-`src/test/resources/known-failures.txt` has each test and its reason. They fall in these groups:
+`src/test/resources/known-failures.txt` has each test and its reason. They fall into these groups:
 
-- **Tooling (29):** the assertion is on a dev warning or an owner path in a message. `async-chain-supersession` and `boundary-not-born-held-3540` are here: their frames match, and only the warning is missing.
-- **Hydration (8):** the rest of `createRoot`, and one snapshot file.
-- **Platform (5):** `equals-comparator-errors` asserts V8's wording of a TypeError, and GraalJS words it differently; `gc` needs a JS garbage collector.
+- **Tooling (43):** the assertion is on a dev warning, a strictRead error, attribution or an owner path in a message.
+- **Store representation (15):** the test counts record clones, reads the key counter, or asserts the identity of the committed backing or a `$OWNER` stamp. The port's store keeps the same frames another way.
+- **JavaScript property semantics (12):** property descriptors, accessor properties, and a prototype swapped with `Object.setPrototypeOf`. A Java object's fields are read as values.
+- **Hydration (7):** hydration ids.
+- **Platform (5):** V8's wording of a TypeError, which GraalJS words differently, and `gc`, which needs `node:inspector` and a JS garbage collector.
 - **Differences in ADR 0033's table (4):** `staged-signed-zero` for `Objects.equals`, and `untracked-async-read` for a message that says "off the lane" rather than "after an await".
+- **Ref callbacks (1).**
 
 ## Files that do not run
 
-`dist-artifacts` and `treeshake` need Solid's build output. `attribution-engine-cost`, `diagnostics`, `observe-idle-cost`, `rules-index` and `snapshot-derived-store-rows` import Node modules, so they are listed above as one failure each.
+`dist-artifacts` and `treeshake` need Solid's build output, so they do not bundle. `attribution-engine-cost`, `attribution-retention`, `gc`, `observe-idle-cost` and `rules-index` fail as a whole, and each is listed above as one failure. `node:fs` is a stand-in whose `writeFileSync` does nothing: the optimistic landing model imports it only to write a report that the harness never asks for. A test that reads a file through it fails, and is listed. `vi.resetModules` is a no-op: the optimistic landing model asks for a fresh Solid per case, and its cases each make their own roots.
 
 ## Beyond the tests
 
-`DifferentialTest` runs `js/fuzz.test.ts` on Solid's own source in Node and on the port, and wants every frame of 400 seeds to be the same.
+`DifferentialTest` runs `js/fuzz.test.ts` on Solid's own source in Node and on the port, and wants every frame of 400 seeds to be the same. Every seed runs in one runtime, so each starts from what the seeds before it left behind. Solid 2.0.3 crashes on seed 306 ("Potential Infinite Loop Detected"), and `prepare.mjs` goes on in a fresh process. That process first replays seeds 1 to 305 without logging them, so Solid and the port start seed 307 from the same state. Both sides skip seed 306.

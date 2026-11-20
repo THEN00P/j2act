@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 /**
- * Port of @solidjs/signals core/core.ts at 9449845: recompute, read, and write. Left out: the shadow seat,
+ * Port of @solidjs/signals core/core.ts at 68406c2: recompute, read, and write. Left out: the shadow seat,
  * strict reads and other dev-only checks, attribution, hydration snapshots and ids.
  */
 final class Core {
@@ -79,7 +79,8 @@ final class Core {
     } else if (q.laneStageHook != null && (el.flags & REACTIVE_ZOMBIE) != 0 && laneFrameMember(el)) {
       q.dirtyQueue.deleteFromHeap(el);
       el.flags &= ~(REACTIVE_DIRTY | REACTIVE_CHECK | REACTIVE_LANE_DIRTY);
-    } else {
+    } else if (!(q.laneAdoptHook != null && el.x != null && el.x.parked != null && q.laneAdoptHook.adopt(el, 1))) {
+      // A reader the landing re-derives whose frame flight the seam parked adopts it at its turn (R5, F-9).
       recompute(el, false);
     }
   }
@@ -108,36 +109,62 @@ final class Core {
     q.bumpNotifyEpoch();
     int isEffect = el.type;
     List<Node> released = null;
+    Object superseded = NOT_PENDING;
     Transaction prevLane = q.passLane;
     Object prevMount = laneRoot;
     Object mount = null;
     if (q.laneStageHook != null) {
       laneRoot = create ? (prevLane != null ? prevLane : prevMount) : null;
       mount = laneRoot;
+    }
+    // R5: the seam's re-derive runs with the flight it parked still current; a later pass asks its own question, the
+    // hold's if the hold waits on it; so does a pass of a lane's derivation a frame's write dirtied (Verdict.reask).
+    if (q.laneAdoptHook != null && !create && el.x != null) {
+      Object p = el.x.parked;
+      boolean visit;
+      if (p != null) {
+        visit = p != el.x.inFlight;
+        if (visit) {
+          el.x.parked = null;
+        }
+      } else {
+        visit = (el.config & CONFIG_OVERRIDE) != 0 && (el.flags & REACTIVE_LANE_DIRTY) == 0;
+      }
+      if (visit) {
+        q.laneAdoptHook.adopt(el, 2);
+      }
+    }
+    if (q.laneStageHook != null) {
+      // The creator's flags on a first pass (0 with no creator running).
+      Node creator = create ? creatorPass(context) : null;
+      int cf = creator != null ? creator.flags : 0;
+      // S-46 (D-25): a first pass under a pass that probed is the mount a display-ahead read gates; so is one its
+      // first pass creates: a boundary inside the mount is the mount (S-58).
+      // #4806: a render effect reading a verdict memo opens the mount the memo hands it (Show's function child).
+      if ((cf & REACTIVE_PROBED) != 0 || (creator != null && (((creator.config & CONFIG_MOUNT_AHEAD) != 0
+        && (creator.statusFlags & STATUS_UNINITIALIZED) != 0)
+        || (creator.type == EFFECT_RENDER && creator.depsTail != null
+          && hasDep(creator, d -> (d.config & CONFIG_VERDICT) != 0, creator.depsTail))))) {
+        el.config |= CONFIG_MOUNT_AHEAD;
+      }
       Transaction next = null;
       if (((el.flags & REACTIVE_LANE_DIRTY) != 0 || (el.config & (CONFIG_OVERRIDE | CONFIG_GUESS)) == CONFIG_OVERRIDE)
         && el.x != null && el.x.transaction != null && el.x.transaction.lane) {
         next = el.x.transaction;
-      } else if (create && prevLane != null && prevLane.parent.verdict != prevLane) {
-        Node creator = creatorPass(context);
-        if (creator != null && (creator.flags & REACTIVE_RECOMPUTING_DEPS) != 0) {
-          next = prevLane;
-        }
+      } else if (prevLane != null && prevLane.parent.verdict != prevLane && (cf & REACTIVE_RECOMPUTING_DEPS) != 0) {
+        next = prevLane;
       }
       q.passLane = next;
     }
     boolean replaced = (el.config & CONFIG_STAGED_ERROR) != 0;
+    boolean linked = false;
     if (!create) {
       q.dirtyQueue.deleteFromHeap(el);
       if (q.laneStageHook != null && isEffect == 0 && ((el.statusFlags & STATUS_PENDING) != 0
-        || (el.config & (CONFIG_ASYNC | CONFIG_HELD)) == (CONFIG_ASYNC | CONFIG_HELD))) {
+        || (el.config & (CONFIG_ASYNC | CONFIG_OWN_PROBE | CONFIG_HELD)) == (CONFIG_ASYNC | CONFIG_HELD))) {
         el.config &= ~CONFIG_VERDICT;
       }
       if (el.x != null) {
-        Object p = q.laneStageHook != null ? el.x.parked : null;
-        if (p != null && p != el.x.inFlight) {
-          el.x.parked = null;
-        }
         el.x.inFlight = null;
         rt.async.releaseFlightTeardown(el);
       }
@@ -150,7 +177,7 @@ final class Core {
           q.joinPassTx(tx, q.freshHook != null && truthy(q.freshHook.fresh(el, (el.statusFlags & STATUS_UNINITIALIZED) != 0)));
         } else if (tx != q.flushTransaction && (el.statusFlags & STATUS_UNINITIALIZED) == 0
           && (el.config & CONFIG_HELD_FRAME) == 0) {
-          if (el.pendingValue != NOT_PENDING) {
+          if ((superseded = el.pendingValue) != NOT_PENDING) {
             q.insertSubs(el);
           }
           el.pendingValue = NOT_PENDING;
@@ -165,6 +192,14 @@ final class Core {
         rt.graph.deferredReleases = prev;
       } else if (el.firstChild != null || el.disposal != null) {
         parkChildren(el);
+      }
+      // A held staged error stays the newest answer latest shows while this pass's flight is up (D-22, D-41).
+      // linked: whether the pass had sources (a first pass did not: it asks no question its committed value answers).
+      if (q.passHook != null) {
+        linked = el.deps != null;
+        if (el.x != null && ((el.config & CONFIG_STAGED_ERROR) != 0 || el.x.aheadError != null)) {
+          q.passHook.pass(el, false);
+        }
       }
       if ((el.config & CONFIG_STAGED_ERROR) != 0) {
         el.pendingValue = NOT_PENDING;
@@ -181,7 +216,9 @@ final class Core {
     boolean wasPendingSource = el.x != null && el.x.pendingSources != null && el.x.pendingSources.contains(el);
     boolean stagedErr = false;
     boolean reask = (el.flags & REACTIVE_REASK) != 0
-      && !(((el.statusFlags & STATUS_PENDING) != 0 || (q.guessing && el.pendingValue != NOT_PENDING))
+      && !(((el.statusFlags & STATUS_PENDING) != 0 || (el.pendingValue != NOT_PENDING
+        // A held user write is not an answer: the refresh over it asks the same question (D-34, #4887, #4888).
+        && (el.flags & REACTIVE_MANUAL_WRITE) == 0))
         && el.x != null && !el.x.reask);
     Owner oldcontext = context;
     context = el;
@@ -190,8 +227,8 @@ final class Core {
     int releaseAfter = el.flags & REACTIVE_RELEASE_AFTER;
     el.flags = REACTIVE_RECOMPUTING_DEPS | (el.flags & (REACTIVE_ZOMBIE | REACTIVE_REASK));
     el.time = q.clock;
-    Object value = el.pendingValue != NOT_PENDING ? el.pendingValue
-      : (el.config & CONFIG_OVERRIDE) != 0 && el.x.lane != NOT_PENDING ? el.x.lane : el.value;
+    // The pass's previous value: its staging (a lane node's is its lane's), else the committed one.
+    Object value = el.pendingValue != NOT_PENDING ? el.pendingValue : el.value;
     int oldHeight = el.height;
     boolean missedWake = false;
     boolean joined = false;
@@ -217,7 +254,10 @@ final class Core {
         }
         el.loading = false;
       }
-      if (el.statusFlags != 0 || el.x != null) {
+      // Lane work this pass served the committed value of a flight still in the air keeps the pending it had: a
+      // boundary waiting on it keeps its fallback (F-4, #4862).
+      if ((el.statusFlags != 0 || el.x != null)
+        && !(q.laneServedHook != null && (el.statusFlags & STATUS_PENDING) != 0 && q.laneServedHook.served(el, null, true))) {
         rt.async.clearStatus(el, create);
       }
     } catch (VirtualMachineError e) {
@@ -263,7 +303,8 @@ final class Core {
         : REACTIVE_JOINED;
       joined = (el.flags & joinMask) != 0;
       if (q.observeFlightHook != null) {
-        el.config = (el.config & ~CONFIG_VERDICT) | (el.flags & REACTIVE_PROBED);
+        el.config = (el.config & ~(CONFIG_VERDICT | CONFIG_OWN_PROBE | CONFIG_AHEAD)) | (el.flags & REACTIVE_PROBED)
+          | ((el.flags & REACTIVE_WINDOW) << 9) | ((el.flags & REACTIVE_AHEAD) << 11);
       }
       el.flags = el.flags & (REACTIVE_ZOMBIE | REACTIVE_DISPOSED | REACTIVE_FRAME_READ | REACTIVE_STAGED_READ
         | REACTIVE_LANE_READ | REACTIVE_SCREEN_READ | REACTIVE_PROBE_UNANSWERED);
@@ -272,6 +313,10 @@ final class Core {
         for (Node node : released) {
           rt.async.releaseIfSettledUnobserved(node);
         }
+      }
+      // A pass that read only committed values asks the committed question again (A24, A19 exc. 2): a re-ask too.
+      if (linked && !reask && (el.statusFlags & STATUS_PENDING) != 0) {
+        reask = q.passHook.pass(el, true);
       }
       if (el.x != null) {
         el.x.reask = reask && (el.statusFlags & STATUS_PENDING) != 0;
@@ -294,12 +339,17 @@ final class Core {
         lane = null;
       }
     }
+    // The transaction this flush (or tick) has joined, if any.
+    Transaction tx = q.flushTransaction != null ? q.flushTransaction : q.passTx;
     if (!errored) {
       boolean unstaged = el.pendingValue == NOT_PENDING;
-      Object compareValue = !unstaged ? el.pendingValue
-        : (el.config & CONFIG_OVERRIDE) != 0 && el.x.lane != NOT_PENDING ? el.x.lane : el.value;
+      Object compareValue = !unstaged ? el.pendingValue : el.value;
+      // A recovery to the last good value in a flush that has joined a hold is a change of answer (D-41, S-53).
       boolean valueChanged = (unstaged && wasUninitialized != 0 && isEffect == 0)
-        || (el.x != null && el.x.shownError != null) || replaced || !isSame(el, compareValue, value);
+        || (el.x != null && el.x.shownError != null) || (outgoingError != null && tx != null) || replaced
+        // Lane work on a node a held pass created has no screen: the lane's value is a change (#3835, F-11).
+        || (lane != null && el.parent instanceof Node && (el.parent.config & CONFIG_HELD) != 0)
+        || !isSame(el, compareValue, value);
       if (isEffect != 0 && valueChanged
         && !((el.flags & REACTIVE_SCREEN_READ) != 0 && !el.modified && ValueEquality.same(el.prevValue, value))
         && unstaged) {
@@ -316,15 +366,19 @@ final class Core {
         // the lane decided
       } else if (valueChanged) {
         if (lane != null) {
+          // Lane work: the lane's staging, revealed at the next seam.
           if (isEffect != 0 && el.pendingValue == NOT_PENDING) {
             el.value = value;
-          } else if (isEffect != 0 || lane.shown) {
-            el.pendingValue = value;
           } else {
-            el.x.lane = value;
+            el.pendingValue = value;
+          }
+          // Born in the lane: no committed value until the lane lands (its correction re-derives it on the truth).
+          // Not an effect: its value slot is private and its first run is the lane's (#4871).
+          if (create && isEffect == 0) {
+            el.statusFlags |= STATUS_UNINITIALIZED;
           }
         } else if (create
-          ? !((q.flushTransaction != null || q.passTx != null) && (joined || creatorJoined(oldcontext)))
+          ? !(tx != null && (joined || creatorJoined(oldcontext)))
           : isEffect != 0 && el.pendingValue == NOT_PENDING) {
           el.value = value;
         } else {
@@ -333,17 +387,19 @@ final class Core {
             el.x.shownError = outgoingError;
           }
           if (create) {
-            q.holdNode(el, q.flushTransaction != null ? q.flushTransaction : q.passTx);
+            q.holdNode(el, tx);
             el.statusFlags |= STATUS_UNINITIALIZED;
             if (q.freshHook != null) {
               q.freshHook.fresh(el, mount == null ? q.flushTransaction : null);
             }
           }
         }
+        // Lane work re-staged: the lane's members re-derive as its work (laneDirty notifies them first).
         if (el.subs != null) {
-          q.insertSubs(el);
           if (lane != null) {
             q.laneDirty(el, lane);
+          } else {
+            q.insertSubs(el);
           }
         }
       } else if (el.height != oldHeight) {
@@ -376,7 +432,9 @@ final class Core {
         }
       }
     }
-    if ((el.x == null || el.x.error == null) && el.pendingValue == NOT_PENDING && !(isEffect != 0 && el.modified)) {
+    // Lane work's staging is the lane's, revealed at its seam: its tail is judged as an unchanged pass's.
+    if ((el.x == null || el.x.error == null) && (lane != null || el.pendingValue == NOT_PENDING)
+      && !(isEffect != 0 && el.modified)) {
       if (create || isEffect == EFFECT_TRACKED) {
         rt.graph.trimStaleDeps(el);
       } else {
@@ -397,6 +455,10 @@ final class Core {
     if (missedWake) {
       q.dirtyQueue.enqueueSub(el);
       q.schedule();
+    }
+    // Re-derived to the staging it superseded (#4417): its held readers keep their pass and children.
+    if (q.keepReadersHook != null && superseded != NOT_PENDING && ValueEquality.same(value, superseded)) {
+      q.keepReadersHook.accept(el);
     }
     if (releaseAfter != 0) {
       rt.async.releaseIfSettledUnobserved(el);
@@ -462,8 +524,18 @@ final class Core {
     return el.x;
   }
 
+  /**
+   * #4777: the pass whose plain read made this flush adopt a hold (it had no transaction before): a window that pass
+   * then opens can give the hold back and start over (Verdict.markVerdictReader).
+   */
+  Node adopter;
+
   void joinPass(Node c, Node el) {
     Scheduler q = s();
+    if (q.observeFlightHook != null && q.flushTransaction == null) {
+      adopter = c;
+      q.adopted.clear();
+    }
     c.flags |= REACTIVE_JOINED;
     if ((el.statusFlags & STATUS_UNINITIALIZED) != 0 || c.type != EFFECT_RENDER) {
       q.joinPassTx(q.txOf(el), (c.type == 0 && (c.statusFlags & STATUS_UNINITIALIZED) != 0)
@@ -482,20 +554,57 @@ final class Core {
     Scheduler q = s();
     boolean verdictReader = q.observeFlightHook != null && (c.config & CONFIG_VERDICT) != 0;
     boolean lane = q.laneStageHook != null && q.passLane != null;
-    if ((!lane || ((c.statusFlags & STATUS_UNINITIALIZED) != 0 && (el.statusFlags & STATUS_PENDING) != 0))
-      && !verdictReader && ((c.config & (EFFECT_RENDER << 23)) == 0 || (el.config & CONFIG_INPUTS_PUBLISHED) != 0)) {
+    // S-46 (D-25): a render effect a probing pass is mounting is not a leaf of the screen: its first pass reading the
+    // hold's staging or flight is born held, whatever else it read (S-58). Not lane work reading a held node that is
+    // not pending: a lane never makes a flush the hold's (D-37).
+    if (q.laneStageHook != null && (c.config & CONFIG_MOUNT_AHEAD) != 0 && (c.statusFlags & STATUS_UNINITIALIZED) != 0
+      && (!lane || (el.statusFlags & STATUS_PENDING) != 0)) {
+      joinPass(c, el);
       return false;
     }
-    Transaction t = q.txOf(el);
-    if (((lane ? q.passLane.over != null && Scheduler.resolveTx(q.passLane.over) == t : t == q.flushTransaction) && !verdictReader)
-      || bornInto(c, t)) {
-      return false;
+    // #4544: not a pass whose posture is only inherited, reading the hold's own write: it is the hold's work.
+    // Not served the screen, the pass reads the staging and joins el's transaction, but for the lane case below.
+    if (!(verdictReader && q.holdStagingHook.test(c, el))
+      && !((!lane || ((c.statusFlags & STATUS_UNINITIALIZED) != 0 && (el.statusFlags & STATUS_PENDING) != 0))
+        && !verdictReader && ((c.config & (EFFECT_RENDER << 23)) == 0 || (el.config & CONFIG_INPUTS_PUBLISHED) != 0
+          // S-46 (D-25): a render effect a probing pass is mounting is born held, not a leaf of the screen.
+))) {
+      Transaction t = q.txOf(el);
+      // A lane re-based over this transaction's answer reads that staging as the lane's render effects do,
+      // joining nothing: lane work never makes a flush the hold's (D-37, #4643).
+      if (lane && q.passLane.over != null && Scheduler.resolveTx(q.passLane.over) == t && !verdictReader) {
+        return false;
+      }
+      if (!((!lane && t == q.flushTransaction && !verdictReader) || bornInto(c, t))) {
+        q.staleReader(c, t);
+        if (lane || verdictReader) {
+          q.laneServedHook.served(c, el, false);
+        }
+        return true;
+      }
     }
-    q.staleReader(c, t);
-    if (lane || verdictReader) {
-      q.laneServedHook.accept(c, el);
+    joinPass(c, el);
+    return false;
+  }
+
+  /** A dep of c that f picks: this pass's reads, then its last pass's tail; this pass's reads only with tail. */
+  private static boolean hasDep(Node c, java.util.function.Predicate<Node> f, Link tail) {
+    for (Link d = c.deps; d != null; d = d == tail ? null : d.nextDep) {
+      if (f.test(d.dep)) {
+        return true;
+      }
     }
-    return true;
+    return false;
+  }
+
+  /**
+   * #4806 (S-46, D-25): a staging a verdict pass reads for the first time (not on its last pass, not yet on this one)
+   * is content the pass opens, not a value it keeps (stagedScreen).
+   */
+  private boolean fresh;
+
+  private static boolean readsFresh(Node c, Node el) {
+    return el.pendingValue != NOT_PENDING && (c.config & CONFIG_VERDICT) != 0 && !hasDep(c, d -> d == el, null);
   }
 
   boolean bornInto(Node c, Transaction t) {
@@ -669,10 +778,19 @@ final class Core {
   void stashFlushed(Node el) {
     NodeExtension x = el.x;
     if (x.flushedAt != s().clock) {
+      // D-8: the flush checks whether the rewrite nets (Verdict.revert), once per node per flush.
+      if (s().revertHook != null) {
+        s().heldRewrites.add(el);
+      }
       x.flushed = el.pendingValue;
       x.flushedAt = s().clock;
       unflushedStaged = true;
     }
+  }
+
+  /** The value a signal had when this tick began writing it: the flushed staging of a held slot, else committed. */
+  Object tickBase(Node el) {
+    return (el.config & CONFIG_HELD) != 0 && el.x != null && el.x.flushedAt == s().clock ? el.x.flushed : el.value;
   }
 
   boolean markLateLinker(Node c) {
@@ -692,7 +810,7 @@ final class Core {
 
   void pullComputed(Node owner, Node c) {
     Heap heap = s().dirtyQueue;
-    if (owner.height >= heap.min) {
+    if (owner.height >= heap.min || (owner.flags & REACTIVE_CHECK) != 0) {
       heap.markNode(c, REACTIVE_DIRTY);
       heap.markHeap();
       updateIfNecessary(owner);
@@ -700,8 +818,11 @@ final class Core {
       updateIfNecessary(owner);
     }
     int height = owner.height;
-    if (height >= c.height && owner.parent != c) {
+    if (owner.parent == c) {
+      owner.flags |= REACTIVE_OWNER_READS;
+    } else if (height >= c.height) {
       c.height = height + 1;
+      heap.liftOwned(c, c.height);
     }
   }
 
@@ -737,6 +858,10 @@ final class Core {
     }
     if (el.fn == null && (!unflushedStaged || el.pendingValue == NOT_PENDING) && (el.config & CONFIG_OVERRIDE) == 0) {
       if (c != null) {
+        // (Untracked reads count as fresh never: no dep to compare.)
+        if (q.laneStageHook != null) {
+          fresh = tracking && readsFresh(c, el);
+        }
         if (tracking) {
           rt.graph.link(el, c);
         }
@@ -744,7 +869,6 @@ final class Core {
           if (frameRead(c, el)) {
             return el.value;
           }
-          joinPass(c, el);
         }
       }
       if (c == null || el.pendingValue == NOT_PENDING || (c.config & CONFIG_CHILDREN_FORBIDDEN) != 0) {
@@ -759,11 +883,41 @@ final class Core {
       return el.pendingValue;
     }
     boolean committed = false;
+    // A re-read: link reused the link this pass's last pass made to el. Only a re-read retries an errored source.
+    boolean reread = false;
     if (c != null) {
+      if (q.laneStageHook != null) {
+        fresh = tracking && readsFresh(c, el);
+      }
       if (tracking) {
-        rt.graph.link(el, c);
+        reread = rt.graph.link(el, c);
         if (el.fn != null) {
           pullComputed(el, c);
+          if (q.observeFlightHook != null && ((c.statusFlags & STATUS_UNINITIALIZED) != 0
+            ? (c.config & CONFIG_HELD) != 0 || q.flushTransaction != null
+            : (c.config & CONFIG_HELD_FRAME) != 0)) {
+            // #4544 (F-6): a render effect never committed reading a settled verdict reader's value reads ahead.
+            if (c.type == EFFECT_RENDER && (el.config & CONFIG_VERDICT) != 0
+              && (el.statusFlags & (STATUS_PENDING | STATUS_UNINITIALIZED)) == 0) {
+              c.flags |= REACTIVE_AHEAD;
+            }
+            // #4776, #4778 (D-25): a sync verdict memo is display while only the display reads it. A pass of a hold's
+            // own work reading it makes it that hold's: it re-derives now, served the hold's writes, and the reader
+            // reads that. A memo that probes in its own body stays the screen's for a held reader (F-6).
+            // A pass that asks is display like any other (S-51): an async derivation's read seats nothing; re-derived
+            // into the hold, the memo pulled the branch it gates into the verdict lane, born there, and the lane
+            // waited on that branch's mount while the mount waited on the lane (#4965).
+            if ((el.config & (CONFIG_VERDICT | CONFIG_FRAME | CONFIG_ASYNC | CONFIG_OWN_PROBE)) == CONFIG_VERDICT
+              && (c.config & CONFIG_ASYNC) == 0) {
+              Transaction held = (c.config & CONFIG_HELD) != 0 ? q.txOf(c) : q.flushTransaction;
+              Transaction t = held != null ? Scheduler.resolveTx(held) : null;
+              NodeExtension x = ext(el);
+              if (x.readIn != t) {
+                x.readIn = t;
+                recompute(el, false);
+              }
+            }
+          }
           if (q.observeFlightHook != null && c.type == 0) {
             c.flags |= el.config & CONFIG_VERDICT & ((el.statusFlags & STATUS_PENDING) != 0
               && ((c.config & CONFIG_STAGED) != 0 || (c.statusFlags & STATUS_UNINITIALIZED) != 0) ? c.config : -1);
@@ -772,10 +926,10 @@ final class Core {
       }
       if ((el.config & CONFIG_HELD) != 0 && (el.config & CONFIG_OVERRIDE) == 0
         && (c.config & CONFIG_CHILDREN_FORBIDDEN) == 0) {
-        if ((el.statusFlags & STATUS_UNINITIALIZED) != 0 || !frameRead(c, el)) {
+        if ((el.statusFlags & STATUS_UNINITIALIZED) != 0) {
           joinPass(c, el);
         } else {
-          committed = true;
+          committed = frameRead(c, el);
         }
       }
     }
@@ -787,10 +941,15 @@ final class Core {
     }
     if (q.laneStageHook != null && (el.statusFlags & STATUS_PENDING) != 0 && !committed
       && (el.config & CONFIG_OVERRIDE) == 0 && (el.statusFlags & STATUS_UNINITIALIZED) == 0) {
-      if (q.passLane != null && !(c != null && (c.statusFlags & STATUS_UNINITIALIZED) != 0)) {
-        committed = true;
-      } else if (c != null && (c.config & CONFIG_VERDICT) != 0) {
+      // A verdict reader first, in a lane or not: a memo's plain read of a flight observes it (A10, #4661).
+      // A mount a probing pass opened observes the flight on its first pass whatever it read ahead (S-46, S-58).
+      if (c != null && (c.config & CONFIG_VERDICT) != 0
+        && !((c.config & CONFIG_MOUNT_AHEAD) != 0 && (c.statusFlags & STATUS_UNINITIALIZED) != 0)) {
         committed = q.observeFlightHook.test(c, el);
+      } else if (q.passLane != null && (!(c != null && (c.statusFlags & STATUS_UNINITIALIZED) != 0)
+        || bornOfLaneRerun(c))) {
+        // Lane work: served the committed value, unless it read a staging of the flush this pass (F-2; S-57).
+        committed = q.laneServedHook.served(c, el, true);
       }
     }
     if ((el.statusFlags & STATUS_PENDING) != 0 && !committed) {
@@ -809,7 +968,10 @@ final class Core {
       }
     }
     if (el.fn != null && (el.statusFlags & STATUS_ERROR) != 0) {
-      if (tracking && el.time < q.clock) {
+      // Not a zombie: its fate is the seam's (L2); its retry livelocked with the live frame's readers (S-58).
+      // A reader's first read is no question: a boundary its memo re-creates, or a mount, reads the error and asks
+      // nothing (F-9, #5002).
+      if (reread && el.time < q.clock && (el.flags & REACTIVE_ZOMBIE) == 0) {
         recompute(el, false);
         return read(el);
       }
@@ -828,6 +990,16 @@ final class Core {
       q.schedule();
     }
     return value;
+  }
+
+  /**
+   * A memo's first pass created by a guess lane's re-run of a memo that has a screen (#4824): it stands where the one
+   * it replaces stood, so lane work's read of a parent's flight is the screen's for it too.
+   */
+  private boolean bornOfLaneRerun(Node c) {
+    Owner p = c.parent;
+    return !Lanes.isVerdict(s().passLane) && p instanceof Node && ((Node) p).fn != null
+      && (((Node) p).statusFlags & STATUS_UNINITIALIZED) == 0 && (p.config & CONFIG_FRAME) == 0;
   }
 
   private void throwShown(Node el) {
@@ -864,6 +1036,11 @@ final class Core {
 
   void stagedRead(Node c, Node el) {
     if (el == null || (el.statusFlags & STATUS_UNINITIALIZED) == 0) {
+      // Lane work this pass served the committed value of a flight now reads a staging of the flush: it throws, with
+      // or without a transaction to be the flight's stale reader in yet (#4859).
+      if (s().passLane != null) {
+        s().laneServedHook.served(c, null, false);
+      }
       c.flags |= REACTIVE_STAGED_READ;
       Scheduler q = s();
       if (q.laneSeamsHook != null && (q.passLane != null || (c.type != 0 && (c.config & CONFIG_VERDICT) != 0))) {
@@ -875,13 +1052,19 @@ final class Core {
   boolean stagedScreen(Node c, Node el) {
     Scheduler q = s();
     if (q.flushTransaction == null || bornInto(c, q.flushTransaction)
-      || (el != null && (el.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD)) {
+      || (el != null && (el.config & (CONFIG_HELD | CONFIG_OVERRIDE)) == CONFIG_HELD)
+      // #4544: this flush's own write, read by a pass whose posture is only inherited, is the frame's derivation;
+      // a store's node-less staging (no el) too.
+      || (q.observeFlightHook != null && q.holdStagingHook.test(c, el))) {
       return false;
     }
-    if (q.observeFlightHook != null && q.flushTransaction == q.latestOpened && q.passLane == null
-      && (c.config & CONFIG_VERDICT) != 0 && (c.statusFlags & STATUS_UNINITIALIZED) == 0) {
-      q.stagedReaders.add(c);
-      return false;
+    // The staging is the frame's read for a pass in the frame's seat, and the seam re-derives the pass once only if
+    // the flush parks (D-22, F-10). Lane work sees the screen (D-37).
+    // #4806: content a display-ahead gate opens is a mount, whatever its shape: its verdict lane reveals with the landing.
+    // #4966 (F-6, D-23): not under a gate that is only the pass's own isPending window: what a verdict gates shows while
+    // the question is open, and a read's place after the probe or before it never changes what shows.
+    if (q.laneStageHook != null && el != null && fresh && q.passLane != null && c.flags >>> WINDOW_KINDS != 1) {
+      q.passLane.opened = true;
     }
     q.staleReader(c, q.flushTransaction);
     return true;

@@ -1,10 +1,10 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import java.util.List;
 import java.util.Set;
 
-/** Port of NodeExtension in @solidjs/signals core/types.ts at 9449845: machinery most nodes never touch. */
+/** Port of NodeExtension in @solidjs/signals core/types.ts at 68406c2: machinery most nodes never touch. */
 final class NodeExtension {
   /** The current flight; `inFlightSet` is false for Solid's onSupersede-only `undefined`. */
   Object inFlight;
@@ -26,12 +26,18 @@ final class NodeExtension {
   long flushedAt = -1;
   /** Provenance (A18): the question this node's guess or latest flight answers. */
   int q;
-  /** Lanes: the lane's value while CONFIG_OVERRIDE is set. */
-  Object lane = Constants.NOT_PENDING;
+  /** #4544: the hold (a Transaction) or, before one, the flush clock (a Long) under which a window read this staging. */
+  Object askedIn;
+  /** #4776: the hold whose own work read this memo's value (a branch it opened). */
+  Scheduler.Transaction readIn;
+  /** Lanes: the node's lane has shown a value of it: a guess is value, and the lane's record holds what it covered. */
+  boolean shown;
   /** affects() marks live on this node. */
   int marks;
   /** D-41: the error a node showed when a re-ask made it pending. */
   Throwable shownError;
+  /** D-22, D-41: an error a hold staged that a re-ask replaced before it showed: latest's newest answer meanwhile. */
+  Object aheadError;
   /** R5: the frame pass's flight of a latest()/isPending() reader. */
   Object parked;
 }

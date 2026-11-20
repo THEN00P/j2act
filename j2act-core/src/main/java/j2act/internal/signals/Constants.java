@@ -1,7 +1,7 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
-/** Port of @solidjs/signals core/constants.ts at 9449845. Bits not used by what is ported keep their values. */
+/** Port of @solidjs/signals core/constants.ts at 68406c2. Bits not used by what is ported keep their values. */
 final class Constants {
   private Constants() {
   }
@@ -27,7 +27,16 @@ final class Constants {
   static final int REACTIVE_SCREEN_READ = 1 << 18;
   static final int REACTIVE_PROBE_UNANSWERED = 1 << 19;
   static final int REACTIVE_WINDOW = 1 << 21;
+  /** #4544: a render effect born into a hold read a settled verdict reader's value this pass. */
+  static final int REACTIVE_AHEAD = 1 << 20;
   static final int REACTIVE_RELEASE_AFTER = 1 << 22;
+  /** A computed its own owner reads: a wake of it wakes the owner too, whose pass re-creates it. */
+  static final int REACTIVE_OWNER_READS = 1 << 23;
+  /**
+   * The windows the pass opened, by kind, from this bit up (window << WINDOW_KINDS): 1 isPending, 2 latest. Per pass.
+   * #4966: a first plain read only the pass's own isPending window gates is not a mount (Core.stagedScreen).
+   */
+  static final int WINDOW_KINDS = 24;
 
   static final int CONFIG_OWNED_WRITE = 1 << 0;
   static final int CONFIG_CHILDREN_FORBIDDEN = 1 << 4;
@@ -50,7 +59,13 @@ final class Constants {
   static final int CONFIG_FRESH_READ = 1 << 16;
   static final int CONFIG_PROMOTED = 1 << 22;
   static final int CONFIG_FRAME = 1 << 23;
+  /** A render effect created by a pass that probed: the mount a display-ahead Show opens (S-46, D-25). */
+  static final int CONFIG_MOUNT_AHEAD = 1 << 24;
   static final int CONFIG_ASYNC = 1 << 29;
+  /** #4544: the node's last pass opened a verdict window of its own (REACTIVE_WINDOW, kept). */
+  static final int CONFIG_OWN_PROBE = REACTIVE_WINDOW << 9;
+  /** #4544 (F-6): the effect's last pass read a display-ahead value; the sign bit, tested by {@code &} only. */
+  static final int CONFIG_AHEAD = REACTIVE_AHEAD << 11;
 
   static final int STATUS_NONE = 0;
   static final int STATUS_PENDING = 1 << 0;

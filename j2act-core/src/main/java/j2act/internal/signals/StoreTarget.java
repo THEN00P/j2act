@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -7,7 +7,7 @@ import java.util.Set;
 import java.util.function.BiPredicate;
 
 /**
- * Port of @solidjs/signals store/target.ts at 9449845: what a view stands for. `v` is the committed backing,
+ * Port of @solidjs/signals store/target.ts at 68406c2: what a view stands for. `v` is the committed backing,
  * a raw the application gave or a copy the store owns, and `pb` the pending backing of the current batch,
  * which is also what the container node `k` stages. Nodes are made when something subscribes.
  *
@@ -43,6 +43,8 @@ public final class StoreTarget implements Node.Host {
   boolean d;
   /** Projection family, null for plain stores. */
   StoreFamily fam;
+  /** An optimistic family's target (S2): the guess carrier arms apply. Set once at creation. */
+  boolean o;
   /** A shallow store: its keys are reactive and its values are served raw, by reference. */
   boolean s;
   BiPredicate<Object, Object> slotEquals;

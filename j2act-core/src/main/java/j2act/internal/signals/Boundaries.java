@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -19,7 +19,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * Port of @solidjs/signals boundaries.ts at 9449845: Loading and Errored. Left out: the dev reports of an
+ * Port of @solidjs/signals boundaries.ts at 68406c2: Loading and Errored. Left out: the dev reports of an
  * `on` that can never show its fallback and of an accessor passed to `on`.
  */
 final class Boundaries {
@@ -86,8 +86,30 @@ final class Boundaries {
     return (Boundary) node.ctx.get(BOUNDARY);
   }
 
+  /**
+   * The statuses that keep reader r of b: b's own and pending and, for a loading boundary behind an error fallback,
+   * the error of a reader directly under it: there is nothing to reveal, the error shows above (#4870).
+   */
+  private int keeps(Boundary b, Node r) {
+    return b.type | STATUS_PENDING | (behindError(b.parent) && boundaryOf(r) == b ? STATUS_ERROR : 0);
+  }
+
+  /** The nearest loading boundary at or above b catches what is pending (#4926). */
+  private boolean freshAbove(Boundary b) {
+    return b != null && ((b.type & STATUS_PENDING) != 0 ? isCollecting(b) : freshAbove(b.parent));
+  }
+
+  /** An error boundary at or above {@code b} shows its fallback: content under it is not on screen. */
+  private static boolean behindError(Boundary b) {
+    return b != null && ((b.type == STATUS_ERROR && b.fallback) || behindError(b.parent));
+  }
+
+  /**
+   * Catches what reaches it: an error boundary always; a loading one until it has shown content, or while re-armed.
+   * Behind an error fallback nothing is on screen, so the error boundary's recovery re-arms the subtree (#4627).
+   */
   private boolean isCollecting(Boundary b) {
-    return b.type == STATUS_ERROR || !b.initialized || b.armed || b.detached;
+    return b.type == STATUS_ERROR || !b.initialized || b.armed || b.detached || behindError(b.parent);
   }
 
   /**
@@ -133,6 +155,16 @@ final class Boundaries {
 
   private void caught(Boundary b, Node node, Throwable error, Node source) {
     if (b.type == STATUS_ERROR) {
+      // The reader's selected outcome owns publication: a latest or optimistic lane is not lost converting its error
+      // into fallback content.
+      Scheduler q = s();
+      Transaction lane = q.laneStageHook != null
+        ? (q.passLane != null ? q.passLane
+          : node.x != null && node.x.transaction != null && node.x.transaction.lane ? q.txOf(node) : null)
+        : null;
+      if (q.laneStageHook != null && !b.fallback) {
+        b.lane = lane;
+      }
       if (error == null && node.x != null) {
         error = node.x.error;
       }
@@ -143,15 +175,19 @@ final class Boundaries {
         source = node;
       }
       Throwable cause = Errors.unwrapStatusError(error);
+      // Later errors update the shown fallback through this signal: its message publishes with the swap.
+      if (q.laneStageHook != null && lane != null) {
+        q.laneStageHook.stage(b.error, lane, true, false);
+      }
       rt.core.setSignal(b.error, cause);
       rt.reportClientError(cause, b.owner, source);
+    } else if (!b.detached) {
+      // A loading boundary that catches has not shown content: fresh until it does (D-39, #4627). A tab's root
+      // only catches while nobody can see it, and stays shown.
+      b.initialized = false;
     }
     record(b, node, source);
-    for (Boundary p = b.parent; p != null; p = p.parent) {
-      if (p.fallback && p.type > b.type) {
-        record(p, node, node);
-      }
-    }
+    // A loading boundary behind an error fallback that catches a pending holds nothing above it (D-39, #4627).
     if (b.armed) {
       flip(b);
     }
@@ -188,7 +224,7 @@ final class Boundaries {
       if (!collecting.isEmpty()) {
         for (Boundary b = boundaryOf(node); b != null; b = b.parent) {
           Node r = b.readers.get(node);
-          if ((r == null || (r.statusFlags & (b.type | STATUS_PENDING)) == 0) && b.readers.remove(node) != null
+          if ((r == null || (r.statusFlags & keeps(b, node)) == 0) && b.readers.remove(node) != null
             && prune(b, 0) == 0) {
             if (b.fallback) {
               redraw(b);
@@ -227,12 +263,38 @@ final class Boundaries {
   }
 
   private Boundary hiddenBy(Node r) {
+    return hiddenBy(r, null);
+  }
+
+  /** Solid's {@code 1} from hiddenBy: hidden, with no boundary to name. Only ever for a node that is not an effect. */
+  private static final Boundary HIDDEN = new Boundary();
+
+  /**
+   * The nearest boundary on r's chain showing its fallback, if any. A boundary output passing a pending by (an error
+   * boundary) is on screen only through the render effects it reaches, through memos or other error boundaries:
+   * reaching none, or only effects behind fallbacks, it holds nothing (F-4, D-14, #4638). A node already walked is
+   * not walked again.
+   */
+  private Boundary hiddenBy(Node r, Set<Node> seen) {
     for (Boundary b = boundaryOf(r); b != null; b = b.parent) {
       if (b.fallback) {
         return b;
       }
     }
-    return null;
+    Boundary h = null;
+    if (seen != null || (r.config & CONFIG_REDERIVE) != 0) {
+      if (seen == null) {
+        seen = new HashSet<>();
+      }
+      h = r.type != EFFECT_RENDER ? HIDDEN : null;
+      for (Link s = r.subs; s != null; s = s.nextSub) {
+        h = !seen.add(s.sub) ? HIDDEN : hiddenBy(s.sub, seen);
+        if (h == null) {
+          break;
+        }
+      }
+    }
+    return h;
   }
 
   /**
@@ -273,7 +335,10 @@ final class Boundaries {
 
   private boolean heldRun(Node node) {
     Boundary b = hiddenBy(node);
-    if (b == null) {
+    // A swap to the fallback still staged in a hold (an on re-arm the frame holds) has not reached the screen: the
+    // content is still the display, and a run there applies now (D-17, F-1, #4987).
+    // So is one whose content a guess lane carries beside it (#4999; lanes only).
+    if (b == null || (b.output.config & (s().laneStageHook != null ? CONFIG_HELD | CONFIG_OVERRIDE : CONFIG_HELD)) != 0) {
       return false;
     }
     if (b.runs == null) {
@@ -302,6 +367,36 @@ final class Boundaries {
     b.runs = null;
   }
 
+  /**
+   * {@code r}, held by error boundary {@code b} for the error {@code s} threw, is pending again after {@code s}
+   * answered, and a loading boundary between them that has not shown content catches it: that boundary is its
+   * display, beside the recovered content (D-39, F-4, #4627). Not while that boundary's swap is staged in a hold.
+   */
+  private boolean caughtBelow(Boundary b, Node r, Node s) {
+    if ((s.statusFlags & (STATUS_ERROR | STATUS_PENDING)) == 0 && (r.statusFlags & STATUS_ERROR) == 0) {
+      for (Boundary l = boundaryOf(r); l != null && l != b; l = l.parent) {
+        if ((l.type & STATUS_PENDING) != 0 && isCollecting(l)) {
+          return (l.output.config & CONFIG_HELD) == 0;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * {@code n} reads {@code s}, directly or through derivations wherever they live. Each upstream node is walked
+   * once, so a shared upstream graph costs its size, not its paths (#4644).
+   */
+  private static boolean reads(Node n, Node s, Set<Node> seen) {
+    for (Link l = n.deps; l != null; l = l.nextDep) {
+      Node h = l.dep;
+      if (h == s || (seen.add(h) && reads(h, s, seen))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** `pass` is Solid's `boolean | 0`: -1 for undefined or false, 0 for 0, 1 for true. */
   int prune(Boundary b, int pass) {
     Scheduler q = s();
@@ -310,7 +405,9 @@ final class Boundaries {
       Node r = e.getKey();
       Node src = e.getValue();
       if (((r.flags | src.flags) & REACTIVE_DISPOSED) == 0) {
-        if (((r.statusFlags | src.statusFlags) & mask) != 0
+        int k = keeps(b, r);
+        if ((((r.statusFlags & k) != 0 || ((src.statusFlags & k) != 0 && reads(r, src, new HashSet<>())))
+          && !((mask & STATUS_ERROR) != 0 && caughtBelow(b, r, src)))
           || ((mask & STATUS_ERROR) != 0 && (src.config & CONFIG_STAGED_ERROR) != 0)
           || ((r.config & CONFIG_VERDICT) != 0 && (r.flags & REACTIVE_IN_HEAP) != 0)) {
           if (pass == 0) {
@@ -519,6 +616,22 @@ final class Boundaries {
 
   private Object outputPass(Boundary b, Node tree, int type) throws Exception {
     Node self = (Node) rt.core.context;
+    Scheduler q = s();
+    // Keep the ahead swap's lane for recovery as well as for the fallback: else the answer parks in the input's hold.
+    // A swap to the fallback staged in a hold, the content still on screen (D-17): a lane pass derives that content with
+    // its guesses (D-33, F-1), the swap left staged (#4999). Lanes only.
+    boolean shown = q.laneStageHook != null && !b.initialized && (self.config & CONFIG_HELD) != 0
+      && !ValueEquality.same(self.value, b.fb != null ? b.fb.value : null);
+    if (q.laneStageHook != null && b.type == STATUS_ERROR) {
+      if (b.fallback && (self.config & CONFIG_OVERRIDE) != 0 && b.lane == null) {
+        b.lane = q.txOf(self);
+      }
+      if (b.lane != null) {
+        q.passLane = b.lane;
+        self.flags |= REACTIVE_LANE_READ;
+        b.lane = null;
+      }
+    }
     if (!b.armed && (self.config & CONFIG_HELD) == 0) {
       self.config |= CONFIG_FRAME;
     }
@@ -545,6 +658,13 @@ final class Boundaries {
         }
         record(b, tree, tree);
       }
+      // An error boundary on its fallback is the display of everything under it: a retry pending there keeps the
+      // fallback and holds nothing outside it (F-3, F-12).
+      // Not when the loading boundary above has not shown content: this fallback was never on screen, and that
+      // boundary catches the pending (F-4, #4926).
+      if (type == STATUS_ERROR && b.fallback && !freshAbove(b)) {
+        return fallback(b);
+      }
       throw Errors.<RuntimeException>sneak(tree.x.error);
     }
     if (isCollecting(b)) {
@@ -553,7 +673,7 @@ final class Boundaries {
         rt.graph.link(tree, self);
         return fallback(b);
       }
-      if (prune(b, 1) != 0) {
+      if (prune(b, 1) != 0 && !shown) {
         rt.graph.link(tree, self);
         return fallback(b);
       }
@@ -571,8 +691,12 @@ final class Boundaries {
       }
       throw Errors.<RuntimeException>sneak(e);
     }
+    // So is a tree the read itself ran into a pending: an on re-armed by a guess showed the old content (#4856).
+    if (isCollecting(b) && (tree.statusFlags & type & STATUS_PENDING) != 0) {
+      caught(b, tree, null, tree);
+    }
     if (isCollecting(b) && !b.readers.isEmpty()) {
-      return fallback(b);
+      return shown && q.passLane != null ? value : fallback(b);
     }
     b.initialized = true;
     b.fallback = false;

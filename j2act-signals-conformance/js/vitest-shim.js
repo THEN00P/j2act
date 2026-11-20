@@ -174,6 +174,8 @@
   const stubs = [];
   const vi = {
     fn: fnImpl,
+    // One runtime per test file: a test that asks for fresh modules shares it (its cases each make their own roots).
+    resetModules() {},
     spyOn(obj, key) {
       const original = obj[key];
       const spy = fnImpl(function (...a) {
@@ -569,7 +571,7 @@
   globalThis.afterAll = afterAll;
   globalThis.__vitest = { it, test, describe, expect, vi, beforeEach, afterEach, beforeAll, afterAll };
   globalThis.queueMicrotask ??= f => void Promise.resolve().then(f);
-  globalThis.process ??= { env: {}, on() {}, off() {}, removeListener() {}, emit() {} };
+  globalThis.process ??= { env: {}, on() {}, off() {}, removeListener() {}, emit() {}, stdout: { write() {} }, stderr: { write() {} } };
   globalThis.AbortController ??= class {
     constructor() {
       const listeners = [];
