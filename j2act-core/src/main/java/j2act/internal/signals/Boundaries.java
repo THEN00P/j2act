@@ -94,6 +94,11 @@ final class Boundaries {
     return b.type | STATUS_PENDING | (behindError(b.parent) && boundaryOf(r) == b ? STATUS_ERROR : 0);
   }
 
+  /** The nearest loading boundary at or above b catches what is pending (#4926). */
+  private boolean freshAbove(Boundary b) {
+    return b != null && ((b.type & STATUS_PENDING) != 0 ? isCollecting(b) : freshAbove(b.parent));
+  }
+
   /** An error boundary at or above {@code b} shows its fallback: content under it is not on screen. */
   private static boolean behindError(Boundary b) {
     return b != null && ((b.type == STATUS_ERROR && b.fallback) || behindError(b.parent));
@@ -648,7 +653,9 @@ final class Boundaries {
       }
       // An error boundary on its fallback is the display of everything under it: a retry pending there keeps the
       // fallback and holds nothing outside it (F-3, F-12).
-      if (status == STATUS_PENDING && b.fallback && type == STATUS_ERROR) {
+      // Not when the loading boundary above has not shown content: this fallback was never on screen, and that
+      // boundary catches the pending (F-4, #4926).
+      if (type == STATUS_ERROR && b.fallback && !freshAbove(b)) {
         return fallback(b);
       }
       throw Errors.<RuntimeException>sneak(tree.x.error);

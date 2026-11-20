@@ -763,11 +763,13 @@ final class Scheduler {
     }
   }
 
+  /**
+   * A15's stale reader: c was served the committed value of a node t holds, re-run at t's landing. Listed on each hold
+   * the pass reads committed from, each landing re-running it (#4932); reruns skips repeats by the cleared flag.
+   */
   void staleReader(Node c, Transaction t) {
-    if ((c.flags & REACTIVE_FRAME_READ) == 0) {
-      c.flags |= REACTIVE_FRAME_READ;
-      t.reruns.add(c);
-    }
+    t.reruns.add(c);
+    c.flags |= REACTIVE_FRAME_READ;
   }
 
   void queuePendingNode(Node node) {

@@ -1027,7 +1027,7 @@ final class StoreOptimistic implements Stores.OptHooks {
           c = c.u;
         }
         if (c != null) {
-          pairOne(t, pb, list, at, list ? (keyFn != null ? keyFn.apply(c.v) : null) : c.pk, c.px, false);
+          pairOne(t, pb, list, at, list ? (keyFn != null ? keyFn.apply(c.v) : null) : c.pk, c.px, false, viewed);
         }
       }
     }
@@ -1039,7 +1039,7 @@ final class StoreOptimistic implements Stores.OptHooks {
       for (Object ov : rowsOf(stores.committed(t))) {
         StoreTarget rt0 = shape.isWrappable(ov) ? stores.lookupTarget(ov, fam) : null;
         if (rt0 != null) {
-          pairOne(t, pb, true, at, keyFn.apply(ov), rt0.px, false);
+          pairOne(t, pb, true, at, keyFn.apply(ov), rt0.px, false, viewed);
         }
       }
     }
@@ -1055,7 +1055,7 @@ final class StoreOptimistic implements Stores.OptHooks {
           Object r = shape.get(f, j);
           StoreTarget ft = isObject(r) ? shape.targetOf(r) : null;
           if (ft != null && stores.same(ft.px, r) && ft.fam != fam) {
-            pairOne(t, pb, true, at, keyFn.apply(r), r, true);
+            pairOne(t, pb, true, at, keyFn.apply(r), r, true, viewed);
           }
         }
       }
@@ -1063,7 +1063,7 @@ final class StoreOptimistic implements Stores.OptHooks {
   }
 
   private void pairOne(StoreTarget t, Object pb, boolean list, Map<Object, Integer>[] at, Object k, Object px,
-      boolean lent) {
+      boolean lent, boolean viewed) {
     StoreShape shape = shape();
     Function<Object, Object> keyFn = t.fam.key;
     if (k == null) {
@@ -1078,6 +1078,12 @@ final class StoreOptimistic implements Stores.OptHooks {
           at[0].put(rk, i);
         }
       }
+    }
+    // A returned landing leaves a row another store lent alone (its target here is chained over that store's
+    // proxy): reconciling the answer into it tied the lender's row to this landing (#4928).
+    StoreTarget pt = shape.isObject(px) ? shape.targetOf(px) : null;
+    if (viewed && pt != null && pt.ch) {
+      return;
     }
     Object i = list ? at[0].get(k) : k;
     Object nv = i == null ? null : shape.get(pb, i);
@@ -1250,7 +1256,9 @@ final class StoreOptimistic implements Stores.OptHooks {
     long a = f.asked;
     Node d = f.node;
     Node c = rt.core.context instanceof Node ? (Node) rt.core.context : null;
-    if (o == null || o.isEmpty() || (a == q.clock + 1 && q.passLane == null && !o.contains(t)) || a == ~q.clock) {
+    // Whoever asked: a reader that joined another action's lane over mainline's new question waits for its answer (#4929).
+    if (o == null || o.isEmpty() || (a == q.clock + 1 && (q.passLane == null ? !o.contains(t) : !laneOfAction(o, q.passLane)))
+      || a == ~q.clock) {
       return false;
     }
     boolean j = heldC == c && heldAt == q.clock;
@@ -1299,6 +1307,16 @@ final class StoreOptimistic implements Stores.OptHooks {
             return true;
           }
         }
+      }
+    }
+    return false;
+  }
+
+  private boolean laneOfAction(Set<StoreTarget> o, Transaction lane) {
+    for (StoreTarget g : o) {
+      Node n = laneNodeOf(g, false);
+      if (n != null && sameAction(s().txOf(n), lane)) {
+        return true;
       }
     }
     return false;
