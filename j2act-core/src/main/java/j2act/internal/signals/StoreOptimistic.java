@@ -1413,7 +1413,8 @@ final class StoreOptimistic implements Stores.OptHooks {
   }
 
   private static boolean sameAction(Transaction a, Transaction b) {
-    return Scheduler.resolveTx(a.parent) == Scheduler.resolveTx(b.parent);
+    // Either may be mainline's transaction, with no parent (#5029).
+    return Scheduler.resolveTx(a.parent != null ? a.parent : a) == Scheduler.resolveTx(b.parent != null ? b.parent : b);
   }
 
   private void markOverlaid(StoreTarget t) {

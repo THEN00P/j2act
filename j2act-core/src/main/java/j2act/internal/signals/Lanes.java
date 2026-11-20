@@ -1065,7 +1065,8 @@ final class Lanes {
 
   private static boolean anyPendingDerivation(List<Node> nodes) {
     for (Node n : nodes) {
-      if (n.type == 0 && (n.statusFlags & STATUS_PENDING) != 0) {
+      // A disposed reader holds nothing (F-3, D-41, #5039).
+      if (n.type == 0 && (n.statusFlags & STATUS_PENDING) != 0 && (n.flags & REACTIVE_DISPOSED) == 0) {
         return true;
       }
     }

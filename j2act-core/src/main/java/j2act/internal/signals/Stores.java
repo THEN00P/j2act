@@ -668,6 +668,15 @@ public final class Stores {
       queueFold(target);
     }
     Object base = target.pb != null ? target.pb : target.v;
+    // #4146 for an adoption (#5005): before a user's adoption swaps a held container's staging, its keys get their
+    // leaves, born from the two frames, so a change stages on its key as a trap write's would.
+    if (userWrite && target.k != null && (target.k.config & CONFIG_HELD) != 0 && !shape.isArray(base)) {
+      Set<Object> keys = new LinkedHashSet<>(shape.keys(base));
+      keys.addAll(shape.keys(incoming));
+      for (Object key : keys) {
+        deferredReleases.add(getNode(target, key));
+      }
+    }
     if (directCommit) {
       target.pb = null;
       if (target.k != null) {
@@ -1280,14 +1289,16 @@ public final class Stores {
    * shallow-served, a chained raw resolved to the inner store's, a wrappable wrapped (cached on the key's node).
    */
   Object serveKeyValue(StoreTarget target, Object key, Object v, boolean chained, Node node) {
-    if (target.s) {
-      return serveShallow(target, key, v);
-    }
     if (target.ch && !chained && v != null && shape.isObject(v)) {
       StoreTarget vt = shape.targetOf(v);
       if (vt == null || !same(vt.px, v)) {
         v = resolveChainedRaw(target, key, v);
       }
+    }
+    // After the chained resolve: a shallow view serves the inner store's proxy, so a guess's draft writes the view's
+    // copy, never the source store (CS-R4, CS-R43, F-11, #5027).
+    if (target.s) {
+      return serveShallow(target, key, v);
     }
     if (node != null) {
       if (v != null && node.pxv != null && same(node.pxv, v) && !isUndefined(v)) {
