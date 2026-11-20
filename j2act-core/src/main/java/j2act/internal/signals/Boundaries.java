@@ -335,7 +335,9 @@ final class Boundaries {
 
   private boolean heldRun(Node node) {
     Boundary b = hiddenBy(node);
-    if (b == null) {
+    // A swap to the fallback still staged in a hold (an on re-arm the frame holds) has not reached the screen: the
+    // content is still the display, and a run there applies now (D-17, F-1, #4987).
+    if (b == null || (b.output.config & CONFIG_HELD) != 0) {
       return false;
     }
     if (b.runs == null) {

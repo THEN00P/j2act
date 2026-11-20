@@ -813,8 +813,12 @@ final class Verdict {
       boolean same = true;
       for (Node.Link d = sub.deps; d != null && same; d = d.nextDep) {
         Node dep = d.dep;
-        same = dep.fn != null ? (dep.flags & (REACTIVE_IN_HEAP | REACTIVE_DIRTY | REACTIVE_CHECK)) == 0
-          : dep.pendingValue == NOT_PENDING || rt.core.isSame(dep, rt.core.tickBase(dep), dep.pendingValue);
+        boolean fn = dep.fn != null;
+        // A derivation's own staging is its answer; a user write staged on one (createSignal(fn)'s setter) is a
+        // written source like a signal's (#4991).
+        same = !(fn && (dep.flags & (REACTIVE_IN_HEAP | REACTIVE_DIRTY | REACTIVE_CHECK)) != 0)
+          && (dep.pendingValue == NOT_PENDING || (fn && (dep.flags & REACTIVE_MANUAL_WRITE) == 0)
+            || rt.core.isSame(dep, rt.core.tickBase(dep), dep.pendingValue));
       }
       if (same) {
         q.dirtyQueue.deleteFromHeap(sub);

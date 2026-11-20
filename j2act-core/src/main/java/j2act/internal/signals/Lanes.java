@@ -485,7 +485,12 @@ final class Lanes {
           x.shown = false;
           x.transaction = null;
         }
-        // The lane's staging of it is void.
+        // The lane's staging of it is void, and so is what its readers derived from it in the lane: they re-derive, or a
+        // lane run released after this pass shows the void value and a re-derivation equal to their committed one
+        // notifies nobody (F-1, F-7, D-34, #4990).
+        if (el.pendingValue != NOT_PENDING) {
+          s().insertSubs(el);
+        }
         el.pendingValue = NOT_PENDING;
       }
       el.config &= ~(CONFIG_OVERRIDE | CONFIG_HELD | CONFIG_HELD_FRAME);
@@ -630,6 +635,11 @@ final class Lanes {
       } else {
         x.transaction = null;
         if (effect == 0) {
+          // Its readers re-derive unless the lane was held: a shown lane's runs, released below, show the void staging,
+          // and its own re-derivation may land on what the screen shows and notify nobody (F-1, D-34, #4971).
+          if (!l.held && n.pendingValue != NOT_PENDING) {
+            q.insertSubs(n);
+          }
           // A staged error is a staging too: void with it (#4748).
           n.pendingValue = NOT_PENDING;
           n.config &= ~CONFIG_STAGED_ERROR;
