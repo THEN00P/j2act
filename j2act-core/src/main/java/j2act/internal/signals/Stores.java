@@ -411,11 +411,17 @@ public final class Stores {
       }
     } else if (t.n != null && t.n.get(key) == node) {
       t.n.remove(key);
-      t.nc--;
+      // An emptied map is dropped (#5024): the target outlives its readers while the app holds the raw object.
+      if (--t.nc == 0) {
+        t.n = null;
+      }
     } else if (t.h != null && t.h.get(key) == node) {
       t.h.remove(key);
+      if (t.h.isEmpty()) {
+        t.h = null;
+      }
     }
-    if (t.fam != null && t.nc == 0 && t.k == null && t.dk == null && (t.h == null || t.h.isEmpty())) {
+    if (t.fam != null && t.nc == 0 && t.k == null && t.dk == null && t.h == null) {
       t.fam.live.remove(t);
     }
   }

@@ -141,7 +141,9 @@ final class Async {
       Node dep = d.dep;
       // A disposed dep carries nothing (#5003): it is unlinked, so no settle walk reaches it.
       if ((dep.flags & REACTIVE_DISPOSED) == 0
-        && (dep == source || (dep.x != null && dep.x.pendingSources != null && dep.x.pendingSources.contains(source)))) {
+        // A source that has settled has no walk to come: linked directly, it holds nothing (F-2, #5041).
+        && (dep == source ? (dep.statusFlags & STATUS_PENDING) != 0
+          : dep.x != null && dep.x.pendingSources != null && dep.x.pendingSources.contains(source))) {
         return true;
       }
     }
@@ -278,7 +280,8 @@ final class Async {
         if (!errored) {
           setPendingError(node, null, null);
         }
-        if ((node.config & CONFIG_HELD) != 0) {
+        // A source still in flight has not landed: a reader that stopped carrying it joins nothing (F-2, #5019).
+        if ((node.config & CONFIG_HELD) != 0 && (source.statusFlags & STATUS_PENDING) == 0) {
           q.joinFuture(q.txOf(node));
         }
         if (node.x != null && node.x.blocked) {
