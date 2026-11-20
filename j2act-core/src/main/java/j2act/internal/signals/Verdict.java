@@ -175,7 +175,7 @@ final class Verdict {
     }
   }
 
-  private boolean markVerdictReader() {
+  private boolean markVerdictReader(int window) {
     Node c = rt.core.creatorPass(rt.core.context);
     if (c != null && rt.core.tracking) {
       Scheduler q = s();
@@ -194,7 +194,7 @@ final class Verdict {
       if (born == 0) {
         c.config |= CONFIG_VERDICT;
       }
-      c.flags |= REACTIVE_PROBED | REACTIVE_WINDOW | born;
+      c.flags |= REACTIVE_PROBED | REACTIVE_WINDOW | (window << WINDOW_KINDS) | born;
       if (restart && (c.config & CONFIG_VERDICT) != 0) {
         // Thrown as a loading window's unready read: the pass parks for this instant with no visible pending, and its
         // own tail runs it again in this flush.
@@ -209,7 +209,7 @@ final class Verdict {
   }
 
   <T> T latest(Supplier<T> fn) {
-    if (markVerdictReader()) {
+    if (markVerdictReader(2)) {
       return fn.get();
     }
     boolean prev = latestActive;
@@ -226,7 +226,7 @@ final class Verdict {
 
   boolean isPending(Supplier<?> fn) {
     // (A frame's pass again, reask: the thunk reads plainly and finds nothing, the same swallow below.)
-    boolean plain = markVerdictReader();
+    boolean plain = markVerdictReader(1);
     boolean prevProbing = probing;
     boolean prevFound = probeFound;
     java.util.function.BiFunction<Node, Node, Object> prevVerdict = rt.core.verdict;

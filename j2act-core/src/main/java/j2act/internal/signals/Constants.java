@@ -32,6 +32,11 @@ final class Constants {
   static final int REACTIVE_RELEASE_AFTER = 1 << 22;
   /** A computed its own owner reads: a wake of it wakes the owner too, whose pass re-creates it. */
   static final int REACTIVE_OWNER_READS = 1 << 23;
+  /**
+   * The windows the pass opened, by kind, from this bit up (window << WINDOW_KINDS): 1 isPending, 2 latest. Per pass.
+   * #4966: a first plain read only the pass's own isPending window gates is not a mount (Core.stagedScreen).
+   */
+  static final int WINDOW_KINDS = 24;
 
   static final int CONFIG_OWNED_WRITE = 1 << 0;
   static final int CONFIG_CHILDREN_FORBIDDEN = 1 << 4;

@@ -1331,12 +1331,30 @@ public final class Stores {
   }
 
   /** A read through a derived store pulls its derive first: the firewall. */
+  /** Does n read c, through any chain of computations? Only nodes above c can reach it (a signal has no height). */
+  private static boolean feeds(Node n, Node c) {
+    for (Link l = n.deps; l != null; l = l.nextDep) {
+      Node d = l.dep;
+      if (d == c || (d.height > c.height && feeds(d, c))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private void pullFamily(StoreTarget target) {
     Node fw = target.fam.node;
     if (fw == null || writeOverride || inDraft(target)) {
       return;
     }
     Scheduler q = s();
+    // A reader the derive itself reads through (its row handed back into its own source, #4970, #4972) is the
+    // derive's input, not its reader: it reads the leaves as the derive last wrote them. Pulling or linking the derive
+    // from it is a cycle: each pass lifted it above the derive that sits above it, without bound.
+    Owner ctx = rt.core.context;
+    if (ctx instanceof Node && ((Node) ctx).subs != null && feeds(fw, (Node) ctx)) {
+      return;
+    }
     if ((fw.statusFlags & (STATUS_PENDING | STATUS_ERROR)) != 0 || (fw.config & CONFIG_STAGED_ERROR) != 0) {
       if (rt.core.verdict == null && (fw.statusFlags & STATUS_PENDING) != 0 && optHooks != null && optHooks.stands(target)) {
         return;

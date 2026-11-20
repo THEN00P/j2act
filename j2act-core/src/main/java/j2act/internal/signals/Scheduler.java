@@ -829,13 +829,21 @@ final class Scheduler {
     }
   }
 
-  /** Every flight c waits on is a refresh() re-ask: its own, with no sources, or each source's, through sources (#4824). */
+  /**
+   * Every flight c waits on is a refresh() re-ask: its own, with no sources, or each source's, through sources (#4824).
+   * The propagated copies can form a cycle (two keyed projections whose derives each read a row lent from the other's
+   * store, #4969): a source already walked adds no flight of its own.
+   */
   static boolean reasks(Node c) {
+    return reasks(c, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+  }
+
+  private static boolean reasks(Node c, Set<Node> seen) {
     if (c.x.pendingSources == null) {
       return c.x.reask;
     }
-    for (Node p : c.x.pendingSources) {
-      if (p == c ? !p.x.reask : !reasks(p)) {
+    for (Node p : new ArrayList<>(c.x.pendingSources)) {
+      if (p == c ? !p.x.reask : !(!seen.add(p) || reasks(p, seen))) {
         return false;
       }
     }

@@ -902,8 +902,11 @@ final class Core {
             // #4776, #4778 (D-25): a sync verdict memo is display while only the display reads it. A pass of a hold's
             // own work reading it makes it that hold's: it re-derives now, served the hold's writes, and the reader
             // reads that. A memo that probes in its own body stays the screen's for a held reader (F-6).
-            // A pass that asks is display like any other (S-51).
-            if ((el.config & (CONFIG_VERDICT | CONFIG_FRAME | CONFIG_ASYNC | CONFIG_OWN_PROBE)) == CONFIG_VERDICT) {
+            // A pass that asks is display like any other (S-51): an async derivation's read seats nothing; re-derived
+            // into the hold, the memo pulled the branch it gates into the verdict lane, born there, and the lane
+            // waited on that branch's mount while the mount waited on the lane (#4965).
+            if ((el.config & (CONFIG_VERDICT | CONFIG_FRAME | CONFIG_ASYNC | CONFIG_OWN_PROBE)) == CONFIG_VERDICT
+              && (c.config & CONFIG_ASYNC) == 0) {
               Transaction held = (c.config & CONFIG_HELD) != 0 ? q.txOf(c) : q.flushTransaction;
               Transaction t = held != null ? Scheduler.resolveTx(held) : null;
               NodeExtension x = ext(el);
@@ -1054,7 +1057,9 @@ final class Core {
     // The staging is the frame's read for a pass in the frame's seat, and the seam re-derives the pass once only if
     // the flush parks (D-22, F-10). Lane work sees the screen (D-37).
     // #4806: content a display-ahead gate opens is a mount, whatever its shape: its verdict lane reveals with the landing.
-    if (q.laneStageHook != null && el != null && fresh && q.passLane != null) {
+    // #4966 (F-6, D-23): not under a gate that is only the pass's own isPending window: what a verdict gates shows while
+    // the question is open, and a read's place after the probe or before it never changes what shows.
+    if (q.laneStageHook != null && el != null && fresh && q.passLane != null && c.flags >>> WINDOW_KINDS != 1) {
       q.passLane.opened = true;
     }
     q.staleReader(c, q.flushTransaction);
