@@ -148,6 +148,14 @@ async function runSeed(seed: number, log: string[]) {
 it("fuzz", async () => {
   const from = (globalThis as any).__seedFrom ?? 1;
   const count = (globalThis as any).__seeds ?? 400;
+  // A fresh process after Solid hung or crashed (prepare.mjs) first runs the seeds before `from` without logging them:
+  // the port runs every seed in one runtime, so each seed starts from what the seeds before it left behind.
+  for (let seed = 1; seed < from; seed++) {
+    if (((globalThis as any).__skip ?? []).includes(seed)) continue;
+    try {
+      await runSeed(seed, []);
+    } catch {}
+  }
   for (let seed = from; seed < from + count; seed++) {
     const log: string[] = [];
     log.push("=== seed " + seed);

@@ -124,23 +124,27 @@ try {
 // Solid's run, in a child process per stretch of seeds: a seed on which Solid itself hangs (a loop of microtasks
 // that no timer can interrupt) is marked SOLID HUNG, and the run goes on from the next seed. A seed on which it
 // crashes (an error thrown by a scheduled flush) is marked SOLID CRASHED by fuzz.test.ts. DifferentialTest skips both.
+// A fresh process replays the seeds before it, less the skipped ones, as the port's one runtime has run them: seed 307,
+// after Solid crashed on 306, started from a clean Solid against a port still holding what seeds 1-305 leaked.
 const total = process.env.FUZZ_SEEDS ? Number(process.env.FUZZ_SEEDS) : 400;
 const runner = join(here, "target", "fuzz-runner.mjs");
 writeFileSync(runner, `import { pathToFileURL } from "node:url";
 import { writeSync } from "node:fs";
-const [file, from, count] = process.argv.slice(2);
+const [file, from, count, skip] = process.argv.slice(2);
 // Written at once: a run killed for a hang loses nothing it logged.
 console.log = line => writeSync(1, line + "\\n");
 process.on("uncaughtException", e => { globalThis.__crashed = String(e && e.message).slice(0, 80); });
 await import(pathToFileURL(file).href);
 globalThis.__seedFrom = +from;
+globalThis.__skip = JSON.parse(skip);
 globalThis.__seeds = +count;
 await globalThis.__fuzz();
 `);
 const logged = [];
 const skipped = [];
 for (let from = 1; from <= total; ) {
-  const run = spawnSync(process.execPath, [runner, join(here, "target", "fuzz-real.mjs"), String(from), String(total - from + 1)],
+  const args = [runner, join(here, "target", "fuzz-real.mjs"), String(from), String(total - from + 1), JSON.stringify(skipped)];
+  const run = spawnSync(process.execPath, args,
     { encoding: "utf8", timeout: 60000, maxBuffer: 1 << 28 });
   const out = run.stdout.split("\n").filter(line => line !== "");
   logged.push(...out);
