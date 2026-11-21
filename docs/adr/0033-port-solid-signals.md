@@ -80,18 +80,17 @@ This is Solid's documented form, where a read before the first `await` is tracke
 
 ## What is left out
 
-- `createStore`, projections, `createOptimisticStore`: they need JS proxies. `Store` stays.
 - `attribution*`, `dev`, `copies`, `identities`: developer tooling and JS packaging. Solid's invariant checks are ported as test-time assertions.
 - `flatten`: JSX children; a boundary's content here is a string of HTML. `seat.ts`: Solid's shadow rewrite of its read path, not what ships. When upstream switches to it, so does this.
 - Hydration ids, snapshots and the `transparent` option, and `enableExternalSource`, which bridges to other reactive systems that Java does not have.
 
-These are on the backlog. `Reveal`, `Loading`'s `on`, `createDeferred` and `from` came with the port as `reveal(...)`, `loading(...).on(...)`, `createDeferred(...)` and `createFrom(...)`. `from` is for sources outside the JVM, such as Kafka or a device. `mapArray` and `repeat` are ported and tested, and their row ownership is what kept components use; nothing public calls them yet. This deleted `Node`, `Transition`, `OptimisticLane`, `Pass`, `Until`, `LoadRun`, `MirrorCell`, `NotReady`, `LoadFailed` and `Observer`.
+These are on the backlog. `createStore`, projections and `createOptimisticStore` were left out at first, as they need JS proxies; ADR 0035 ported them over a seam to the objects a store holds. `Reveal`, `Loading`'s `on`, `createDeferred` and `from` came with the port as `reveal(...)`, `loading(...).on(...)`, `createDeferred(...)` and `createFrom(...)`. `from` is for sources outside the JVM, such as Kafka or a device. `mapArray` and `repeat` are ported and tested, and their row ownership is what kept components use; nothing public calls them yet. This deleted `Node`, `Transition`, `OptimisticLane`, `Pass`, `Until`, `LoadRun`, `MirrorCell`, `NotReady`, `LoadFailed` and `Observer`.
 
 ## How it was checked
 
 Done means Solid's tests pass, every one that does not is listed with a reason, and the table below has no unexplained row. Hand-porting 100,000 lines of tests would have taken far too long and would have copied any misreading into the tests, so they run as they are. `j2act-signals-conformance` fetches Solid at the pinned commit, bundles its test files, and runs them in GraalJS with Solid's imports pointing at the Java classes. The module is not published.
 
-- **Solid's tests.** Of 4,578 in the files that run: 2,681 pass, 1,851 reach something left out on purpose, and 46 fail for a reason listed beside them in `known-failures.txt`. `docs/spikes/solid-port-tests.md` has the groups. A listed test that starts passing fails the build, so the list cannot go stale.
+- **Solid's tests.** Of 7,171 in the files that run at 2.0.3: 6,384 pass, 700 reach something left out on purpose, and 87 fail for a reason listed beside them in `known-failures.txt`. `docs/spikes/solid-port-tests.md` has the groups. A listed test that starts passing fails the build, so the list cannot go stale.
 - **Solid itself.** `js/fuzz.test.ts` builds random graphs and drives them with random writes, refreshes, actions and landings. The build runs it on Solid's own source in Node and on the port in GraalJS, and compares every frame of 400 seeds. 1,800 more seeds were compared by hand during the work. They all matched. At 2.0.3, Solid crashes on seed 306, which both sides skip.
 - **j2act.** `ConsistencyTest`, the existing tests, and the browser checks on Spring and WildFly.
 
