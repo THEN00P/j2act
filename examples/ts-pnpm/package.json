@@ -14,7 +14,7 @@
   "devDependencies": {
     "@j2act/vite": "file:../../j2act-vite",
     "typescript": "7.0.2",
-    "vite": "8.3.1"
+    "vite": "8.3.8"
   },
   "packageManager": "pnpm@10.32.1"
 }

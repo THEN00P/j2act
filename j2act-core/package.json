@@ -10,7 +10,7 @@
     "check": "tsc -p tsconfig.json && vitest run && node --test src/test/vite/*.test.mjs"
   },
   "devDependencies": {
-    "happy-dom": "20.14.6",
+    "happy-dom": "21.0.4",
     "idiomorph": "0.8.0",
     "typescript": "7.0.2",
     "vite": "8.3.4",

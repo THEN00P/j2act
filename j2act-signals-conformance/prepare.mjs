@@ -13,7 +13,7 @@ const out = join(here, "target", "solid-bundles");
 const cache = process.env.SOLID_SRC ?? join(homedir(), ".cache", "j2act", `solid-${COMMIT}`);
 
 if (!existsSync(join(here, "node_modules", "esbuild"))) {
-  execSync("npm install --no-audit --no-fund --no-package-lock", { cwd: here, stdio: "inherit", shell: true });
+  execSync("npm ci --no-audit --no-fund", { cwd: here, stdio: "inherit", shell: true });
 }
 
 if (!existsSync(join(cache, "packages", "signals", "tests"))) {
