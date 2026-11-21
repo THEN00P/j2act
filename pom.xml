@@ -217,6 +217,42 @@
             <configuration>
               <signer>bc</signer>
             </configuration>
+            <!-- bcpg 1.81 asks for bcprov and bcutil in [1.81,1.82): Maven looks a range up on every build, before
+                 it settles versions, and Central answering without it fails the build. bcpg comes without them, and
+                 they come at fixed versions, which need no lookup. -->
+            <dependencies>
+              <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcpg-jdk18on</artifactId>
+                <version>1.81</version>
+                <exclusions>
+                  <exclusion>
+                    <groupId>org.bouncycastle</groupId>
+                    <artifactId>bcprov-jdk18on</artifactId>
+                  </exclusion>
+                  <exclusion>
+                    <groupId>org.bouncycastle</groupId>
+                    <artifactId>bcutil-jdk18on</artifactId>
+                  </exclusion>
+                </exclusions>
+              </dependency>
+              <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcprov-jdk18on</artifactId>
+                <version>1.81</version>
+              </dependency>
+              <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcutil-jdk18on</artifactId>
+                <version>1.81</version>
+                <exclusions>
+                  <exclusion>
+                    <groupId>org.bouncycastle</groupId>
+                    <artifactId>bcprov-jdk18on</artifactId>
+                  </exclusion>
+                </exclusions>
+              </dependency>
+            </dependencies>
             <executions>
               <execution>
                 <id>sign-artifacts</id>

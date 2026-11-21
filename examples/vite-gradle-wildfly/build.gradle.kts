@@ -12,7 +12,11 @@ java {
 }
 
 repositories {
-  mavenLocal()
+  // As in settings.gradle.kts: j2act's snapshots only from ./mvnw install.
+  exclusiveContent {
+    forRepository { mavenLocal() }
+    filter { includeGroup("io.github.then00p.j2act") }
+  }
   mavenCentral()
 }
 
