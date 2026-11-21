@@ -165,6 +165,8 @@ it("fuzz", async () => {
       continue;
     }
     (globalThis as any).__crashed = undefined;
+    // prepare.mjs's runner: when a seed began, so a run killed at its deadline names the seed that hung, if one did.
+    if ((globalThis as any).__started) (globalThis as any).__started(seed);
     try {
       await runSeed(seed, log);
     } catch (e: any) {

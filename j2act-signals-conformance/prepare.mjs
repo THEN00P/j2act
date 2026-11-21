@@ -138,19 +138,32 @@ await import(pathToFileURL(file).href);
 globalThis.__seedFrom = +from;
 globalThis.__skip = JSON.parse(skip);
 globalThis.__seeds = +count;
+globalThis.__started = seed => writeSync(1, "#started " + seed + " " + Date.now() + "\\n");
 await globalThis.__fuzz();
 `);
 const logged = [];
 const skipped = [];
+// A seed counts as hung only when it ran this long before the deadline: one that had just begun when a slow stretch
+// ran out of time starts the next process instead.
+const deadline = 60000;
+const hungAfter = 20000;
+let retried = 0;
 for (let from = 1; from <= total; ) {
   const args = [runner, join(here, "target", "fuzz-real.mjs"), String(from), String(total - from + 1), JSON.stringify(skipped)];
+  const began = Date.now();
   const run = spawnSync(process.execPath, args,
-    { encoding: "utf8", timeout: 60000, maxBuffer: 1 << 28 });
-  const out = run.stdout.split("\n").filter(line => line !== "");
+    { encoding: "utf8", timeout: deadline, maxBuffer: 1 << 28 });
+  const killed = Date.now();
+  const lines = run.stdout.split("\n").filter(line => line !== "");
+  const out = lines.filter(line => !line.startsWith("#started "));
   logged.push(...out);
   let last = from - 1;
-  for (const line of out) {
-    if (line.startsWith("=== seed ")) last = Number(line.slice(9));
+  let started = null;
+  for (const line of lines) {
+    if (line.startsWith("#started ")) {
+      const [seed, at] = line.slice(9).split(" ").map(Number);
+      started = { seed, at };
+    } else if (line.startsWith("=== seed ")) last = Number(line.slice(9));
     else if (line.startsWith("SOLID CRASHED")) skipped.push(last);
   }
   if (run.status === 0 && last === total) break;
@@ -160,6 +173,18 @@ for (let from = 1; from <= total; ) {
     continue;
   }
   if (run.error === undefined) throw new Error(`Solid's fuzz run failed:\n${run.stderr}`);
+  if (started === null || started.seed !== last + 1) {
+    // The deadline came before the first logged seed began: replaying the seeds before it took the time.
+    throw new Error(`Solid's fuzz run from seed ${from} ran out of time before seed ${last + 1} began (${killed - began} ms)`);
+  }
+  if (killed - started.at < hungAfter) {
+    // It had only just begun: the stretch was slow, not this seed. Once: a replay that leaves no time fails the run.
+    if (retried === last + 1) {
+      throw new Error(`Solid's fuzz run from seed ${from} spends its time replaying the seeds before it`);
+    }
+    retried = from = last + 1;
+    continue;
+  }
   logged.push(`=== seed ${last + 1}`, "SOLID HUNG");
   skipped.push(last + 1);
   from = last + 2;
@@ -167,5 +192,7 @@ for (let from = 1; from <= total; ) {
 writeFileSync(join(here, "target", "fuzz-expected.txt"), logged.join("\n") + "\n");
 // The port's bundle skips them too: what Solid shows there is no reference, and a loop only costs time.
 const portBundle = join(here, "target", "fuzz-port.js");
-writeFileSync(portBundle, `globalThis.__skip = ${JSON.stringify(skipped)};\n` + readFileSync(portBundle, "utf8"));
+// FUZZ_SEEDS sets both runs' count.
+writeFileSync(portBundle, `globalThis.__skip = ${JSON.stringify(skipped)};\nglobalThis.__seeds = ${total};\n`
+  + readFileSync(portBundle, "utf8"));
 console.log(`bundled ${entries.length - failed.length} of ${entries.length} Solid test files`);
