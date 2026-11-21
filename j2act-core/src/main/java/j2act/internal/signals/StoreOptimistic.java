@@ -46,8 +46,6 @@ final class StoreOptimistic implements Stores.OptHooks {
 
   private final Runtime rt;
   private final Stores stores;
-  /** A target's guess carriers, one per lane, oldest first. */
-  private final Map<StoreTarget, List<Node>> carriers = new WeakHashMap<>();
   private final Map<Node, Patch> patches = new WeakHashMap<>();
   /** An optimistic setter's targets whose staging was set aside, restored when its writes become guesses. */
   private final Map<StoreTarget, Object> optStaged = new HashMap<>();
@@ -87,7 +85,15 @@ final class StoreOptimistic implements Stores.OptHooks {
   }
 
   private List<Node> kgOf(StoreTarget t) {
-    return carriers.get(t);
+    return t.carriers;
+  }
+
+  /** A target's guess carriers (StoreTarget.carriers), made at the first. */
+  private static List<Node> carriersOf(StoreTarget t) {
+    if (t.carriers == null) {
+      t.carriers = new ArrayList<>();
+    }
+    return t.carriers;
   }
 
   private Patch patch(Node g) {
@@ -243,7 +249,7 @@ final class StoreOptimistic implements Stores.OptHooks {
    * guess goes on one with a guess still unflushed, or a live one whose record shares a key; else a new one.
    */
   private Node guessCarrier(StoreTarget t, Set<Object> keys) {
-    List<Node> kg = carriers.computeIfAbsent(t, k -> new ArrayList<>());
+    List<Node> kg = carriersOf(t);
     for (int i = kg.size() - 1; i >= 0; i--) {
       Node g = kg.get(i);
       boolean live = (g.config & (CONFIG_OVERRIDE | CONFIG_GUESS)) != 0;
@@ -844,7 +850,7 @@ final class StoreOptimistic implements Stores.OptHooks {
     StoreTarget t = n.host instanceof StoreTarget ? (StoreTarget) n.host : null;
     if (back) {
       markOverlaid(t);
-      List<Node> kg = carriers.computeIfAbsent(t, k -> new ArrayList<>());
+      List<Node> kg = carriersOf(t);
       if (!kg.contains(n)) {
         kg.add(n);
       }
@@ -1260,11 +1266,7 @@ final class StoreOptimistic implements Stores.OptHooks {
         } else {
           continue;
         }
-        if (live.isEmpty()) {
-          carriers.remove(t);
-        } else {
-          carriers.put(t, live);
-        }
+        t.carriers = live.isEmpty() ? null : live;
       }
       if (set.isEmpty()) {
         overlaidFamilies.remove(fam);
