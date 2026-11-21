@@ -40,6 +40,10 @@ final class Scope {
   Owner slot;
   /** This scope's view as a render effect: its first half renders, its second puts the result on the page. */
   Node effect;
+  /** The effect was started for a region node born in a transition, so it was born in that transition too. */
+  private boolean effectForTransition;
+  /** The effect was replaced, and the new one has not shown yet: what it rendered in its parent is newer than html. */
+  private boolean htmlBeforeEmbedded;
   /** What the last pass of the first half gave. */
   String rendered;
   /** What the last pass of the second half showed. */
@@ -359,6 +363,16 @@ final class Scope {
           // Its view ran again: this run's node takes over, and the last one goes.
           shown.release();
           shown.node = cut.node;
+          boolean inTransition = cut.node != null && tab.rt.uninitialized(cut.node);
+          if (effect != null && (inTransition || effectForTransition)) {
+            // A node born in a transition has no value outside it, and this effect was born outside it: it would wait
+            // for the transition, which waits for it. Solid makes a new insert effect when the view around it runs
+            // again, so renderInParent starts one in this pass, born in the transition with the node.
+            tab.rt.disposeNode(effect);
+            effect = null;
+            htmlBeforeEmbedded = true;
+          }
+          effectForTransition = inTransition;
           if (shown instanceof RegionTag) {
             ((RegionTag) shown).adopt((RegionTag) cut);
           }
@@ -591,6 +605,7 @@ final class Scope {
 
   /** The second half: the frame can show, so its patch is on its way, and what it replaced goes with that. */
   private void shown(String value) {
+    htmlBeforeEmbedded = false;
     value = withLatestChildren(value);
     html = value;
     if (value == embedded) {
@@ -614,7 +629,7 @@ final class Scope {
   private String withLatestChildren(String value) {
     for (Scope child : children.values()) {
       String was = child.embedded;
-      if (child.html == null || was == null || child.html.equals(was)) {
+      if (child.html == null || was == null || child.htmlBeforeEmbedded || child.html.equals(was)) {
         continue;
       }
       int at = value.indexOf(was);
