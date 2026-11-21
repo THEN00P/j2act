@@ -15,15 +15,15 @@ jobs:
         java: [21, 25]
     name: build (JDK ${{ matrix.java }})
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: j2act-core/package-lock.json
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
@@ -49,7 +49,7 @@ jobs:
             exit 1
           fi
 
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@v6
 
       # With the release profile, so the source and javadoc jars Central needs are built on every push
       # and a javadoc error never first shows up in a release; signing is left to the release workflow.
