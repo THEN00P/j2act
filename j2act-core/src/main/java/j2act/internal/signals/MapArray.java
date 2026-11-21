@@ -340,10 +340,13 @@ final class MapArray {
   private List<Object> updateKeyedMap(MapData d) {
     d.owner.parentComputed = rt.core.context instanceof Node ? (Node) rt.core.context : null;
     List<Object> listed = d.list.get();
-    List<Object> newItems = listed != null ? listed : new ArrayList<>();
-    int newLen = newItems.size();
-    d.newItems = newItems;
+    List<Object> live = listed != null ? listed : new ArrayList<>();
+    int newLen = live.size();
     rt.core.runWithOwner(d.owner, () -> {
+      // map.ts's updateKeyedRows takes the next pass's items first, under the map's owner, which tracks nothing: a
+      // mapper that writes the list, or a list whose reads are signals, leaves this pass alone.
+      List<Object> newItems = rt.core.untrack(() -> new ArrayList<>(live));
+      d.newItems = newItems;
       updateInOwner(d, newItems, newLen);
       return null;
     });
