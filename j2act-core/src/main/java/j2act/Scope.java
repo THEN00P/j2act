@@ -540,6 +540,18 @@ final class Scope {
     return true;
   }
 
+  /**
+   * A region's pass while its node was born in a transition that is held and has no value outside it: the
+   * transition's work, so it reads what the node has there and shows with it, instead of waiting for the transition,
+   * which is waiting for this pass. Solid's region is the insert effect itself, created where the node was.
+   */
+  private Object laneRenderPass(Object previous) {
+    if (instance instanceof CutTag && ((CutTag) instance).node != null) {
+      tab.rt.enterLaneOf(((CutTag) instance).node);
+    }
+    return renderPass(previous);
+  }
+
   /** The first half of this scope's render effect. */
   Object renderPass(Object previous) {
     String out;
@@ -595,7 +607,7 @@ final class Scope {
   /** Makes this scope's render effect, whose first pass runs now. */
   void startEffect() {
     tab.rt.runWithOwner(slot, () -> {
-      tab.rt.effectNode(this::renderPass, (value, previous) -> {
+      tab.rt.effectNode(this::laneRenderPass, (value, previous) -> {
         shown((String) value);
         return null;
       }, null, false, created -> effect = created);

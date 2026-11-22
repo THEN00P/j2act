@@ -72,6 +72,8 @@ class ConsistencyTest {
     volatile int openTransitions;
     /** A guess may be out, or a value was first read during a hold, since nothing was last held. */
     volatile boolean worldsApart;
+    /** A pass of the page ran while a guess's lane was live, since the last check: what it sent can show that world. */
+    volatile boolean laneAtPass;
     volatile String waiting;
 
     Graph(Random random, int derived) {
@@ -144,6 +146,9 @@ class ConsistencyTest {
         visible.add(createSignal(i % 2 == 0));
       }
       return () -> {
+        if (tab.rt.lanesLive()) {
+          graph.laneAtPass = true;
+        }
         List<DomContent> shown = new ArrayList<>();
         shown.add(T.button("reveal").onClick(e -> visible.get(graph.revealing).set(true)));
         shown.add(T.button("write").onClick(e -> signals.get(graph.writeTo).set(graph.written)));
@@ -153,9 +158,11 @@ class ConsistencyTest {
         }));
         shown.add(T.button("refresh").onClick(e -> refreshNode(nodes.get(graph.refreshing))));
         shown.add(T.button("sync").onClick(e -> {
-          graph.openTransitions = tab.rt.holding() ? 1 : 0;
-          graph.waiting = tab.rt.holding() ? "a held change" : "";
-          if (!tab.rt.holding()) {
+          // A guess's lane can outlive its action until what it showed lands: its world is still out until then.
+          boolean held = tab.rt.holding() || tab.rt.lanesLive();
+          graph.openTransitions = held ? 1 : 0;
+          graph.waiting = tab.rt.holding() ? "a held change" : tab.rt.lanesLive() ? "a guess's lane" : "";
+          if (!held) {
             graph.worldsApart = false;
           }
         }));
@@ -380,7 +387,8 @@ class ConsistencyTest {
     for (Run run : graph.runs) {
       guessOut |= run.result == null || !run.result.isDone();
     }
-    guessOut |= graph.worldsApart;
+    guessOut |= graph.worldsApart || graph.laneAtPass;
+    graph.laneAtPass = false;
     if (!guessOut) {
       for (Map<String, String> message : h.conn.since(from, m -> m.get("html") != null)) {
         if (shownOn(message.get("html")).values().stream().noneMatch(v -> v.startsWith("g"))) {

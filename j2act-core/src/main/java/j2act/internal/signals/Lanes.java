@@ -926,6 +926,16 @@ final class Lanes {
     }
   }
 
+  /** The lane has not landed or dissolved. */
+  boolean live(Transaction l) {
+    return lanes.contains(l);
+  }
+
+  /** A lane has not landed or dissolved: a guess's world is still out. */
+  boolean anyLive() {
+    return !lanes.isEmpty();
+  }
+
   private void endLanes(Transaction u) {
     Scheduler q = s();
     if (guessed) {

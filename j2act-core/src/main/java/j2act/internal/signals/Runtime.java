@@ -596,6 +596,22 @@ public final class Runtime {
     }
   }
 
+  /**
+   * Makes the running computation's pass the work of the lane `node` was born in, while that lane is held and the node
+   * has no value outside it (Solid 9e02d02a): its reads see the lane's values, and what it gives is the lane's, shown
+   * when the lane is, as a Solid effect created where the node was. Read from outside, the node would wait for the
+   * lane, and the held lane for this reader. Only from inside a computation's pass, whose recompute stages it and puts
+   * the pass's lane back.
+   */
+  public void enterLaneOf(Node node) {
+    Scheduler.Transaction lane = node.x != null ? node.x.transaction : null;
+    if (lane != null && lane.lane && lane.held && (node.statusFlags & Constants.STATUS_UNINITIALIZED) != 0
+      && (node.flags & Constants.REACTIVE_DISPOSED) == 0 && lanes != null && lanes.live(lane)
+      && scheduler.laneStageHook != null && core.context instanceof Node) {
+      scheduler.passLane = lane;
+    }
+  }
+
   /** Runs an effect or memo again in the next flush, as if something it read changed. */
   public void rerun(Node node) {
     if ((node.flags & Constants.REACTIVE_DISPOSED) == 0) {
@@ -682,6 +698,11 @@ public final class Runtime {
 
   public boolean holding() {
     return scheduler.transactionsOpen();
+  }
+
+  /** A guess's lane has not landed or dissolved yet, so what it shows is still out beside the truth. */
+  public boolean lanesLive() {
+    return lanes != null && lanes.anyLive();
   }
 
   public boolean flushing() {
