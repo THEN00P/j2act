@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.REACTIVE_CHECK;
 import static j2act.internal.signals.Constants.REACTIVE_DIRTY;
@@ -11,7 +11,7 @@ import j2act.internal.signals.Node.Link;
 import java.util.Arrays;
 import java.util.function.Consumer;
 
-/** Port of @solidjs/signals core/heap.ts at 9449845. Nodes run in height order, parents before children. */
+/** Port of @solidjs/signals core/heap.ts at 68406c2. Nodes run in height order, parents before children. */
 final class Heap {
   private Node[] heap = new Node[2000];
   boolean marked;
@@ -167,8 +167,37 @@ final class Heap {
     }
     if (el.height != newHeight) {
       el.height = newHeight;
+      liftOwned(el, newHeight);
+      // Not an owner reading it: it sits below its child by construction (REACTIVE_OWNER_READS).
       for (Link s = el.subs; s != null; s = s.nextSub) {
-        insertIntoHeapHeight(s.sub);
+        if (s.sub != el.parent) {
+          insertIntoHeapHeight(s.sub);
+        }
+      }
+    }
+  }
+
+  /**
+   * A raised node's owned computations (through roots) move above it (#4848): an owner raised after its children's
+   * birth left a grandchild at or below it, to run before the owner whose run disposes it. A child waiting in the heap
+   * keeps its seat this pass; what it owns moves either way.
+   */
+  void liftOwned(Owner o, int h) {
+    for (Owner c = o.firstChild; c != null; c = c.nextSibling) {
+      if (c.root || !(c instanceof Node)) {
+        liftOwned(c, h);
+      } else if (((Node) c).height <= h) {
+        // A child waiting in the heap moves with it: left at its seat it runs before the owner that disposes it.
+        Node n = (Node) c;
+        int f = n.flags & (REACTIVE_IN_HEAP | REACTIVE_IN_HEAP_HEIGHT);
+        deleteFromHeap(n);
+        n.height = h + 1;
+        if ((f & REACTIVE_IN_HEAP) != 0) {
+          insertIntoHeap(n);
+        } else if (f != 0) {
+          insertIntoHeapHeight(n);
+        }
+        liftOwned(n, h + 1);
       }
     }
   }

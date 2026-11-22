@@ -1,11 +1,11 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import java.util.function.BiPredicate;
 import java.util.function.IntConsumer;
 
 /**
- * Port of Signal, Computed and Effect in @solidjs/signals core/types.ts and core/effect.ts at 9449845, as
+ * Port of Signal, Computed and Effect in @solidjs/signals core/types.ts and core/effect.ts at 68406c2, as
  * one class. Solid's objects are shapes told apart by which fields they have, and its code reads
  * `(n as Computed)._statusFlags` on a plain signal to get undefined. A plain signal here has `fn == null`
  * and zeros in the rest, which answers the same.

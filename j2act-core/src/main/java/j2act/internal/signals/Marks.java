@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -10,7 +10,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Port of @solidjs/signals affects.ts and affects-marks.ts at 9449845; store/affects.ts registers a store's targets. */
+/** Port of @solidjs/signals affects.ts and affects-marks.ts at 68406c2; store/affects.ts registers a store's targets. */
 final class Marks {
   private final Runtime rt;
   private int active;

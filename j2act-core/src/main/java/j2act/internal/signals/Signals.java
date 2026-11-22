@@ -1,5 +1,5 @@
 package j2act.internal.signals;
-// Port of @solidjs/signals at 9449845. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
+// Port of @solidjs/signals at 68406c2. Copyright (c) 2023-2025 Ryan Carniato, MIT License; see NOTICE.
 
 import static j2act.internal.signals.Constants.*;
 
@@ -11,7 +11,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
-/** Port of the imperative half of @solidjs/signals signals.ts at 9449845: resolve, refresh, until, reaction, onSettled, onFlush. */
+/** Port of the imperative half of @solidjs/signals signals.ts at 68406c2: resolve, refresh, until, reaction, onSettled, onFlush. */
 public final class Signals {
   /** Solid's AbortSignal, as much as until reads of it. */
   public interface Abort {
@@ -224,7 +224,11 @@ public final class Signals {
 
   void onFlush(Runnable callback) {
     rt.scheduler.schedule();
-    microtask(callback);
+    // Each callback flushes before the next runs, so async work one starts never holds another's writes.
+    microtask(() -> {
+      callback.run();
+      rt.scheduler.flush();
+    });
   }
 
   /** createReaction: tracks what its returned function is given, once, and runs effectFn when that changes. */

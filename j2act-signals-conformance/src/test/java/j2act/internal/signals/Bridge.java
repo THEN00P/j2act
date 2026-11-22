@@ -86,6 +86,14 @@ public final class Bridge {
   }
 
   /** An array's index is an Integer and its length the shape's LENGTH; any other key is itself. */
+  /**
+   * A key for target: the shim's array flag is the proxy shell's, made from the seed, so a seedless store ({}) that an
+   * array landed on is an array by its backing (Solid's traps never ask the shell).
+   */
+  private Object storeKey(StoreTarget target, Value key, boolean array) {
+    return storeKey(key, array || rt.stores.shape().isArray(rawBacking(target)));
+  }
+
   private Object storeKey(Value key, boolean array) {
     if (array && key.isString()) {
       String s = key.asString();
@@ -146,16 +154,16 @@ public final class Bridge {
   }
 
   public Object storeGet(Object target, Value key, boolean array) {
-    return js(rt.storeGet((StoreTarget) target, storeKey(key, array)));
+    return js(rt.storeGet((StoreTarget) target, storeKey((StoreTarget) target, key, array)));
   }
 
   public boolean storeHas(Object target, Value key, boolean array) {
-    return rt.storeHas((StoreTarget) target, storeKey(key, array));
+    return rt.storeHas((StoreTarget) target, storeKey((StoreTarget) target, key, array));
   }
 
   /** Whether the current backing has the key itself, asked without tracking. */
   public boolean storeOwn(Object target, Value key, boolean array) {
-    return rt.stores.shape().has(rawBacking((StoreTarget) target), storeKey(key, array));
+    return rt.stores.shape().has(rawBacking((StoreTarget) target), storeKey((StoreTarget) target, key, array));
   }
 
   /**
@@ -195,9 +203,14 @@ public final class Bridge {
     return rawBacking((StoreTarget) target);
   }
 
+  /** Inside a setter's or a derive's draft of this target, where an inherited constructor is not served. */
+  public boolean storeDrafting(Object target) {
+    return rt.stores.writeOverride || rt.stores.inDraft((StoreTarget) target);
+  }
+
   /** [value] for a key that is there, undefined otherwise. */
   public Object storeDescriptor(Object target, Value key, boolean array) {
-    Object[] d = rt.storeDescriptor((StoreTarget) target, storeKey(key, array));
+    Object[] d = rt.storeDescriptor((StoreTarget) target, storeKey((StoreTarget) target, key, array));
     if (d == null) {
       return undefined;
     }
@@ -215,11 +228,11 @@ public final class Bridge {
   }
 
   public void storeSet(Object target, Value key, Value value, boolean array) {
-    rt.storeSet((StoreTarget) target, storeKey(key, array), toJava(value));
+    rt.storeSet((StoreTarget) target, storeKey((StoreTarget) target, key, array), toJava(value));
   }
 
   public void storeDelete(Object target, Value key, boolean array) {
-    rt.storeDelete((StoreTarget) target, storeKey(key, array));
+    rt.storeDelete((StoreTarget) target, storeKey((StoreTarget) target, key, array));
   }
 
   public void storeTrack(Object target) {

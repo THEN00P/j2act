@@ -148,14 +148,34 @@ async function runSeed(seed: number, log: string[]) {
 it("fuzz", async () => {
   const from = (globalThis as any).__seedFrom ?? 1;
   const count = (globalThis as any).__seeds ?? 400;
+  // A fresh process after Solid hung or crashed (prepare.mjs) first runs the seeds before `from` without logging them:
+  // the port runs every seed in one runtime, so each seed starts from what the seeds before it left behind.
+  for (let seed = 1; seed < from; seed++) {
+    if (((globalThis as any).__skip ?? []).includes(seed)) continue;
+    try {
+      await runSeed(seed, []);
+    } catch {}
+  }
   for (let seed = from; seed < from + count; seed++) {
     const log: string[] = [];
     log.push("=== seed " + seed);
+    // A seed on which Solid itself crashed or hung (prepare.mjs): no reference, so the port skips it.
+    if (((globalThis as any).__skip ?? []).includes(seed)) {
+      console.log(log.join("\n") + "\nSKIPPED");
+      continue;
+    }
+    (globalThis as any).__crashed = undefined;
+    // prepare.mjs's runner: when a seed began, so a run killed at its deadline names the seed that hung, if one did.
+    if ((globalThis as any).__started) (globalThis as any).__started(seed);
     try {
       await runSeed(seed, log);
     } catch (e: any) {
       log.push("THROW " + String(e && e.message).slice(0, 60));
     }
+    // An error a scheduled flush threw, which no try sees: prepare.mjs records it when Solid itself crashes.
+    if ((globalThis as any).__crashed !== undefined) log.push("SOLID CRASHED " + (globalThis as any).__crashed);
     console.log(log.join("\n"));
+    // A crash leaves Solid's module state broken for every later seed: prepare.mjs goes on in a fresh process.
+    if ((globalThis as any).__crashed !== undefined) break;
   }
 }, 600000);
