@@ -1,5 +1,7 @@
 # Spike: one reactive owner per key
 
+> ADR 0037 decides shared state. What held here still stands; the room-wide `isPending` of another user's save, and the owner's graph as the place readers' pages join, do not.
+
 **Question.** Does ADR 0033's option A hold up? One owner per key anywhere in a cluster, so that state shared between people is reactive: a write is a signal write, saving is a step of it, readers on any server follow, and they can tell when their data is stale.
 
 **What ran.** `SharedScopeSpikeTest` on the branch `shared-scope-spike`, thrown away after. Real j2act pages on the reader's side, a small stand-in for the owner (the port gives it real signals), two nodes in one JVM joined by real TCP sockets, and faked membership. 9 checks, 6 runs of the class, all passing after the fixes below.
