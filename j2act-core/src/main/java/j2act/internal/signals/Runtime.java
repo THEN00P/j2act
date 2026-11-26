@@ -646,6 +646,14 @@ public final class Runtime {
     return owner;
   }
 
+  /**
+   * A slot made with `running` as what runs, by createSlotOwner(parent, running), goes on as if `next` were: the node
+   * that took over from that one, so the one that went is not kept by the slot.
+   */
+  public void runSlotUnder(Owner owner, Node next) {
+    owner.parentComputed = next;
+  }
+
   /** Who runs this owner's nodes after it now: the view placing it again. */
   public void reparentSlotOwner(Owner owner) {
     Owner running = core.context;

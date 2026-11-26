@@ -2402,6 +2402,14 @@ public final class Stores {
   }
 
   private void walkDeep(StoreTarget t, Map<Object, Boolean> visited) {
+    walkDeep(t, visited, true);
+  }
+
+  /**
+   * subscribe false: handOut's walk, which reads nothing and only brings every record up to date and wraps it. It
+   * makes no witness, which nothing would ever read, so nothing would let go of it, nor of the record it is for.
+   */
+  private void walkDeep(StoreTarget t, Map<Object, Boolean> visited, boolean subscribe) {
     if (t.fam != null) {
       pullFamily(t);
     }
@@ -2409,12 +2417,14 @@ public final class Stores {
     if (visited.put(src, Boolean.TRUE) != null) {
       return;
     }
-    rt.core.read(getDeepNode(t));
-    // A chained backing changes without this store's nodes moving: witness the inner store too.
-    for (StoreTarget it = t; it.ch;) {
-      it = shape.targetOf(it.v);
-      rt.core.read(getContainerNode(it));
-      rt.core.read(getDeepNode(it));
+    if (subscribe) {
+      rt.core.read(getDeepNode(t));
+      // A chained backing changes without this store's nodes moving: witness the inner store too.
+      for (StoreTarget it = t; it.ch;) {
+        it = shape.targetOf(it.v);
+        rt.core.read(getContainerNode(it));
+        rt.core.read(getDeepNode(it));
+      }
     }
     for (Object key : shape.keys(src)) {
       Object child = shape.get(src, key);
@@ -2436,7 +2446,7 @@ public final class Stores {
         }
       }
       if (ct != null) {
-        walkDeep(ct, visited);
+        walkDeep(ct, visited, subscribe);
       }
     }
   }
@@ -2490,7 +2500,7 @@ public final class Stores {
       return NOT_FINE;
     }
     rt.core.untrack(() -> {
-      walkDeep(t0, shape.identityMap());
+      walkDeep(t0, shape.identityMap(), false);
       return null;
     });
     SnapshotRun run = new SnapshotRun(true);

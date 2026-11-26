@@ -95,7 +95,7 @@ final class Mirrors implements Published.Reader {
     Object value = host.rt.read(mirror.node);
     Scope scope = Tracking.scope();
     if (scope != null) {
-      scope.sharedRead(new SharedRead(host, source, null, j2act.internal.store.JavaShape.Reads.VALUE,
+      Scope.noteSharedRead(scope, new SharedRead(host, source, null, j2act.internal.store.JavaShape.Reads.VALUE,
         mirror.feed().value(), false));
     }
     return value;
@@ -163,7 +163,8 @@ final class Mirrors implements Published.Reader {
       inElement |= parentView instanceof java.util.List || parentView instanceof java.util.Map;
     }
     java.util.Collections.reverse(keys);
-    scope.sharedRead(new SharedRead(host, mirror.source, keys.toArray(), kind, mirror.feed().value(), inElement));
+    Scope.noteSharedRead(scope, new SharedRead(host, mirror.source, keys.toArray(), kind, mirror.feed().value(),
+      inElement));
   }
 
   /** Lane-only. This graph's copy of the store, subscribed on first use. */

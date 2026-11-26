@@ -95,6 +95,15 @@ final class SharedRead {
           reads.add(read);
         }
       }
+      if (s.instance instanceof CutTag) {
+        // A region's scope shows what its supplier gave: what that read is the region's own.
+        CutTag cut = (CutTag) s.instance;
+        for (SharedRead read : cut.creator.cutReadsOf(cut.node)) {
+          if (s == scope || read.countsFromOutside()) {
+            reads.add(read);
+          }
+        }
+      }
     }
     return reads;
   }

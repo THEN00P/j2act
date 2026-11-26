@@ -24,7 +24,8 @@ abstract class CutTag extends ComponentTag {
   final Tab tab;
   /** The scope whose view made it, and the computation that was running there. */
   final Scope creator;
-  final Owner running;
+  /** Until a scope shows it: its slot is made as if this were running then. */
+  Owner running;
   /** A scope shows it, or showed it: from then on that scope says when its node goes. */
   boolean placed;
 
@@ -48,15 +49,30 @@ abstract class CutTag extends ComponentTag {
     node = tab.rt.runWithOwner(creator.slot, () -> tab.rt.memoNode(previous -> {
       CutTag outer = COMPUTING.get();
       COMPUTING.set(this);
+      Object self = tab.rt.getObserver();
+      collecting = null;
+      boolean done = false;
       try {
         Object value = Tracking.in(tab, creator, compute);
         computed = value;
+        done = true;
         return value;
       } finally {
         if (outer == null) {
           COMPUTING.remove();
         } else {
           COMPUTING.set(outer);
+        }
+        List<SharedRead> read = collecting;
+        collecting = null;
+        if (done) {
+          // What this run read replaces what the last one did; one that stopped partway leaves what is shown.
+          creator.cutReads(self, read);
+          if (outer != null && read != null) {
+            for (SharedRead r : read) {
+              outer.collect(r);
+            }
+          }
         }
       }
     }, ALWAYS_NEW));
@@ -68,7 +84,24 @@ abstract class CutTag extends ComponentTag {
 
   /** Its node goes: its scope took a newer one, or went itself. */
   void release() {
+    creator.cutReads(node, null);
+    tab.slotsRunning.remove(node);
     tab.rt.disposeNode(node);
+  }
+
+  /** What the running supplier read of other graphs (ADR 0037), for the scope that shows what it gives. */
+  private List<SharedRead> collecting;
+
+  void collect(SharedRead read) {
+    if (collecting == null) {
+      collecting = new java.util.ArrayList<>();
+    }
+    collecting.add(read);
+  }
+
+  /** The cut whose supplier is running on this thread, or null. */
+  static CutTag computing() {
+    return COMPUTING.get();
   }
 
   /** What its supplier last gave. */

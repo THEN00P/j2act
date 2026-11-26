@@ -157,6 +157,8 @@ public final class Tab {
    * one in a cluster, as has a browser's; null without one.
    */
   volatile SharedHub cluster;
+  /** Slots of region scopes made as if a node of a region were running, by that node (Scope's region constructor). */
+  final Map<Object, java.util.Set<Scope>> slotsRunning = new java.util.IdentityHashMap<>();
   /** While a store that moved from another server is made here: its plain values, by address (ADR 0037). */
   volatile Map<String, String> handed;
 
@@ -1504,8 +1506,9 @@ public final class Tab {
     scope.onPage = html;
     scope.placed = true;
     scope.pageRows = scope.instance instanceof RegionTag ? new ArrayList<>(scope.children.values()) : null;
+    Around around = new Around(html);
     for (Scope child : scope.children.values()) {
-      if (!child.detached && child.broughtBy(html)) {
+      if (!child.detached && around.brought(child)) {
         onPage(child, child.html);
       } else {
         // As it was before a hold, perhaps: the page has its element, but not what is in it now.
@@ -1529,11 +1532,13 @@ public final class Tab {
    * is now older than the scope itself: it needs its own patch, or nothing would ever correct it.
    */
   private void behindThisPatch(Scope scope, String sent, List<Scope> scopes, int next) {
+    Around marks = new Around(sent);
+    Around brought = new Around(sent);
     for (Scope child : scope.children.values()) {
-      if (child.disposed || child.html == null || child.detached || !sent.contains(child.mark())) {
+      if (child.disposed || child.html == null || child.detached || !marks.contains(child.mark())) {
         continue;
       }
-      if (child.broughtBy(sent)) {
+      if (brought.brought(child)) {
         behindThisPatch(child, child.html, scopes, next);
       } else {
         // Next, even if it already went: this patch replaced it.

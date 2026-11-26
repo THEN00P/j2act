@@ -128,7 +128,18 @@ final class Scope {
     this.codeEpoch = tab.engine.codeEpoch;
     this.slot = region.creator == parent || region.creator.disposed ? tab.rt.createSlotOwner(parent.slot)
       : tab.rt.createSlotOwner(region.creator.slot, region.running);
+    if (region.running instanceof Node && region.creator != parent && !region.creator.disposed) {
+      // A row of a list region runs as if that region's node were running: when the region's node is replaced, the
+      // row goes on under the new one, and the old one is not kept by every row made while it ran.
+      runsUnder = region.running;
+      tab.slotsRunning.computeIfAbsent(runsUnder, n -> java.util.Collections.newSetFromMap(
+        new java.util.IdentityHashMap<>())).add(this);
+    }
+    region.running = null;
   }
+
+  /** The node of a region this scope's slot runs as if under, while it does (tab.slotsRunning). */
+  private Object runsUnder;
 
   /** `above` is what a scope with no parent still belongs to: the boundary of its tab. */
   Scope(Tab tab, Scope parent, String address, Owner above) {
@@ -360,9 +371,22 @@ final class Scope {
       } else {
         CutTag shown = (CutTag) instance;
         if (shown.node != cut.node) {
-          // Its view ran again: this run's node takes over, and the last one goes.
+          // Its view ran again: this run's node takes over, and the last one goes, with the slots that ran under it.
+          java.util.Set<Scope> under = tab.slotsRunning.remove(shown.node);
           shown.release();
           shown.node = cut.node;
+          if (under != null) {
+            for (Scope s : under) {
+              tab.rt.runSlotUnder(s.slot, cut.node);
+              s.runsUnder = cut.node;
+            }
+            java.util.Set<Scope> now = tab.slotsRunning.get(cut.node);
+            if (now == null) {
+              tab.slotsRunning.put(cut.node, under);
+            } else {
+              now.addAll(under);
+            }
+          }
           boolean inTransition = cut.node != null && tab.rt.uninitialized(cut.node);
           if (effect != null && (inTransition || effectForTransition)) {
             // A node born in a transition has no value outside it, and this effect was born outside it: it would wait
@@ -690,8 +714,9 @@ final class Scope {
     }
     removing.clear();
     tab.handlers.drop(this);
+    Around around = new Around(what);
     for (Scope child : new ArrayList<>(children.values())) {
-      if (!child.disposed && !child.detached && child.broughtBy(what)) {
+      if (!child.disposed && !child.detached && around.brought(child)) {
         child.pageHas(child.html);
       }
     }
@@ -816,6 +841,46 @@ final class Scope {
     sharedReads.add(read);
   }
 
+  /**
+   * What the cuts this scope's view made read in their supplier's last run, by their node (ADR 0036, 0037): a region
+   * runs again on its own, and each run's reads replace its last ones. Lane-only.
+   */
+  private Map<Object, List<SharedRead>> cutReads;
+
+  void cutReads(Object node, List<SharedRead> reads) {
+    if (reads == null || reads.isEmpty()) {
+      if (cutReads != null) {
+        cutReads.remove(node);
+      }
+      return;
+    }
+    if (cutReads == null) {
+      cutReads = new java.util.IdentityHashMap<>();
+    }
+    cutReads.put(node, reads);
+  }
+
+  List<SharedRead> cutReadsOf(Node node) {
+    List<SharedRead> reads = cutReads == null || node == null ? null : cutReads.get(node);
+    return reads == null ? java.util.Collections.emptyList() : reads;
+  }
+
+  /**
+   * A read of another graph's value with this scope current: a cut's supplier running keeps it for its next run, and
+   * this scope's render, if it is rendering, for what it renders now.
+   */
+  static void noteSharedRead(Scope scope, SharedRead read) {
+    CutTag cut = CutTag.computing();
+    if (cut == null) {
+      scope.sharedRead(read);
+      return;
+    }
+    cut.collect(read);
+    if (scope.rendering) {
+      scope.sharedRead(read);
+    }
+  }
+
   /** A render starts: what it reads replaces what the last one read, once it ends. */
   void beginSharedReads() {
     previousSharedReads = sharedReads;
@@ -864,6 +929,16 @@ final class Scope {
       return;
     }
     disposed = true;
+    if (runsUnder != null) {
+      java.util.Set<Scope> under = tab.slotsRunning.get(runsUnder);
+      if (under != null) {
+        under.remove(this);
+        if (under.isEmpty()) {
+          tab.slotsRunning.remove(runsUnder);
+        }
+      }
+      runsUnder = null;
+    }
     if (releases != null) {
       for (Runnable release : releases) {
         try {
