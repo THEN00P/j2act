@@ -635,7 +635,7 @@ public final class Reactive {
 
   /** Tracked: the last load of this async memo failed; for showing it beside a withStaleOnError() value. */
   public static boolean failed(Supplier<?> memo) {
-    return valueOf(memo, "failed").readFailed();
+    return valueOf(memo, "failed").here().readFailed();
   }
 
   /**
@@ -651,10 +651,10 @@ public final class Reactive {
       throw new IllegalStateException("isPending(...) needs a tab: call it from a view, a memo, a handler or an effect");
     }
     if (tab.lane.isCurrent()) {
-      return tab.rt.isPending(fn);
+      return tab.host.mirrors.isPending(fn);
     }
     boolean[] answer = new boolean[1];
-    tab.host.hop(() -> answer[0] = tab.rt.isPending(fn));
+    tab.host.hop(() -> answer[0] = tab.host.mirrors.isPending(fn));
     return answer[0];
   }
 
@@ -663,7 +663,7 @@ public final class Reactive {
    * action around this call ends, for a refresh that should show (ADR 0031).
    */
   public static void affects(Supplier<?> memo) {
-    ValueCell cell = valueOf(memo, "affects");
+    ValueCell cell = valueOf(memo, "affects").here();
     Action.Call call = Action.Call.current();
     if (call != null) {
       call.enter(cell.tab, () -> {

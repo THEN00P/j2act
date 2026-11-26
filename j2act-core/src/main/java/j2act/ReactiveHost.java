@@ -2,21 +2,36 @@ package j2act;
 
 import j2act.internal.signals.Runtime;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Deque;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
 /**
- * What one browser's tabs share (ADR 0033): one lane, one graph and one scheduler, as Solid has one of each
- * per page. A tab with no cookie has one of its own. The engine's microtask is the end of the lane job
+ * One tab's graph (ADR 0037): one lane, one graph and one scheduler, as Solid has one of each per page; or a store
+ * hub's, which holds a browser's stores and no page. A graph reads another's values through mirrors, and other graphs
+ * read its own through what it publishes. The engine's microtask is the end of the lane job
  * that scheduled it, so a job is what JS's synchronous code is, and every job ends with a flush.
  */
 final class ReactiveHost {
 
+  private static final java.util.concurrent.atomic.AtomicLong SEQUENCE = new java.util.concurrent.atomic.AtomicLong();
+
   final J2Act engine;
   final Lane lane;
   final Runtime rt;
+  /** The one tab of this graph (ADR 0037): a page, or a hub that holds stores and no page. */
+  volatile Tab tab;
+  /** Its place in the order lanes may wait for each other: a graph of stores waits only for younger ones. */
+  final long seq = SEQUENCE.incrementAndGet();
+  /** The values of other graphs this one reads. */
+  final Mirrors mirrors = new Mirrors(this);
+  /** What other graphs read of this one's values, made with the first. */
+  private Published published;
+  /** Writes to other graphs' values made in this job, sent as one batch each when it ends. Lane-only. */
+  private List<Outgoing> outgoing = new ArrayList<>();
   /** What the engine scheduled for the end of this job. Lane-only. */
   private final Deque<Runnable> microtasks = new ArrayDeque<>();
   /** Every tab on this lane, hub included. */
@@ -138,6 +153,7 @@ final class ReactiveHost {
       return;
     }
     flushing = true;
+    boolean again;
     try {
       do {
         for (Tab tab : tabs) {
@@ -161,16 +177,139 @@ final class ReactiveHost {
         forTab(tab, tab::afterFlush);
       }
       // What afterFlush ran, such as onSettled callbacks, may have written.
-      if (!microtasks.isEmpty() || anyDirty()) {
-        flushing = false;
-        endJob();
-      }
+      again = !microtasks.isEmpty() || anyDirty();
     } finally {
       flushing = false;
     }
+    if (again) {
+      endJob();
+      return;
+    }
+    jobsDone++;
+    if (published != null) {
+      try {
+        published.afterJob();
+      } catch (RuntimeException | Error e) {
+        engine.log(System.Logger.Level.WARNING, "publishing a revision failed", e);
+      }
+    }
+    sendOutgoing();
   }
 
-  /** Runs a step for one tab as that tab's: if it fails, the other tabs of this browser still get theirs. */
+  // ---- other graphs (ADR 0037)
+
+  /** How many jobs ended. Lane-only. */
+  long jobsDone;
+
+  /** A graph of stores, not of a page. */
+  boolean isStoreHost() {
+    Tab t = tab;
+    return t != null && t.hubFor != null;
+  }
+
+  /**
+   * Whether code on this lane may wait for other's lane. A page's lane may wait for any store's; a store's only for a
+   * younger store's, so that no two lanes ever wait for each other.
+   */
+  boolean mayInline(ReactiveHost other) {
+    return other != this && (!isStoreHost() || other.seq > seq);
+  }
+
+  /** Lane-only. What other graphs read of this one, made with the first reader. */
+  Published published() {
+    if (published == null) {
+      published = new Published(this);
+    }
+    return published;
+  }
+
+  /** Runs body at the end of this job, after the flush in progress. Lane-only. */
+  void later(Runnable body) {
+    microtasks.add(body);
+  }
+
+  /** Like hop, but only if no other task of the lane runs now; false when it did not run. */
+  boolean tryHop(Runnable body) {
+    if (lane.isCurrent()) {
+      body.run();
+      return true;
+    }
+    return lane.tryRunInline(() -> {
+      try {
+        body.run();
+      } finally {
+        endJob();
+      }
+    });
+  }
+
+  /** A write this graph's code made to another graph's value. */
+  private static final class Outgoing {
+    final ReactiveHost to;
+    final Runnable write;
+
+    Outgoing(ReactiveHost to, Runnable write) {
+      this.to = to;
+      this.write = write;
+    }
+  }
+
+  /**
+   * Lane-only. A write to a value of the graph to, made by code running here (ADR 0037): the writes of one job go
+   * there together, in their order, when the job ends, and are applied in one job of that graph's.
+   */
+  void queueWrite(ReactiveHost to, Runnable write) {
+    outgoing.add(new Outgoing(to, write));
+  }
+
+  /** Lane-only. Where the writes of what runs next start, to drop them if it fails. */
+  int outgoingMark() {
+    return outgoing.size();
+  }
+
+  /** Lane-only. What failed sends nothing: its writes since mark are dropped. */
+  void dropOutgoingSince(int mark) {
+    while (outgoing.size() > mark) {
+      outgoing.remove(outgoing.size() - 1);
+    }
+  }
+
+  private void sendOutgoing() {
+    if (outgoing.isEmpty()) {
+      return;
+    }
+    List<Outgoing> sent = outgoing;
+    outgoing = new ArrayList<>();
+    java.util.Map<ReactiveHost, List<Runnable>> byHost = new java.util.LinkedHashMap<>();
+    for (Outgoing o : sent) {
+      byHost.computeIfAbsent(o.to, h -> new ArrayList<>()).add(o.write);
+    }
+    byHost.forEach((to, writes) -> to.applyBatch(writes, null));
+  }
+
+  /**
+   * Applies writes from another graph in one job, in their order, so that they are one revision; then runs done, after
+   * that revision went out. From any thread.
+   */
+  void applyBatch(List<Runnable> writes, Runnable done) {
+    job(() -> {
+      Tab owner = tab;
+      if (owner == null || owner.disposed) {
+        return;
+      }
+      Tracking.in(owner, null, () -> {
+        for (Runnable write : writes) {
+          runQuietly(write);
+        }
+        return null;
+      });
+    });
+    if (done != null) {
+      job(done);
+    }
+  }
+
+  /** Runs a step for one tab as that tab's, so a failure is logged as its own. */
   private void forTab(Tab tab, Runnable step) {
     try {
       Tracking.in(tab, null, () -> {

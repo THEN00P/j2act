@@ -668,18 +668,20 @@ class BrowserStoreTest {
   }
 
   static final class HoldsPerTab extends LiveComponent {
-    static final java.util.List<java.util.concurrent.CompletableFuture<String>> LOADS =
-      new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** Each tab's load of "b", by the tab's id. */
+    static final Map<String, java.util.concurrent.CompletableFuture<String>> LOADS =
+      new java.util.concurrent.ConcurrentHashMap<>();
 
     @Override protected View setup() {
       Selection selection = useBrowserStore(Selection.class);
+      String tab = useTab().id();
       AsyncSupplier<String> body = () -> {
         String id = selection.id.get();
         if ("a".equals(id)) {
           return java.util.concurrent.CompletableFuture.completedFuture("A");
         }
         java.util.concurrent.CompletableFuture<String> load = new java.util.concurrent.CompletableFuture<>();
-        LOADS.add(load);
+        LOADS.put(tab, load);
         return load.thenApply(String::toUpperCase);
       };
       var loaded = createMemo(body);
@@ -689,9 +691,12 @@ class BrowserStoreTest {
     }
   }
 
-  /** ADR 0033: one graph per browser, so its visible tabs hold together and change in one flush. */
+  /**
+   * ADR 0037: each tab has a graph of its own, so a write to the browser's state shows in each tab when that tab's own
+   * loads are done. One tab's slow load never holds the other, and neither shows the new id beside the old load.
+   */
   @Test
-  void theTabsOfABrowserHoldAWriteTogetherAndRevealItTogether() {
+  void eachTabOfABrowserRevealsAWriteWhenItsOwnLoadLands() {
     HoldsPerTab.LOADS.clear();
     try (Harness h = harness(HoldsPerTab::new)) {
       Page first = new Page(h.engine, "/", Exchange.empty());
@@ -705,12 +710,12 @@ class BrowserStoreTest {
       assertTrue(first.conn.since(fromFirst, m -> "patch".equals(m.get("type"))).isEmpty(), "the first tab holds");
       assertTrue(second.conn.since(fromSecond, m -> "patch".equals(m.get("type"))).isEmpty(), "the second tab holds");
 
-      HoldsPerTab.LOADS.get(0).complete("b");
-      assertTrue(first.conn.since(fromFirst, m -> "patch".equals(m.get("type"))).isEmpty(), "still held");
-      assertTrue(second.conn.since(fromSecond, m -> "patch".equals(m.get("type"))).isEmpty(), "still held");
-      HoldsPerTab.LOADS.get(1).complete("b");
-      first.awaitPatch(fromFirst, "id:b;loaded:B;");
+      HoldsPerTab.LOADS.get(second.tab).complete("b");
       second.awaitPatch(fromSecond, "id:b;loaded:B;");
+      assertTrue(first.conn.since(fromFirst, m -> "patch".equals(m.get("type"))).isEmpty(),
+        "the first tab still waits for its own load");
+      HoldsPerTab.LOADS.get(first.tab).complete("b");
+      first.awaitPatch(fromFirst, "id:b;loaded:B;");
       for (Page page : List.of(first, second)) {
         for (Map<String, String> patch : page.conn.since(0, m -> "patch".equals(m.get("type")))) {
           assertTrue(!patch.get("html").contains("id:b;loaded:A"), patch.get("html"));

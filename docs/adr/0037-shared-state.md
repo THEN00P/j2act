@@ -37,23 +37,25 @@ The reason for separate graphs is how Solid shows async work. Within one graph, 
 
 ## How a change reaches other pages
 
-A shared store's methods run on the store's queue, one at a time, so `update(fn)` is atomic however many pages call it at once. When a method finishes, the store has a new revision: a number, and the values it changed. It publishes that revision to every graph that subscribed to the store.
+A shared store runs on its own lane. A write from a page does not run there at once: the writes one job of the page makes to a store, such as everything one click handler wrote, go to the store together when the job ends, in their order, and the store applies them in one job of its own. An action's writes go when its body has ended well, and not at all if it failed. `update(fn)` runs `fn` on the store's lane, on what the store has then, so a read-modify-write is atomic however many pages write at once. Code on a page that reads the store reads what the page shows, so a decision a handler makes from what it read is made on what the user saw.
 
-A page's first read of `room.messages()` subscribes its graph. The store answers with its current values and their revision number in one step, and sends every later revision after that, so nothing posted in between is lost. The page's graph applies each revision as one write from outside (ADR 0014): its own computations run, and it renders its own pages on its own queue. A graph that finds a gap in the numbers, or a store that started over, asks for the current values again.
+When a job of the store ends, the values it changed are a new revision: a number, and the values. It publishes that revision to every graph that subscribed to one of them.
 
-The values a store publishes are immutable once published. On one server, every graph reads the same objects and nothing is copied. Across servers, the same revisions travel as JSON. The developer's code is the same in both cases, and the in-process path uses the same subscription and the same revision numbers as the network, so nothing works on one server that would break on two.
+A page's first read of `room.messages()` subscribes its graph. The store answers with its current values and their revision number in one step, and sends every later revision after that, so nothing posted in between is lost. The page's graph applies each revision in one job: its own computations run, and it renders its own pages on its own queue. A revision older than what a page has changes nothing there.
 
-A graph unsubscribes when its last reader of the store is gone.
+The values a store publishes are immutable once published: a value as it is, and a deep store (ADR 0035) as its snapshot, which is the same object for every part that did not change. On one server, every graph reads the same objects and nothing is copied. A page keeps its own copy of a deep store's nodes, merged from each snapshot by the rows' `id` field when their class has one and by position otherwise, so what read one row runs again only when that row changed. Across servers, the same revisions travel as JSON. The developer's code is the same in both cases, and the in-process path uses the same subscription and the same revision numbers as the network, so nothing works on one server that would break on two.
+
+A graph unsubscribes when nothing in it reads the store's value any more: a value when the engine says its mirror lost its last reader, a deep store when the last computation that read its copy ran again without reading it or ended.
 
 ## What other users see of a write
 
-Other pages see what a store method finished, never what it is still doing. A click that calls `room.post(m)` runs the method on the store's queue as an action of the page that clicked: that page can show a guess right away (`optimistic`), sees `isPending` while it runs, and loses the guess if the method throws. Bob sees the message when the method has finished, and not before.
+Other pages see what a store applied, never what is still on its way. A click that runs an action writing `room.messages` shows on its own page as `isPending` until the action ends, and as a guess at once if the value is optimistic (`createOptimistic`, `createOptimisticStore`), which goes when the action ends. When the body ends well, its writes go to the store, the store applies and publishes them, and the page gets that revision, the end of `isPending` and the end of the action in one change. Bob sees the message when the store has applied it, and not before.
 
-A method that throws publishes nothing. This differs from a Solid action, where plain writes stand when the action fails: a shared store's revision is all of the method's writes or none of them. A method that also saves to the database publishes after the save. Slow work, such as a call to another service, belongs before the method, so the store's queue only ever runs short steps.
+An action that throws sends nothing, and a handler that throws sends nothing either. This differs from a Solid action, where plain writes stand when the action fails: what a page sends a store is all of the writes of the job or the action, or none of them. A body that also saves to the database ends after the save, so the store has the write only once the database does.
 
 A click that times out may still have succeeded. A method that can be retried takes a stable id from its caller, as the spike found: a guess is matched to the real message by that id, and a retry with the same id is recognised.
 
-A `computed` or `query` in a shared store runs once for the store, not once per reader. While a query in the store is loading, each reader sees it pending beside its old value, and only that reader's own screen waits for it, according to that reader's own boundaries.
+A `computed` or `query` in a shared store runs once for the store, not once per reader. While a query in the store is loading, each reader sees it pending beside its old value, and only that reader's own screen waits for it, according to that reader's own boundaries. A reset at an `errored(...)` on a page loads the store's failed value again, for every reader.
 
 A shared store's code cannot read anything that differs between readers: `user`, `pathParam()`, a tab store. That keeps ADR 0030's rule for browser stores, now for every shared store. The runtime and the processor report it as an error.
 

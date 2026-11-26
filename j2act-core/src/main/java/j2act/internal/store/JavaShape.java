@@ -590,6 +590,47 @@ public final class JavaShape implements StoreShape {
   }
 
   /**
+   * A copy of another graph's store, as this graph reads it (ADR 0037): an optimistic store whose derive answers what
+   * the other graph last published, each answer merged into the last, so a reader here is told only of what changed.
+   * Rows pair by their id field when their class has one, as Solid's reconcile pairs by id, and by position
+   * otherwise, and what changed in a paired row is told property by property. Optimistic, so an action here can show
+   * its guess at once.
+   */
+  public Object createMirror(j2act.internal.signals.Stores.Derive derive, Object seed, boolean optimistic) {
+    rt.storeShape(this);
+    return optimistic ? rt.createOptimisticStore(derive, seed, JavaShape::mirrorKey, false, false)
+      : rt.createProjection(derive, seed, JavaShape::mirrorKey, false, false);
+  }
+
+  /**
+   * An empty value of the kind a store's view holds, for a copy of it whose first answer has not come: a list, a map
+   * or a set, or the store's own copy of an object of the bean's class with nothing in it.
+   */
+  public Object emptyLike(Object view) {
+    if (view instanceof ListView) {
+      return new ArrayList<>();
+    }
+    if (view instanceof MapView) {
+      return new LinkedHashMap<>();
+    }
+    if (view instanceof SetView) {
+      return new java.util.LinkedHashSet<>();
+    }
+    Kinds.Layout l = view instanceof BeanView ? Kinds.layout(((BeanView) view).type) : null;
+    return l == null ? new ArrayList<>() : new Copy(l, new Object[l.fields.length]);
+  }
+
+  private static Object mirrorKey(Object row) {
+    if (row == null || row instanceof List || row instanceof Map || row instanceof Set || row instanceof StoreView
+        || row instanceof Copy || Kinds.of(row) == Kinds.Kind.VALUE) {
+      return null;
+    }
+    Kinds.Layout l = layout(row);
+    Integer id = l == null ? null : l.index.get("id");
+    return id == null ? null : Kinds.read(l.fields[id], row);
+  }
+
+  /**
    * A row's key. The engine asks it of every object it pairs, as Solid asks `row.id`, and an object below a row,
    * such as its address, is not a row: a key typed for the row's class has no key for it.
    */
@@ -603,6 +644,11 @@ public final class JavaShape implements StoreShape {
     } catch (ClassCastException e) {
       return null;
     }
+  }
+
+  /** Marks the store as about to change, so isPending is true for it until the action around this ends. */
+  public void affects(Object view) {
+    rt.storeAffects(view);
   }
 
   /** The node behind a derived store, for refresh. */

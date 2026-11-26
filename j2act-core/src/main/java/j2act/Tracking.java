@@ -13,8 +13,8 @@ final class Tracking {
   }
 
   /**
-   * Runs fn with what is around it put back: a browser's tabs share a runtime, so code that runs again later, in
-   * whatever job its flush falls in, has only this to say whose it is (ADR 0033).
+   * Runs fn with what is around it put back: code the engine runs again later, in whatever job its flush falls in, has
+   * only this to say whose it is (ADR 0033), and a store's hub runs what tabs sent it as theirs (ADR 0037).
    */
   static <T> T in(Tab tab, Scope scope, java.util.function.Supplier<T> fn) {
     Scope previousScope = swapScope(scope);

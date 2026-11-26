@@ -31,7 +31,7 @@ public final class Tab {
   final J2Act engine;
   final String id;
   final String token;
-  /** What this tab shares with the rest of its browser (ADR 0033). */
+  /** This tab's own graph (ADR 0037). */
   final ReactiveHost host;
   final Lane lane;
   final Runtime rt;
@@ -192,6 +192,9 @@ public final class Tab {
     this.lane = host.lane;
     this.rt = host.rt;
     host.tabs.add(this);
+    if (host.tab == null) {
+      host.tab = this;
+    }
     this.unacknowledged = new Unacknowledged(engine.maxUnacknowledged);
     this.exchange = exchange;
     this.nonce = engine.cspNonce == null ? null : engine.cspNonce.apply(exchange);
@@ -907,8 +910,8 @@ public final class Tab {
   }
 
   /**
-   * A read outside any loading(...) the page waits for, or a change it would tear. Asked of the whole browser's
-   * runtime, so another tab's load can keep a navigation back too, for no longer than pendingMs.
+   * A read outside any loading(...) the page waits for, or a change it would tear. Asked of this tab's own graph,
+   * so only its own loads keep a navigation back, for no longer than pendingMs (ADR 0037).
    */
   private boolean awaitingData() {
     return rt.holding();
@@ -1483,7 +1486,7 @@ public final class Tab {
     return depth;
   }
 
-  /** Lane-only. Re-renders what changed and sends it. Runs the whole browser's reactivity. */
+  /** Lane-only. Re-renders what changed and sends it. */
   void flush() {
     host.endJob();
   }
@@ -1780,6 +1783,7 @@ public final class Tab {
     }
     lastActivity = engine.clock.millis();
     dispatching = entry.scope;
+    int sends = host.outgoingMark();
     try {
       Handlers.invoke(entry, message);
       if ("true".equals(message.get("echo")) && entry.scope.html != null) {
@@ -1792,6 +1796,8 @@ public final class Tab {
       onRouteException(e);
       return true;
     } catch (Throwable t) {
+      // What it wrote to other graphs goes nowhere: a handler that throws changes nothing they show (ADR 0037).
+      host.dropOutgoingSince(sends);
       engine.log(System.Logger.Level.WARNING, "event handler failed in "
         + entry.scope.instance.getClass().getName(), t);
       return false;

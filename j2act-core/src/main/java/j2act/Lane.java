@@ -69,6 +69,22 @@ final class Lane implements Executor {
     }
   }
 
+  /** Like runInline, but only if no other task of the lane runs now: false, and nothing ran, when one does. */
+  boolean tryRunInline(Runnable task) {
+    if (!running.tryLock()) {
+      return false;
+    }
+    Thread previous = owner;
+    owner = Thread.currentThread();
+    try {
+      task.run();
+    } finally {
+      owner = previous;
+      running.unlock();
+    }
+    return true;
+  }
+
   private void drain() {
     try {
       Runnable task;

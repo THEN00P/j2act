@@ -532,6 +532,11 @@ public final class Runtime {
     return count;
   }
 
+  /** Whether anything reads it now. */
+  public boolean observed(Node node) {
+    return node.subs != null;
+  }
+
   /** Whether its last run read anything that could run it again. */
   public boolean hasSources(Node node) {
     return node.deps != null;

@@ -109,10 +109,16 @@ class RandomAppTest {
 
     volatile int kept;
 
+    /**
+     * The browser's lane applies a tab's writes when the tab's job ends, and an action's when the action ends well
+     * (ADR 0037): what the pages end up showing is the write it applied last, so that is where this is noted.
+     */
     void write(Signal<Integer> n) {
       int value = written.incrementAndGet();
-      shown = value;
-      n.set(value);
+      n.update(old -> {
+        shown = value;
+        return value;
+      });
     }
   }
 
@@ -807,17 +813,31 @@ class RandomAppTest {
       return tab;
     }
 
-    /** Waits until every lane has done what it was given so far. */
+    /**
+     * Waits until every lane has done what it was given so far: the tabs' and their browsers' (ADR 0037), a few times
+     * over, since a write goes from a tab to its browser and the browser's revision back.
+     */
     void settleLanes() {
-      for (BrowserTab tab : tabs) {
-        CompletableFuture<Void> done = new CompletableFuture<>();
-        tab.tab.host.job(() -> done.complete(null));
-        try {
-          done.get(5, TimeUnit.SECONDS);
-        } catch (Exception e) {
-          fail("a lane is stuck\n" + log, e);
+      for (int round = 0; round < 3; round++) {
+        for (Browser browser : h.engine.browsers.values()) {
+          settle(browser.hub.host);
         }
+        for (BrowserTab tab : tabs) {
+          settle(tab.tab.host);
+        }
+      }
+      for (BrowserTab tab : tabs) {
         tab.apply();
+      }
+    }
+
+    private void settle(ReactiveHost host) {
+      CompletableFuture<Void> done = new CompletableFuture<>();
+      host.job(() -> done.complete(null));
+      try {
+        done.get(5, TimeUnit.SECONDS);
+      } catch (Exception e) {
+        fail("a lane is stuck\n" + log, e);
       }
     }
 
@@ -1110,7 +1130,7 @@ class RandomAppTest {
 
     /** What must be true of every tab at rest. */
     void check() {
-      int n = w.written.get();
+      int n = w.shown;
       for (BrowserTab tab : tabs) {
         String at = "tab" + tabs.indexOf(tab) + " wanted " + tab.wanted;
         expect(tab, tab.problems.isEmpty(), at + ": " + tab.problems);

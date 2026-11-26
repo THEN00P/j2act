@@ -108,7 +108,18 @@ public final class Action<V, R> {
         Throwable failed = failure;
         // Not tab.post: it ends even if the tab has, and what waits on its future runs as this tab's.
         tab.host.job(() -> Tracking.in(tab, scope, () -> {
-          run.end(ended, failed);
+          if (failed == null && call.sends()) {
+            // Its writes to other graphs land there first, and their revision here, then it ends (ADR 0037).
+            call.send(apply -> {
+              // What the other graphs published of its writes, its pending's end and its own end: one change here.
+              apply.run();
+              call.ended();
+              run.end(ended, null);
+            });
+          } else {
+            call.ended();
+            run.end(ended, failed);
+          }
           return null;
         }));
       });
@@ -131,6 +142,74 @@ public final class Action<V, R> {
 
     static Call current() {
       return CURRENT.get();
+    }
+
+    /** Writes to other graphs' values, by graph, in order: sent when the body ended well, dropped if it failed. */
+    private final java.util.Map<ReactiveHost, java.util.List<Runnable>> outgoing = new java.util.LinkedHashMap<>();
+
+    /**
+     * A write to a value of another graph (ADR 0037): held until the body ends, then sent with the rest, as an
+     * action's writes commit at its end. Meanwhile the page shows the value as pending, as for its own held writes.
+     */
+    void queue(Cell cell, Runnable write, Supplier<?> onPage) {
+      synchronized (outgoing) {
+        outgoing.computeIfAbsent(cell.tab.host, h -> new java.util.ArrayList<>()).add(() -> {
+          if (!cell.tab.disposed) {
+            write.run();
+          }
+        });
+      }
+      Object feed = enter(tab, onPage);
+      if (feed instanceof Feed) {
+        synchronized (outgoing) {
+          sending.add((Feed) feed);
+        }
+      }
+    }
+
+    /** The mirrors here this action's writes make pending until it ends. */
+    private final java.util.List<Feed> sending = new java.util.ArrayList<>();
+
+    /** Lane-only, the action's tab's: it ended, so what it wrote is no longer pending here. */
+    void ended() {
+      java.util.List<Feed> feeds;
+      synchronized (outgoing) {
+        feeds = new java.util.ArrayList<>(sending);
+        sending.clear();
+      }
+      for (Feed feed : feeds) {
+        feed.sending(-1);
+      }
+    }
+
+    boolean sends() {
+      synchronized (outgoing) {
+        return !outgoing.isEmpty();
+      }
+    }
+
+    /**
+     * Lane-only, the action's tab's. Sends the writes, one batch per graph. Once each graph applied its batch and
+     * published it, done runs on this lane, in a job of its own, with what applies those revisions here.
+     */
+    void send(java.util.function.Consumer<Runnable> done) {
+      java.util.Map<ReactiveHost, java.util.List<Runnable>> batches;
+      synchronized (outgoing) {
+        batches = new java.util.LinkedHashMap<>(outgoing);
+        outgoing.clear();
+      }
+      java.util.List<Runnable> heard = new java.util.ArrayList<>();
+      int[] left = {batches.size()};
+      batches.forEach((to, writes) -> {
+        tab.host.mirrors.await(to);
+        to.applyBatch(writes, () -> tab.host.job(() -> Tracking.in(tab, null, () -> {
+          heard.add(tab.host.mirrors.heard(to));
+          if (--left[0] == 0) {
+            done.accept(() -> heard.forEach(Runnable::run));
+          }
+          return null;
+        })));
+      });
     }
 
     /** Runs fn on the lane in this action's transaction. */

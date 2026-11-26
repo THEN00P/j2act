@@ -27,8 +27,8 @@ import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 /**
- * What the layer above the engine owes it: code the engine runs again later knows whose it is, what goes away lets go
- * of the graph a browser's tabs share, and an answer nobody waits for any more changes nothing.
+ * What the layer above the engine owes it: code the engine runs again later knows whose it is, what goes away stops
+ * following the browser's graph, and an answer nobody waits for any more changes nothing.
  */
 class SharedRuntimeTest {
 
@@ -680,7 +680,7 @@ class SharedRuntimeTest {
     }
   }
 
-  // ---- a hidden tab holds nothing, whenever it went out of sight
+  // ---- a tab's loads hold only that tab (ADR 0037)
 
   @BrowserScoped
   public static class Selection extends Store {
@@ -706,7 +706,7 @@ class SharedRuntimeTest {
   }
 
   @Test
-  void aTabGoingOutOfSightFreesTheOthersFromAHoldItIsTheLastOf() {
+  void aTabShowsAWriteWhenItsOwnLoadLandsWhateverTheOtherTabsLoad() {
     HoldsTogether.LOADS.clear();
     HoldsTogether.tabs.set(0);
     try (Harness h = new Harness(HoldsTogether::new, b -> b.withReconnectGrace(Duration.ofSeconds(30)))) {
@@ -721,21 +721,19 @@ class SharedRuntimeTest {
       int fromOne = one.size();
       click(h, one, first.html());
       Harness.eventually(() -> HoldsTogether.LOADS.size() == 2, "both tabs load");
-      HoldsTogether.LOADS.get("b0").complete("B");
-      assertTrue(one.since(fromOne, m -> "patch".equals(m.get("type"))).isEmpty(), "held for the other tab's load");
-
-      h.engine.onMessage(two, Json.object("type", "visibility", "hidden", true));
-      Harness.eventually(() -> !one.since(fromOne, m -> "patch".equals(m.get("type"))
-        && m.get("html").contains("id:b;loaded:B;")).isEmpty(), "the visible tab shows it");
-
       int fromTwo = two.size();
+      HoldsTogether.LOADS.get("b0").complete("B");
+      Harness.eventually(() -> !one.since(fromOne, m -> "patch".equals(m.get("type"))
+        && m.get("html").contains("id:b;loaded:B;")).isEmpty(), "the tab whose load landed shows it");
+      assertTrue(two.since(fromTwo, m -> "patch".equals(m.get("type"))).isEmpty(), "the other still waits for its own");
+
       HoldsTogether.LOADS.get("b1").complete("B2");
       Harness.eventually(() -> !two.since(fromTwo, m -> "patch".equals(m.get("type"))
-        && m.get("html").contains("id:b;loaded:B2;")).isEmpty(), "the hidden tab catches up");
+        && m.get("html").contains("id:b;loaded:B2;")).isEmpty(), "and shows it once its load lands");
     }
   }
 
-  // ---- what outlives a tab still ends: its transaction holds what the other tabs share
+  // ---- an action whose tab ended still sends its writes to the browser (ADR 0037)
 
   static final class WritesAfterItsTabEnds extends LiveComponent {
     static volatile CompletableFuture<Void> gate;

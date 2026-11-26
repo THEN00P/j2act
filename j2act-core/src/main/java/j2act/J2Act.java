@@ -302,9 +302,6 @@ public final class J2Act implements AutoCloseable {
       tab.browser = joined;
       tab.joinedBrowser();
       if (minted) {
-        synchronized (hosts) {
-          hosts.put(cookie, tab.host);
-        }
         tab.browserCookie = cookie;
         tab.mintedBrowserCookie = tab.pendingBrowserCookie = browserCookieHeader(cookie);
         if (tab.connection != null) {
@@ -370,10 +367,8 @@ public final class J2Act implements AutoCloseable {
     } catch (RuntimeException e) {
       log(System.Logger.Level.WARNING, "a browser's retained state could not be restored", e);
     }
-    synchronized (hosts) {
-      hosts.putIfAbsent(cookie, tab.host);
-    }
-    Tab hub = new Tab(this, tab.host, "browser:" + newSecret(9), newSecret(18), tab.exchange, "/");
+    // A graph of its own (ADR 0037): its tabs read its values through their own.
+    Tab hub = new Tab(this, new ReactiveHost(this), "browser:" + newSecret(9), newSecret(18), tab.exchange, "/");
     Browser browser = new Browser(this, cookie, hub, principal);
     hub.hubFor = browser;
     hub.snapshot.restore(entries);
@@ -1334,27 +1329,16 @@ public final class J2Act implements AutoCloseable {
     }
   }
 
-  /** One runtime per browser (ADR 0033): by cookie while any tab uses it. A runtime never merges with another. */
-  private final Map<String, ReactiveHost> hosts = new java.util.concurrent.ConcurrentHashMap<>();
-
-  /** A tab on its cookie's runtime. It joins under the lock, so a last tab leaving cannot forget the runtime first. */
+  /** A tab with a graph of its own (ADR 0037): what it shares with other tabs, it reads from their graphs. */
   private Tab newTab(String cookie, Exchange exchange, String url) {
-    synchronized (hosts) {
-      ReactiveHost host = cookie == null ? new ReactiveHost(this) : hosts.computeIfAbsent(cookie, c -> new ReactiveHost(this));
-      return new Tab(this, host, newSecret(18), newSecret(18), exchange, url);
-    }
+    return new Tab(this, new ReactiveHost(this), newSecret(18), newSecret(18), exchange, url);
   }
 
-  /** Lane-only. A tab ended: a runtime no tab uses is forgotten, and its cookie's next tab makes another. */
+  /** Lane-only. A tab ended: the values of other graphs it read stop coming. */
   void leaveHost(Tab tab) {
     ReactiveHost host = tab.host;
-    synchronized (hosts) {
-      host.tabs.remove(tab);
-      if (host.tabs.isEmpty()) {
-        // Under every cookie it had: a tab that left a browser registers its runtime under its next one.
-        hosts.values().removeIf(h -> h == host);
-      }
-    }
+    host.tabs.remove(tab);
+    host.mirrors.releaseAll();
   }
 
   String newSecret(int bytes) {
