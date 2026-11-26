@@ -370,4 +370,35 @@ class ClusterTest {
       assertEquals(0, held.deletes.get().intValue());
     }
   }
+
+  private static int sizeOn(ReactiveHost host) {
+    java.util.concurrent.CompletableFuture<Integer> size = new java.util.concurrent.CompletableFuture<>();
+    host.job(() -> size.complete(host.published().size()));
+    try {
+      return size.get(5, java.util.concurrent.TimeUnit.SECONDS);
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  @Test
+  void aServerWhosePagesAreAllHiddenHearsNothingFromTheHolderUntilOneIsShown() {
+    try (Harness a = server("http://a"); Harness b = server("http://b")) {
+      Room room = a.engine.sharedStore(Room.class, "lobby");
+      BrowserStoreTest.Page bob = new BrowserStoreTest.Page(b.engine, "/", Exchange.empty()).connect();
+      ReactiveHost held = a.engine.peers.remote.owned(a.engine.sharedId(Room.class, "lobby")).entry.hub.host;
+      Harness.eventually(() -> sizeOn(held) == 2, "B reads both values: " + sizeOn(held));
+      bob.engine.onMessage(bob.conn, Json.object("type", "visibility", "hidden", "true"));
+      Harness.eventually(() -> sizeOn(held) == 0, "B's only page is hidden: A sends B nothing");
+      int from = bob.conn.size();
+      room.post("while hidden");
+      Thread.sleep(150);
+      assertTrue(bob.conn.since(from, m -> "patch".equals(m.get("type"))).isEmpty(), "nothing reached the page");
+      bob.engine.onMessage(bob.conn, Json.object("type", "visibility", "hidden", "false"));
+      bob.awaitPatch(from, "messages:while hidden;posts:1;");
+      Harness.eventually(() -> sizeOn(held) == 2, "B reads them again");
+    } catch (InterruptedException e) {
+      throw new IllegalStateException(e);
+    }
+  }
 }

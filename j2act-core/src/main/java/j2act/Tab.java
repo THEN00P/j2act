@@ -1696,6 +1696,8 @@ public final class Tab {
       // With no socket, and no response still streaming, nobody is looking at what this tab shows.
       boolean hidden = pageHidden || (connection == null && stream == null && shellSent);
       rt.setTabHidden(rootOwner, hidden);
+      // Nor at what other graphs change: they skip it until someone does (ADR 0037).
+      host.mirrors.hidden(hidden);
       // A change could go through without this tab while it was out of sight: it reads what that left behind again.
       if (live && outOfSight && !hidden && root != null && rt.clock() != outOfSightAt) {
         markDirty(root);

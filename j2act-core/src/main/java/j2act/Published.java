@@ -85,6 +85,14 @@ final class Published {
   interface Reader {
     /** A revision of from's: every value it changed that this reader reads. Any thread. */
     void deliver(ReactiveHost from, long revision, List<Update> updates);
+
+    /**
+     * Nobody looks at this reader's page now (ADR 0037): revisions skip it until it resumes, and then it gets the state
+     * each value is in. Any thread.
+     */
+    default boolean paused() {
+      return false;
+    }
   }
 
   private static final class Entry {
@@ -96,6 +104,8 @@ final class Published {
     final Map<Reader, Integer> readers = new LinkedHashMap<>();
     State last;
     Node tap;
+    /** A stub's value every reader of which is paused: the server holding it stops sending it (ADR 0037). */
+    boolean stubPaused;
 
     Entry(Cell cell) {
       this.cell = cell;
@@ -121,7 +131,8 @@ final class Published {
       entry = new Entry(cell);
       entries.put(cell, entry);
       entry.tap = tap(cell);
-      entry.last = stateOf(cell).at(revision);
+      // A number of its own: a reader that read it before, and stopped, has an older state of it with the last one.
+      entry.last = stateOf(cell).at(++revision);
       host.lastStates.put(cell, entry.last);
       if (cell instanceof Stub.Stubbed) {
         // A stub's value comes from the server that holds the store, from now on (ADR 0037).
@@ -129,7 +140,58 @@ final class Published {
       }
     }
     entry.readers.merge(reader, 1, Integer::sum);
+    restub(entry);
     return entry.last;
+  }
+
+  /**
+   * A stub's value is fed by the server holding it while a reader that is not paused reads it, so a server whose
+   * pages are all hidden gets nothing it would not show (ADR 0037).
+   */
+  private void restub(Entry entry) {
+    if (!(entry.cell instanceof Stub.Stubbed)) {
+      return;
+    }
+    boolean wanted = false;
+    for (Reader reader : entry.readers.keySet()) {
+      wanted |= !reader.paused();
+    }
+    if (wanted == !entry.stubPaused) {
+      return;
+    }
+    entry.stubPaused = !wanted;
+    Stub stub = host.tab.sharedFor.stub;
+    if (wanted) {
+      stub.subscribe(entry.cell.address);
+    } else {
+      stub.unsubscribe(entry.cell.address);
+    }
+  }
+
+  /** Lane-only. reader paused: a stub's value only paused readers read stops coming from its holder. */
+  void paused(Reader reader) {
+    for (Entry entry : entries.values()) {
+      if (entry.readers.containsKey(reader)) {
+        restub(entry);
+      }
+    }
+  }
+
+  /**
+   * Lane-only. reader resumed: it gets the state each value it reads is in now, as this host's latest revision; what
+   * it has already changes nothing there.
+   */
+  List<Update> resumed(Reader reader) {
+    List<Update> updates = new ArrayList<>();
+    for (Entry entry : entries.values()) {
+      if (entry.readers.containsKey(reader)) {
+        restub(entry);
+        if (!entry.cell.disposed) {
+          updates.add(new Update(entry.cell, entry.last));
+        }
+      }
+    }
+    return updates;
   }
 
   /** Lane-only. reader no longer reads cell. */
@@ -139,10 +201,12 @@ final class Published {
       return;
     }
     entry.readers.computeIfPresent(reader, (r, count) -> count > 1 ? count - 1 : null);
-    if (entry.readers.isEmpty()) {
+    if (!entry.readers.isEmpty()) {
+      restub(entry);
+    } else {
       entries.remove(cell);
       host.lastStates.remove(cell);
-      unstub(cell);
+      unstub(entry);
       if (entry.tap != null) {
         host.rt.disposeNode(entry.tap);
       }
@@ -150,8 +214,9 @@ final class Published {
     }
   }
 
-  private void unstub(Cell cell) {
-    if (cell instanceof Stub.Stubbed) {
+  private void unstub(Entry entry) {
+    Cell cell = entry.cell;
+    if (cell instanceof Stub.Stubbed && !entry.stubPaused) {
       host.tab.sharedFor.stub.unsubscribe(cell.address);
     }
   }
@@ -170,13 +235,18 @@ final class Published {
   /** Lane-only. A reader's graph ended. */
   void forget(Reader reader) {
     for (Entry entry : new ArrayList<>(entries.values())) {
-      if (entry.readers.remove(reader) != null && entry.readers.isEmpty()) {
-        entries.remove(entry.cell);
-        host.lastStates.remove(entry.cell);
-        unstub(entry.cell);
-        if (entry.tap != null) {
-          host.rt.disposeNode(entry.tap);
-        }
+      if (entry.readers.remove(reader) == null) {
+        continue;
+      }
+      if (!entry.readers.isEmpty()) {
+        restub(entry);
+        continue;
+      }
+      entries.remove(entry.cell);
+      host.lastStates.remove(entry.cell);
+      unstub(entry);
+      if (entry.tap != null) {
+        host.rt.disposeNode(entry.tap);
       }
     }
     unreadIfNone();
@@ -203,7 +273,9 @@ final class Published {
         out = new LinkedHashMap<>();
       }
       for (Reader reader : entry.readers.keySet()) {
-        out.computeIfAbsent(reader, r -> new ArrayList<>()).add(new Update(entry.cell, entry.last));
+        if (!reader.paused()) {
+          out.computeIfAbsent(reader, r -> new ArrayList<>()).add(new Update(entry.cell, entry.last));
+        }
       }
     }
     if (out == null) {

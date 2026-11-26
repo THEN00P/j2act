@@ -45,7 +45,7 @@ final class Checks {
 
   /** What differs between the readers of a shared store, which its code cannot use (ADR 0037). */
   private static final Set<String> READER_READS = new HashSet<>(Arrays.asList("auth", "pathParam", "queryParam",
-    "useTab", "useTabStore", "useBrowser", "useBrowserStore", "navigate"));
+    "useTab", "useTabStore", "useBrowser", "useBrowserStore", "navigate", "liveWhileHidden"));
   private static final String SHARED_SCOPED = "j2act.SharedScoped";
 
   /** Setters of URL-valued attributes in the generated tags. */

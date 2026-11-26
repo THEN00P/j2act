@@ -37,6 +37,7 @@ public class SharedStores {
     public Annex() {
       createEffect(() -> 1, value -> {
         useTab(); // expect: useTab() differs between the readers
+        liveWhileHidden(); // expect: liveWhileHidden() differs between the readers
         return null;
       });
     }

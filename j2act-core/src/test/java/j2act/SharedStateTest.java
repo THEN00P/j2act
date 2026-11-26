@@ -270,4 +270,108 @@ class SharedStateTest {
       fails = false;
     }
   }
+
+  static volatile boolean keepLive;
+
+  /** Shows the count; its button's region read it, so a click on it waits until the page has the latest. */
+  static final class Watch extends LiveComponent {
+    @Override protected View setup() {
+      Board board = useBrowserStore(Board.class);
+      if (keepLive) {
+        Reactive.liveWhileHidden();
+      }
+      return () -> T.page("w", T.div(T.span("count:" + board.count.get() + ";"),
+        T.button("inc").onClick(e -> board.count.update(n -> n + 1))));
+    }
+  }
+
+  private static void visible(BrowserStoreTest.Page page, boolean visible) {
+    page.engine.onMessage(page.conn, j2act.internal.json.Json.object("type", "visibility", "hidden",
+      String.valueOf(!visible)));
+  }
+
+  private static boolean patched(BrowserStoreTest.Page page, int from, String text) {
+    return !page.conn.since(from, m -> "patch".equals(m.get("type")) && m.get("html").contains(text)).isEmpty();
+  }
+
+  @Test
+  void aHiddenPageGetsNothingUntilItIsShownAndThenTheLatest() {
+    keepLive = false;
+    try (Harness h = BrowserStoreTest.harness(Watch::new)) {
+      BrowserStoreTest.Page[] tabs = twoTabs(h);
+      visible(tabs[1], false);
+      quiet();
+      int hidden = tabs[1].conn.size();
+      int from = tabs[0].conn.size();
+      tabs[0].click("inc");
+      tabs[0].awaitPatch(from, "count:1;");
+      from = tabs[0].conn.size();
+      tabs[0].click("inc");
+      tabs[0].awaitPatch(from, "count:2;");
+      quiet();
+      assertTrue(!patched(tabs[1], hidden, "count:"), "a hidden page renders none of it");
+      visible(tabs[1], true);
+      tabs[1].awaitPatch(hidden, "count:2;");
+      assertTrue(!patched(tabs[1], hidden, "count:1;"), "only the latest, not each change in between");
+      from = tabs[1].conn.size();
+      tabs[0].click("inc");
+      tabs[1].awaitPatch(from, "count:3;");
+    }
+  }
+
+  @Test
+  void aPageThatAskedToStayLiveGetsEveryChangeWhileHidden() {
+    keepLive = true;
+    try (Harness h = BrowserStoreTest.harness(Watch::new)) {
+      BrowserStoreTest.Page[] tabs = twoTabs(h);
+      visible(tabs[1], false);
+      quiet();
+      int from = tabs[1].conn.size();
+      tabs[0].click("inc");
+      tabs[1].awaitPatch(from, "count:1;");
+    } finally {
+      keepLive = false;
+    }
+  }
+
+  @Test
+  void aClickOnAHiddenPageCatchesUpFirstAndThenItWaitsAgain() {
+    keepLive = false;
+    try (Harness h = BrowserStoreTest.harness(Watch::new)) {
+      BrowserStoreTest.Page[] tabs = twoTabs(h);
+      visible(tabs[1], false);
+      quiet();
+      int from = tabs[0].conn.size();
+      tabs[0].click("inc");
+      tabs[0].awaitPatch(from, "count:1;");
+      int hidden = tabs[1].conn.size();
+      // Rendered from count 0, which changed since: it waits for the page to have 1, then runs.
+      from = tabs[0].conn.size();
+      tabs[1].click("inc");
+      tabs[1].awaitPatch(hidden, "count:1;");
+      tabs[0].awaitPatch(from, "count:2;");
+      quiet();
+      int after = tabs[1].conn.size();
+      from = tabs[0].conn.size();
+      tabs[0].click("inc");
+      tabs[0].awaitPatch(from, "count:3;");
+      quiet();
+      assertTrue(!patched(tabs[1], after, "count:3;"), "hidden again once it caught up");
+    }
+  }
+
+  @Test
+  void aServerWhosePagesAreAllHiddenStopsHearingFromTheHolder() {
+    // ClusterTest covers this across servers; here the hub's entry stays while its reader is paused.
+    keepLive = false;
+    try (Harness h = BrowserStoreTest.harness(Watch::new)) {
+      BrowserStoreTest.Page[] tabs = twoTabs(h);
+      ReactiveHost hub = h.engine.browsers.values().iterator().next().hub.host;
+      Harness.eventually(() -> sizeOn(hub) == 1, "the hub sends the count: " + sizeOn(hub));
+      visible(tabs[0], false);
+      visible(tabs[1], false);
+      quiet();
+      assertEquals(1, sizeOn(hub), "a hidden page still reads it: it stays");
+    }
+  }
 }

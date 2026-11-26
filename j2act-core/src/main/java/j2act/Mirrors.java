@@ -25,6 +25,60 @@ final class Mirrors implements Published.Reader {
   private final ReactiveHost host;
   private final Map<Cell, Mirror> cells = new IdentityHashMap<>();
 
+  /** Nobody looks at this graph's page (ADR 0037): sources skip it, and it catches up when someone does. */
+  private volatile boolean paused;
+  /** Lane-only. The page is hidden or has no socket. */
+  private boolean hidden;
+  /** Lane-only. Components that keep this graph getting changes while hidden (liveWhileHidden()). */
+  private int keptLive;
+  /** Lane-only. Clicks waiting to catch up: they need the revisions now, hidden or not. */
+  private int waking;
+
+  @Override public boolean paused() {
+    return paused;
+  }
+
+  /** Lane-only. Whether anyone looks at this graph's page. */
+  void hidden(boolean hidden) {
+    this.hidden = hidden;
+    repause();
+  }
+
+  /** Lane-only. A component keeps this graph live while hidden (+1), or left (-1). */
+  void keepLive(int delta) {
+    keptLive += delta;
+    repause();
+  }
+
+  private void repause() {
+    boolean next = hidden && keptLive == 0 && waking == 0;
+    if (next == paused) {
+      return;
+    }
+    // Before the sources hear of it, so what they publish meanwhile reaches this graph or the catch-up does.
+    paused = next;
+    for (ReactiveHost from : sources()) {
+      if (next) {
+        from.job(() -> from.published().paused(this));
+      } else {
+        from.job(() -> {
+          List<Published.Update> now = from.published().resumed(this);
+          if (!now.isEmpty()) {
+            deliver(from, from.published().revision, now);
+          }
+        });
+      }
+    }
+  }
+
+  private java.util.Set<ReactiveHost> sources() {
+    java.util.Set<ReactiveHost> sources = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+    for (Mirror mirror : cells.values()) {
+      sources.add(mirror.source().tab.host);
+    }
+    return sources;
+  }
+
   Mirrors(ReactiveHost host) {
     this.host = host;
   }
@@ -271,9 +325,16 @@ final class Mirrors implements Published.Reader {
   void whenCaughtUp(Map<Cell, Long> revisions, Runnable then) {
     if (caughtUp(revisions)) {
       host.job(then);
-    } else {
-      catchingUp.add(new java.util.AbstractMap.SimpleImmutableEntry<>(revisions, then));
+      return;
     }
+    // A hidden page catches up for the click, then goes back to waiting until someone looks.
+    waking++;
+    repause();
+    catchingUp.add(new java.util.AbstractMap.SimpleImmutableEntry<>(revisions, () -> {
+      waking--;
+      repause();
+      then.run();
+    }));
   }
 
   private boolean caughtUp(Map<Cell, Long> revisions) {
@@ -319,10 +380,7 @@ final class Mirrors implements Published.Reader {
 
   /** Lane-only. This graph ended: every source it read stops sending. */
   void releaseAll() {
-    java.util.Set<ReactiveHost> sources = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
-    for (Mirror mirror : cells.values()) {
-      sources.add(mirror.source().tab.host);
-    }
+    java.util.Set<ReactiveHost> sources = sources();
     cells.clear();
     for (ReactiveHost from : sources) {
       from.job(() -> from.published().forget(this));

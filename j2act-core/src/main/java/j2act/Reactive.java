@@ -377,6 +377,20 @@ public final class Reactive {
   }
 
   /**
+   * Keeps this page getting what shared and browser stores change while nobody looks at it (ADR 0037), for as long as
+   * this component is on it: for a title that counts unread messages, or a sound when one arrives. Other hidden pages
+   * get nothing until they are shown again, and then the state each value is in.
+   */
+  public static void liveWhileHidden() {
+    Tab tab = readerTab("liveWhileHidden()");
+    if (tab.isHub()) {
+      throw new IllegalStateException("liveWhileHidden() is for a component on a page, not a store (ADR 0037)");
+    }
+    tab.host.mirrors.keepLive(1);
+    onCleanup(() -> tab.host.mirrors.keepLive(-1));
+  }
+
+  /**
    * Runs once, when the page is live and this component's data is on screen: the socket is
    * connected, everything loading here and below finished, and the update showing it was sent
    * (ADR 0031). What it returns, or null, runs on unmount.
