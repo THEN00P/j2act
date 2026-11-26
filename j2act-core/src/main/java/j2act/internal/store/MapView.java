@@ -26,7 +26,11 @@ public final class MapView<K, V> extends AbstractMap<K, V> implements StoreView 
   }
 
   @Override @SuppressWarnings("unchecked") public V get(Object key) {
-    return shape.at(target, () -> (V) shape.present(shape.rt.storeGet(target, key)));
+    return shape.at(target, () -> {
+      Object value = shape.rt.storeGet(target, key);
+      shape.noted(target, key, value, true);
+      return (V) shape.present(value);
+    });
   }
 
   @Override public boolean containsKey(Object key) {

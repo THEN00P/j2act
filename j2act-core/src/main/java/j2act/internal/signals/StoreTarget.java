@@ -68,6 +68,16 @@ public final class StoreTarget implements Node.Host {
     return px;
   }
 
+  /** The target this one is a part of, or null for a store's own. */
+  public StoreTarget parent() {
+    return u;
+  }
+
+  /** This target's key in its parent: a field name, a map key or a list index. */
+  public Object keyInParent() {
+    return pk;
+  }
+
   /** The target of the store this one is part of. */
   public StoreTarget root() {
     StoreTarget t = this;

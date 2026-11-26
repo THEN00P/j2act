@@ -48,6 +48,38 @@ public final class JavaShape implements StoreShape {
     this.rt = rt;
   }
 
+  /**
+   * Told of each tracked read by what it read (ADR 0037): an element of a list or a map that is an object, which a
+   * reader needs to be there; one value, a field, a scalar element or whether a set holds something; or a whole
+   * object, as a reader of a class that does not track its fields reads it.
+   */
+  public interface Reads {
+    int ELEMENT = 1;
+    int VALUE = 2;
+    int WHOLE = 3;
+
+    void read(StoreTarget target, Object key, int kind);
+  }
+
+  private Reads reads;
+
+  public void reads(Reads reads) {
+    this.reads = reads;
+  }
+
+  /** A tracked read of key in target, of what kind. */
+  void noted(StoreTarget target, Object key, Object value, boolean element) {
+    if (reads != null && rt.getObserver() != null) {
+      reads.read(target, key, element && value instanceof StoreView ? Reads.ELEMENT : Reads.VALUE);
+    }
+  }
+
+  void notedWhole(StoreTarget target) {
+    if (reads != null && rt.getObserver() != null) {
+      reads.read(target, null, Reads.WHOLE);
+    }
+  }
+
   // ---- the seam
 
   @Override public boolean isWrappable(Object value) {
@@ -444,6 +476,7 @@ public final class JavaShape implements StoreShape {
       Object given = tracks(bean.type) ? rt.handOut(bean) : j2act.internal.signals.Stores.NOT_FINE;
       if (given == j2act.internal.signals.Stores.NOT_FINE) {
         given = rt.deep(bean);
+        notedWhole(bean.target);
       }
       if (handed != null) {
         handed.check();
@@ -465,6 +498,7 @@ public final class JavaShape implements StoreShape {
     }
     return at(owner.target, () -> {
       Object value = rt.storeGet(owner.target, name);
+      noted(owner.target, name, value, false);
       below(value);
       Object now;
       if (value instanceof BeanView) {
@@ -496,7 +530,9 @@ public final class JavaShape implements StoreShape {
       return;
     }
     at(owner.target, () -> {
-      below(rt.storeGet(owner.target, name));
+      Object value = rt.storeGet(owner.target, name);
+      noted(owner.target, name, value, false);
+      below(value);
       return null;
     });
   }
@@ -676,7 +712,12 @@ public final class JavaShape implements StoreShape {
 
   /** One property, by the fields that lead to it: tracked, and only that property. */
   public Object readPath(Object view, String[] path) {
-    return at(targetOf(view), () -> present(rt.storeGet(follow(view, path, path.length - 1), path[path.length - 1])));
+    return at(targetOf(view), () -> {
+      StoreTarget owner = follow(view, path, path.length - 1);
+      Object value = rt.storeGet(owner, path[path.length - 1]);
+      noted(owner, path[path.length - 1], value, false);
+      return present(value);
+    });
   }
 
   /** Writes one property, with no draft. */
@@ -689,7 +730,10 @@ public final class JavaShape implements StoreShape {
 
   /** The whole value as real objects, tracked: whoever reads it runs again on any change in it. */
   public Object deep(Object view) {
-    return at(targetOf(view), () -> rt.deep(view));
+    return at(targetOf(view), () -> {
+      notedWhole(targetOf(view));
+      return rt.deep(view);
+    });
   }
 
   /** Puts back a value a snapshot kept. */

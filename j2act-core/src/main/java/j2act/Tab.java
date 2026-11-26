@@ -279,6 +279,7 @@ public final class Tab {
             onRouteException(e);
           }
           host.endJob();
+          sendPendingAcks();
         } catch (Throwable t) {
           engine.stats.failedTasks.incrementAndGet();
           engine.log(System.Logger.Level.ERROR, "tab task failed", t);
@@ -376,6 +377,18 @@ public final class Tab {
 
   void post(Runnable body) {
     lane.execute(task(body));
+  }
+
+  /** Lane-only. Acknowledges the events this job ran, after its patches went. */
+  private void sendPendingAcks() {
+    if (pendingAcks.isEmpty()) {
+      return;
+    }
+    List<String> acks = new ArrayList<>(pendingAcks);
+    pendingAcks.clear();
+    for (String ack : acks) {
+      send(ack);
+    }
   }
 
   <T> CompletableFuture<T> call(Callable<T> body) {
@@ -1790,6 +1803,63 @@ public final class Tab {
 
   // ---- events
 
+  /** An event waiting for this page to catch up with another graph, and how often it waited. */
+  private static final class HeldEvent {
+    final Map<String, String> message;
+    final String ack;
+    int waits;
+
+    HeldEvent(Map<String, String> message, String ack) {
+      this.message = message;
+      this.ack = ack;
+    }
+  }
+
+  /** How often an event waits for this page to catch up before it runs on what the page shows then. */
+  private static final int CATCH_UPS = 4;
+  /** Events in the order they came, the first one waiting. Lane-only. */
+  private final java.util.ArrayDeque<HeldEvent> heldEvents = new java.util.ArrayDeque<>();
+  /** Acknowledgements of events run in this job, sent after its patches. Lane-only. */
+  private final List<String> pendingAcks = new ArrayList<>();
+
+  /**
+   * Lane-only. An event from the page (ADR 0037). Its handler was rendered from what other graphs had published then;
+   * when one of them changed that since, the page has not heard of it yet, and the event waits until it has and the
+   * page rendered again: then the handler runs if its element still renders, and the event is refused if it does not,
+   * as a click on a button that is gone. Events after it wait in order.
+   */
+  void event(Map<String, String> message, String ack) {
+    heldEvents.add(new HeldEvent(message, ack));
+    if (heldEvents.size() == 1) {
+      runEvents();
+    }
+  }
+
+  private void runEvents() {
+    while (!heldEvents.isEmpty() && !disposed) {
+      HeldEvent event = heldEvents.peek();
+      Map<Cell, Long> changed = changedFor(event.message);
+      if (changed != null && event.waits++ < CATCH_UPS) {
+        engine.stats.heldEvents.incrementAndGet();
+        host.mirrors.whenCaughtUp(changed, () -> post(this::runEvents));
+        return;
+      }
+      heldEvents.poll();
+      boolean ok = dispatch(event.message);
+      pendingAcks.add(Json.object("type", "ack", "id", event.ack, "ok", ok));
+    }
+  }
+
+  /** What changed in other graphs since the handler's element was rendered from it; null if nothing did. */
+  private Map<Cell, Long> changedFor(Map<String, String> message) {
+    String handlerId = message.get("handler");
+    Handlers.Entry entry = handlerId == null ? null : handlers.get(handlerId);
+    if (entry == null || entry.scope.disposed) {
+      return null;
+    }
+    return SharedRead.changed(SharedRead.of(entry.scope));
+  }
+
   /** Runs a handler from the latest render. Unknown or stale ids are rejected (ADR 0013). */
   boolean dispatch(Map<String, String> message) {
     noteEvent(message.get("id"));
@@ -1800,6 +1870,7 @@ public final class Tab {
       engine.stats.rejectedEvents.incrementAndGet();
       return false;
     }
+
     lastActivity = engine.clock.millis();
     dispatching = entry.scope;
     int sends = host.outgoingMark();

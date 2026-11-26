@@ -25,14 +25,38 @@ final class Published {
     /** withStaleOnError: the last load failed, and the value is the old one. */
     final boolean failed;
     final long revision;
+    /** The graph whose batch of writes made this state, or null for any other change. */
+    final ReactiveHost author;
+    /** The state before this one, a few back, for a page that wrote this one itself (ADR 0037). */
+    final State before;
 
     State(boolean hasValue, Object value, boolean pending, Throwable error, boolean failed, long revision) {
+      this(hasValue, value, pending, error, failed, revision, null, null);
+    }
+
+    private State(boolean hasValue, Object value, boolean pending, Throwable error, boolean failed, long revision,
+        ReactiveHost author, State before) {
       this.hasValue = hasValue;
       this.value = value;
       this.pending = pending;
       this.error = error;
       this.failed = failed;
       this.revision = revision;
+      this.author = author;
+      this.before = before;
+    }
+
+    /** This state, made by author's batch after previous, which it keeps a few states deep. */
+    State after(State previous, ReactiveHost author) {
+      return new State(hasValue, value, pending, error, failed, revision, author, trimmed(previous, 8));
+    }
+
+    private static State trimmed(State state, int depth) {
+      if (state == null || depth == 0) {
+        return null;
+      }
+      return new State(state.hasValue, state.value, state.pending, state.error, state.failed, state.revision,
+        state.author, trimmed(state.before, depth - 1));
     }
 
     /** The same state, as a reader would see it: the same object, by identity, as the engine compares. */
@@ -92,6 +116,7 @@ final class Published {
       entries.put(cell, entry);
       entry.tap = tap(cell);
       entry.last = stateOf(cell).at(revision);
+      host.lastStates.put(cell, entry.last);
     }
     entry.readers.merge(reader, 1, Integer::sum);
     return entry.last;
@@ -106,6 +131,7 @@ final class Published {
     entry.readers.computeIfPresent(reader, (r, count) -> count > 1 ? count - 1 : null);
     if (entry.readers.isEmpty()) {
       entries.remove(cell);
+      host.lastStates.remove(cell);
       if (entry.tap != null) {
         host.rt.disposeNode(entry.tap);
       }
@@ -129,6 +155,7 @@ final class Published {
     for (Entry entry : new ArrayList<>(entries.values())) {
       if (entry.readers.remove(reader) != null && entry.readers.isEmpty()) {
         entries.remove(entry.cell);
+        host.lastStates.remove(entry.cell);
         if (entry.tap != null) {
           host.rt.disposeNode(entry.tap);
         }
@@ -152,7 +179,8 @@ final class Published {
       if (now.sameAs(entry.last)) {
         continue;
       }
-      entry.last = now.at(next);
+      entry.last = now.at(next).after(entry.last, host.writing);
+      host.lastStates.put(entry.cell, entry.last);
       if (out == null) {
         out = new LinkedHashMap<>();
       }

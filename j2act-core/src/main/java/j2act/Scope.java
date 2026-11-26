@@ -769,6 +769,40 @@ final class Scope {
     tab.rt.setLeftBehind(slot, behind);
   }
 
+  /** Other graphs' parts this scope's last render read (ADR 0037), and the render's before, while it runs. Lane-only. */
+  private java.util.List<SharedRead> sharedReads = java.util.Collections.emptyList();
+  private java.util.List<SharedRead> previousSharedReads;
+
+  java.util.List<SharedRead> sharedReads() {
+    return sharedReads;
+  }
+
+  /** A render read another graph's part. */
+  void sharedRead(SharedRead read) {
+    if (sharedReads.isEmpty() && !(sharedReads instanceof ArrayList)) {
+      sharedReads = new ArrayList<>();
+    }
+    sharedReads.add(read);
+  }
+
+  /** A render starts: what it reads replaces what the last one read, once it ends. */
+  void beginSharedReads() {
+    previousSharedReads = sharedReads;
+    sharedReads = java.util.Collections.emptyList();
+  }
+
+  /** A render stopped partway and its output is dropped: what is on screen was rendered from what it read before. */
+  void abortSharedReads() {
+    if (previousSharedReads != null) {
+      sharedReads = previousSharedReads;
+      previousSharedReads = null;
+    }
+  }
+
+  void endSharedReads() {
+    previousSharedReads = null;
+  }
+
   /** What lets go when this scope ends, such as a hold on a shared store it looked up (ADR 0037). Lane-only. */
   private java.util.List<Runnable> releases;
 

@@ -1,6 +1,7 @@
 package j2act;
 
 import j2act.internal.signals.Runtime;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Supplier;
@@ -134,7 +135,6 @@ public final class Action<V, R> {
 
     final Tab tab;
     private final Runtime.ActionRun run;
-
     Call(Tab tab, Runtime.ActionRun run) {
       this.tab = tab;
       this.run = run;
@@ -189,8 +189,8 @@ public final class Action<V, R> {
     }
 
     /**
-     * Lane-only, the action's tab's. Sends the writes, one batch per graph. Once each graph applied its batch and
-     * published it, done runs on this lane, in a job of its own, with what applies those revisions here.
+     * Lane-only, the action's tab's. Sends the writes, one batch per graph, as one change. Once every graph applied its
+     * batch and published it, done runs on this lane with what applies those revisions here.
      */
     void send(java.util.function.Consumer<Runnable> done) {
       java.util.Map<ReactiveHost, java.util.List<Runnable>> batches;
@@ -198,18 +198,19 @@ public final class Action<V, R> {
         batches = new java.util.LinkedHashMap<>(outgoing);
         outgoing.clear();
       }
-      java.util.List<Runnable> heard = new java.util.ArrayList<>();
-      int[] left = {batches.size()};
+      java.util.List<ReactiveHost.Batch> sent = new java.util.ArrayList<>();
       batches.forEach((to, writes) -> {
         tab.host.mirrors.await(to);
-        to.applyBatch(writes, () -> tab.host.job(() -> Tracking.in(tab, null, () -> {
-          heard.add(tab.host.mirrors.heard(to));
-          if (--left[0] == 0) {
-            done.accept(() -> heard.forEach(Runnable::run));
-          }
-          return null;
-        })));
+        sent.add(new ReactiveHost.Batch(to, writes));
       });
+      tab.host.deliver(sent, () -> Tracking.in(tab, null, () -> {
+        java.util.List<Runnable> published = new java.util.ArrayList<>();
+        for (ReactiveHost.Batch batch : sent) {
+          published.add(tab.host.mirrors.heard(batch.to));
+        }
+        done.accept(() -> published.forEach(Runnable::run));
+        return null;
+      }));
     }
 
     /** Runs fn on the lane in this action's transaction. */

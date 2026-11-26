@@ -1145,10 +1145,7 @@ public final class J2Act implements AutoCloseable {
     }
     if ("event".equals(type)) {
       String ack = message.get("id");
-      boolean[] ok = new boolean[1];
-      tab.lane.execute(tab.task(
-        () -> ok[0] = tab.dispatch(message),
-        () -> tab.send(Json.object("type", "ack", "id", ack, "ok", ok[0]))));
+      tab.post(() -> tab.event(message, ack));
     } else if ("callback".equals(type)) {
       // A client callback into Java: same identity re-check and stale-id rejection as events.
       tab.post(() -> tab.dispatch(message));
@@ -1634,6 +1631,8 @@ public final class J2Act implements AutoCloseable {
     public final AtomicLong supersededRuns = new AtomicLong();
     public final AtomicLong patches = new AtomicLong();
     public final AtomicLong rejectedEvents = new AtomicLong();
+    /** Events that waited for their page to catch up with another graph first (ADR 0037). */
+    public final AtomicLong heldEvents = new AtomicLong();
     public final AtomicLong failedTasks = new AtomicLong();
     public final AtomicLong rateLimited = new AtomicLong();
   }

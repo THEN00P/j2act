@@ -38,7 +38,13 @@ final class Mirrors {
     if (asking != null) {
       asking.add(mirror.feed());
     }
-    return host.rt.read(mirror.node);
+    Object value = host.rt.read(mirror.node);
+    Scope scope = Tracking.scope();
+    if (scope != null) {
+      scope.sharedRead(new SharedRead(host, source, null, j2act.internal.store.JavaShape.Reads.VALUE,
+        mirror.feed().value(), false));
+    }
+    return value;
   }
 
   /** Lane-only. What this graph shows of the value, or the source's own when nothing here reads it. */
@@ -84,11 +90,34 @@ final class Mirrors {
     })));
   }
 
+  /** The copies of other graphs' stores here, by their root target, for what reads them. */
+  private final Map<j2act.internal.signals.StoreTarget, StoreMirror> byRoot = new IdentityHashMap<>();
+
+  /** Lane-only. A tracked read of a store here: a copy's part, which the scope rendering notes with what it saw. */
+  void storeRead(j2act.internal.signals.StoreTarget target, Object key, int kind) {
+    StoreMirror mirror = byRoot.get(target.root());
+    Scope scope = mirror == null ? null : Tracking.scope();
+    if (scope == null) {
+      return;
+    }
+    java.util.ArrayList<Object> keys = new java.util.ArrayList<>();
+    keys.add(key);
+    boolean inElement = false;
+    for (j2act.internal.signals.StoreTarget t = target; t.parent() != null; t = t.parent()) {
+      keys.add(t.keyInParent());
+      Object parentView = t.parent().view();
+      inElement |= parentView instanceof java.util.List || parentView instanceof java.util.Map;
+    }
+    java.util.Collections.reverse(keys);
+    scope.sharedRead(new SharedRead(host, mirror.source, keys.toArray(), kind, mirror.feed().value(), inElement));
+  }
+
   /** Lane-only. This graph's copy of the store, subscribed on first use. */
   StoreMirror storeOf(StoreCell source) {
     boolean fresh = !cells.containsKey(source);
     StoreMirror mirror = mirror(source, first -> StoreMirror.of(host.tab, source, first, () -> release(source)));
     if (fresh) {
+      byRoot.put(mirror.shape.targetOf(mirror.view), mirror);
       // One that only untracked code read goes again at the end of the job.
       host.later(mirror::releaseIfUnheld);
     }
@@ -208,11 +237,43 @@ final class Mirrors {
     applyNow(updates);
   }
 
+  /** Waiting for revisions, each with what runs once this graph has them. Lane-only. */
+  private final java.util.List<java.util.Map.Entry<Map<Cell, Long>, Runnable>> catchingUp = new java.util.ArrayList<>();
+
+  /**
+   * Lane-only. Runs then in a job of its own once this graph has the revisions given, after the job that applied them
+   * rendered what they changed; a value this graph no longer reads counts as had.
+   */
+  void whenCaughtUp(Map<Cell, Long> revisions, Runnable then) {
+    if (caughtUp(revisions)) {
+      host.job(then);
+    } else {
+      catchingUp.add(new java.util.AbstractMap.SimpleImmutableEntry<>(revisions, then));
+    }
+  }
+
+  private boolean caughtUp(Map<Cell, Long> revisions) {
+    for (Map.Entry<Cell, Long> e : revisions.entrySet()) {
+      Mirror mirror = cells.get(e.getKey());
+      if (mirror != null && mirror.feed().revision() < e.getValue()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private void applyNow(List<Published.Update> updates) {
     for (Published.Update update : updates) {
       Mirror mirror = cells.get(update.cell);
       if (mirror != null) {
         mirror.accept(update.state);
+      }
+    }
+    for (java.util.Iterator<java.util.Map.Entry<Map<Cell, Long>, Runnable>> it = catchingUp.iterator(); it.hasNext(); ) {
+      java.util.Map.Entry<Map<Cell, Long>, Runnable> waiting = it.next();
+      if (caughtUp(waiting.getKey())) {
+        it.remove();
+        host.job(waiting.getValue());
       }
     }
   }
@@ -222,6 +283,9 @@ final class Mirrors {
     Mirror mirror = cells.remove(source);
     if (mirror == null) {
       return;
+    }
+    if (mirror instanceof StoreMirror) {
+      byRoot.remove(((StoreMirror) mirror).shape.targetOf(((StoreMirror) mirror).view));
     }
     ReactiveHost from = source.tab.host;
     from.job(() -> from.published().unsubscribe(source, host));

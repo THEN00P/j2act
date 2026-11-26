@@ -24,7 +24,11 @@ public final class SetView<E> extends AbstractSet<E> implements StoreView {
   }
 
   @Override public boolean contains(Object o) {
-    return shape.at(target, () -> shape.rt.storeHas(target, o));
+    return shape.at(target, () -> {
+      boolean has = shape.rt.storeHas(target, o);
+      shape.noted(target, o, has, false);
+      return has;
+    });
   }
 
   @Override public int size() {

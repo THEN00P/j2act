@@ -61,16 +61,20 @@ A `computed` or `query` in a shared store runs once for the store, not once per 
 
 A handler exists only for an element the page rendered (`Handlers`, ADR 0019), and a click on anything else is ignored. With every page rendered under its own user, `user.isAdmin() ? delButton() : null` is the permission check, and `delete` needs none of its own.
 
-Rendering again is not enough when rights change, because the change and the click can arrive at different servers in either order. So a handler remembers which revisions the button depended on: the revisions of the shared values its element and every condition above it read when it rendered. A click on it reaches the store with those revisions, and the store runs the method only if none of them has changed since. If one has, the store refuses, the page renders again, and the user clicks the new button if there still is one. The developer writes the rule once, in the view.
+Rendering again later is not enough when rights change, because the change can reach the store before the page hears of it, and the click can arrive in between. So every render notes what it read of other graphs and what it saw: a value as it was, and a deep store's part by its path from the store's root, with list rows named by their `id` field, or by position when their class has none. When a click arrives, j2act compares what its handler's region and the regions around it saw with the state the stores last published. If one of them changed, the page is behind: the click waits until the page has the revisions that changed it and has rendered again, and then runs if its element still renders, or is refused if it does not, as a click on a button that is gone. Events after a waiting click wait behind it, in order. The developer writes the rule once, in the view.
 
 Following from that:
 
-- What a permission depends on must be a tracked value: `user.isAdmin()` reads a shared store of members or roles, not a cached boolean or an untracked service call. j2act cannot tell when an untracked answer is out of date. A protected handler whose element read nothing tracked is refused.
-- A handler belongs to its target. When a row of a list now shows a different message, the row's handlers get new ids, so an old click on the delete button of message M never deletes message N that moved into its row. Today `Handlers` keeps an id while its element renders at the same position, and that has to change for keyed rows whatever this ADR decides.
-- A revocation that the store orders before a click refuses the click. A click the store accepted first runs to its end. A method that must not finish once rights are gone checks again itself; rendering promises nothing about later.
+- What decides that an element shows is read in the regions around it, so those count. A region further out also reads the list it renders, its length and its other rows, which say nothing of a button in one row: only the reads that are not of a list's or a map's elements count from regions further out. A new message never makes a click on another message's button wait. In a build that is not enhanced, the whole view is one region, so a click waits whenever anything its view read changed, a few milliseconds for the page to catch up.
+- What changed only through this page's own earlier writes does not count: a page that has not heard back of its own last click is not behind anyone, so a quick second click on "+1" runs at once. Each published state keeps who wrote it and the few states before.
+- What a permission depends on must be a tracked value: `user.isAdmin()` reads a shared store of members or roles, not a cached boolean or an untracked service call. j2act cannot tell when an untracked answer is out of date.
+- A handler belongs to its target. A row rendered with a key (`withKey`) has the key in its handlers' path, so when another message is shown there, its handlers get new ids, and an old click on the delete button of message M never deletes message N that moved into its row. A row with no key keeps its position's ids, as the processor's warning about missing keys says; the check above still waits for a page whose rows moved.
+- A click the check let through, and the writes it makes, run to their end, also an action's, whose writes go to the store when its body ends. A revocation the store published before the click arrived makes the click wait and, without its button, refuses it. A method that must not finish once rights are gone checks again itself; rendering promises nothing about later.
 - Which stores a page may open is also decided by the page: `useSharedStore(ChatRoom.class, roomId)` is called after whatever check the page makes, and a page that never opened the room has no handlers into it.
 
-A revision is as fine as the reads. Shared stores are deep stores (ADR 0035), which track reads by property, and each property carries the revision that last changed it. A handler remembers the revisions of exactly the properties its element and the conditions above it read: the delete button of message M remembers M's owner, the reader's role and whatever else decided that it renders, not the whole list. A post that adds message N does not refuse a click on M's button; a change to M's owner or to the reader's role does.
+A check is as fine as the reads. With the enhancer (ADR 0036), each child expression is a region and each field read of a store row is its own: the delete button of message M depends on the reader's role, read in `user.isAdmin() ? delButton() : null`, and the edit button on M's owner, read in `user.isMessageOwner(message) ? editButton() : null`. A post that adds message N makes neither wait; a change to M's owner makes the edit button's click wait, and the reader's role the delete button's.
+
+A click's writes to several stores land in all of them at once: a page's graph waits for each store's lane, in one order every lane keeps, and applies every batch before any store publishes. A store's own writes to other stores go as a job of their own to each.
 
 ## Keys and lifetime
 
@@ -106,7 +110,9 @@ Which server holds a store is decided by its key, with a lease in the app's Data
 - **Tabs joining the shared store's graph,** as tabs join their browser's graph today. A tab belongs to one graph, and a page reads many shared stores: several rooms, a guild, a browser.
 - **A separate shared value with its own change tracking** (a `Shared<T>` beside Solid's signals). Deep stores would be implemented twice.
 - **Other users seeing a write in progress,** as the spike's room-wide `isPending(messages)` did. One member's slow save becomes everyone's, and two saves at once cannot be told apart. A room that wants "Alice is typing" publishes it as a value of its own.
-- **Checking permissions by rendering again before a click.** Correct on one server, wrong when the revocation and the click arrive at different servers.
+- **Checking permissions by rendering again before a click, with what the page has.** Wrong when the revocation reached the store and not yet the page: the store's published state decides whether the page is behind.
+- **Refusing a click whose handler was rendered from anything that changed since.** A click on a button whose region read the message list would be refused whenever someone posted. Waiting for the page to catch up and checking that the element still renders refuses only what the user could no longer click.
+- **Checking when the writes reach the store, and dropping them there.** The click's own handler has run by then, and an action's body, with its saves; and an action accepted at its click would fail at its end.
 - **Rendering a fragment once per server and sending the same HTML to every reader whose output would be identical.** j2act sees tracked reads only, so it cannot prove that a fragment read nothing private: a security context in a thread-local, a static or a service call is invisible to it, and one such read would send Alice's HTML to Bob. Most fragments also carry per-tab handler ids. And the saving is small, since a new message renders one row per reader, not the page.
 
 ## Considered for later
@@ -116,8 +122,7 @@ Which server holds a store is decided by its key, with a lease in the app's Data
 
 ## Open
 
-- How a deep store (ADR 0035) publishes its changes by property across graphs, so that editing one message re-renders one row per reader and a handler's revisions name properties.
-- Ordering across stores: an action in one store that causes a write in another can reach a page in two updates. If guild membership decides who may delete in a channel, the click has to be checked where both are ordered.
+- Ordering across stores: a store's own write to another store, such as a channel's effect writing the guild's unread count, reaches a page in two revisions, one per store. A click is checked against both stores' published states at once, and a page's writes to both land at once.
 - Sending less to pages that are hidden or not looking at a room, as Discord does for passive sessions.
 - Heartbeats, and how long a reader shows stale data when a store's server stops answering.
 - A load test of a large room: messages per second, open windows and latency, with real sockets, uneven permissions and slow readers.

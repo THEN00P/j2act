@@ -56,12 +56,14 @@ final class Handlers {
   void begin(Scope scope) {
     scope.previousHandlerIds = scope.handlerIds;
     scope.handlerIds = new LinkedHashMap<>();
+    scope.beginSharedReads();
   }
 
   /** Called at the end of a scope's render: ids of elements that did not render again are dropped. */
   void end(Scope scope) {
     scope.droppedHandlers.addAll(scope.previousHandlerIds.values());
     scope.previousHandlerIds.clear();
+    scope.endSharedReads();
   }
 
   /** The pass that stopped using these showed, so nothing on the page can send them any more. */
@@ -76,6 +78,7 @@ final class Handlers {
   void abort(Scope scope) {
     scope.handlerIds.putAll(scope.previousHandlerIds);
     scope.previousHandlerIds.clear();
+    scope.abortSharedReads();
   }
 
   void remove(Scope scope) {

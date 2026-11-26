@@ -73,6 +73,7 @@ final class ReactiveHost {
   j2act.internal.store.JavaShape stores() {
     if (stores == null) {
       stores = new j2act.internal.store.JavaShape(rt);
+      stores.reads(mirrors::storeRead);
       stores.opaque(value -> engine.storeOpaque(value.getClass()));
       if (engine.devMode()) {
         stores.checkMutations(message -> engine.log(System.Logger.Level.WARNING, message, null));
@@ -193,6 +194,7 @@ final class ReactiveHost {
         engine.log(System.Logger.Level.WARNING, "publishing a revision failed", e);
       }
     }
+    writing = null;
     sendOutgoing();
   }
 
@@ -200,6 +202,15 @@ final class ReactiveHost {
 
   /** How many jobs ended. Lane-only. */
   long jobsDone;
+
+  /** The state each value other graphs read here was last published in, readable from any thread (ADR 0037). */
+  final java.util.concurrent.ConcurrentHashMap<Cell, Published.State> lastStates =
+    new java.util.concurrent.ConcurrentHashMap<>();
+
+  /** The state cell was last published in, or null when no other graph reads it. Any thread. */
+  Published.State lastState(Cell cell) {
+    return lastStates.get(cell);
+  }
 
   /** A graph of stores, not of a page. */
   boolean isStoreHost() {
@@ -256,6 +267,8 @@ final class ReactiveHost {
       this.write = write;
     }
   }
+  /** The graph whose batch of writes this job applies, for what it publishes. Lane-only. */
+  ReactiveHost writing;
 
   /**
    * Lane-only. A write to a value of the graph to, made by code running here (ADR 0037): the writes of one job go
@@ -287,19 +300,90 @@ final class ReactiveHost {
     for (Outgoing o : sent) {
       byHost.computeIfAbsent(o.to, h -> new ArrayList<>()).add(o.write);
     }
-    byHost.forEach((to, writes) -> to.applyBatch(writes, null));
+    List<Batch> batches = new ArrayList<>();
+    byHost.forEach((to, writes) -> batches.add(new Batch(to, writes)));
+    deliver(batches, null);
+  }
+
+  /** One graph's share of a click's writes. */
+  static final class Batch {
+    final ReactiveHost to;
+    final List<Runnable> writes;
+
+    Batch(ReactiveHost to, List<Runnable> writes) {
+      this.to = to;
+      this.writes = writes;
+    }
+  }
+
+  /**
+   * Lane-only. Applies a click's writes to the graphs they are for, as one change: a page's graph waits for each
+   * graph's lane in their order and applies every batch before any publishes, so a click's writes to two stores land
+   * in both at once. A store's graph waits for no older lane: each batch goes as a job of its own there. done, if any,
+   * runs in a later job of this graph's, after the revisions they made had reached it.
+   */
+  void deliver(List<Batch> batches, Runnable done) {
+    if (isStoreHost()) {
+      int[] left = {batches.size()};
+      for (Batch batch : batches) {
+        batch.to.applyBatch(this, batch.writes, () -> {
+          if (--left[0] == 0 && done != null) {
+            job(done);
+          }
+        });
+      }
+      return;
+    }
+    List<ReactiveHost> targets = new ArrayList<>();
+    for (Batch batch : batches) {
+      if (!targets.contains(batch.to)) {
+        targets.add(batch.to);
+      }
+    }
+    targets.sort(java.util.Comparator.comparingLong(h -> h.seq));
+    Runnable body = () -> {
+      for (Batch batch : batches) {
+        batch.to.applyHere(this, batch.writes);
+      }
+    };
+    for (int i = targets.size() - 1; i >= 0; i--) {
+      ReactiveHost target = targets.get(i);
+      Runnable inner = body;
+      body = () -> target.hop(inner);
+    }
+    body.run();
+    if (done != null) {
+      // After the revisions the targets posted while this lane waited for them.
+      job(done);
+    }
+  }
+
+  /** On this lane, held by a page's delivery: another graph's writes, applied as its, in their order. */
+  private void applyHere(ReactiveHost from, List<Runnable> writes) {
+    Tab owner = tab;
+    if (owner == null || owner.disposed) {
+      return;
+    }
+    writing = from;
+    Tracking.in(owner, null, () -> {
+      for (Runnable write : writes) {
+        runQuietly(write);
+      }
+      return null;
+    });
   }
 
   /**
    * Applies writes from another graph in one job, in their order, so that they are one revision; then runs done, after
    * that revision went out. From any thread.
    */
-  void applyBatch(List<Runnable> writes, Runnable done) {
+  void applyBatch(ReactiveHost from, List<Runnable> writes, Runnable done) {
     job(() -> {
       Tab owner = tab;
       if (owner == null || owner.disposed) {
         return;
       }
+      writing = from;
       Tracking.in(owner, null, () -> {
         for (Runnable write : writes) {
           runQuietly(write);

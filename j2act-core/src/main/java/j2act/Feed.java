@@ -141,6 +141,11 @@ final class Feed {
     return s != null && s.failed;
   }
 
+  /** The revision of the last state taken. */
+  long revision() {
+    return revision;
+  }
+
   /** The value the source last published, or null. */
   Object value() {
     Published.State s = state;

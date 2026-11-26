@@ -36,7 +36,9 @@ public final class ListView<E> extends AbstractList<E> implements StoreView, Ran
         shape.rt.storeLength(target);
         throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
       }
-      return (E) shape.present(shape.rt.storeGet(target, index));
+      Object value = shape.rt.storeGet(target, index);
+      shape.noted(target, index, value, true);
+      return (E) shape.present(value);
     });
   }
 
