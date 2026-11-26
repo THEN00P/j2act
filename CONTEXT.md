@@ -13,8 +13,36 @@ The server side of one page load, reached with useTab(): created when the page's
 _Avoid_: Session, Circuit, Connection, Page load
 
 **Browser**:
-Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with useBrowser(). Its @BrowserScoped stores live on a hub while any of its tabs lives, plus a grace window. It has one lane and one reactive graph for all its tabs and stores (ADR 0033), so a change reaches every tab in one update, and tabs that can be seen hold together while it loads; a tab nobody can see holds nothing and catches up. A logout or another user starts a new browser (ADR 0030).
+Every tab of one browser, identified by the HttpOnly j2-browser cookie and reached with useBrowser(). Its @BrowserScoped stores live on a hub while any of its tabs lives, plus a grace window. Each tab has a graph of its own and reads the browser's stores through it (ADR 0037), so a tab's slow load holds only that tab, and two tabs can show a change a moment apart. A logout or another user starts a new browser (ADR 0030).
 _Avoid_: Session, Device, Visitor, User
+
+**Shared Store**:
+A @SharedScoped Store, one per class and key for everyone, reached with useSharedStore(ChatRoom.class, roomId) or, for the one of the whole application, useSharedStore(Settings.class) (ADR 0037). It lives on a hub of its own while a component that looked it up is on a page or a graph reads it, plus a grace window, and reads its key with sharedKey(). Every page that reads it renders with its own user. In a Cluster it lives on the server its Lease names; the others have a Stub of it.
+_Avoid_: Global store, Room (that is one use of it), Channel
+
+**Graph**:
+One tab's, or one hub's, reactive runtime and lane (ADR 0037). A tab reads another graph's values through a Mirror, and writes go there as one batch per job, or per action when it ends well.
+_Avoid_: Runtime (the engine's class), Host
+
+**Mirror**:
+A graph's copy of a value or a store of another graph, fed by the Revisions that graph publishes: a memo for a value, a store merged by row id for a deep store. It goes when nothing in the graph reads it any more (ADR 0037).
+_Avoid_: Replica, Proxy, Cache
+
+**Revision**:
+What a hub publishes after a job that changed values others read: a number and the values' new states, the same objects for every part that did not change (ADR 0037).
+_Avoid_: Version, Event, Delta
+
+**Cluster**:
+Servers sharing Shared Stores, configured with withCluster(Cluster) or the j2act.cluster.* properties (ADR 0037). They find each other through a ClusterDiscovery, prove the cluster's secret to each other over the j2act socket, and each store lives on one of them.
+_Avoid_: Grid, Mesh
+
+**Lease**:
+Which server of a Cluster holds a Shared Store, for a term it renews, with an epoch that rises with each new holder, so one that lost it cannot keep writing (ADR 0037). DatabaseLeases keep them in the app's database; otherwise each store's home server does.
+_Avoid_: Lock, Ownership
+
+**Stub**:
+A server's copy of a Shared Store another server holds: its values come from the holder once for all its pages, and its writes go there, as serializable lambdas, each batch applied once (ADR 0037).
+_Avoid_: Proxy, Replica
 
 **Retained State**:
 A value created with createRetained() that goes into its owner's Snapshot, so it outlives the in-memory tab or browser: grace expiry, pause, restart, redeploy, another node, and a closed tab reopened within 15 minutes. Keyed by its component's slot path and the variable it is assigned to, through the processor (ADR 0031), or by its store's class and field name. createRetained(save, restore) holds live data that needs converting. A reload still starts empty. Unsaved work only; anything worth keeping still belongs in the app's database (ADR 0026).
@@ -25,7 +53,7 @@ The Retained State of one tab or one browser, saved to retained state storage wi
 _Avoid_: Checkpoint (that is the opt-in trigger that saves one while the tab is live), Backup
 
 **Store**:
-A class annotated @TabScoped or @BrowserScoped that extends Store: one instance per tab or per browser, a bean of the app's container that components @Inject, or reach with useTabStore(X.class) and useBrowserStore(X.class) without one. A browser store's memos and effects run once per browser and cannot use tab stores. It holds signals, memos and other primitives as fields, never plain values, and its methods are the actions. No middleware (ADR 0030).
+A class annotated @TabScoped, @BrowserScoped or @SharedScoped that extends Store: one instance per tab, per browser or per key for everyone, a bean of the app's container that components @Inject, or reach with useTabStore(X.class) and useBrowserStore(X.class) without one. A browser store's memos and effects run once per browser and cannot use tab stores; a shared store's run once for the store and cannot use anything that differs between readers. It holds signals, memos and other primitives as fields, never plain values, and its methods are the actions. No middleware (ADR 0030).
 _Avoid_: GlobalState, Context, Singleton, Session, and createStore for it (that makes a Stored)
 
 **Stored**:

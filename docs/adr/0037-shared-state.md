@@ -1,6 +1,6 @@
 # Shared state across users
 
-> Proposed. Changes ADR 0030's "Browser state" and ADR 0033's "One `Runtime` per browser" and its first rejected alternative. Replaces the "one owner per key" direction at the end of ADR 0033 and in `docs/spikes/shared-scope.md`.
+> Accepted. Changes ADR 0030's "Browser state" and ADR 0033's "One `Runtime` per browser" and its first rejected alternative. Replaces the "one owner per key" direction at the end of ADR 0033 and in `docs/spikes/shared-scope.md`.
 
 A chat room, a Discord-like server with its channels, a shop's live bookkeeping: state that many people look at and change at once. Today j2act can share state between the tabs of one browser and no further. This ADR lets any page read and write state that other users' pages also read, and keeps the code the developer writes the same as for state that belongs to one page:
 
@@ -86,7 +86,7 @@ A shared store's code cannot use what differs between its readers: `auth()`, `pa
 
 ## Browser state becomes a shared store
 
-`@BrowserScoped` is a shared store keyed by the browser cookie, with ADR 0030's identity rules. Tabs of one browser no longer share one graph (ADR 0033): each tab is its own graph reading the browser's stores like any other shared store. Two open tabs can show a change a moment apart when one of them waits on a slow load; in exchange, a slow load in one tab no longer holds the others, and there is one mechanism instead of two.
+`@BrowserScoped` stores live on a hub keyed by the browser cookie, with ADR 0030's identity rules, as shared stores do on theirs. Tabs of one browser no longer share one graph (ADR 0033): each tab is its own graph reading the browser's stores like any other hub's. Two open tabs can show a change a moment apart when one of them waits on a slow load; in exchange, a slow load in one tab no longer holds the others, and there is one mechanism instead of two. In a cluster, a browser's tabs are routed to one server by its cookie, as ADR 0030 has it, and its hub lives there.
 
 ## Security
 
@@ -102,9 +102,27 @@ A page whose lane falls behind takes every revision waiting for it in one job an
 
 ## More than one server
 
-The developer's code does not change. A shared store lives on one server. Another server whose pages read it subscribes once, however many of its users are watching, gets each revision once, and renders its own pages. A call to a store's method from another server is sent to the store's server, so its arguments must serialize. For a 20,000-user chat on 20 servers, one message is 20 updates between servers, then each server renders its own users.
+The developer's code does not change. `withCluster(Cluster.builder().self(url).discovery(...).build())`, or the `j2act.cluster.*` properties on Spring and context parameters on Jakarta EE, makes servers a cluster. Each shared store lives on one of them, the holder of its lease; every other server whose pages read it has a stub of it, a hub whose values come from the holder, subscribed once however many of its users watch, and whose pages read the stub as they read any hub. For a 20,000-user chat on 20 servers, one message is 20 updates between servers, then each server renders its own users.
 
-Which server holds a store is decided by its key, with a lease in the app's DataSource that carries a number which goes up with every new holder. A save carries that number, so a holder that lost its lease cannot keep writing. While a store's server is gone, its readers show their last values as stale and its methods fail. Moving a live store between servers, and starting it elsewhere after a crash, are left for later.
+**Links.** Servers talk over the j2act socket pages use, `/_j2act/ws`, each connecting to the other with the JDK's WebSocket client: no port to open and nothing in the adapters. Before anything else, both ends prove they have the cluster's secret, a keyed hash of a number the other end chose. A message longer than a frame goes in parts. Links are pinged every second; one silent for five seconds counts as gone, its server counts out of the cluster until it answers again, and what depended on it hears so.
+
+**Finding each other** is a `ClusterDiscovery`: `StaticDiscovery` (a fixed list), `SeedDiscovery` (a few servers, and every server they tell of), `DnsDiscovery` (what a name resolves to, as a headless service has it) and j2act-retained-jdbc's `DatabaseDiscovery` (each server's row in the app's database, which keeps the cluster's secret too, so nothing needs configuring but each server's URL).
+
+**Leases.** A store's lease names its holder for a term it renews, with an epoch that rises with each new holder. j2act-retained-jdbc's `DatabaseLeases` keep them in the app's database: a lapsed lease is taken by raising its epoch where it is still what was read, so of two servers asking at once one gets it, and a holder cut off from the others renews nothing and loses the store. Without a database, each store's lease is kept by its home, the server up now whose URL hashes highest with the store's id; a home that has not heard of a store asks the others whether one holds it before it grants it. Across a network split each side then has a home, so a store can have a holder on each side until the split heals, which `DatabaseLeases` rule out. The first lookup of a store on a server waits for its lease. A holder that loses its lease ends the store there at once, saving nothing, and its readers hear it is gone.
+
+**A holder that dies.** Its stubs show their last values as pending and their writes fail. Once the lease has lapsed, the next server to ask takes the store, which starts there from its Retained State, and the stubs go on with it; everything else it held is gone, as shared state is live communication. A store's lease term is how long it is gone, 15 seconds by default (`term`).
+
+**Writes** go to the holder as one batch per job of the stub's, which carries a tab's job's or action's writes there. A value set travels as JSON of its field's type. `update(fn)`, `Stored.update(change)` and `onStore(store, body)` take serializable lambdas (`Signal.Update`, `Stored.Change`, `Reactive.OnStore`), which travel as their class and method with what they capture in JSON:
+
+- What a lambda captures must be a value the JSON codec carries by its class, such as a String, a number, an enum, a record or a bean, or a shared store, which is the store itself on the holder. A component, a collection, a service or a lambda fails where the lambda is written, saying what it captured and why.
+- The holder runs only application code: the capturing class must be a store or a component of the application, or in a package allowed with `allowRemoteCode(...)`, never the JDK's or j2act's own.
+- Each lambda carries a hash of its class's bytes; one from another build of the application is refused, since every server of a cluster has to run the same build.
+- A batch has an id. The holder applies a batch at most once, answering one that comes again as it answered the first; the stub sends a batch again over a new link until the holder answers or `callTimeout` (10 s) runs out, and then what made it fails, with its outcome unknown. An action ends when the holder answered and its revision reached the page.
+- Since the holder decides when a lambda runs, and a lambda may run more than once where it is written and where it is applied, nothing it does outside the value should matter: no saving, no sending, no counting.
+
+`onStore(store, s -> s.postUnlessClosed(text))` runs a domain method on the holder against the real instance, for reads and writes that belong together; on one server it runs on the store's lane.
+
+**Permissions across servers.** A click on a stub's server whose region read a part of the store is checked with the holder, at the revisions the stub has: when the holder changed a part since, the click waits until the stub and the page have it, and runs only if its button still renders.
 
 ## Rejected
 
@@ -126,5 +144,6 @@ Which server holds a store is decided by its key, with a lease in the app's Data
 
 - Ordering across stores: a store's own write to another store, such as a channel's effect writing the guild's unread count, reaches a page in two revisions, one per store. A click is checked against both stores' published states at once, and a page's writes to both land at once.
 - Sending less to pages that are hidden or not looking at a room, as Discord does for passive sessions.
-- Heartbeats, and how long a reader shows stale data when a store's server stops answering.
+- Moving a live store to another server with its plain values, not only its Retained State.
+- A browser's hub as a store of the cluster, so that its tabs need not be routed to one server.
 - A load test of a large room: messages per second, open windows and latency, with real sockets, uneven permissions and slow readers.
