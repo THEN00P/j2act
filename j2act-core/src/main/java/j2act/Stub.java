@@ -171,6 +171,14 @@ final class Stub {
           cell.feed().accept(state(cell, (Map<String, Object>) update.get("s"), revision));
         }
       }
+      // After this job's end, when the stub has published them to its pages.
+      for (java.util.Iterator<Map.Entry<Map<String, Long>, Runnable>> it = waitingFor.iterator(); it.hasNext(); ) {
+        Map.Entry<Map<String, Long>, Runnable> waiting = it.next();
+        if (has(waiting.getKey())) {
+          it.remove();
+          entry.hub.host.later(waiting.getValue());
+        }
+      }
     });
   }
 
@@ -212,6 +220,113 @@ final class Stub {
     for (Stubbed cell : cells.values()) {
       cell.feed().stale();
     }
+  }
+
+  // ---- checks of what a click was rendered from
+
+  /** How a click waits for the stubs to have what their holders have changed since: run(then) runs then after it. */
+  interface Behind {
+    void run(Runnable then);
+  }
+
+  /**
+   * Asks the servers holding these reads' stores whether the parts are still what the stubs have, at the revisions the
+   * stubs have them. Completes with null when they all hold, or with what waits until the stubs have the revisions
+   * that changed them.
+   */
+  @SuppressWarnings("unchecked")
+  static CompletableFuture<Behind> check(List<SharedRead> reads) {
+    Map<Stub, List<SharedRead>> byStub = new LinkedHashMap<>();
+    for (SharedRead read : reads) {
+      Stub stub = read.source.tab.sharedFor.stub;
+      byStub.computeIfAbsent(stub, s -> new ArrayList<>()).add(read);
+    }
+    List<CompletableFuture<Map<Stub, Map<String, Long>>>> asked = new ArrayList<>();
+    for (Map.Entry<Stub, List<SharedRead>> e : byStub.entrySet()) {
+      asked.add(e.getKey().ask(e.getValue()));
+    }
+    return CompletableFuture.allOf(asked.toArray(new CompletableFuture<?>[0])).thenApply(v -> {
+      Map<Stub, Map<String, Long>> behind = new LinkedHashMap<>();
+      for (CompletableFuture<Map<Stub, Map<String, Long>>> a : asked) {
+        behind.putAll(a.join());
+      }
+      if (behind.isEmpty()) {
+        return null;
+      }
+      return then -> {
+        int[] left = {behind.size()};
+        behind.forEach((stub, revisions) -> stub.whenAt(revisions, () -> {
+          if (--left[0] == 0) {
+            then.run();
+          }
+        }));
+      };
+    });
+  }
+
+  private CompletableFuture<Map<Stub, Map<String, Long>>> ask(List<SharedRead> reads) {
+    if (!live) {
+      return CompletableFuture.completedFuture(java.util.Collections.emptyMap());
+    }
+    List<Object> out = new ArrayList<>();
+    for (SharedRead read : reads) {
+      Stubbed cell = cells.get(read.source.address);
+      if (cell == null) {
+        continue;
+      }
+      Map<String, Object> r = new LinkedHashMap<>();
+      r.put("addr", read.source.address);
+      r.put("kind", (long) read.kind());
+      r.put("revision", cell.feed().revision());
+      if (read.keys() != null) {
+        List<Object> keys = new ArrayList<>();
+        for (Object key : read.keys()) {
+          keys.add(key instanceof String || key instanceof Number || key instanceof Boolean || key == null ? key
+            : String.valueOf(key));
+        }
+        r.put("keys", keys);
+      }
+      out.add(r);
+    }
+    Map<String, Object> m = Peers.message("check", "store", store, "gen", generation);
+    m.put("reads", out);
+    return peers.ask(link, m).handle((answer, error) -> {
+      if (error != null || answer == null || answer.get("changed") == null) {
+        // No answer: the store is out of reach, and its writes fail anyway.
+        return java.util.Collections.<Stub, Map<String, Long>>emptyMap();
+      }
+      Map<String, Long> changed = new LinkedHashMap<>();
+      for (Object c : (List<Object>) answer.get("changed")) {
+        Map<String, Object> one = (Map<String, Object>) c;
+        changed.put((String) one.get("addr"), ((Number) one.get("revision")).longValue());
+      }
+      return changed.isEmpty() ? java.util.Collections.<Stub, Map<String, Long>>emptyMap()
+        : java.util.Collections.singletonMap(this, changed);
+    });
+  }
+
+  /** Waiting for revisions of the holder's, with what runs once the stub has them. Lane-only. */
+  private final List<Map.Entry<Map<String, Long>, Runnable>> waitingFor = new ArrayList<>();
+
+  /** Runs then once the stub has these revisions of its values, on its own lane. */
+  private void whenAt(Map<String, Long> revisions, Runnable then) {
+    entry.hub.host.job(() -> {
+      if (has(revisions)) {
+        then.run();
+      } else {
+        waitingFor.add(new java.util.AbstractMap.SimpleImmutableEntry<>(revisions, then));
+      }
+    });
+  }
+
+  private boolean has(Map<String, Long> revisions) {
+    for (Map.Entry<String, Long> e : revisions.entrySet()) {
+      Stubbed cell = cells.get(e.getKey());
+      if (cell != null && cell.feed().revision() < e.getValue()) {
+        return false;
+      }
+    }
+    return true;
   }
 
   // ---- writes

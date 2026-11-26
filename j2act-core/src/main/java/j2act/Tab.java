@@ -1822,6 +1822,8 @@ public final class Tab {
     final Map<String, String> message;
     final String ack;
     int waits;
+    /** The servers holding the stores its handler read have said those parts still hold. */
+    boolean checkedRemote;
 
     HeldEvent(Map<String, String> message, String ack) {
       this.message = message;
@@ -1858,10 +1860,43 @@ public final class Tab {
         host.mirrors.whenCaughtUp(changed, () -> post(this::runEvents));
         return;
       }
+      if (changed == null && !event.checkedRemote && event.waits < CATCH_UPS) {
+        // What the handler read of a store another server holds: that server says whether it still holds (ADR 0037).
+        java.util.List<SharedRead> remote = remoteReads(event.message);
+        if (!remote.isEmpty()) {
+          event.checkedRemote = true;
+          Stub.check(remote).whenComplete((behind, error) -> post(() -> {
+            if (error == null && behind != null && event.waits++ < CATCH_UPS) {
+              engine.stats.heldEvents.incrementAndGet();
+              event.checkedRemote = false;
+              behind.run(() -> post(this::runEvents));
+            } else {
+              runEvents();
+            }
+          }));
+          return;
+        }
+      }
       heldEvents.poll();
       boolean ok = dispatch(event.message);
       pendingAcks.add(Json.object("type", "ack", "id", event.ack, "ok", ok));
     }
+  }
+
+  /** What the handler's element was rendered from of stores held on other servers. */
+  private java.util.List<SharedRead> remoteReads(Map<String, String> message) {
+    String handlerId = message.get("handler");
+    Handlers.Entry entry = handlerId == null ? null : handlers.get(handlerId);
+    java.util.List<SharedRead> remote = new ArrayList<>();
+    if (entry == null || entry.scope.disposed) {
+      return remote;
+    }
+    for (SharedRead read : SharedRead.of(entry.scope)) {
+      if (read.source instanceof Stub.Stubbed) {
+        remote.add(read);
+      }
+    }
+    return remote;
   }
 
   /** What changed in other graphs since the handler's element was rendered from it; null if nothing did. */

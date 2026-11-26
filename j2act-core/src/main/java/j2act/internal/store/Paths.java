@@ -66,9 +66,9 @@ public final class Paths {
       if (key == null) {
         continue;
       }
-      if (at instanceof List && key instanceof Integer) {
+      if (at instanceof List && key instanceof Number) {
         List<?> list = (List<?>) at;
-        int i = (Integer) key;
+        int i = ((Number) key).intValue();
         Object element = i >= 0 && i < list.size() ? list.get(i) : MISSING;
         Object id = element == MISSING ? null : idOf(element);
         out[n++] = id != null ? new Row(id) : new Index(i);

@@ -309,4 +309,65 @@ class ClusterTest {
       assertEquals(Integer.valueOf(3), back.apply(1));
     }
   }
+
+  /** What a delete button on the stub's server shows: whether the store still lets anyone delete. */
+  @SharedScoped
+  public static class Board extends Store {
+    final Signal<Boolean> open = createSignal(true);
+    final Signal<Integer> deletes = createSignal(0);
+  }
+
+  static final class BoardPage extends LiveComponent {
+    @Override protected View setup() {
+      Board board = useSharedStore(Board.class, "board");
+      return () -> T.page("b", T.div(
+        T.span("open:" + board.open.get() + ";deletes:" + board.deletes.get() + ";"),
+        board.open.get() ? T.button("delete").onClick(e -> board.deletes.update(n -> n + 1)) : null));
+    }
+  }
+
+  private Harness boardServer(String url) {
+    Harness h = new Harness(BoardPage::new, b -> b
+      .withReconnectGrace(Duration.ofMillis(300))
+      .withJson(new FieldJson())
+      .withCluster(Cluster.builder()
+        .self(url)
+        .discovery(new StaticDiscovery("http://a", "http://b"))
+        .secret("a shared secret for tests")
+        .term(Duration.ofSeconds(2))
+        .build()));
+    wires.engines.put(url, h.engine);
+    return h;
+  }
+
+  @Test
+  void aClickFromBeforeAChangeTheHolderHasWaitsAndIsRefusedOnTheOtherServer() throws Exception {
+    try (Harness a = boardServer("http://a"); Harness b = boardServer("http://b")) {
+      BrowserStoreTest.Page alice = new BrowserStoreTest.Page(a.engine, "/", Exchange.empty()).connect();
+      BrowserStoreTest.Page bob = new BrowserStoreTest.Page(b.engine, "/", Exchange.empty()).connect();
+      assertTrue(a.engine.shared.values().iterator().next().stub == null, "A holds it");
+      Board held = a.engine.sharedStore(Board.class, "board");
+      // The holder closes the board, and Bob's click, from before he heard, reaches B before the change does.
+      java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+      SharedHub stub = b.engine.shared.values().iterator().next();
+      stub.hub.host.job(() -> {
+        try {
+          release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+      });
+      held.open.set(false);
+      Harness.eventually(() -> !held.open.get(), "the holder has it");
+      String id = "x" + (++ids);
+      bob.engine.onMessage(bob.conn, Json.object("type", "event", "id", id, "handler", Harness.clickOn(bob.html,
+        "delete"), "value", ""));
+      Thread.sleep(100);
+      release.countDown();
+      Map<String, String> ack = bob.conn.await(0, m -> "ack".equals(m.get("type")) && id.equals(m.get("id")));
+      assertEquals("false", ack.get("ok"), "the button was gone once Bob's page caught up");
+      Thread.sleep(200);
+      assertEquals(0, held.deletes.get().intValue());
+    }
+  }
 }

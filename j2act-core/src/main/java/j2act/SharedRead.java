@@ -22,6 +22,15 @@ final class SharedRead {
   /** The part is inside a list's or a map's element. */
   final boolean inElement;
 
+  /** For a check by the server that holds the store (ADR 0037): the keys to the part, or null for a value. */
+  Object[] keys() {
+    return keys;
+  }
+
+  int kind() {
+    return kind;
+  }
+
   SharedRead(ReactiveHost reader, Cell source, Object[] keys, int kind, Object seen, boolean inElement) {
     this.reader = reader;
     this.source = source;
@@ -54,7 +63,7 @@ final class SharedRead {
       if (same(state.value, steps)) {
         return true;
       }
-      if (state.author != reader) {
+      if (reader == null || state.author != reader) {
         return false;
       }
     }

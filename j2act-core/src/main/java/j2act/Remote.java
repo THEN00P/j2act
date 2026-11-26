@@ -165,6 +165,9 @@ final class Remote {
       case "batch":
         engine.work.execute(this, () -> batch(link, m), () -> { });
         return;
+      case "check":
+        check(link, m);
+        return;
       default:
         peers.engine.stub(link, type, m);
     }
@@ -298,6 +301,43 @@ final class Remote {
       return;
     }
     o.entry.hub.host.applyBatch(null, writes, () -> done.complete(Peers.message("result", "ok", true, "error", null)));
+  }
+
+  /**
+   * Whether what a click on another server was rendered from still holds here (ADR 0037): each part, at the revision
+   * that server has it, against what this store last published. The answer names each that changed and its revision now.
+   */
+  @SuppressWarnings("unchecked")
+  private void check(Link link, Map<String, Object> m) {
+    Owned o = live(m);
+    if (o == null) {
+      link.send(Peers.answer(m, "changed", null));
+      return;
+    }
+    List<Object> changed = new ArrayList<>();
+    for (Object r : (List<Object>) m.get("reads")) {
+      Map<String, Object> read = (Map<String, Object>) r;
+      Cell cell = o.entry.hub.cells.get((String) read.get("addr"));
+      Published.State now = cell == null ? null : o.entry.hub.host.lastState(cell);
+      if (now == null) {
+        continue;
+      }
+      long revision = ((Number) read.get("revision")).longValue();
+      Published.State then = now;
+      while (then != null && then.revision != revision) {
+        then = then.before;
+      }
+      List<Object> keys = (List<Object>) read.get("keys");
+      boolean holds = then != null && new SharedRead(null, cell, keys == null ? null : keys.toArray(),
+        ((Number) read.get("kind")).intValue(), then.value, false).holds();
+      if (!holds) {
+        Map<String, Object> c = new LinkedHashMap<>();
+        c.put("addr", cell.address);
+        c.put("revision", now.revision);
+        changed.add(c);
+      }
+    }
+    link.send(Peers.answer(m, "changed", changed));
   }
 
   /** One server reading a store held here: what it reads goes to it once, for all its pages. */
