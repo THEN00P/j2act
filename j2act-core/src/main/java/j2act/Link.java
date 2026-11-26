@@ -154,6 +154,7 @@ final class Link {
       node = new Node(id, node.url());
       write(Json.object("peer", "proof", "proof", proof(theirNonce, peers.self.id())));
       opened();
+      peers.authenticated(this);
     } else if (!outbound && "proof".equals(type) && theirNonce != null) {
       if (!proof(nonce, node.id()).equals(m.get("proof"))) {
         refused();

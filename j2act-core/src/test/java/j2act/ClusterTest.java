@@ -88,6 +88,11 @@ class ClusterTest {
 
   @SharedScoped
   public static class Room extends Store {
+    /** A value a lambda captures in a test. */
+    static final class Lambda {
+      final int step = 2;
+    }
+
     final Stored<List<Message>> messages = createStore(new ArrayList<>());
     final Signal<Integer> posts = createSignal(0);
 
@@ -134,13 +139,17 @@ class ClusterTest {
   }
 
   private Harness server(String url) {
+    return server(url, "a shared secret for tests");
+  }
+
+  private Harness server(String url, String secret) {
     Harness h = new Harness(RoomPage::new, b -> b
       .withReconnectGrace(Duration.ofMillis(300))
       .withJson(new FieldJson())
       .withCluster(Cluster.builder()
         .self(url)
         .discovery(new StaticDiscovery("http://a", "http://b"))
-        .secret("a shared secret for tests")
+        .secret(secret)
         .term(Duration.ofSeconds(2))
         .build()));
     wires.engines.put(url, h.engine);
@@ -217,6 +226,87 @@ class ClusterTest {
       assertTrue(e.getMessage().contains("captures a java.util.ArrayList"), e.getMessage());
       assertNotNull(room);
       assertEquals(0, room.posts.get().intValue());
+    }
+  }
+
+  @Test
+  void whenItsHolderDiesTheOtherServerTakesTheStoreOver() {
+    Harness a = server("http://a");
+    try (Harness b = server("http://b")) {
+      // The first lookup decides the holder: A's, as A looks first.
+      BrowserStoreTest.Page alice = new BrowserStoreTest.Page(a.engine, "/", Exchange.empty()).connect();
+      BrowserStoreTest.Page bob = new BrowserStoreTest.Page(b.engine, "/", Exchange.empty()).connect();
+      assertTrue(a.engine.shared.values().iterator().next().stub == null, "A holds it");
+      int fromBob = bob.conn.size();
+      type(alice, "post", "before");
+      bob.awaitPatch(fromBob, "messages:before;posts:1;");
+
+      // A goes, and with it the store's live values: B takes it over once the lease ran out.
+      wires.engines.remove("http://a");
+      a.close();
+      Harness.eventually(() -> !b.engine.peers.remote.toString().isEmpty() && b.engine.peers.remote.owned(
+        b.engine.sharedId(Room.class, "lobby")) != null, "B holds it now");
+      fromBob = bob.conn.size();
+      type(bob, "post", "after");
+      bob.awaitPatch(fromBob, "messages:after;posts:1;");
+    } finally {
+      a.close();
+    }
+  }
+
+  @Test
+  void aServerWithoutTheSecretGetsNoLink() {
+    try (Harness a = server("http://a"); Harness b = server("http://b", "another secret, not the cluster's")) {
+      new BrowserStoreTest.Page(a.engine, "/", Exchange.empty()).connect();
+      Link link = b.engine.peers.link(Node.at("http://a"));
+      Harness.eventually(() -> link.gone, "A closed it");
+      assertTrue(!link.authed);
+    }
+  }
+
+  @Test
+  void aBatchThatComesTwiceIsAppliedOnce() throws Exception {
+    try (Harness a = server("http://a"); Harness b = server("http://b")) {
+      new BrowserStoreTest.Page(a.engine, "/", Exchange.empty()).connect();
+      SharedHub held = a.engine.shared.values().iterator().next();
+      Link link = b.engine.peers.link(Node.at("http://a"));
+      Map<String, Object> batch = Peers.message("batch", "store", b.engine.sharedId(Room.class, "lobby"),
+        "gen", held.generation, "id", "twice");
+      List<Object> ops = new ArrayList<>();
+      ops.add(Ops.set(held.store.scope.cells.get(1), 5, b.engine));
+      batch.put("ops", ops);
+      Map<String, Object> first = b.engine.peers.await(b.engine.peers.ask(link, new java.util.LinkedHashMap<>(batch)));
+      Room room = (Room) held.store;
+      room.posts.set(7);
+      Harness.eventually(() -> room.posts.get() == 7, "set here meanwhile");
+      Map<String, Object> second = b.engine.peers.await(b.engine.peers.ask(link, new java.util.LinkedHashMap<>(batch)));
+      assertEquals(true, first.get("ok"));
+      assertEquals(true, second.get("ok"));
+      Thread.sleep(100);
+      assertEquals(7, room.posts.get().intValue(), "the second came again and was not applied");
+    }
+  }
+
+  @Test
+  void onlyApplicationCodeOfTheSameBuildRunsFromAnotherServer() throws Exception {
+    try (Harness a = server("http://a")) {
+      Room.Lambda lambda = new Room.Lambda();
+      Map<String, Object> encoded = Lambdas.encode((Signal.Update<Integer>) n -> n + lambda.step, a.engine);
+      Map<String, Object> notOurs = new java.util.LinkedHashMap<>(encoded);
+      notOurs.put("capturing", "java.lang.String");
+      assertThrows(SecurityException.class, () -> Lambdas.decode(notOurs, a.engine, new ArrayList<>()));
+      Map<String, Object> otherBuild = new java.util.LinkedHashMap<>(encoded);
+      otherBuild.put("build", "another");
+      // This lambda is the test's, so its package has to be allowed; a store's or a component's needs nothing.
+      List<String> tests = Arrays.asList("j2act");
+      assertThrows(SecurityException.class, () -> Lambdas.decode(encoded, a.engine, new ArrayList<>()));
+      IllegalStateException e = assertThrows(IllegalStateException.class,
+        () -> Lambdas.decode(otherBuild, a.engine, tests));
+      assertTrue(e.getMessage().contains("another build"), e.getMessage());
+      @SuppressWarnings("unchecked")
+      java.util.function.UnaryOperator<Integer> back = (java.util.function.UnaryOperator<Integer>) Lambdas.decode(
+        encoded, a.engine, tests);
+      assertEquals(Integer.valueOf(3), back.apply(1));
     }
   }
 }

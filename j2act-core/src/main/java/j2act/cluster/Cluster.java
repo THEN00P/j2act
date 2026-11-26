@@ -26,7 +26,8 @@ import java.util.Objects;
 public final class Cluster {
   final Node self;
   final ClusterDiscovery discovery;
-  final String secret;
+  /** The secret given, or null for one the discovery keeps, read when a link first needs it. */
+  private volatile String secret;
   final SharedLeases leases;
   final Duration term;
   final Duration callTimeout;
@@ -35,9 +36,8 @@ public final class Cluster {
   private Cluster(Builder b) {
     this.self = Objects.requireNonNull(b.self, "self(url): the URL other servers reach this one at");
     this.discovery = Objects.requireNonNull(b.discovery, "discovery(...)");
-    this.secret = b.secret != null ? b.secret : b.discovery instanceof SecretSource
-      ? ((SecretSource) b.discovery).secret() : null;
-    if (secret == null || secret.length() < 16) {
+    this.secret = b.secret;
+    if (secret == null ? !(b.discovery instanceof SecretSource) : secret.length() < 16) {
       throw new IllegalArgumentException("a cluster needs a secret of at least 16 characters, from secret(...) or a"
         + " discovery that keeps one, such as DatabaseDiscovery (ADR 0037)");
     }
@@ -61,7 +61,11 @@ public final class Cluster {
 
   /** The secret servers prove to each other; not for logs. */
   public String secret() {
-    return secret;
+    String s = secret;
+    if (s == null) {
+      s = secret = ((SecretSource) discovery).secret();
+    }
+    return s;
   }
 
   /** The leases, or null for leases kept by each store's home server. */

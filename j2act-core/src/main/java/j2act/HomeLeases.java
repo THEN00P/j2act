@@ -54,13 +54,22 @@ final class HomeLeases implements SharedLeases {
   }
 
   @Override public Lease acquire(String store, Node candidate, Duration term) {
-    Node home = home(store);
-    if (home.equals(peers.self)) {
-      return grant(store, candidate, term.toMillis());
+    RuntimeException last = null;
+    // A home that cannot be reached counts out, and the next one is asked.
+    for (int attempt = 0; attempt < 4; attempt++) {
+      Node home = home(store);
+      if (home.equals(peers.self)) {
+        return grant(store, candidate, term.toMillis());
+      }
+      try {
+        Map<String, Object> answer = peers.await(peers.ask(peers.link(home), Peers.message("lease", "store", store,
+          "url", candidate.url(), "id", candidate.id(), "term", term.toMillis())));
+        return lease(store, answer);
+      } catch (RuntimeException e) {
+        last = e;
+      }
     }
-    Map<String, Object> answer = peers.await(peers.ask(peers.link(home), Peers.message("lease", "store", store,
-      "url", candidate.url(), "id", candidate.id(), "term", term.toMillis())));
-    return lease(store, answer);
+    throw last;
   }
 
   @Override public boolean renew(Lease lease, Duration term) {

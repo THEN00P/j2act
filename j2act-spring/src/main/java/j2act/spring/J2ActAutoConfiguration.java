@@ -60,6 +60,7 @@ public class J2ActAutoConfiguration {
     ObjectProvider<J2ActIdentity> identity,
     ObjectProvider<JsonBinding> json,
     ObjectProvider<RetainedStateStorage> retainedStorage,
+    ObjectProvider<j2act.cluster.Cluster> cluster,
     ListableBeanFactory beanFactory
   ) {
     ServletContext context = servletContext.getIfAvailable();
@@ -77,6 +78,7 @@ public class J2ActAutoConfiguration {
     }
     identity.ifAvailable(builder::withIdentity);
     retainedStorage.ifAvailable(builder::withRetainedStateStorage);
+    cluster.ifAvailable(builder::withCluster);
     JsonBinding binding = json.getIfAvailable(() -> JacksonBinding.find(beanFactory, getClass().getClassLoader()));
     if (binding != null) {
       builder.withJson(binding);
@@ -128,6 +130,61 @@ public class J2ActAutoConfiguration {
     @ConditionalOnMissingBean
     RetainedStateStorage j2ActRetainedStateStorage(DataSource dataSource) {
       return JdbcRetainedStateStorage.of(dataSource);
+    }
+  }
+
+  /**
+   * A cluster from the application's properties (ADR 0037), when j2act.cluster.self names the URL other servers reach
+   * this one at. Its servers come from j2act.cluster.members, a fixed list, j2act.cluster.seeds, a few to start from,
+   * or j2act.cluster.dns with j2act.cluster.dns-port, and otherwise from the app's DataSource, which then keeps the
+   * secret and the leases too. j2act.cluster.secret sets the secret where no database keeps it. Declare a Cluster bean
+   * instead for anything else.
+   */
+  @Configuration(proxyBeanMethods = false)
+  @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty("j2act.cluster.self")
+  static class ClusterFromProperties {
+
+    @Bean
+    @ConditionalOnMissingBean
+    // Its tables are the app's: they exist once Spring ran the schema scripts.
+    @org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization
+    j2act.cluster.Cluster j2ActCluster(org.springframework.core.env.Environment env, ObjectProvider<DataSource> data) {
+      j2act.cluster.Cluster.Builder cluster = j2act.cluster.Cluster.builder().self(env.getRequiredProperty("j2act.cluster.self"));
+      String members = env.getProperty("j2act.cluster.members");
+      String seeds = env.getProperty("j2act.cluster.seeds");
+      String dns = env.getProperty("j2act.cluster.dns");
+      DataSource dataSource = data.getIfUnique();
+      if (members != null) {
+        cluster.discovery(new j2act.cluster.StaticDiscovery(members.split("\\s*,\\s*")));
+      } else if (seeds != null) {
+        cluster.discovery(new j2act.cluster.SeedDiscovery(seeds.split("\\s*,\\s*")));
+      } else if (dns != null) {
+        cluster.discovery(new j2act.cluster.DnsDiscovery(dns, env.getProperty("j2act.cluster.dns-scheme", "http"),
+          env.getProperty("j2act.cluster.dns-port", Integer.class, 8080), env.getProperty("j2act.cluster.dns-path", "")));
+      } else if (dataSource != null && hasJdbc()) {
+        cluster.discovery(j2act.jdbc.DatabaseDiscovery.of(dataSource));
+      } else {
+        throw new IllegalStateException("j2act.cluster.self is set, but not how its servers find each other:"
+          + " j2act.cluster.members, j2act.cluster.seeds, j2act.cluster.dns, or a DataSource with j2act-retained-jdbc"
+          + " (ADR 0037)");
+      }
+      if (dataSource != null && hasJdbc()) {
+        cluster.leases(j2act.jdbc.DatabaseLeases.of(dataSource));
+      }
+      String secret = env.getProperty("j2act.cluster.secret");
+      if (secret != null) {
+        cluster.secret(secret);
+      }
+      return cluster.build();
+    }
+
+    private static boolean hasJdbc() {
+      try {
+        Class.forName("j2act.jdbc.DatabaseDiscovery", false, ClusterFromProperties.class.getClassLoader());
+        return true;
+      } catch (ClassNotFoundException e) {
+        return false;
+      }
     }
   }
 

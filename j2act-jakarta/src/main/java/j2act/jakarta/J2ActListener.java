@@ -54,6 +54,39 @@ public abstract class J2ActListener implements ServletContextListener {
   protected void customize(J2Act.Builder builder) {
   }
 
+  /**
+   * A cluster from the context parameters (ADR 0037), when j2act.cluster.self names the URL other servers reach this
+   * one at: its servers from j2act.cluster.members, a fixed list, j2act.cluster.seeds, a few to start from, or
+   * j2act.cluster.dns with j2act.cluster.dns-port, and its secret from j2act.cluster.secret. For servers and leases in
+   * the database, call builder.withCluster(...) in customize with j2act-retained-jdbc's DatabaseDiscovery.
+   */
+  private static void cluster(ServletContext context, J2Act.Builder builder) {
+    String self = context.getInitParameter("j2act.cluster.self");
+    if (self == null) {
+      return;
+    }
+    j2act.cluster.Cluster.Builder cluster = j2act.cluster.Cluster.builder().self(self);
+    String members = context.getInitParameter("j2act.cluster.members");
+    String seeds = context.getInitParameter("j2act.cluster.seeds");
+    String dns = context.getInitParameter("j2act.cluster.dns");
+    if (members != null) {
+      cluster.discovery(new j2act.cluster.StaticDiscovery(members.trim().split("\\s*,\\s*")));
+    } else if (seeds != null) {
+      cluster.discovery(new j2act.cluster.SeedDiscovery(seeds.trim().split("\\s*,\\s*")));
+    } else if (dns != null) {
+      String port = context.getInitParameter("j2act.cluster.dns-port");
+      String scheme = context.getInitParameter("j2act.cluster.dns-scheme");
+      String path = context.getInitParameter("j2act.cluster.dns-path");
+      cluster.discovery(new j2act.cluster.DnsDiscovery(dns, scheme == null ? "http" : scheme,
+        port == null ? 8080 : Integer.parseInt(port.trim()), path == null ? context.getContextPath() : path));
+    } else {
+      throw new IllegalStateException("j2act.cluster.self is set, but not how its servers find each other:"
+        + " j2act.cluster.members, j2act.cluster.seeds or j2act.cluster.dns (ADR 0037)");
+    }
+    cluster.secret(context.getInitParameter("j2act.cluster.secret"));
+    builder.withCluster(cluster.build());
+  }
+
   @Override public void contextInitialized(ServletContextEvent event) {
     ServletContext context = event.getServletContext();
     PageResolver resolver = router();
@@ -85,6 +118,7 @@ public abstract class J2ActListener implements ServletContextListener {
     } catch (LinkageError | RuntimeException e) {
       LOG.log(System.Logger.Level.INFO, "no JSON-B provider; client modules use the basic JSON binding");
     }
+    cluster(context, builder);
     customize(builder);
     j2Act = builder.build();
     context.setAttribute(ATTRIBUTE, j2Act);

@@ -36,6 +36,8 @@ final class Peers {
   /** Links that came in, by the socket they came on. */
   private final Map<Connection, Link> inbound = new ConcurrentHashMap<>();
   private volatile Set<Node> members = Collections.emptySet();
+  /** Servers a link to failed or fell silent, by URL: counted out until one reaches them again. */
+  private final Map<String, Long> down = new ConcurrentHashMap<>();
   final Remote remote;
   final HomeLeases homeLeases;
   /** Stubs here of stores other servers hold, by the store's id. */
@@ -43,6 +45,8 @@ final class Peers {
   private volatile Link loopback;
   private final AtomicLong requests = new AtomicLong();
   private final Map<String, CompletableFuture<Map<String, Object>>> answers = new ConcurrentHashMap<>();
+  /** The link each request waiting for an answer went on, so a link that goes fails them at once. */
+  private final Map<String, Link> asked = new ConcurrentHashMap<>();
   private volatile boolean closed;
 
   /** How links reach other servers: the JDK's WebSocket client, or one a test puts in. */
@@ -84,6 +88,12 @@ final class Peers {
         found.remove(self);
         members = Collections.unmodifiableSet(found);
         long now = System.currentTimeMillis();
+        for (Node node : members) {
+          // A server counted out is tried again now and then; when it answers, it counts again.
+          if (down.containsKey(node.url()) && !links.containsKey(node.url())) {
+            link(node);
+          }
+        }
         for (Link link : new ArrayList<>(links.values())) {
           if (now - link.lastHeard > SILENCE_MILLIS) {
             link.close();
@@ -112,9 +122,14 @@ final class Peers {
     }, () -> engine.afterMillis(TICK_MILLIS, this::tick));
   }
 
-  /** The servers up now, this one too. */
+  /** The servers up now, this one too: those discovery names that no link failed to reach lately. */
   Set<Node> live() {
-    Set<Node> all = new LinkedHashSet<>(members);
+    Set<Node> all = new LinkedHashSet<>();
+    for (Node node : members) {
+      if (!down.containsKey(node.url())) {
+        all.add(node);
+      }
+    }
     all.add(self);
     return all;
   }
@@ -124,14 +139,18 @@ final class Peers {
     if (node.equals(self)) {
       throw new IllegalArgumentException("no link to this server itself");
     }
-    return links.compute(node.url(), (url, existing) -> {
+    Link fresh;
+    synchronized (links) {
+      Link existing = links.get(node.url());
       if (existing != null && !existing.gone) {
         return existing;
       }
-      Link link = new Link(this, node, true);
-      transport.connect(this, node, link);
-      return link;
-    });
+      fresh = new Link(this, node, true);
+      links.put(node.url(), fresh);
+    }
+    // Outside the lock: a socket that fails at once ends the link right here.
+    transport.connect(this, node, fresh);
+    return fresh;
   }
 
   // ---- inbound, from the adapter's socket
@@ -140,6 +159,10 @@ final class Peers {
   boolean onMessage(Connection connection, String text) {
     if (!text.startsWith("{\"peer\"")) {
       return false;
+    }
+    if (closed) {
+      connection.close();
+      return true;
     }
     Link link = inbound.computeIfAbsent(connection, c -> new Link(this, null, false).over(new Socket() {
       @Override public void send(String frame) {
@@ -164,6 +187,11 @@ final class Peers {
 
   /** An inbound link proved itself: it is the link to its server from now on. */
   void authenticated(Link link) {
+    if (link.node.equals(self)) {
+      // The two ends of the loopback: neither is a link to another server.
+      return;
+    }
+    down.remove(link.node.url());
     Link previous = links.put(link.node.url(), link);
     if (previous != null && previous != link) {
       previous.close();
@@ -173,9 +201,20 @@ final class Peers {
   void lost(Link link) {
     if (link.node != null) {
       links.remove(link.node.url(), link);
+      if (!link.node.equals(self) && !closed) {
+        down.put(link.node.url(), System.currentTimeMillis());
+      }
     }
     if (link == loopback) {
       loopback = null;
+    }
+    for (Map.Entry<String, Link> e : new ArrayList<>(asked.entrySet())) {
+      if (e.getValue() == link) {
+        CompletableFuture<Map<String, Object>> answer = answers.get(e.getKey());
+        if (answer != null) {
+          answer.completeExceptionally(new IllegalStateException("the link to " + link.node + " is gone"));
+        }
+      }
     }
     remote.lost(link);
     homeLeases.lost(link);
@@ -266,7 +305,15 @@ final class Peers {
     request.put("req", id);
     CompletableFuture<Map<String, Object>> answer = new CompletableFuture<>();
     answers.put(id, answer);
-    answer.whenComplete((v, e) -> answers.remove(id));
+    asked.put(id, link);
+    answer.whenComplete((v, e) -> {
+      answers.remove(id);
+      asked.remove(id);
+    });
+    if (link.gone) {
+      answer.completeExceptionally(new IllegalStateException("the link to " + link.node + " is gone"));
+      return answer;
+    }
     engine.afterMillis(cluster.callTimeout().toMillis(), () -> answer.completeExceptionally(
       new java.util.concurrent.TimeoutException("no answer from " + link.node + " in " + cluster.callTimeout())));
     link.send(request);
