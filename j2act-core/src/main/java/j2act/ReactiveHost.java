@@ -197,7 +197,7 @@ final class ReactiveHost {
     }
     writing = null;
     Tab t = tab;
-    Stub stub = t == null || t.sharedFor == null ? null : t.sharedFor.stub;
+    Stub stub = t == null || t.cluster == null ? null : t.cluster.stub;
     if (stub != null) {
       // What this job wrote to a store held on another server goes there as one batch (ADR 0037).
       stub.flush();
@@ -362,7 +362,7 @@ final class ReactiveHost {
         target.hop(inner);
         // A stub sent what it took on to the server holding its store: done waits for that server too (ADR 0037).
         Tab hub = target.tab;
-        Stub stub = hub == null || hub.sharedFor == null ? null : hub.sharedFor.stub;
+        Stub stub = hub == null || hub.cluster == null ? null : hub.cluster.stub;
         CompletableFuture<Void> answered = stub == null ? null : Stub.takeSent();
         if (answered != null) {
           remote.add(answered);

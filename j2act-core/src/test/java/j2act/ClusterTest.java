@@ -472,4 +472,133 @@ class ClusterTest {
       a.close();
     }
   }
+
+  // ---- a browser's stores in a cluster
+
+  @BrowserScoped
+  public static class Cart extends Store {
+    final Signal<Integer> items = createSignal(0);
+    final Stored<List<Message>> notes = createStore(new ArrayList<>());
+
+    void add(int n) {
+      items.update(k -> k + n);
+    }
+
+    void note(String text) {
+      notes.update(list -> list.add(new Message(list.size() + 1, text)));
+    }
+  }
+
+  static final class CartPage extends LiveComponent {
+    @Override protected View setup() {
+      Cart cart = Reactive.useBrowserStore(Cart.class);
+      return () -> T.page("c", T.div(
+        T.span("items:" + cart.items.get() + ";notes:" + cart.notes.get().stream().map(Message::getText)
+          .collect(Collectors.joining(",")) + ";"),
+        T.input().withId("add").onChange(e -> cart.add(Integer.parseInt(e.value()))),
+        T.input().withId("note").onChange(e -> cart.note(e.value()))));
+    }
+  }
+
+  private Harness browserServer(String url) {
+    Harness h = new Harness(CartPage::new, b -> b
+      .withReconnectGrace(Duration.ofMillis(300))
+      .withJson(new FieldJson())
+      .withIdentity(ex -> ex.cookie("user").map(u -> AuthCtx.of(u, java.util.Collections.emptySet()))
+        .orElse(AuthCtx.anonymous()))
+      .withCluster(Cluster.builder()
+        .self(url)
+        .discovery(new StaticDiscovery("http://a", "http://b"))
+        .secret("a shared secret for tests")
+        .term(Duration.ofSeconds(2))
+        .build()));
+    wires.engines.put(url, h.engine);
+    return h;
+  }
+
+  private static Browser browserOn(Harness h) {
+    return h.engine.browsers.values().iterator().next();
+  }
+
+  @Test
+  void aBrowsersTabsOnTwoServersShareItsStoresOneServerHolds() {
+    try (Harness a = browserServer("http://a"); Harness b = browserServer("http://b")) {
+      BrowserStoreTest.Page first = new BrowserStoreTest.Page(a.engine, "/", Exchange.empty());
+      String cookie = BrowserStoreTest.cookieValue(first.result.setCookies());
+      first.connect();
+      BrowserStoreTest.Page second = new BrowserStoreTest.Page(b.engine, "/", BrowserStoreTest.withCookie(cookie))
+        .connect();
+      assertTrue(second.html.contains("items:0;notes:;"), second.html);
+      assertTrue((browserOn(a).cluster.stub == null) != (browserOn(b).cluster.stub == null),
+        "one server holds its stores, the other has a stub");
+      assertEquals(browserOn(a).id(), browserOn(b).id(), "the same browser on both");
+
+      int from = second.conn.size();
+      type(first, "add", "2");
+      second.awaitPatch(from, "items:2;");
+      from = first.conn.size();
+      type(second, "note", "from b");
+      first.awaitPatch(from, "notes:from b;");
+      Harness.eventually(() -> browserOn(a).tabCount() == 2 && browserOn(b).tabCount() == 2,
+        "each server counts both tabs: " + browserOn(a).tabCount() + ", " + browserOn(b).tabCount());
+      from = second.conn.size();
+      assertEquals(2, browserOn(a).requestPause(), "its tab here and the one on B");
+      second.conn.await(from, m -> "pauseRequested".equals(m.get("type")));
+      from = first.conn.size();
+      browserOn(b).requestPause();
+      first.conn.await(from, m -> "pauseRequested".equals(m.get("type")));
+      second.bye();
+      Harness.eventually(() -> browserOn(a).tabCount() == 1, "the tab on B went: " + browserOn(a).tabCount());
+    }
+  }
+
+  @Test
+  void aTabOfAnotherUserOnTheOtherServerGetsABrowserOfItsOwn() {
+    try (Harness a = browserServer("http://a"); Harness b = browserServer("http://b")) {
+      BrowserStoreTest.Page ada = new BrowserStoreTest.Page(a.engine, "/", userOnly("ada"));
+      String cookie = BrowserStoreTest.cookieValue(ada.result.setCookies());
+      ada.connect();
+      type(ada, "add", "7");
+      // The browser is Ada's, which server B hears from the server holding it, not from anything it has itself.
+      BrowserStoreTest.Page eve = new BrowserStoreTest.Page(b.engine, "/", BrowserStoreTest.withCookieAs(cookie, "eve"));
+      assertTrue(eve.html.contains("items:0;"), "nothing of Ada's: " + eve.html);
+      String fresh = BrowserStoreTest.cookieValue(eve.result.setCookies());
+      assertTrue(!fresh.equals(cookie), "a cookie of its own");
+      BrowserStoreTest.Page adaOnB = new BrowserStoreTest.Page(b.engine, "/", BrowserStoreTest.withCookieAs(cookie,
+        "ada"));
+      assertTrue(adaOnB.html.contains("items:7;"), "Ada's own tab there has it: " + adaOnB.html);
+    }
+  }
+
+  private static Exchange userOnly(String user) {
+    return Exchange.of(java.util.Collections.singletonMap("user", user), java.util.Collections.emptyMap());
+  }
+
+  @Test
+  void aServerThatStopsHandsABrowsersStoresOverWithTheirValues() {
+    Harness a = browserServer("http://a");
+    try (Harness b = browserServer("http://b")) {
+      BrowserStoreTest.Page first = new BrowserStoreTest.Page(a.engine, "/", Exchange.empty());
+      String cookie = BrowserStoreTest.cookieValue(first.result.setCookies());
+      first.connect();
+      BrowserStoreTest.Page second = new BrowserStoreTest.Page(b.engine, "/", BrowserStoreTest.withCookie(cookie))
+        .connect();
+      assertTrue(browserOn(a).cluster.stub == null, "A holds it");
+      int from = second.conn.size();
+      type(first, "add", "2");
+      type(first, "note", "kept");
+      second.awaitPatch(from, "items:2;notes:kept;");
+
+      a.close();
+      String storeId = J2Act.browserStoreId(browserOn(b).id());
+      assertNotNull(b.engine.peers.remote.owned(storeId), "B holds it as soon as A is gone");
+      from = second.conn.size();
+      type(second, "add", "3");
+      second.awaitPatch(from, "items:5;notes:kept;");
+      BrowserStoreTest.Page third = new BrowserStoreTest.Page(b.engine, "/", BrowserStoreTest.withCookie(cookie));
+      assertTrue(third.html.contains("items:5;notes:kept;"), third.html);
+    } finally {
+      a.close();
+    }
+  }
 }

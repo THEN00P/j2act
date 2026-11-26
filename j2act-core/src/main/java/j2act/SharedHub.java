@@ -52,21 +52,86 @@ final class SharedHub {
   /** Completes once the latest retirement's snapshot reached storage. Guarded by this. */
   CompletableFuture<Void> saved = CompletableFuture.completedFuture(null);
 
+  /** For a browser's hub in a cluster (ADR 0037): the browser, whose stores it holds; null for a shared store. */
+  final Browser browser;
+
   SharedHub(J2Act engine, Class<? extends Store> type, Object key, String generation, Tab hub) {
     this.engine = engine;
     this.type = type;
     this.key = key;
     this.generation = generation;
     this.hub = hub;
+    this.browser = null;
+  }
+
+  /** A browser's hub as a store of the cluster: one lease for all its stores, by its id. */
+  SharedHub(J2Act engine, Browser browser, String generation) {
+    this.engine = engine;
+    this.type = null;
+    this.key = browser.id;
+    this.generation = generation;
+    this.hub = browser.hub;
+    this.browser = browser;
   }
 
   /** The id its Retained State is saved under. */
   String storageId() {
+    if (browser != null) {
+      return browser.storageId;
+    }
     return Retained.id("shared:" + type.getName() + ":" + (key == Store.APPLICATION ? "" : "k:" + key));
   }
 
   /** For logs and errors: the class and the key's type, never the key itself, which may say who it is for. */
   String describe() {
+    if (browser != null) {
+      return "the stores of a browser";
+    }
     return type.getName() + (key == Store.APPLICATION ? "" : " for a " + key.getClass().getSimpleName() + " key");
+  }
+
+  /** The store a value's address is in: the shared store, or a browser's store of the class the address names. */
+  Store storeAt(String address) {
+    if (browser == null) {
+      return store;
+    }
+    String prefix = address.startsWith(Retained.STORE_PREFIX) ? address.substring(Retained.STORE_PREFIX.length())
+      : address;
+    int hash = prefix.indexOf('#');
+    return storeOfClass(hash < 0 ? prefix : prefix.substring(0, hash));
+  }
+
+  /**
+   * The store of a class: for a browser's hub, made here on first use, as the server holding it makes what a stub on
+   * another server was asked for. Off the hub's lane, it waits for it.
+   */
+  Store storeOfClass(String className) {
+    if (browser == null) {
+      return store;
+    }
+    Store found = hub.storeOfClass(className);
+    if (found != null) {
+      return found;
+    }
+    Class<?> type;
+    try {
+      type = Class.forName(className, false, engine.resourceLoader);
+    } catch (ClassNotFoundException e) {
+      throw new IllegalArgumentException(className + " is not on this server: every server runs the same build", e);
+    }
+    if (!Store.class.isAssignableFrom(type) || !Scope.storeClass(type).isAnnotationPresent(BrowserScoped.class)) {
+      throw new IllegalArgumentException(className + " is not a @BrowserScoped store");
+    }
+    return engine.browserStoreOnHub(hub, type.asSubclass(Store.class));
+  }
+
+  /** The value at address, its store made first if a browser's hub has not made it yet. */
+  Cell cellAt(String address) {
+    Cell cell = hub.cells.get(address);
+    if (cell == null && browser != null && address.startsWith(Retained.STORE_PREFIX)) {
+      storeAt(address);
+      cell = hub.cells.get(address);
+    }
+    return cell;
   }
 }

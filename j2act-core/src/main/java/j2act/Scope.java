@@ -473,7 +473,7 @@ final class Scope {
     Scope previousScope = Tracking.swapScope(this);
     Cell cell;
     // A stub of a store held on another server binds what the holder feeds (ADR 0037).
-    Stub stub = tab.sharedFor != null ? tab.sharedFor.stub : null;
+    Stub stub = tab.cluster != null ? tab.cluster.stub : null;
     try {
       cell = tab.rt.runWithOwner(slot, () -> tab.rt.untrack(() -> stub != null
         ? Stubs.cell(primitive, tab, address + "#" + index, stub, store)

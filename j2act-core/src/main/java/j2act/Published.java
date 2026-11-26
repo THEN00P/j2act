@@ -136,7 +136,7 @@ final class Published {
       host.lastStates.put(cell, entry.last);
       if (cell instanceof Stub.Stubbed) {
         // A stub's value comes from the server that holds the store, from now on (ADR 0037).
-        host.tab.sharedFor.stub.subscribe(cell.address);
+        host.tab.cluster.stub.subscribe(cell.address);
       }
     }
     entry.readers.merge(reader, 1, Integer::sum);
@@ -160,7 +160,7 @@ final class Published {
       return;
     }
     entry.stubPaused = !wanted;
-    Stub stub = host.tab.sharedFor.stub;
+    Stub stub = host.tab.cluster.stub;
     if (wanted) {
       stub.subscribe(entry.cell.address);
     } else {
@@ -217,7 +217,7 @@ final class Published {
   private void unstub(Entry entry) {
     Cell cell = entry.cell;
     if (cell instanceof Stub.Stubbed && !entry.stubPaused) {
-      host.tab.sharedFor.stub.unsubscribe(cell.address);
+      host.tab.cluster.stub.unsubscribe(cell.address);
     }
   }
 

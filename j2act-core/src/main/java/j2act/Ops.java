@@ -37,9 +37,11 @@ final class Ops {
     return m;
   }
 
-  static Map<String, Object> call(Object body, J2Act engine) {
+  static Map<String, Object> call(Store store, Object body, J2Act engine) {
     Map<String, Object> m = new LinkedHashMap<>();
     m.put("op", "call");
+    // A browser's hub holds a store of each class it was asked for: the holder finds this one by it.
+    m.put("type", Scope.storeClass(store.getClass()).getName());
     m.put("fn", Lambdas.encode(body, engine));
     return m;
   }
@@ -58,17 +60,17 @@ final class Ops {
     String kind = (String) op.get("op");
     if ("call".equals(kind)) {
       Reactive.OnStore body = (Reactive.OnStore) Lambdas.decode((Map<String, Object>) op.get("fn"), engine, allowed);
-      Store store = entry.store;
+      Store store = entry.storeOfClass((String) op.get("type"));
       return () -> entry.hub.applyCall(store, body);
     }
     String address = (String) op.get("addr");
-    Cell cell = entry.hub.cells.get(address);
+    Cell cell = entry.cellAt(address);
     if (cell == null) {
       throw new IllegalArgumentException("no value " + address + " in " + entry.describe());
     }
     switch (kind) {
       case "set": {
-        Object value = engine.json.read((String) op.get("json"), typeOf(entry.store, address));
+        Object value = engine.json.read((String) op.get("json"), typeOf(entry.storeAt(address), address));
         if (cell instanceof ValueCell) {
           return () -> ((ValueCell) cell).applyWrite(value);
         }

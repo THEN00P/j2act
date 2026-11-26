@@ -62,6 +62,74 @@ final class Stub {
     this.keyType = keyType;
   }
 
+  /** For a browser's stub (ADR 0037): what its open says besides the store, the identity of its tabs here. */
+  private final Map<String, Object> opening = new ConcurrentHashMap<>();
+  /** For a browser's stub: whether the holder let it open, the browser being this principal's or nobody's. */
+  private final CompletableFuture<Boolean> mine = new CompletableFuture<>();
+  /** For a browser's stub: its tabs here, to tell the holder again after a new link. */
+  private volatile int tabsHere = -1;
+
+  /** A browser's stub opens with its storage id, its principal and the identity its holder's code reads. */
+  void opening(String storageId, String principal, AuthCtx auth) {
+    opening.put("storage", storageId);
+    if (principal != null) {
+      opening.put("principal", principal);
+    }
+    opening.put("auth", Remote.authJson(auth));
+  }
+
+  /** The principal the browser's tabs here have now, for its next open and for the holder now. */
+  void principal(String principal) {
+    opening.put("principal", principal);
+    Link l = link;
+    if (live && l != null) {
+      l.send(Peers.message("bprincipal", "store", store, "gen", generation, "principal", principal));
+    }
+  }
+
+  /** Blocking, up to millis: true once the holder opened the browser here, false when it is another principal's. */
+  Boolean whetherMine(long millis) {
+    try {
+      return mine.get(millis, java.util.concurrent.TimeUnit.MILLISECONDS);
+    } catch (java.util.concurrent.TimeoutException e) {
+      // Out of reach for now: it shows as loading until the holder answers.
+      return null;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return null;
+    } catch (java.util.concurrent.ExecutionException e) {
+      return null;
+    }
+  }
+
+  /** How many of a browser's tabs are on this server: the holder hears it. */
+  void tabs(int count) {
+    tabsHere = count;
+    Link l = link;
+    if (live && l != null) {
+      l.send(Peers.message("btabs", "store", store, "gen", generation, "n", (long) count));
+    }
+  }
+
+  /** For a browser's stub: a tab of it here has had its socket, so the browser's effects may run on the holder. */
+  private volatile boolean tabLive;
+
+  void live() {
+    tabLive = true;
+    Link l = link;
+    if (live && l != null) {
+      l.send(Peers.message("blive", "store", store, "gen", generation));
+    }
+  }
+
+  /** browser().requestPause() here: the holder asks its tabs of the browser and the other servers theirs. */
+  void pauseAll() {
+    Link l = link;
+    if (live && l != null) {
+      l.send(Peers.message("bpause", "store", store, "gen", generation));
+    }
+  }
+
   /** Talks to holder from now on. */
   void start(Node holder) {
     owner = holder;
@@ -81,7 +149,9 @@ final class Stub {
       return;
     }
     link = l;
-    peers.ask(l, Peers.message("open", "store", store, "type", type, "key", key, "keyType", keyType))
+    Map<String, Object> open = Peers.message("open", "store", store, "type", type, "key", key, "keyType", keyType);
+    open.putAll(opening);
+    peers.ask(l, open)
       .whenComplete((answer, error) -> {
         if (error != null || answer == null) {
           retryLater();
@@ -89,7 +159,18 @@ final class Stub {
         }
         if (Boolean.TRUE.equals(answer.get("ok"))) {
           String gen = (String) answer.get("gen");
+          Browser browser = entry.browser;
+          if (browser != null && answer.get("principal") != null) {
+            synchronized (browser) {
+              if (browser.principal == null) {
+                browser.principal = (String) answer.get("principal");
+              }
+            }
+          }
           entry.hub.host.job(() -> opened(l, gen, ((Number) answer.get("epoch")).longValue()));
+        } else if (Boolean.TRUE.equals(answer.get("elsewhere"))) {
+          // The browser is another principal's (ADR 0030): nothing of it shows here.
+          mine.complete(false);
         } else if (answer.get("holder") != null) {
           owner = Node.at((String) answer.get("holder"));
           connect();
@@ -119,6 +200,33 @@ final class Stub {
     }
     for (String address : subscribed) {
       l.send(Peers.message("sub", "store", store, "gen", gen, "addr", address));
+    }
+    if (tabsHere >= 0) {
+      l.send(Peers.message("btabs", "store", store, "gen", gen, "n", (long) tabsHere));
+    }
+    if (tabLive) {
+      l.send(Peers.message("blive", "store", store, "gen", gen));
+    }
+    mine.complete(true);
+  }
+
+  /** For a browser's stub: what the holder says of it. Any thread. */
+  void onBrowser(String type, Map<String, Object> m) {
+    Browser browser = entry.browser;
+    if (browser == null || !m.get("gen").equals(generation)) {
+      return;
+    }
+    switch (type) {
+      case "belse":
+        browser.elsewhere = ((Number) m.get("n")).intValue();
+        return;
+      case "bpauseHere":
+        browser.pauseHere();
+        return;
+      case "bprincipalIs":
+        engine.browserPrincipalHeard(browser, (String) m.get("principal"));
+        return;
+      default:
     }
   }
 
@@ -189,7 +297,7 @@ final class Stub {
     Throwable failure = error == null ? null : new IllegalStateException(error);
     if (has) {
       try {
-        value = engine.json.read((String) s.get("v"), Ops.typeOf(entry.store, cell.cell().address));
+        value = engine.json.read((String) s.get("v"), Ops.typeOf(entry.storeAt(cell.cell().address), cell.cell().address));
       } catch (RuntimeException e) {
         has = false;
         failure = e;
@@ -250,7 +358,7 @@ final class Stub {
   static CompletableFuture<Behind> check(List<SharedRead> reads) {
     Map<Stub, List<SharedRead>> byStub = new LinkedHashMap<>();
     for (SharedRead read : reads) {
-      Stub stub = read.source.tab.sharedFor.stub;
+      Stub stub = read.source.tab.cluster.stub;
       byStub.computeIfAbsent(stub, s -> new ArrayList<>()).add(read);
     }
     List<CompletableFuture<Map<Stub, Map<String, Long>>>> asked = new ArrayList<>();
@@ -349,8 +457,8 @@ final class Stub {
   }
 
   /** Lane-only. onStore's body, to run on the holder with the store. */
-  void call(Object body) {
-    ops.add(Ops.call(body, engine));
+  void call(Store store, Object body) {
+    ops.add(Ops.call(store, body, engine));
   }
 
   /** Lane-only, at the end of a job: its writes go to the holder as one batch. */

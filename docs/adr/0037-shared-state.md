@@ -86,7 +86,13 @@ A shared store's code cannot use what differs between its readers: `auth()`, `pa
 
 ## Browser state becomes a shared store
 
-`@BrowserScoped` stores live on a hub keyed by the browser cookie, with ADR 0030's identity rules, as shared stores do on theirs. Tabs of one browser no longer share one graph (ADR 0033): each tab is its own graph reading the browser's stores like any other hub's. Two open tabs can show a change a moment apart when one of them waits on a slow load; in exchange, a slow load in one tab no longer holds the others, and there is one mechanism instead of two. In a cluster, a browser's tabs are routed to one server by its cookie, as ADR 0030 has it, and its hub lives there.
+`@BrowserScoped` stores live on a hub keyed by the browser cookie, with ADR 0030's identity rules, as shared stores do on theirs. Tabs of one browser no longer share one graph (ADR 0033): each tab is its own graph reading the browser's stores like any other hub's. Two open tabs can show a change a moment apart when one of them waits on a slow load; in exchange, a slow load in one tab no longer holds the others, and there is one mechanism instead of two. In a cluster, a browser's hub is a store of the cluster, as a shared store is: one lease for all its stores, under `browser|` and the cookie's hash, never the cookie. Its tabs can be on any server; the one holding it makes each store when a tab asks for it, and runs its effects once one of its tabs anywhere has a socket. The holder keeps the principal: a server opening the browser says whose tab it has, and a tab of another principal gets a browser of its own, as on one server. `tabCount()` and `requestPause()` count and ask the tabs on every server.
+
+## Hidden pages and moving stores
+
+A page whose tab is hidden, or which lost its socket, is skipped by the graphs it reads, and gets the state each value is in once it is shown; a server whose pages are all hidden stops hearing that value from the holder. A click on a hidden page that has to catch up gets the revisions it waits for. `liveWhileHidden()` keeps a page getting every change, for an unread count in its title.
+
+A server that stops (`leaveCluster()`, which Spring calls before its web server stops and `close()` calls otherwise) hands each store it holds to another server that answers: the lease goes over (`SharedLeases.handOver`), and the store's plain values go as JSON beside its Retained State, with its generation, its revision number and the ids of the batches it applied. Batches that reach it after it froze are answered as moved and sent again where it went; its readers hear where and go on there. A crash still loses what was not saved.
 
 ## Security
 
@@ -143,7 +149,4 @@ The developer's code does not change. `withCluster(Cluster.builder().self(url).d
 ## Open
 
 - Ordering across stores: a store's own write to another store, such as a channel's effect writing the guild's unread count, reaches a page in two revisions, one per store. A click is checked against both stores' published states at once, and a page's writes to both land at once.
-- Sending less to pages that are hidden or not looking at a room, as Discord does for passive sessions.
-- Moving a live store to another server with its plain values, not only its Retained State.
-- A browser's hub as a store of the cluster, so that its tabs need not be routed to one server.
 - A load test of a large room: messages per second, open windows and latency, with real sockets, uneven permissions and slow readers.

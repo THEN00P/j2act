@@ -152,6 +152,11 @@ public final class Tab {
   volatile Browser hubFor;
   /** Set when this tab is a @SharedScoped store's hub (ADR 0037): no page, no socket, no user. */
   volatile SharedHub sharedFor;
+  /**
+   * A hub's place in a cluster (ADR 0037): held here, or a stub of the server that holds it. A shared store's hub has
+   * one in a cluster, as has a browser's; null without one.
+   */
+  volatile SharedHub cluster;
   /** While a store that moved from another server is made here: its plain values, by address (ADR 0037). */
   volatile Map<String, String> handed;
 
@@ -170,9 +175,9 @@ public final class Tab {
   /** On this lane: onStore's body, with the store; a copy of a store on another server sends it there (ADR 0037). */
   @SuppressWarnings({"unchecked", "rawtypes"})
   void applyCall(Store store, Reactive.OnStore body) {
-    SharedHub shared = sharedFor;
+    SharedHub shared = cluster;
     if (shared != null && shared.stub != null) {
-      shared.stub.call(body);
+      shared.stub.call(store, body);
       return;
     }
     Tracking.in(this, store.scope, () -> {
@@ -211,6 +216,20 @@ public final class Tab {
       return;
     }
     engine.leaveBrowser(this, old);
+    browserGeneration.update(n -> (Long) n + 1);
+  }
+
+  /**
+   * Lane-only. This tab's browser ended here while the tab goes on, as when another server took its stores over (ADR
+   * 0037): what read its state re-renders, and joins it again, with the same cookie, wherever it is now.
+   */
+  void leaveEndedBrowser() {
+    synchronized (this) {
+      if (browser == null || !browser.ended) {
+        return;
+      }
+      browser = null;
+    }
     browserGeneration.update(n -> (Long) n + 1);
   }
 
@@ -500,6 +519,21 @@ public final class Tab {
     storeDestructions.remove(key);
     StoreEntry entry = stores.remove(key);
     return entry == null ? null : entry.instance;
+  }
+
+  /** The store of this class this hub made, whatever key a container gave it; null if none. */
+  Store storeOfClass(String className) {
+    for (StoreEntry entry : stores.values()) {
+      if (entry.instance instanceof Store && Scope.storeClass(entry.instance.getClass()).getName().equals(className)) {
+        return (Store) entry.instance;
+      }
+    }
+    return null;
+  }
+
+  /** The identity a hub's code reads, as its holder heard it from the server that opened it (ADR 0037). */
+  void presetAuth(AuthCtx auth) {
+    resolvedAuth = auth;
   }
 
   Object existingStore(Object key) {
@@ -1723,6 +1757,11 @@ public final class Tab {
       return;
     }
     live = true;
+    SharedHub c = cluster;
+    if (hubFor != null && c != null && c.stub != null) {
+      // A browser's effects run where its stores are held: one of its tabs here has its socket now (ADR 0037).
+      c.stub.live();
+    }
     List<EffectCell> parked = new ArrayList<>(parkedEffects);
     parkedEffects.clear();
     for (EffectCell effect : parked) {

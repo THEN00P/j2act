@@ -162,6 +162,17 @@ final class Remote {
     owned.clear();
   }
 
+  /** The browsers whose stores this server holds for the cluster. */
+  List<Browser> browsersHeld() {
+    List<Browser> held = new ArrayList<>();
+    for (Owned o : owned.values()) {
+      if (o.entry.browser != null) {
+        held.add(o.entry.browser);
+      }
+    }
+    return held;
+  }
+
   /** What this server holds now, for a home server asking who holds a store. */
   SharedLeases.Lease leaseOf(String store) {
     Owned o = owned.get(store);
@@ -309,10 +320,21 @@ final class Remote {
     }
     Map<String, Object> retained = new LinkedHashMap<>(hub.snapshot.values());
     SharedHub e = o.entry;
-    Map<String, Object> m = Peers.message("take", "store", o.store, "type", e.type.getName(), "key",
-      e.key == Store.APPLICATION ? null : engine.json.write(e.key), "keyType",
-      e.key == Store.APPLICATION ? null : e.key.getClass().getName(), "gen", e.generation, "revision",
-      host.published().revision);
+    Map<String, Object> m;
+    if (e.browser != null) {
+      String principal;
+      synchronized (e.browser) {
+        principal = e.browser.principal;
+      }
+      m = Peers.message("take", "store", o.store, "type", "browser", "key", e.browser.id, "storage",
+        e.browser.storageId, "principal", principal, "auth", authJson(hub.currentAuth()), "gen", e.generation,
+        "revision", host.published().revision);
+    } else {
+      m = Peers.message("take", "store", o.store, "type", e.type.getName(), "key",
+        e.key == Store.APPLICATION ? null : engine.json.write(e.key), "keyType",
+        e.key == Store.APPLICATION ? null : e.key.getClass().getName(), "gen", e.generation, "revision",
+        host.published().revision);
+    }
     m.put("values", values);
     m.put("retained", retained);
     m.put("applied", new ArrayList<Object>(o.applied));
@@ -343,9 +365,15 @@ final class Remote {
       for (Object id : (List<Object>) m.get("applied")) {
         applied.add((String) id);
       }
-      engine.takeShared(lease, (String) m.get("type"), (String) m.get("key"), (String) m.get("keyType"),
-        new SharedHub.Handed((String) m.get("gen"), ((Number) m.get("revision")).longValue(), values, retained),
-        applied);
+      SharedHub.Handed handed = new SharedHub.Handed((String) m.get("gen"), ((Number) m.get("revision")).longValue(),
+        values, retained);
+      if ("browser".equals(m.get("type"))) {
+        engine.takeBrowser(lease, (String) m.get("key"), (String) m.get("storage"), (String) m.get("principal"),
+          authOf(m.get("auth")), handed, applied);
+      } else {
+        engine.takeShared(lease, (String) m.get("type"), (String) m.get("key"), (String) m.get("keyType"), handed,
+          applied);
+      }
       link.send(Peers.answer(m, "ok", true));
     } catch (RuntimeException e) {
       engine.log(System.Logger.Level.WARNING, "a store another server handed this one could not start here", e);
@@ -383,6 +411,12 @@ final class Remote {
       case "take":
         engine.work.execute(this, () -> take(link, m), () -> { });
         return;
+      case "btabs":
+      case "bpause":
+      case "bprincipal":
+      case "blive":
+        browserMessage(link, type, m);
+        return;
       default:
         peers.engine.stub(link, type, m);
     }
@@ -404,7 +438,15 @@ final class Remote {
         return;
       }
       try {
-        engine.openOwned(store, (String) m.get("type"), (String) m.get("key"), (String) m.get("keyType"), lease);
+        if ("browser".equals(m.get("type"))) {
+          if (!engine.openBrowserHere(store, (String) m.get("key"), (String) m.get("storage"),
+              (String) m.get("principal"), authOf(m.get("auth")), lease)) {
+            link.send(Peers.answer(m, "ok", false, "elsewhere", true));
+            return;
+          }
+        } else {
+          engine.openOwned(store, (String) m.get("type"), (String) m.get("key"), (String) m.get("keyType"), lease);
+        }
       } catch (RuntimeException e) {
         link.send(Peers.answer(m, "ok", false, "error", e.getMessage()));
         return;
@@ -423,8 +465,181 @@ final class Remote {
       link.send(Peers.answer(m, "ok", false, "error", "the store is ending here"));
       return;
     }
+    String bound = null;
+    Browser browser = o.entry.browser;
+    if (browser != null) {
+      // A browser is one principal's (ADR 0030): one of another's gets nothing of it, as on one server.
+      String principal = (String) m.get("principal");
+      synchronized (browser) {
+        bound = browser.principal;
+        if (bound == null && principal != null) {
+          engine.recordPrincipal(browser, principal);
+          bound = principal;
+        }
+      }
+      if (bound != null && !bound.equals(principal)) {
+        engine.letGoShared(o.entry);
+        link.send(Peers.answer(m, "ok", false, "elsewhere", true));
+        return;
+      }
+    }
     o.holds.merge(link, 1, Integer::sum);
-    link.send(Peers.answer(m, "ok", true, "gen", o.entry.generation, "epoch", o.lease.epoch));
+    link.send(Peers.answer(m, "ok", true, "gen", o.entry.generation, "epoch", o.lease.epoch, "principal", bound));
+  }
+
+  // ---- browsers whose stores this server holds for the cluster (ADR 0037)
+
+  /** The identity a browser's tabs have, as a holder's code reads it: name, roles and claims as JSON. */
+  static String authJson(AuthCtx auth) {
+    Map<String, Object> a = new LinkedHashMap<>();
+    if (auth != null && !auth.isAnonymous()) {
+      a.put("name", auth.name());
+      a.put("roles", new ArrayList<Object>(auth.roles()));
+      Map<String, Object> claims = new LinkedHashMap<>();
+      for (String key : claimKeys(auth)) {
+        Object value = auth.claim(key);
+        if (value == null || value instanceof String || value instanceof Number || value instanceof Boolean) {
+          claims.put(key, value);
+        } else {
+          claims.put(key, String.valueOf(value));
+        }
+      }
+      a.put("claims", claims);
+    }
+    return json(a);
+  }
+
+  private static java.util.Set<String> claimKeys(AuthCtx auth) {
+    return auth.claimKeys();
+  }
+
+  /** A hub's id in the cluster. */
+  String storeOf(SharedHub entry) {
+    return entry.browser != null ? J2Act.browserStoreId(entry.browser.id) : engine.sharedId(entry.type, entry.key);
+  }
+
+  @SuppressWarnings("unchecked")
+  static AuthCtx authOf(Object json) {
+    if (json == null) {
+      return AuthCtx.anonymous();
+    }
+    Map<String, Object> a = (Map<String, Object>) Json.parse((String) json);
+    if (a.get("name") == null) {
+      return AuthCtx.anonymous();
+    }
+    java.util.Set<String> roles = new java.util.LinkedHashSet<>();
+    for (Object role : (List<Object>) a.get("roles")) {
+      roles.add((String) role);
+    }
+    Map<String, Object> claims = a.get("claims") == null ? java.util.Collections.emptyMap()
+      : (Map<String, Object>) a.get("claims");
+    return AuthCtx.of((String) a.get("name"), roles, claims);
+  }
+
+  /** Per server, how many tabs of a browser held here it has. */
+  private final Map<String, Map<Link, Integer>> browserTabs = new ConcurrentHashMap<>();
+
+  /** A browser's tabs on this server came or went: the holder hears, or as the holder, each server hears. */
+  void tabsChanged(SharedHub entry, int count) {
+    if (entry.stub != null) {
+      entry.stub.tabs(count);
+      return;
+    }
+    Owned o = owned.get(storeOf(entry));
+    if (o != null) {
+      tellTabs(o);
+    }
+  }
+
+  /** As the holder: each server hears how many tabs of the browser the others have. */
+  private void tellTabs(Owned o) {
+    Map<Link, Integer> counts = browserTabs.getOrDefault(o.store, java.util.Collections.emptyMap());
+    int total = o.entry.browser.tabs.size();
+    for (int n : counts.values()) {
+      total += n;
+    }
+    for (Map.Entry<Link, Integer> e : counts.entrySet()) {
+      e.getKey().send(Peers.message("belse", "store", o.store, "gen", o.entry.generation, "n",
+        (long) (total - e.getValue())));
+    }
+  }
+
+  /** As the holder: a browser's tabs on other servers. */
+  int tabsElsewhere(SharedHub entry) {
+    int n = 0;
+    for (int count : browserTabs.getOrDefault(storeOf(entry), java.util.Collections.emptyMap()).values()) {
+      n += count;
+    }
+    return n;
+  }
+
+  /** browser().requestPause(): the other servers with tabs of it ask theirs; how many tabs they have. */
+  int pauseElsewhere(SharedHub entry) {
+    if (entry.stub != null) {
+      entry.stub.pauseAll();
+      return entry.browser.elsewhere;
+    }
+    String store = storeOf(entry);
+    for (Link link : browserTabs.getOrDefault(store, java.util.Collections.emptyMap()).keySet()) {
+      link.send(Peers.message("bpauseHere", "store", store, "gen", entry.generation));
+    }
+    return tabsElsewhere(entry);
+  }
+
+  /** As the holder: the browser is principal's now; the servers with tabs of it hear. */
+  void principalIs(SharedHub entry, String principal) {
+    Owned o = owned.get(storeOf(entry));
+    if (o == null) {
+      return;
+    }
+    java.util.Set<Link> told = new java.util.HashSet<>(o.holds.keySet());
+    told.addAll(browserTabs.getOrDefault(o.store, java.util.Collections.emptyMap()).keySet());
+    for (Link link : told) {
+      link.send(Peers.message("bprincipalIs", "store", o.store, "gen", o.entry.generation, "principal", principal));
+    }
+  }
+
+  /** What a server with tabs of a browser held here says of them. */
+  private void browserMessage(Link link, String type, Map<String, Object> m) {
+    Owned o = live(m);
+    if (o == null || o.entry.browser == null) {
+      return;
+    }
+    Browser browser = o.entry.browser;
+    switch (type) {
+      case "blive":
+        browser.hub.goLive();
+        return;
+      case "btabs":
+        browserTabs.computeIfAbsent(o.store, s -> new ConcurrentHashMap<>()).put(link, ((Number) m.get("n")).intValue());
+        tellTabs(o);
+        return;
+      case "bpause": {
+        browser.pauseHere();
+        for (Link other : browserTabs.getOrDefault(o.store, java.util.Collections.emptyMap()).keySet()) {
+          if (other != link) {
+            other.send(Peers.message("bpauseHere", "store", o.store, "gen", o.entry.generation));
+          }
+        }
+        return;
+      }
+      case "bprincipal": {
+        String principal = (String) m.get("principal");
+        String bound;
+        synchronized (browser) {
+          bound = browser.principal;
+          if (bound == null && principal != null) {
+            engine.recordPrincipal(browser, principal);
+            return;
+          }
+        }
+        if (bound != null && !bound.equals(principal)) {
+          link.send(Peers.message("bprincipalIs", "store", o.store, "gen", o.entry.generation, "principal", bound));
+        }
+        return;
+      }
+      default:
+    }
   }
 
   private void letGo(Owned o, Link link, int times) {
@@ -439,6 +654,14 @@ final class Remote {
 
   /** The server at the other end of link is gone: what it read and held here goes. */
   void lost(Link link) {
+    for (Map.Entry<String, Map<Link, Integer>> e : browserTabs.entrySet()) {
+      if (e.getValue().remove(link) != null) {
+        Owned o = owned.get(e.getKey());
+        if (o != null) {
+          tellTabs(o);
+        }
+      }
+    }
     for (Owned o : owned.values()) {
       Reader reader = o.readers.remove(link);
       if (reader != null) {
@@ -461,7 +684,7 @@ final class Remote {
     Reader reader = o.readers.computeIfAbsent(link, l -> new Reader(o, l));
     ReactiveHost host = o.entry.hub.host;
     host.job(() -> {
-      Cell cell = o.entry.hub.cells.get(address);
+      Cell cell = o.entry.cellAt(address);
       // A store moving sends nothing more: the server it moves to starts from what it had (ADR 0037).
       if (cell == null || o.moving) {
         return;

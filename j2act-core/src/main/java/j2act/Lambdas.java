@@ -113,7 +113,8 @@ final class Lambdas {
     if (value instanceof Store) {
       SharedHub hub = ((Store) value).sharedHub();
       if (hub == null) {
-        throw unsupported(lambda, index, value, "a store that is not @SharedScoped, which another server does not have");
+        throw unsupported(lambda, index, value, "a store that is not @SharedScoped, which another server does not have:"
+          + " a browser's or a tab's belongs to one user, so capture the values it holds");
       }
       out.put("kind", "store");
       out.put("type", hub.type.getName());

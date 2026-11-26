@@ -216,7 +216,7 @@ public final class J2Act implements AutoCloseable {
     if (cookie == null) {
       return false;
     }
-    Browser browser = browsers.get(cookie);
+    Browser browser = browsers.get(Browser.idOf(cookie));
     Retained.Snapshot stored = browser == null ? snapshots.browserSnapshot(cookie) : null;
     if (browser == null && stored == null) {
       return false; // nothing of it is left to protect: its first use makes a fresh browser
@@ -228,7 +228,7 @@ public final class J2Act implements AutoCloseable {
         if (browser.ended) {
           // It retired since the lookup, with its snapshot saved, and its hub is gone: whoever logged
           // in has to go on that snapshot, or it stays anonymous for another account to restore.
-          browsers.remove(cookie, browser);
+          browsers.remove(browser.id, browser);
           return cookieBelongsElsewhere(tab, () -> principal);
         }
         bound = browser.principal;
@@ -318,18 +318,20 @@ public final class J2Act implements AutoCloseable {
 
   /** Joins the browser with this cookie, made or restored if need be; null when it belongs to someone else. */
   private Browser join(String cookie, Tab tab, String principal) {
+    String id = Browser.idOf(cookie);
     while (true) {
-      Browser browser = browsers.get(cookie);
+      Browser browser = browsers.get(id);
       if (browser == null) {
         // One maker per cookie, so the hub that consumes the snapshot is the one that stays.
-        synchronized (BROWSER_LOCKS[Math.floorMod(cookie.hashCode(), BROWSER_LOCKS.length)]) {
-          browser = browsers.get(cookie);
+        synchronized (BROWSER_LOCKS[Math.floorMod(id.hashCode(), BROWSER_LOCKS.length)]) {
+          browser = browsers.get(id);
           if (browser == null) {
             browser = newBrowser(cookie, tab, principal);
             if (browser == null) {
               return null;
             }
-            browsers.put(cookie, browser);
+            browsers.putIfAbsent(id, browser);
+            browser = browsers.get(id);
           }
         }
       }
@@ -341,12 +343,21 @@ public final class J2Act implements AutoCloseable {
           if (browser.principal == null && principal != null) {
             recordPrincipal(browser, principal);
           }
+          if (browser.cookie == null) {
+            // Held here for another server's tabs until now: this server has its cookie too.
+            browser.cookie = cookie;
+          }
           // A browser still saving after its last tab comes back as it was: its values are all here.
           browser.retired = false;
           browser.joins++;
           browser.tabs.add(tab);
-          return browser;
+        } else {
+          browser = null;
         }
+      }
+      if (browser != null) {
+        browser.tabsChanged();
+        return browser;
       }
       // It ended between the lookup and the lock, after its snapshot landed: the next one restores it.
     }
@@ -354,8 +365,71 @@ public final class J2Act implements AutoCloseable {
 
   /** A new hub, with its retained values back if it saved some for this identity; null when they belong to another user. */
   private Browser newBrowser(String cookie, Tab tab, String principal) {
+    if (peers != null) {
+      return newClusteredBrowser(cookie, tab, principal);
+    }
+    return newLocalBrowser(cookie, Browser.idOf(cookie), Browser.storageIdOf(cookie), tab.exchange, null, principal);
+  }
+
+  /** A browser's id in the cluster: of the cookie's hash, never the cookie. */
+  static String browserStoreId(String browserId) {
+    return "browser|" + browserId;
+  }
+
+  /**
+   * A browser's hub in a cluster (ADR 0037): held here when its lease says so, else a stub of the server that holds
+   * it, which says whether the browser is this principal's before anything of it shows here.
+   */
+  private Browser newClusteredBrowser(String cookie, Tab tab, String principal) {
+    String id = Browser.idOf(cookie);
+    String storeId = browserStoreId(id);
+    j2act.cluster.SharedLeases.Lease lease = leases().acquire(storeId, peers.self, peers.cluster.term());
+    if (lease.holder.equals(peers.self)) {
+      Remote.Owned held = peers.remote.owned(storeId);
+      if (held != null) {
+        // Held here for another server's tabs already: join checks the principal.
+        return held.entry.browser;
+      }
+      Browser browser = newLocalBrowser(cookie, id, Browser.storageIdOf(cookie), tab.exchange, null, principal);
+      if (browser != null) {
+        clusterBrowser(browser, newSecret(12));
+        peers.remote.own(storeId, browser.cluster, lease);
+      }
+      return browser;
+    }
+    Tab hub = new Tab(this, new ReactiveHost(this), "browser:" + newSecret(9), newSecret(18), tab.exchange, "/");
+    Browser browser = new Browser(this, cookie, hub, principal);
+    hub.hubFor = browser;
+    SharedHub entry = clusterBrowser(browser, newSecret(12));
+    entry.stub = new Stub(peers, entry, storeId, "browser", id, null);
+    entry.stub.opening(browser.storageId, principal, tab.currentAuth());
+    peers.stubs.put(storeId, entry.stub);
+    entry.stub.start(lease.holder);
+    Boolean mine = entry.stub.whetherMine(peers.cluster.callTimeout().toMillis());
+    if (Boolean.FALSE.equals(mine)) {
+      entry.stub.close();
+      peers.stubs.remove(storeId, entry.stub);
+      hub.post(() -> hub.dispose(null));
+      return null;
+    }
+    return browser;
+  }
+
+  private SharedHub clusterBrowser(Browser browser, String generation) {
+    SharedHub entry = new SharedHub(this, browser, generation);
+    browser.cluster = entry;
+    browser.hub.cluster = entry;
+    return entry;
+  }
+
+  /**
+   * A browser's hub held here, with its retained values back if it saved some for this identity; null when they
+   * belong to another user. With no cookie, it is held for another server's tabs, opened with their identity.
+   */
+  private Browser newLocalBrowser(String cookie, String browserId, String storageId, Exchange exchange,
+      AuthCtx openedAs, String principal) {
     Map<String, String> entries = null;
-    String id = Retained.id("browser:" + cookie);
+    String id = storageId;
     try {
       Optional<String> stored = snapshots.storage.load(id);
       if (stored.isPresent()) {
@@ -372,11 +446,78 @@ public final class J2Act implements AutoCloseable {
       log(System.Logger.Level.WARNING, "a browser's retained state could not be restored", e);
     }
     // A graph of its own (ADR 0037): its tabs read its values through their own.
-    Tab hub = new Tab(this, new ReactiveHost(this), "browser:" + newSecret(9), newSecret(18), tab.exchange, "/");
-    Browser browser = new Browser(this, cookie, hub, principal);
+    Tab hub = new Tab(this, new ReactiveHost(this), "browser:" + newSecret(9), newSecret(18), exchange, "/");
+    if (openedAs != null) {
+      hub.presetAuth(openedAs);
+    }
+    Browser browser = new Browser(this, cookie, browserId, storageId, hub, principal);
     hub.hubFor = browser;
     hub.snapshot.restore(entries);
     return browser;
+  }
+
+  /**
+   * Another server's tab opens a browser whose lease this server has (ADR 0037): it is held here from now on, restored
+   * from its Retained State, unless that is another principal's. False when it is.
+   */
+  boolean openBrowserHere(String storeId, String browserId, String storageId, String principal, AuthCtx auth,
+      j2act.cluster.SharedLeases.Lease lease) {
+    synchronized (BROWSER_LOCKS[Math.floorMod(browserId.hashCode(), BROWSER_LOCKS.length)]) {
+      if (peers.remote.owned(storeId) != null) {
+        return true;
+      }
+      Browser browser = browsers.get(browserId);
+      if (browser == null || browser.cluster == null || browser.cluster.stub != null) {
+        browser = newLocalBrowser(null, browserId, storageId, Exchange.empty(), auth, principal);
+        if (browser == null) {
+          return false;
+        }
+        Browser here = browsers.get(browserId);
+        if (here == null) {
+          // This server's own tabs of it, when one comes, go on with this one.
+          browsers.put(browserId, browser);
+        }
+      }
+      clusterBrowser(browser, newSecret(12));
+      peers.remote.own(storeId, browser.cluster, lease);
+      return true;
+    }
+  }
+
+  /**
+   * A browser's stores another server held and handed this one as it stopped (ADR 0037): they go on here with their
+   * plain values and Retained State, each made when one of its tabs asks for it again.
+   */
+  void takeBrowser(j2act.cluster.SharedLeases.Lease lease, String browserId, String storageId, String principal,
+      AuthCtx auth, SharedHub.Handed handed, java.util.List<String> applied) {
+    String storeId = lease.store;
+    synchronized (BROWSER_LOCKS[Math.floorMod(browserId.hashCode(), BROWSER_LOCKS.length)]) {
+      if (peers.remote.owned(storeId) != null) {
+        throw new IllegalStateException("this server holds that browser's stores already");
+      }
+      Tab hub = new Tab(this, new ReactiveHost(this), "browser:" + newSecret(9), newSecret(18), Exchange.empty(), "/");
+      hub.presetAuth(auth);
+      Browser browser = new Browser(this, null, browserId, storageId, hub, principal);
+      hub.hubFor = browser;
+      hub.snapshot.restore(new ConcurrentHashMap<>(handed.retained));
+      // Its stores are made when a tab asks for them again: each takes its values from here then.
+      hub.handed = new ConcurrentHashMap<>(handed.values);
+      hub.host.hop(() -> hub.host.published().revision = handed.revision + 1);
+      clusterBrowser(browser, handed.generation);
+      Browser here = browsers.get(browserId);
+      if (here == null) {
+        browsers.put(browserId, browser);
+      }
+      peers.remote.own(storeId, browser.cluster, lease, applied);
+    }
+  }
+
+  /** The store of type on a browser's hub held here, made with the container or as a tab's would be. */
+  Store browserStoreOnHub(Tab hub, Class<? extends Store> type) {
+    if (storeLookup != null) {
+      return Tracking.in(hub, null, () -> type.cast(storeLookup.apply(type)));
+    }
+    return hub.store(type, () -> newStore(type), null);
   }
 
   /** A 303 for a page load, carrying the browser cookie its render minted, so the next page joins the same browser. */
@@ -424,8 +565,17 @@ public final class J2Act implements AutoCloseable {
    * already in storage is saved again at once, so storage never holds this user's values as
    * anonymous ones another account could restore after a crash.
    */
-  private void recordPrincipal(Browser browser, String principal) {
+  void recordPrincipal(Browser browser, String principal) {
     browser.principal = principal;
+    SharedHub cluster = browser.cluster;
+    if (cluster != null && cluster.stub != null) {
+      // The server holding its stores records it, and says so to the others (ADR 0037).
+      cluster.stub.principal(principal);
+      return;
+    }
+    if (cluster != null) {
+      peers.remote.principalIs(cluster, principal);
+    }
     Tab hub = browser.hub;
     hub.post(() -> {
       if (hub.disposed) {
@@ -438,15 +588,37 @@ public final class J2Act implements AutoCloseable {
     });
   }
 
+  /**
+   * The server holding a browser's stores says whose it is (ADR 0037). A tab here of another identity leaves it, as
+   * when its own identity changed: what it shows of the browser goes, and its cookie with it.
+   */
+  void browserPrincipalHeard(Browser browser, String principal) {
+    synchronized (browser) {
+      if (principal == null || principal.equals(browser.principal)) {
+        return;
+      }
+      browser.principal = principal;
+    }
+    for (Tab tab : browser.tabs) {
+      tab.post(() -> identityChanged(tab, tab.currentAuth()));
+    }
+  }
+
   /** A tab of this browser ended or left it; the last one gives the browser the grace window a tab has. */
   void leaveBrowser(Tab tab, Browser browser) {
     boolean empty;
     long joins;
     synchronized (browser) {
       browser.tabs.remove(tab);
-      empty = browser.tabs.isEmpty() && !browser.retired;
+      empty = browser.tabs.isEmpty() && browser.remoteHolds == 0 && !browser.retired;
       joins = browser.joins;
     }
+    browser.tabsChanged();
+    idleBrowser(browser, empty, joins);
+  }
+
+  /** With no tab here and no other server holding it, a browser retires after the grace window a tab has. */
+  private void idleBrowser(Browser browser, boolean empty, long joins) {
     if (empty) {
       // A full grace window after the latest tab left: a tab that came and went meanwhile restarts it.
       later(browser.hub, reconnectGraceMillis, () -> {
@@ -464,7 +636,7 @@ public final class J2Act implements AutoCloseable {
   private CompletableFuture<Void> retireBrowser(Browser browser, boolean closing) {
     CompletableFuture<Void> saved;
     synchronized (browser) {
-      if (browser.ended || browser.retired || !closing && !browser.tabs.isEmpty()) {
+      if (browser.ended || browser.retired || !closing && (!browser.tabs.isEmpty() || browser.remoteHolds > 0)) {
         return browser.saved;
       }
       // Stays in browsers until its snapshot landed: a tab arriving meanwhile revives it, and none waits.
@@ -484,10 +656,17 @@ public final class J2Act implements AutoCloseable {
           end = closing || browser.retired && browser.saved == saved;
           if (end) {
             browser.ended = true;
-            browsers.remove(browser.cookie, browser);
+            browsers.remove(browser.id, browser);
           }
         }
         if (end) {
+          SharedHub c = browser.cluster;
+          if (c != null && c.stub != null) {
+            c.stub.close();
+            peers.stubs.remove(c.stub.store, c.stub);
+          } else if (c != null && !c.handedOff) {
+            peers.remote.ended(c);
+          }
           hub.post(() -> hub.dispose(null));
         }
         saved.complete(null);
@@ -669,6 +848,7 @@ public final class J2Act implements AutoCloseable {
       : key.getClass().getName());
     peers.stubs.put(id, entry.stub);
     hub.sharedFor = entry;
+    hub.cluster = entry;
     hub.host.unread = () -> idleShared(entry);
     makeStore(entry, type, key);
     entry.stub.start(lease.holder);
@@ -742,6 +922,18 @@ public final class J2Act implements AutoCloseable {
 
   /** One more holder of a store held here, for a server that opened it; false when it ends meanwhile. */
   boolean holdShared(SharedHub entry) {
+    Browser browser = entry.browser;
+    if (browser != null) {
+      synchronized (browser) {
+        if (browser.ended) {
+          return false;
+        }
+        browser.retired = false;
+        browser.remoteHolds++;
+        browser.joins++;
+        return true;
+      }
+    }
     synchronized (entry) {
       if (entry.ended) {
         return false;
@@ -754,11 +946,39 @@ public final class J2Act implements AutoCloseable {
   }
 
   void letGoShared(SharedHub entry) {
+    Browser browser = entry.browser;
+    if (browser != null) {
+      boolean empty;
+      long joins;
+      synchronized (browser) {
+        browser.remoteHolds--;
+        empty = browser.tabs.isEmpty() && browser.remoteHolds == 0 && !browser.retired;
+        joins = browser.joins;
+      }
+      idleBrowser(browser, empty, joins);
+      return;
+    }
     releaseShared(entry);
   }
 
   /** A store whose lease this server lost ends at once, saving nothing: another server holds it now. */
   void endShared(SharedHub entry) {
+    Browser browser = entry.browser;
+    if (browser != null) {
+      synchronized (browser) {
+        if (browser.ended) {
+          return;
+        }
+        browser.ended = true;
+        browsers.remove(browser.id, browser);
+      }
+      // Its tabs here join it again, wherever it is now, the next time they use it.
+      for (Tab tab : browser.tabs) {
+        tab.post(tab::leaveEndedBrowser);
+      }
+      entry.hub.post(() -> entry.hub.dispose(null));
+      return;
+    }
     synchronized (entry) {
       if (entry.ended) {
         return;
@@ -781,6 +1001,8 @@ public final class J2Act implements AutoCloseable {
       stub.onGone(m);
     } else if ("moved".equals(type)) {
       stub.onMoved(m);
+    } else {
+      stub.onBrowser(type, m);
     }
   }
 
@@ -798,6 +1020,7 @@ public final class J2Act implements AutoCloseable {
     Tab hub = new Tab(this, new ReactiveHost(this), "shared:" + newSecret(9), newSecret(18), Exchange.empty(), "/");
     SharedHub entry = new SharedHub(this, type, key, handed != null ? handed.generation : newSecret(12), hub);
     hub.sharedFor = entry;
+    hub.cluster = entry;
     hub.host.unread = () -> idleShared(entry);
     if (handed != null) {
       hub.snapshot.restore(handed.retained);
@@ -1639,6 +1862,11 @@ public final class J2Act implements AutoCloseable {
   }
 
   @Override public void close() {
+    // With a cluster, a browser held here for another server's tabs only is in no map of this one's but the cluster's.
+    java.util.Set<Browser> everyBrowser = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    if (peers != null) {
+      everyBrowser.addAll(peers.remote.browsersHeld());
+    }
     leaveCluster();
     sweeper.shutdownNow();
     if (dev != null) {
@@ -1673,7 +1901,8 @@ public final class J2Act implements AutoCloseable {
       // Tabs end first, so their effects' cleanups and @PreDestroy can still use browser stores.
       awaitEnded(ended, deadline);
       java.util.List<CompletableFuture<Void>> browserSaves = new java.util.ArrayList<>();
-      for (Browser browser : browsers.values()) {
+      everyBrowser.addAll(browsers.values());
+      for (Browser browser : everyBrowser) {
         browserSaves.add(retireBrowser(browser, true));
       }
       for (SharedHub entry : shared.values()) {
@@ -1695,7 +1924,8 @@ public final class J2Act implements AutoCloseable {
     // Tabs end first, so their effects' cleanups and @PreDestroy can still use browser stores.
     awaitEnded(ended, deadline);
     // Saved above if asked; either way their effects' cleanups and @PreDestroy run now.
-    for (Browser browser : browsers.values()) {
+    everyBrowser.addAll(browsers.values());
+    for (Browser browser : everyBrowser) {
       synchronized (browser) {
         browser.ended = true;
       }

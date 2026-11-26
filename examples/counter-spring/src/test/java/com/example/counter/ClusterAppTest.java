@@ -85,11 +85,50 @@ class ClusterAppTest {
     }
   }
 
+  @Test
+  void aBrowsersTabsOnTwoServersShareItsStores() throws Exception {
+    String database = "cluster-" + UUID.randomUUID();
+    int a = freePort();
+    int b = freePort();
+    try (ConfigurableApplicationContext one = server(a, database);
+         ConfigurableApplicationContext two = server(b, database)) {
+      HttpResponse<String> first = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + a + "/")).build(),
+        HttpResponse.BodyHandlers.ofString());
+      String cookie = first.headers().allValues("set-cookie").stream().filter(c -> c.startsWith("j2-browser="))
+        .findFirst().orElseThrow().split(";")[0];
+      CounterAppTest.Client here = attach(a, first.body(), cookie);
+      CounterAppTest.Client there = connect(b, "/", cookie);
+      String track = CounterAppTest.find(here.html, "id=\"player-track\"[^>]*data-j2-change=\"([^\"]+)\"");
+      here.send("{\"type\":\"event\",\"handler\":\"" + track + "\",\"value\":\"a song\",\"id\":\"1\"}");
+      // The browser's NowPlaying, a Spring bean of the browser's scope, lives on one server; its tabs read it on both.
+      there.await(m -> m.contains("Playing in this browser: a song"));
+      String louder = CounterAppTest.find(there.html, "id=\"player-louder\"[^>]*data-j2-click=\"([^\"]+)\"");
+      there.send("{\"type\":\"event\",\"handler\":\"" + louder + "\",\"value\":\"\",\"id\":\"2\"}");
+      here.await(m -> m.contains("Volume 6"));
+      here.close();
+      there.close();
+    }
+  }
+
   private CounterAppTest.Client connect(int port, String path) throws Exception {
-    String html = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).build(),
-      HttpResponse.BodyHandlers.ofString()).body();
+    return connect(port, path, null);
+  }
+
+  private CounterAppTest.Client connect(int port, String path, String cookie) throws Exception {
+    HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path));
+    if (cookie != null) {
+      request.header("Cookie", cookie);
+    }
+    return attach(port, http.send(request.build(), HttpResponse.BodyHandlers.ofString()).body(), cookie);
+  }
+
+  private CounterAppTest.Client attach(int port, String html, String cookie) throws Exception {
     CounterAppTest.Client client = new CounterAppTest.Client(html);
-    client.socket = http.newWebSocketBuilder()
+    java.net.http.WebSocket.Builder socket = http.newWebSocketBuilder();
+    if (cookie != null) {
+      socket.header("Cookie", cookie);
+    }
+    client.socket = socket
       .buildAsync(URI.create("ws://localhost:" + port + "/_j2act/ws"), client)
       .get(5, TimeUnit.SECONDS);
     client.send("{\"type\":\"hello\",\"tab\":\"" + CounterAppTest.find(html, "name=\"j2-tab\" content=\"([^\"]+)\"")

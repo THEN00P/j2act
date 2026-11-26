@@ -203,7 +203,16 @@ final class Snapshots {
    * left; writes land in the order the lane took them (ADR 0030).
    */
   CompletableFuture<Void> persistBrowser(Browser browser) {
-    return persistHub(browser.hub, Retained.id("browser:" + browser.cookie), browser.principal, "a browser");
+    SharedHub cluster = browser.cluster;
+    if (cluster != null && (cluster.stub != null || cluster.handedOff)) {
+      // Its values are the server's that holds them, which saves them (ADR 0037).
+      return CompletableFuture.completedFuture(null);
+    }
+    String principal;
+    synchronized (browser) {
+      principal = browser.principal;
+    }
+    return persistHub(browser.hub, browser.storageId, principal, "a browser");
   }
 
   /** Lane-only, the hub's: saves a hub's Retained State under id, or deletes what was saved when it has none. */
