@@ -96,7 +96,9 @@ Logs and errors never print a store's values, as Retained State keeps snapshots 
 
 ## Load
 
-Separate graphs keep users apart only if their work does not compete for the same threads. Loads that block get their own capacity, apart from the threads that run graphs and stores, so one user's slow database calls cannot starve everyone's rendering. A page whose socket is slow keeps a bounded queue: when it falls behind, j2act stops sending the steps in between and renders the latest state when it catches up.
+Separate graphs keep users apart only if their work does not compete for the same threads. The lanes have to run where the container's context is, on its executor (ADR 0017), and so does blocking work: `async(...)` bodies, action bodies and transfers. So blocking work may use only part of the executor, three quarters of a pool whose size j2act can see and 16 threads of one it cannot (`withBlockingWork`), and the rest is always there for rendering and stores. Within that part each tab or store takes turns, at most four of its tasks at once (`withBlockingWorkPerTab`): one user's slow database calls wait behind each other, not in front of everyone else's. Work started from inside work runs at once, and work that waited half a second for its turn starts whatever the limits say, so a body blocked on work queued behind it never holds anything up for long.
+
+A page whose lane falls behind takes every revision waiting for it in one job and renders once, with the latest state. A page whose socket is slow keeps a bounded queue of what it has not acknowledged (ADR 0032): when it is full, what changes waits as dirty, and the latest render goes when the client catches up, never the steps in between.
 
 ## More than one server
 

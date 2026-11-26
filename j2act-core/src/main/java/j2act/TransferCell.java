@@ -93,30 +93,26 @@ final class TransferCell extends Cell {
       offerUpload((Upload) run, (UploadFile) variables, mySeq);
       return;
     }
-    try {
-      tab.engine.executor.execute(() -> {
-        Object result = null;
-        Throwable error = null;
-        Tab.RUNNING_FOR.set(tab);
-        try {
-          result = invoke(run, variables);
-        } catch (Throwable t) {
-          error = t;
-        } finally {
-          Tab.RUNNING_FOR.remove();
-        }
-        if (error != null && attempt < run.retries) {
-          long delay = run.backoff.toMillis() << attempt;
-          tab.engine.later(tab, delay, () -> attempt(run, variables, mySeq, attempt + 1));
-          return;
-        }
-        Object r = result;
-        Throwable e = error;
-        tab.post(() -> finish(run, variables, mySeq, r, e));
-      });
-    } catch (RejectedExecutionException e) {
-      tab.post(() -> finish(run, variables, mySeq, null, e));
-    }
+    tab.engine.work.execute(tab, () -> {
+      Object result = null;
+      Throwable error = null;
+      Tab.RUNNING_FOR.set(tab);
+      try {
+        result = invoke(run, variables);
+      } catch (Throwable t) {
+        error = t;
+      } finally {
+        Tab.RUNNING_FOR.remove();
+      }
+      if (error != null && attempt < run.retries) {
+        long delay = run.backoff.toMillis() << attempt;
+        tab.engine.later(tab, delay, () -> attempt(run, variables, mySeq, attempt + 1));
+        return;
+      }
+      Object r = result;
+      Throwable e = error;
+      tab.post(() -> finish(run, variables, mySeq, r, e));
+    }, () -> tab.post(() -> finish(run, variables, mySeq, null, new RejectedExecutionException("the executor refused it"))));
   }
 
   /**

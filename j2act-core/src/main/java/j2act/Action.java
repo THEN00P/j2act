@@ -87,46 +87,42 @@ public final class Action<V, R> {
   private void start(Tab tab, Scope scope, V variables, CompletableFuture<R> result) {
     Runtime.ActionRun run = tab.rt.openAction((CompletableFuture<Object>) (CompletableFuture<?>) result);
     Call call = new Call(tab, run);
-    try {
-      tab.engine.executor.execute(() -> {
-        R value = null;
-        Throwable failure = null;
-        Call.CURRENT.set(call);
-        Tab.RUNNING_FOR.set(tab);
-        Tab.LOADING.set(tab);
-        Scope previous = Tracking.swapScope(scope);
-        try {
-          value = body.run(variables);
-        } catch (Throwable t) {
-          failure = t;
-        } finally {
-          Tracking.swapScope(previous);
-          Tab.RUNNING_FOR.remove();
-          Tab.LOADING.remove();
-          Call.CURRENT.remove();
-        }
-        R ended = value;
-        Throwable failed = failure;
-        // Not tab.post: it ends even if the tab has, and what waits on its future runs as this tab's.
-        tab.host.job(() -> Tracking.in(tab, scope, () -> {
-          if (failed == null && call.sends()) {
-            // Its writes to other graphs land there first, and their revision here, then it ends (ADR 0037).
-            call.send(apply -> {
-              // What the other graphs published of its writes, its pending's end and its own end: one change here.
-              apply.run();
-              call.ended();
-              run.end(ended, null);
-            });
-          } else {
+    tab.engine.work.execute(tab, () -> {
+      R value = null;
+      Throwable failure = null;
+      Call.CURRENT.set(call);
+      Tab.RUNNING_FOR.set(tab);
+      Tab.LOADING.set(tab);
+      Scope previous = Tracking.swapScope(scope);
+      try {
+        value = body.run(variables);
+      } catch (Throwable t) {
+        failure = t;
+      } finally {
+        Tracking.swapScope(previous);
+        Tab.RUNNING_FOR.remove();
+        Tab.LOADING.remove();
+        Call.CURRENT.remove();
+      }
+      R ended = value;
+      Throwable failed = failure;
+      // Not tab.post: it ends even if the tab has, and what waits on its future runs as this tab's.
+      tab.host.job(() -> Tracking.in(tab, scope, () -> {
+        if (failed == null && call.sends()) {
+          // Its writes to other graphs land there first, and their revision here, then it ends (ADR 0037).
+          call.send(apply -> {
+            // What the other graphs published of its writes, its pending's end and its own end: one change here.
+            apply.run();
             call.ended();
-            run.end(ended, failed);
-          }
-          return null;
-        }));
-      });
-    } catch (RejectedExecutionException e) {
-      run.end(null, e);
-    }
+            run.end(ended, null);
+          });
+        } else {
+          call.ended();
+          run.end(ended, failed);
+        }
+        return null;
+      }));
+    }, () -> tab.host.job(() -> run.end(null, new RejectedExecutionException("the executor refused it"))));
   }
 
   /** One run of an action, on its body's thread: every read and write it makes hops into its transaction. */

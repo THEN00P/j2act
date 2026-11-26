@@ -417,27 +417,23 @@ public final class Reactive {
     if (tab.lane.isCurrent()) {
       tab.rt.onSupersede(thread::interrupt);
     }
-    try {
-      tab.engine.executor.execute(() -> {
-        if (!thread.begin()) {
-          result.cancel(false);
-          return;
-        }
-        Tab.LOADING.set(tab);
-        Scope previous = Tracking.swapScope(scope);
-        try {
-          result.complete(work.load());
-        } catch (Throwable t) {
-          result.completeExceptionally(t);
-        } finally {
-          Tab.LOADING.remove();
-          Tracking.swapScope(previous);
-          thread.end();
-        }
-      });
-    } catch (java.util.concurrent.RejectedExecutionException e) {
-      result.completeExceptionally(e);
-    }
+    tab.engine.work.execute(tab, () -> {
+      if (!thread.begin()) {
+        result.cancel(false);
+        return;
+      }
+      Tab.LOADING.set(tab);
+      Scope previous = Tracking.swapScope(scope);
+      try {
+        result.complete(work.load());
+      } catch (Throwable t) {
+        result.completeExceptionally(t);
+      } finally {
+        Tab.LOADING.remove();
+        Tracking.swapScope(previous);
+        thread.end();
+      }
+    }, () -> result.completeExceptionally(new java.util.concurrent.RejectedExecutionException("the executor refused it")));
     return result;
   }
 

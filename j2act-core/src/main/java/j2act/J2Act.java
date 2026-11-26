@@ -64,6 +64,8 @@ public final class J2Act implements AutoCloseable {
 
   final PageResolver resolver;
   final Executor executor;
+  /** Where blocking work runs: a share of executor, in turns per tab (ADR 0037). */
+  final Work work;
   final MembersInjector injector;
   /** The container's lookup by type, or null without one (ADR 0030). */
   private final Function<Class<?>, Object> storeLookup;
@@ -813,6 +815,8 @@ public final class J2Act implements AutoCloseable {
       this.ownedExecutor = Executors.newFixedThreadPool(32, daemon("j2act-worker"));
       this.executor = ownedExecutor;
     }
+    this.work = new Work(this, executor, b.blockingWork > 0 ? b.blockingWork : Work.share(executor),
+      b.blockingWorkPerTab);
     this.sweeper = Executors.newSingleThreadScheduledExecutor(daemon("j2act-sweeper"));
     long every = b.sweepInterval.toMillis();
     sweeper.scheduleWithFixedDelay(this::sweep, every, every, TimeUnit.MILLISECONDS);
@@ -1549,6 +1553,15 @@ public final class J2Act implements AutoCloseable {
     }
   }
 
+  /** Runs task on the sweeper thread after a delay. */
+  void afterMillis(long millis, Runnable task) {
+    try {
+      sweeper.schedule(task, millis, TimeUnit.MILLISECONDS);
+    } catch (java.util.concurrent.RejectedExecutionException e) {
+      // closing: nothing runs later any more
+    }
+  }
+
   void later(ReactiveHost host, long millis, Runnable task) {
     try {
       sweeper.schedule(() -> host.job(task), millis, TimeUnit.MILLISECONDS);
@@ -1682,6 +1695,26 @@ public final class J2Act implements AutoCloseable {
     /** Pool for lanes and query runs; defaults to an owned pool of 32 daemon threads (ADR 0017). */
     public Builder withExecutor(Executor executor) {
       this.executor = executor;
+      return this;
+    }
+
+    private int blockingWork;
+    private int blockingWorkPerTab = 4;
+
+    /**
+     * How much of the executor blocking work may use at once: async(...) bodies, action bodies and transfers, so that
+     * the rest is always there for rendering (ADR 0037). By default three quarters of a pool j2act can see the size
+     * of, and 16 otherwise; give it the size of the container's pool when that is not one, or a large number for an
+     * executor of virtual threads.
+     */
+    public Builder withBlockingWork(int maxAtOnce) {
+      this.blockingWork = maxAtOnce;
+      return this;
+    }
+
+    /** How much blocking work of one tab or store runs at once, its turn among the others (ADR 0037); 4 by default. */
+    public Builder withBlockingWorkPerTab(int maxAtOnce) {
+      this.blockingWorkPerTab = maxAtOnce;
       return this;
     }
 

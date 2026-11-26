@@ -228,6 +228,30 @@ final class Mirrors {
     };
   }
 
+  /** Revisions that came from other graphs and wait for this lane, in order. */
+  private final java.util.concurrent.ConcurrentLinkedQueue<Object[]> arriving = new java.util.concurrent.ConcurrentLinkedQueue<>();
+  private final java.util.concurrent.atomic.AtomicBoolean draining = new java.util.concurrent.atomic.AtomicBoolean();
+
+  /**
+   * Any thread. A revision of another graph for this one. What arrives before this lane gets to it is one job, so a
+   * page whose lane fell behind renders once with the latest state, not once for every revision in between.
+   */
+  void deliver(ReactiveHost from, long revision, List<Published.Update> updates) {
+    arriving.add(new Object[] {from, revision, updates});
+    if (draining.compareAndSet(false, true)) {
+      host.job(this::drainArriving);
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private void drainArriving() {
+    draining.set(false);
+    Object[] next;
+    while ((next = arriving.poll()) != null) {
+      apply((ReactiveHost) next[0], (Long) next[1], (List<Published.Update>) next[2]);
+    }
+  }
+
   /** Lane-only. One revision of another graph: every value it changed that this graph reads, in one job. */
   void apply(ReactiveHost from, long revision, List<Published.Update> updates) {
     if (awaiting.containsKey(from)) {

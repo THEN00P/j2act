@@ -195,8 +195,7 @@ final class Published {
     for (Map.Entry<ReactiveHost, List<Update>> e : out.entrySet()) {
       ReactiveHost reader = e.getKey();
       List<Update> updates = e.getValue();
-      long number = next;
-      reader.job(() -> reader.mirrors.apply(host, number, updates));
+      reader.mirrors.deliver(host, next, updates);
     }
   }
 
