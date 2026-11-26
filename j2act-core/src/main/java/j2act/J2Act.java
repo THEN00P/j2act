@@ -1704,8 +1704,8 @@ public final class J2Act implements AutoCloseable {
     /**
      * How much of the executor blocking work may use at once: async(...) bodies, action bodies and transfers, so that
      * the rest is always there for rendering (ADR 0037). By default three quarters of a pool j2act can see the size
-     * of, and 16 otherwise; give it the size of the container's pool when that is not one, or a large number for an
-     * executor of virtual threads.
+     * of, and 8 threads otherwise; j2act-spring sets it from Spring's task executor, and on Jakarta EE the context
+     * parameter j2act.blockingWork does. Integer.MAX_VALUE for an executor of virtual threads.
      */
     public Builder withBlockingWork(int maxAtOnce) {
       this.blockingWork = maxAtOnce;

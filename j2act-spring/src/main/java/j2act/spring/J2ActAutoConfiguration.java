@@ -70,6 +70,10 @@ public class J2ActAutoConfiguration {
     Executor executor = taskExecutor.getIfAvailable();
     if (executor != null) {
       builder.withExecutor(executor);
+      int share = blockingShare(executor);
+      if (share > 0) {
+        builder.withBlockingWork(share);
+      }
     }
     identity.ifAvailable(builder::withIdentity);
     retainedStorage.ifAvailable(builder::withRetainedStateStorage);
@@ -79,6 +83,26 @@ public class J2ActAutoConfiguration {
     }
     customizers.orderedStream().forEach(c -> c.customize(builder));
     return builder.build();
+  }
+
+  /**
+   * How much of Spring's task executor blocking work may use (ADR 0037): three quarters of a thread pool, which grows
+   * past its core only once its queue is full, and no limit for one that starts a thread per task, such as Boot's with
+   * virtual threads; 0 when j2act cannot tell.
+   */
+  static int blockingShare(Executor executor) {
+    if (executor instanceof org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor) {
+      org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor pool =
+        (org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor) executor;
+      int threads = pool.getQueueCapacity() == Integer.MAX_VALUE ? pool.getCorePoolSize() : pool.getMaxPoolSize();
+      return Math.max(1, threads * 3 / 4);
+    }
+    if (executor instanceof org.springframework.core.task.SimpleAsyncTaskExecutor
+        && ((org.springframework.core.task.SimpleAsyncTaskExecutor) executor).getConcurrencyLimit()
+          == org.springframework.core.task.SimpleAsyncTaskExecutor.UNBOUNDED_CONCURRENCY) {
+      return Integer.MAX_VALUE;
+    }
+    return 0;
   }
 
   /** The scopes @TabScoped and @BrowserScoped name: one store bean per tab, or per browser (ADR 0030). */

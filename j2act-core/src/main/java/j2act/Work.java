@@ -175,7 +175,7 @@ final class Work {
 
   /**
    * How much of executor blocking work may use: three quarters of a pool whose size is known, so a quarter is always
-   * there for the lanes; 16 of one whose size is not.
+   * there for the lanes; 8 threads of one whose size is not, which an adapter or the application sets when it knows.
    */
   static int share(Executor executor) {
     if (executor instanceof java.util.concurrent.ThreadPoolExecutor) {
@@ -188,6 +188,6 @@ final class Work {
     if (executor instanceof java.util.concurrent.ForkJoinPool) {
       return Math.max(1, ((java.util.concurrent.ForkJoinPool) executor).getParallelism() * 3 / 4);
     }
-    return 16;
+    return 8;
   }
 }

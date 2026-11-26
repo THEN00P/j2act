@@ -68,6 +68,15 @@ public abstract class J2ActListener implements ServletContextListener {
     if (executor != null) {
       builder.withExecutor(CdiSupport.withRequestContext(executor));
       LOG.log(System.Logger.Level.INFO, "j2act runs on the container's ManagedExecutorService");
+      // Its size is the container's configuration, which a ManagedExecutorService does not say (ADR 0037).
+      String share = context.getInitParameter("j2act.blockingWork");
+      if (share != null) {
+        try {
+          builder.withBlockingWork(Integer.parseInt(share.trim()));
+        } catch (NumberFormatException e) {
+          LOG.log(System.Logger.Level.WARNING, "j2act.blockingWork is not a number: " + share);
+        }
+      }
     } else {
       LOG.log(System.Logger.Level.INFO, "no ManagedExecutorService found; j2act uses its own pool");
     }
