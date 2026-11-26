@@ -13,16 +13,16 @@ const { js, until, open, check } = b;
 
 const doc = (id) => id === "alice" ? "document" : `document.getElementById('${id}').contentDocument`;
 const messages = (id) => `[...${doc(id)}.querySelectorAll('#messages > div')].map(d => d.textContent)`;
-const say = (id, text) => js(`const i = ${doc(id)}.getElementById('say'); i.value = ${JSON.stringify(text)};
-  i.dispatchEvent(new Event('change', { bubbles: true })); true`);
+const say = (id, text) => js(`{ const i = ${doc(id)}.getElementById('say'); i.value = ${JSON.stringify(text)};
+  i.dispatchEvent(new Event('change', { bubbles: true })); } true`);
 const buttons = (id) => `[...${doc(id)}.querySelectorAll('#messages button')].map(b => b.textContent)`;
 
 b.run(async () => {
   await open(`${URL}/chat/${ROOM}?name=alice`);
   for (const [id, name] of [["bob", "bob"], ["admin", "admin"]]) {
-    await js(`const f = document.createElement('iframe'); f.id = '${id}';
+    await js(`{ const f = document.createElement('iframe'); f.id = '${id}';
       f.src = ${JSON.stringify(`${URL}/chat/${ROOM}?name=`)} + '${name}';
-      f.style.width = '600px'; f.style.height = '400px'; document.body.append(f); true`);
+      f.style.width = '600px'; f.style.height = '400px'; document.body.append(f); } true`);
     check(`${name}'s page opens`, await until(`${doc(id)} && ${doc(id)}.getElementById('say') !== null`, 10000));
   }
   await sleep(600); // their sockets' hello
