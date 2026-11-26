@@ -2,12 +2,11 @@
 // /chat/{room}, read by three users at once, each the top page or a same-origin iframe with its own name.
 //   java -jar examples/counter-spring/target/counter-spring-*.jar --server.port=8089
 //   node tools/chat-check.mjs http://localhost:8089/
-// For a cluster, start a second demo with --server.port=8090 and --j2act.cluster.self on both, sharing one
-// database, and pass its URL as the second argument: bob and the admin then use that server.
+// Two servers as a cluster are checked by examples/counter-spring's ClusterAppTest, over real sockets: an iframe on
+// the second server would be another origin, whose page this script cannot read.
 import { openBrowser, sleep } from "./cdp.mjs";
 
 const URL = (process.argv[2] || "http://localhost:8089/").replace(/\/$/, "");
-const OTHER = (process.argv[3] || URL).replace(/\/$/, "");
 const ROOM = "check" + Date.now();
 const b = await openBrowser();
 const { js, until, open, check } = b;
@@ -22,7 +21,7 @@ b.run(async () => {
   await open(`${URL}/chat/${ROOM}?name=alice`);
   for (const [id, name] of [["bob", "bob"], ["admin", "admin"]]) {
     await js(`const f = document.createElement('iframe'); f.id = '${id}';
-      f.src = ${JSON.stringify(`${OTHER}/chat/${ROOM}?name=`)} + '${name}';
+      f.src = ${JSON.stringify(`${URL}/chat/${ROOM}?name=`)} + '${name}';
       f.style.width = '600px'; f.style.height = '400px'; document.body.append(f); true`);
     check(`${name}'s page opens`, await until(`${doc(id)} && ${doc(id)}.getElementById('say') !== null`, 10000));
   }
