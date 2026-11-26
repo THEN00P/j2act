@@ -204,8 +204,11 @@ final class ReactiveHost {
   /** A graph of stores, not of a page. */
   boolean isStoreHost() {
     Tab t = tab;
-    return t != null && t.hubFor != null;
+    return t != null && t.isHub();
   }
+
+  /** Runs when no other graph reads anything here any more: a shared store's hub may end then. Lane-only. */
+  Runnable unread;
 
   /**
    * Whether code on this lane may wait for other's lane. A page's lane may wait for any store's; a store's only for a

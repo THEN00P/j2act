@@ -109,6 +109,13 @@ final class Published {
       if (entry.tap != null) {
         host.rt.disposeNode(entry.tap);
       }
+      unreadIfNone();
+    }
+  }
+
+  private void unreadIfNone() {
+    if (entries.isEmpty() && host.unread != null) {
+      host.unread.run();
     }
   }
 
@@ -127,6 +134,7 @@ final class Published {
         }
       }
     }
+    unreadIfNone();
   }
 
   /** Lane-only, at the end of a job: what changed goes out as one revision. */

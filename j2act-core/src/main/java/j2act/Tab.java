@@ -150,6 +150,25 @@ public final class Tab {
 
   /** Set when this tab is a browser's hub: no page, no socket, only its stores. */
   volatile Browser hubFor;
+  /** Set when this tab is a @SharedScoped store's hub (ADR 0037): no page, no socket, no user. */
+  volatile SharedHub sharedFor;
+
+  /** What this tab's code outside a component holds until the tab ends, each once (ADR 0037). */
+  private final java.util.Set<Object> holding = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+  /** Holds key until this tab ends, unless it already does; true if it took the hold. */
+  boolean holdOnce(Object key, Runnable release) {
+    if (!holding.add(key)) {
+      return false;
+    }
+    ended.whenComplete((v, e) -> release.run());
+    return true;
+  }
+
+  /** A hub: a tab with no page that holds stores for other tabs. */
+  boolean isHub() {
+    return hubFor != null || sharedFor != null;
+  }
   /** The j2-browser cookie this page load sent, or the one minted for it on first use. */
   volatile String browserCookie;
   /** The browser this tab joined on first use of browser state, or null. */

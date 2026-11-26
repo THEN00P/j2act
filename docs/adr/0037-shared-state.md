@@ -5,9 +5,9 @@
 A chat room, a Discord-like server with its channels, a shop's live bookkeeping: state that many people look at and change at once. Today j2act can share state between the tabs of one browser and no further. This ADR lets any page read and write state that other users' pages also read, and keeps the code the developer writes the same as for state that belongs to one page:
 
 ```java
-@Shared
+@SharedScoped
 public class ChatRoom extends Store {
-  private final State<List<Message>> messages = state(List.of());
+  private final Signal<List<Message>> messages = createSignal(List.of());
 
   public List<Message> messages() { return messages.get(); }
   public void post(Message m) { messages.update(list -> plus(list, m)); }
@@ -15,7 +15,7 @@ public class ChatRoom extends Store {
 }
 
 // in a page
-ChatRoom room = shared(ChatRoom.class, roomId);
+ChatRoom room = useSharedStore(ChatRoom.class, roomId);
 return () -> chat(
   room.messages().stream().map(message ->
     message(
@@ -57,8 +57,6 @@ A click that times out may still have succeeded. A method that can be retried ta
 
 A `computed` or `query` in a shared store runs once for the store, not once per reader. While a query in the store is loading, each reader sees it pending beside its old value, and only that reader's own screen waits for it, according to that reader's own boundaries. A reset at an `errored(...)` on a page loads the store's failed value again, for every reader.
 
-A shared store's code cannot read anything that differs between readers: `user`, `pathParam()`, a tab store. That keeps ADR 0030's rule for browser stores, now for every shared store. The runtime and the processor report it as an error.
-
 ## Permissions are what was rendered
 
 A handler exists only for an element the page rendered (`Handlers`, ADR 0019), and a click on anything else is ignored. With every page rendered under its own user, `user.isAdmin() ? delButton() : null` is the permission check, and `delete` needs none of its own.
@@ -70,15 +68,17 @@ Following from that:
 - What a permission depends on must be a tracked value: `user.isAdmin()` reads a shared store of members or roles, not a cached boolean or an untracked service call. j2act cannot tell when an untracked answer is out of date. A protected handler whose element read nothing tracked is refused.
 - A handler belongs to its target. When a row of a list now shows a different message, the row's handlers get new ids, so an old click on the delete button of message M never deletes message N that moved into its row. Today `Handlers` keeps an id while its element renders at the same position, and that has to change for keyed rows whatever this ADR decides.
 - A revocation that the store orders before a click refuses the click. A click the store accepted first runs to its end. A method that must not finish once rights are gone checks again itself; rendering promises nothing about later.
-- Which stores a page may open is also decided by the page: `shared(ChatRoom.class, roomId)` is called after whatever check the page makes, and a page that never opened the room has no handlers into it.
+- Which stores a page may open is also decided by the page: `useSharedStore(ChatRoom.class, roomId)` is called after whatever check the page makes, and a page that never opened the room has no handlers into it.
 
 A revision is as fine as the reads. Shared stores are deep stores (ADR 0035), which track reads by property, and each property carries the revision that last changed it. A handler remembers the revisions of exactly the properties its element and the conditions above it read: the delete button of message M remembers M's owner, the reader's role and whatever else decided that it renders, not the whole list. A post that adds message N does not refuse a click on M's button; a change to M's owner or to the reader's role does.
 
 ## Keys and lifetime
 
-A shared store is identified by its class and a key. The key is any value that serializes: a room id, a guild id, a shop id. With no key (`shared(Settings.class)`), there is one per application. Each time a store starts, it gets a new identity besides its key, so a delayed click meant for a room that ended never lands in a new room with the same key.
+A shared store is identified by its class and a key, and the class is annotated `@SharedScoped`. The key is any value with `equals` and `hashCode` that serializes: a room id, a guild id, a shop id. `useSharedStore(Settings.class)`, with no key, is the one store of the whole application. The store reads its key with `sharedKey()`, already in its field initializers, to load what it is for. It is no container bean, since a key is no context a container knows: j2act makes it with its no-argument constructor and injects its members, as Spring's `autowireBean` and CDI's injection target do. Code outside any tab, such as a message listener, reaches it with `j2act.sharedStore(ChatRoom.class, roomId)`. Each time a store starts, it gets a new identity besides its key, so a delayed click meant for a room that ended never lands in a new room with the same key.
 
-A store lives while any graph subscribes to it or any of its methods is running, plus a grace window, then ends. Its `retainedState` is saved as browser snapshots are (ADR 0026, 0030) and comes back when it opens again. Everything else is gone: shared state is live communication between people, and the database stays where data is kept. State that must not end when nobody is looking, such as an accepted payment, belongs in the database.
+What looked a store up holds it: a component until it leaves the page, other code of a tab until the tab ends, a store until it ends itself. A store also lives while any graph reads one of its values. When nothing holds or reads it any more, it waits the grace window a tab has, then saves its `retainedState` as browser snapshots are (ADR 0026, 0030) and ends; that comes back when the key is looked up again. Everything else is gone: shared state is live communication between people, and the database stays where data is kept. State that must not end when nobody is looking, such as an accepted payment, belongs in the database.
+
+A shared store's code cannot use what differs between its readers: `auth()`, `pathParam()`, `queryParam()`, `useTab()`, a tab or browser store, `navigate()`. The runtime refuses each, and the processor reports it as an error at compile time, under javac and ECJ alike.
 
 ## Browser state becomes a shared store
 

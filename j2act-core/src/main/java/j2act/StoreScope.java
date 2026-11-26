@@ -19,7 +19,7 @@ public final class StoreScope {
   public static boolean isActive(Class<? extends Annotation> scope) {
     requireKnown(scope);
     Tab tab = Tab.ambient();
-    return tab != null && (scope == BrowserScoped.class || tab.hubFor == null);
+    return tab != null && tab.sharedFor == null && (scope == BrowserScoped.class || tab.hubFor == null);
   }
 
   /**
@@ -88,6 +88,10 @@ public final class StoreScope {
     Tab tab = Tab.ambient();
     if (tab == null) {
       return null;
+    }
+    if (tab.sharedFor != null) {
+      throw new IllegalStateException("a @SharedScoped store's code runs once for every reader, so it cannot use a @"
+        + scope.getSimpleName() + " store, which differs between them (ADR 0037)");
     }
     if (scope == BrowserScoped.class) {
       if (tab.hubFor != null) {

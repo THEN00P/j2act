@@ -531,6 +531,215 @@ public final class J2Act implements AutoCloseable {
     return browserOf(tab).hub.store(type, () -> newStore(type), null);
   }
 
+  // ---- shared stores (ADR 0037)
+
+  /** A @SharedScoped store's class and key. */
+  private static final class SharedId {
+    final Class<?> type;
+    final Object key;
+
+    SharedId(Class<?> type, Object key) {
+      this.type = type;
+      this.key = key;
+    }
+
+    @Override public boolean equals(Object other) {
+      return other instanceof SharedId && ((SharedId) other).type == type && ((SharedId) other).key.equals(key);
+    }
+
+    @Override public int hashCode() {
+      return type.hashCode() * 31 + key.hashCode();
+    }
+  }
+
+  /** The @SharedScoped stores live on this server, by class and key. */
+  final ConcurrentHashMap<SharedId, SharedHub> shared = new ConcurrentHashMap<>();
+
+  /**
+   * The instance of a @SharedScoped store for key, made on first use (ADR 0037). What looked it up holds it: a
+   * component until it leaves the page, other code of a tab until the tab ends, a store until its own end.
+   */
+  <S extends Store> S sharedStore(Tab tab, Class<S> type, Object key) {
+    requireShared(type);
+    SharedHub entry = joinShared(type, key == null ? Store.APPLICATION : key);
+    Scope scope = Tracking.scope() != null ? Tracking.scope() : Scope.settingUp();
+    Runnable release = () -> releaseShared(entry);
+    boolean held;
+    if (scope != null && !scope.disposed && scope.tab == tab) {
+      held = scope.holdOnce(entry, release);
+    } else {
+      held = tab.holdOnce(entry, release);
+    }
+    if (!held) {
+      // It holds the store already: the lookup's count goes again.
+      releaseShared(entry);
+    }
+    return type.cast(entry.store);
+  }
+
+  /**
+   * The instance of a @SharedScoped store for key, from code outside any tab, such as a message listener (ADR 0037).
+   * Nothing holds it: it lives while pages read it or hold it, and a grace window after this call.
+   */
+  public <S extends Store> S sharedStore(Class<S> type, Object key) {
+    requireShared(type);
+    SharedHub entry = joinShared(type, key == null ? Store.APPLICATION : key);
+    releaseShared(entry);
+    return type.cast(entry.store);
+  }
+
+  private static void requireShared(Class<?> type) {
+    if (!Scope.storeClass(type).isAnnotationPresent(SharedScoped.class)) {
+      throw new IllegalArgumentException(type.getName() + " is not a shared store: annotate it @SharedScoped (ADR 0037)");
+    }
+  }
+
+  private static final Object[] SHARED_LOCKS = new Object[64];
+
+  static {
+    for (int i = 0; i < SHARED_LOCKS.length; i++) {
+      SHARED_LOCKS[i] = new Object();
+    }
+  }
+
+  /** The live hub for the key, made or revived, with one more holder. */
+  private SharedHub joinShared(Class<? extends Store> type, Object key) {
+    SharedId id = new SharedId(type, key);
+    while (true) {
+      SharedHub entry = shared.get(id);
+      if (entry == null) {
+        // One maker per key, so the hub that consumes the snapshot is the one that stays.
+        synchronized (SHARED_LOCKS[Math.floorMod(id.hashCode(), SHARED_LOCKS.length)]) {
+          entry = shared.get(id);
+          if (entry == null) {
+            entry = newShared(type, key);
+            shared.put(id, entry);
+          }
+        }
+      }
+      synchronized (entry) {
+        if (!entry.ended) {
+          // One saving after its last holder comes back as it was: its values are all here.
+          entry.retired = false;
+          entry.holders++;
+          entry.changes++;
+          return entry;
+        }
+      }
+      // It ended between the lookup and the lock, after its snapshot landed: the next one restores it.
+    }
+  }
+
+  /** A new hub for the key, with its Retained State back if it saved some, and its store made on its lane. */
+  private SharedHub newShared(Class<? extends Store> type, Object key) {
+    // No user's request: a shared store reads nobody's identity (ADR 0037).
+    Tab hub = new Tab(this, new ReactiveHost(this), "shared:" + newSecret(9), newSecret(18), Exchange.empty(), "/");
+    SharedHub entry = new SharedHub(this, type, key, newSecret(12), hub);
+    hub.sharedFor = entry;
+    hub.host.unread = () -> idleShared(entry);
+    String storageId = entry.storageId();
+    try {
+      Optional<String> stored = snapshots.storage.load(storageId);
+      if (stored.isPresent()) {
+        snapshots.storage.delete(storageId);
+        Retained.Snapshot snapshot = Retained.decode(stored.get());
+        if (snapshot.expiresAt > clock.millis()) {
+          hub.snapshot.restore(new ConcurrentHashMap<>(snapshot.entries));
+        }
+      }
+    } catch (RuntimeException e) {
+      log(System.Logger.Level.WARNING, "a shared store's retained state could not be restored", e);
+    }
+    // Its effects need no socket: they run for everyone.
+    hub.goLive();
+    Object previous = Store.MAKING_KEY.get();
+    Store.MAKING_KEY.set(key);
+    try {
+      entry.store = hub.store(type, () -> {
+        Object outer = Store.MAKING_KEY.get();
+        Store.MAKING_KEY.set(key);
+        try {
+          return newStore(type);
+        } finally {
+          Store.MAKING_KEY.set(outer);
+        }
+      }, null);
+    } finally {
+      if (previous == null) {
+        Store.MAKING_KEY.remove();
+      } else {
+        Store.MAKING_KEY.set(previous);
+      }
+    }
+    return entry;
+  }
+
+  /** One holder let go; the last one gives it a grace window. */
+  private void releaseShared(SharedHub entry) {
+    synchronized (entry) {
+      entry.holders--;
+      entry.changes++;
+    }
+    idleShared(entry);
+  }
+
+  /**
+   * Nothing may hold it any more: unless a holder or a reader comes within the grace window, it saves its Retained
+   * State and ends.
+   */
+  private void idleShared(SharedHub entry) {
+    long changes;
+    synchronized (entry) {
+      if (entry.holders > 0 || entry.ended || entry.retired) {
+        return;
+      }
+      changes = entry.changes;
+    }
+    later(entry.hub, reconnectGraceMillis, () -> {
+      synchronized (entry) {
+        if (entry.changes != changes || entry.holders > 0) {
+          return;
+        }
+      }
+      if (entry.hub.host.published().size() == 0) {
+        retireShared(entry, false);
+      }
+    });
+  }
+
+  /** Saves the Retained State of a shared store nothing holds or reads, on its hub's lane, and ends it. */
+  private CompletableFuture<Void> retireShared(SharedHub entry, boolean closing) {
+    CompletableFuture<Void> saved;
+    synchronized (entry) {
+      if (entry.ended || entry.retired || !closing && entry.holders > 0) {
+        return entry.saved;
+      }
+      entry.retired = true;
+      saved = entry.saved = new CompletableFuture<>();
+    }
+    Tab hub = entry.hub;
+    hub.post(() -> {
+      hub.snapshot.persisting();
+      hub.snapshot.stored = true;
+      snapshots.persistHub(hub, entry.storageId(), null, "a shared store").whenComplete((v, e) -> {
+        boolean end;
+        synchronized (entry) {
+          // Only the latest retirement ends it, as for a browser.
+          end = closing || entry.retired && entry.saved == saved;
+          if (end) {
+            entry.ended = true;
+            shared.remove(new SharedId(entry.type, entry.key), entry);
+          }
+        }
+        if (end) {
+          hub.post(() -> hub.dispose(null));
+        }
+        saved.complete(null);
+      });
+    });
+    return saved;
+  }
+
   /** What components reach with application() (ADR 0027). */
   final Application application = new Application(this);
   /** How long close() waits for tabs' snapshots; 0 when they are not saved on shutdown. */
@@ -1140,6 +1349,18 @@ public final class J2Act implements AutoCloseable {
    * (ADR 0026), so a crash loses at most one interval.
    */
   private void checkpoint() {
+    for (SharedHub entry : shared.values()) {
+      Tab hub = entry.hub;
+      hub.post(() -> {
+        if (hub.disposed) {
+          return;
+        }
+        hub.snapshot.persisting();
+        if (hub.snapshot.dirty) {
+          snapshots.persistHub(hub, entry.storageId(), null, "a shared store");
+        }
+      });
+    }
     for (Browser browser : browsers.values()) {
       Tab hub = browser.hub;
       hub.post(() -> {
@@ -1244,6 +1465,9 @@ public final class J2Act implements AutoCloseable {
       for (Browser browser : browsers.values()) {
         browserSaves.add(retireBrowser(browser, true));
       }
+      for (SharedHub entry : shared.values()) {
+        browserSaves.add(retireShared(entry, true));
+      }
       try {
         CompletableFuture.allOf(browserSaves.toArray(new CompletableFuture<?>[0]))
           .get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
@@ -1267,6 +1491,13 @@ public final class J2Act implements AutoCloseable {
       browser.hub.post(() -> browser.hub.dispose(null));
     }
     browsers.clear();
+    for (SharedHub entry : shared.values()) {
+      synchronized (entry) {
+        entry.ended = true;
+      }
+      entry.hub.post(() -> entry.hub.dispose(null));
+    }
+    shared.clear();
     if (ownedExecutor != null) {
       ownedExecutor.shutdown();
     }

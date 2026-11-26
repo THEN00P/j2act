@@ -769,11 +769,46 @@ final class Scope {
     tab.rt.setLeftBehind(slot, behind);
   }
 
+  /** What lets go when this scope ends, such as a hold on a shared store it looked up (ADR 0037). Lane-only. */
+  private java.util.List<Runnable> releases;
+
+  /** What this scope holds already, so it holds each once however often it looks it up. Lane-only. */
+  private java.util.Set<Object> holding;
+
+  /** Holds key until this scope ends, unless it already does; true if it took the hold. */
+  boolean holdOnce(Object key, Runnable release) {
+    if (holding == null) {
+      holding = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    }
+    if (!holding.add(key)) {
+      return false;
+    }
+    onDispose(release);
+    return true;
+  }
+
+  void onDispose(Runnable release) {
+    if (releases == null) {
+      releases = new ArrayList<>();
+    }
+    releases.add(release);
+  }
+
   void dispose() {
     if (disposed) {
       return;
     }
     disposed = true;
+    if (releases != null) {
+      for (Runnable release : releases) {
+        try {
+          release.run();
+        } catch (RuntimeException e) {
+          tab.engine.log(System.Logger.Level.WARNING, "letting go of a shared store failed", e);
+        }
+      }
+      releases = null;
+    }
     if (instance instanceof CutTag && instance.scope == this) {
       ((CutTag) instance).release();
     }

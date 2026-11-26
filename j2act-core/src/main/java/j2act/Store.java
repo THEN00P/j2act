@@ -37,8 +37,29 @@ public abstract class Store {
    */
   private static final ThreadLocal<Store> CONSTRUCTING = new ThreadLocal<>();
 
+  /** The key of the @SharedScoped store of the whole application, which has none of its own (ADR 0037). */
+  static final Object APPLICATION = new Object() {
+    @Override public String toString() {
+      return "the application";
+    }
+  };
+
+  /** The key a @SharedScoped store being made on this thread is for. */
+  static final ThreadLocal<Object> MAKING_KEY = new ThreadLocal<>();
+
+  /** A @SharedScoped store's key, null for any other. */
+  private final Object sharedKey = MAKING_KEY.get();
+
   protected Store() {
     CONSTRUCTING.set(this);
+  }
+
+  /**
+   * What a @SharedScoped store is for (ADR 0037): the key it was looked up with, such as a room's id, already set in
+   * its field initializers; null for the one of the whole application and for any other store.
+   */
+  protected Object sharedKey() {
+    return sharedKey == APPLICATION ? null : sharedKey;
   }
 
   static Store constructing() {
