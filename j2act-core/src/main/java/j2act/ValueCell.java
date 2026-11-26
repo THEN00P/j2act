@@ -460,6 +460,11 @@ class ValueCell extends Cell {
   }
 
   /** What is committed, off the lane or on it: what a snapshot takes. */
+  /** A value written, not computed: what a store moving to another server takes along (ADR 0037). */
+  boolean plain() {
+    return getClass() == ValueCell.class && body == null && asyncBody == null && source == null && restore == null;
+  }
+
   final Object committed() {
     return tab.lane.isCurrent() ? rt.committed(node) : onLane(() -> rt.committed(node));
   }

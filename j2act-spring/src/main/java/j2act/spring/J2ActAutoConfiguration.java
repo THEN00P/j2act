@@ -188,6 +188,30 @@ public class J2ActAutoConfiguration {
     }
   }
 
+  /**
+   * Hands the shared stores this server holds to the cluster's other servers as the application stops, before its web
+   * server does, while the others still reach it over its socket (ADR 0037). Nothing without a cluster.
+   */
+  @Bean
+  public org.springframework.context.SmartLifecycle j2ActLeaveCluster(J2Act j2Act) {
+    return new org.springframework.context.SmartLifecycle() {
+      private volatile boolean running;
+
+      @Override public void start() {
+        running = true;
+      }
+
+      @Override public void stop() {
+        running = false;
+        j2Act.leaveCluster();
+      }
+
+      @Override public boolean isRunning() {
+        return running;
+      }
+    };
+  }
+
   @Bean
   public J2ActHandlerMapping j2ActHandlerMapping(J2Act j2Act, PageResolver resolver) {
     return new J2ActHandlerMapping(j2Act, resolver);

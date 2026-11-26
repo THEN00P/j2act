@@ -40,10 +40,27 @@ final class Remote {
         }
       });
 
+    /**
+     * The ids of the batches applied here, the latest ten thousand, so a server the store moves to answers one that
+     * comes again as this one did. Lane-only, the store's.
+     */
+    final java.util.LinkedHashSet<String> applied = new java.util.LinkedHashSet<>();
+    /** Moving to another server (ADR 0037): what comes for it meanwhile is told to try again there. */
+    volatile boolean moving;
+
     Owned(String store, SharedHub entry, SharedLeases.Lease lease) {
       this.store = store;
       this.entry = entry;
       this.lease = lease;
+    }
+
+    void applied(String id) {
+      applied.add(id);
+      if (applied.size() > 10_000) {
+        java.util.Iterator<String> oldest = applied.iterator();
+        oldest.next();
+        oldest.remove();
+      }
     }
   }
 
@@ -56,7 +73,17 @@ final class Remote {
 
   /** A store this server holds now, by its lease; renewed while it lives here. */
   void own(String store, SharedHub entry, SharedLeases.Lease lease) {
+    own(store, entry, lease, java.util.Collections.emptyList());
+  }
+
+  /** The same, for a store that moved here: the batches the server it came from applied are answered as applied. */
+  void own(String store, SharedHub entry, SharedLeases.Lease lease, List<String> applied) {
     Owned o = new Owned(store, entry, lease);
+    Map<String, Object> ok = Peers.message("result", "ok", true, "error", null);
+    for (String id : applied) {
+      o.applied.add(id);
+      o.batches.put(id, CompletableFuture.completedFuture(ok));
+    }
     owned.put(store, o);
     renewLater(o);
   }
@@ -141,6 +168,191 @@ final class Remote {
     return o == null ? null : o.lease;
   }
 
+  // ---- moving a store as this server stops (ADR 0037)
+
+  /**
+   * This server stops: each store it holds moves to another server up now, with its values, before close() ends it
+   * here, so a rolling deploy keeps a room's messages and not only its Retained State. A store that could not move by
+   * the deadline ends here as before, saving its Retained State.
+   */
+  void handOff(long deadlineNanos) {
+    // Those counted out too: a socket this server's own web server closed as it stops counts a server out that is up.
+    if (owned.isEmpty()) {
+      return;
+    }
+    java.util.Set<Node> others = new java.util.LinkedHashSet<>(peers.live());
+    others.addAll(peers.everyOther());
+    others.remove(peers.self);
+    if (others.isEmpty()) {
+      return;
+    }
+    List<CompletableFuture<Void>> moves = new ArrayList<>();
+    for (Owned o : new ArrayList<>(owned.values())) {
+      moves.add(moveToOneOf(o, new ArrayList<>(others)).exceptionally(e -> {
+        engine.log(System.Logger.Level.WARNING, o.entry.describe() + " could not move to another server; it ends"
+          + " here with its Retained State", e);
+        o.moving = false;
+        return null;
+      }));
+    }
+    try {
+      CompletableFuture.allOf(moves.toArray(new CompletableFuture<?>[0]))
+        .get(Math.max(0, deadlineNanos - System.nanoTime()), java.util.concurrent.TimeUnit.NANOSECONDS);
+    } catch (java.util.concurrent.TimeoutException e) {
+      engine.log(System.Logger.Level.WARNING, "not every shared store moved before the server stopped", null);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    } catch (java.util.concurrent.ExecutionException e) {
+      // each logged its own
+    }
+  }
+
+  /**
+   * Freezes the store, then gives it to the first of candidates, in the order its id hashes with theirs, that answers:
+   * so the stores of a server that stops spread over the others, each the same way on every try.
+   */
+  private CompletableFuture<Void> moveToOneOf(Owned o, List<Node> candidates) {
+    CompletableFuture<Map<String, Object>> frozen = new CompletableFuture<>();
+    o.entry.hub.host.job(() -> {
+      try {
+        frozen.complete(freeze(o));
+      } catch (RuntimeException | Error e) {
+        frozen.completeExceptionally(e);
+      }
+    });
+    List<Node> order = new ArrayList<>();
+    List<Node> left = new ArrayList<>(candidates);
+    while (!left.isEmpty()) {
+      Node next = peers.homeLeases.home(o.store, left);
+      order.add(next);
+      left.remove(next);
+    }
+    return frozen.thenCompose(state -> {
+      CompletableFuture<Void> moved = new CompletableFuture<>();
+      engine.work.execute(this, () -> {
+        try {
+          moved.complete(give(o, state, order));
+        } catch (RuntimeException e) {
+          moved.completeExceptionally(e);
+        }
+      }, () -> moved.completeExceptionally(new IllegalStateException("no thread to move it on")));
+      return moved;
+    });
+  }
+
+  /** Blocking. The store goes to the first server of order that answers; the lease goes only to one that did. */
+  private Void give(Owned o, Map<String, Object> state, List<Node> order) {
+    RuntimeException last = null;
+    for (Node to : order) {
+      Link link;
+      try {
+        link = peers.link(to);
+        // Up and answering, before the lease is its: a lease given to a server that is gone helps nobody.
+        peers.await(peers.ask(link, Peers.message("who", "store", o.store)));
+      } catch (RuntimeException e) {
+        last = e;
+        continue;
+      }
+      SharedLeases.Lease next = engine.leases().handOver(o.lease, to, peers.cluster.term());
+      if (next == null) {
+        throw new IllegalStateException("its lease is no longer this server's");
+      }
+      Map<String, Object> take = new LinkedHashMap<>(state);
+      take.put("epoch", next.epoch);
+      take.put("expires", next.expiresAt);
+      Map<String, Object> answer = peers.await(peers.ask(link, take));
+      if (!Boolean.TRUE.equals(answer.get("ok"))) {
+        throw new IllegalStateException(to + " did not take it: " + answer.get("error"));
+      }
+      owned.remove(o.store, o);
+      o.entry.handedOff = true;
+      tellMoved(o, to);
+      engine.endShared(o.entry);
+      return null;
+    }
+    throw last != null ? last : new IllegalStateException("no other server answered");
+  }
+
+  /**
+   * Lane-only, the store's. Stops it here: no revision goes to another server from now on, nor is a batch applied,
+   * and what it has goes in one message, its plain values as JSON beside its Retained State. What is computed from them
+   * computes again where it goes.
+   */
+  private Map<String, Object> freeze(Owned o) {
+    o.moving = true;
+    Tab hub = o.entry.hub;
+    ReactiveHost host = hub.host;
+    hub.snapshot.persisting();
+    for (Reader reader : o.readers.values()) {
+      host.published().forget(reader);
+    }
+    Map<String, Object> values = new LinkedHashMap<>();
+    for (Cell cell : hub.cells.values()) {
+      Object value;
+      if (cell.disposed || cell.owner == null || cell.owner.store == null) {
+        // The hub's own cells, as its route, are not the store's.
+        continue;
+      }
+      if (cell instanceof ValueCell && ((ValueCell) cell).plain() && ((ValueCell) cell).retainedName == null) {
+        value = ((ValueCell) cell).committed();
+      } else if (cell instanceof StoreCell && ((StoreCell) cell).deriveNode() == null) {
+        value = ((StoreCell) cell).snapshotHere();
+      } else {
+        continue;
+      }
+      try {
+        values.put(cell.address, engine.json.write(value));
+      } catch (RuntimeException e) {
+        engine.log(System.Logger.Level.WARNING, cell.address + " of " + o.entry.describe() + " cannot be written as"
+          + " JSON, so it starts from its initial value on the server the store moves to", e);
+      }
+    }
+    Map<String, Object> retained = new LinkedHashMap<>(hub.snapshot.values());
+    SharedHub e = o.entry;
+    Map<String, Object> m = Peers.message("take", "store", o.store, "type", e.type.getName(), "key",
+      e.key == Store.APPLICATION ? null : engine.json.write(e.key), "keyType",
+      e.key == Store.APPLICATION ? null : e.key.getClass().getName(), "gen", e.generation, "revision",
+      host.published().revision);
+    m.put("values", values);
+    m.put("retained", retained);
+    m.put("applied", new ArrayList<Object>(o.applied));
+    return m;
+  }
+
+  /** The servers that read or hold the store go on with the one it moved to. */
+  private void tellMoved(Owned o, Node to) {
+    java.util.Set<Link> told = new java.util.HashSet<>();
+    told.addAll(o.readers.keySet());
+    told.addAll(o.holds.keySet());
+    for (Link link : told) {
+      link.send(Peers.message("moved", "store", o.store, "gen", o.entry.generation, "holder", to.url()));
+    }
+  }
+
+  /** Another server stops and hands this one a store it held, with its values (ADR 0037). */
+  @SuppressWarnings("unchecked")
+  private void take(Link link, Map<String, Object> m) {
+    try {
+      SharedLeases.Lease lease = new SharedLeases.Lease((String) m.get("store"), peers.self,
+        ((Number) m.get("epoch")).longValue(), ((Number) m.get("expires")).longValue());
+      Map<String, String> values = new LinkedHashMap<>();
+      ((Map<String, Object>) m.get("values")).forEach((k, v) -> values.put(k, (String) v));
+      Map<String, String> retained = new java.util.concurrent.ConcurrentHashMap<>();
+      ((Map<String, Object>) m.get("retained")).forEach((k, v) -> retained.put(k, (String) v));
+      List<String> applied = new ArrayList<>();
+      for (Object id : (List<Object>) m.get("applied")) {
+        applied.add((String) id);
+      }
+      engine.takeShared(lease, (String) m.get("type"), (String) m.get("key"), (String) m.get("keyType"),
+        new SharedHub.Handed((String) m.get("gen"), ((Number) m.get("revision")).longValue(), values, retained),
+        applied);
+      link.send(Peers.answer(m, "ok", true));
+    } catch (RuntimeException e) {
+      engine.log(System.Logger.Level.WARNING, "a store another server handed this one could not start here", e);
+      link.send(Peers.answer(m, "ok", false, "error", e.getMessage()));
+    }
+  }
+
   // ---- what other servers send
 
   @SuppressWarnings("unchecked")
@@ -167,6 +379,9 @@ final class Remote {
         return;
       case "check":
         check(link, m);
+        return;
+      case "take":
+        engine.work.execute(this, () -> take(link, m), () -> { });
         return;
       default:
         peers.engine.stub(link, type, m);
@@ -198,6 +413,10 @@ final class Remote {
     }
     if (o == null) {
       link.send(Peers.answer(m, "ok", false, "error", "the store could not start here"));
+      return;
+    }
+    if (o.moving) {
+      link.send(Peers.answer(m, "ok", false, "error", "the store is moving to another server"));
       return;
     }
     if (!engine.holdShared(o.entry)) {
@@ -243,7 +462,8 @@ final class Remote {
     ReactiveHost host = o.entry.hub.host;
     host.job(() -> {
       Cell cell = o.entry.hub.cells.get(address);
-      if (cell == null) {
+      // A store moving sends nothing more: the server it moves to starts from what it had (ADR 0037).
+      if (cell == null || o.moving) {
         return;
       }
       Published.State first = host.published().subscribe(cell, reader);
@@ -285,10 +505,12 @@ final class Remote {
     CompletableFuture<Map<String, Object>> done = new CompletableFuture<>();
     CompletableFuture<Map<String, Object>> first = o.batches.putIfAbsent(id, done);
     if (first != null) {
-      first.thenAccept(answer -> link.send(Peers.answer(m, "ok", answer.get("ok"), "error", answer.get("error"))));
+      first.thenAccept(answer -> link.send(Peers.answer(m, "ok", answer.get("ok"), "moved", answer.get("moved"),
+        "error", answer.get("error"))));
       return;
     }
-    done.thenAccept(answer -> link.send(Peers.answer(m, "ok", answer.get("ok"), "error", answer.get("error"))));
+    done.thenAccept(answer -> link.send(Peers.answer(m, "ok", answer.get("ok"), "moved", answer.get("moved"),
+      "error", answer.get("error"))));
     List<Runnable> writes = new ArrayList<>();
     try {
       for (Object op : (List<Object>) m.get("ops")) {
@@ -300,7 +522,18 @@ final class Remote {
       done.complete(Peers.message("result", "ok", false, "error", e.getMessage()));
       return;
     }
-    o.entry.hub.host.applyBatch(null, writes, () -> done.complete(Peers.message("result", "ok", true, "error", null)));
+    ReactiveHost host = o.entry.hub.host;
+    host.job(() -> {
+      if (o.moving) {
+        // Not applied here: it goes again to the server the store moves to, which has what this one applied.
+        o.batches.remove(id, done);
+        done.complete(Peers.message("result", "ok", false, "moved", true, "error", "the store is moving"));
+        return;
+      }
+      o.applied(id);
+      host.applyHere(null, writes);
+      host.job(() -> done.complete(Peers.message("result", "ok", true, "error", null)));
+    });
   }
 
   /**
@@ -310,7 +543,7 @@ final class Remote {
   @SuppressWarnings("unchecked")
   private void check(Link link, Map<String, Object> m) {
     Owned o = live(m);
-    if (o == null) {
+    if (o == null || o.moving) {
       link.send(Peers.answer(m, "changed", null));
       return;
     }

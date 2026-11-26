@@ -440,6 +440,24 @@ final class Scope {
     }
   }
 
+  /**
+   * A value of a store that moved here from a server that stopped (ADR 0037): it starts as it was there, read back as
+   * the type its field declares, before anything reads it.
+   */
+  private void handIn(Cell cell, String json) {
+    try {
+      Object value = tab.engine.json.read(json, Ops.typeOf(store, cell.address));
+      if (cell instanceof StoreCell) {
+        ((StoreCell) cell).restore(value);
+      } else {
+        ((ValueCell) cell).restoreValue(value);
+      }
+    } catch (RuntimeException e) {
+      tab.engine.log(System.Logger.Level.WARNING, cell.address + " that moved here no longer reads as its field's type;"
+        + " it starts from its initial value", e);
+    }
+  }
+
   void bindPrimitive(Primitive primitive, int index) {
     if (index < cells.size()) {
       Cell cell = cells.get(index);
@@ -469,6 +487,11 @@ final class Scope {
     if (stub != null) {
       primitive.attach(cell, Stubs.runs(primitive));
       return;
+    }
+    Map<String, String> handed = tab.handed;
+    String json = handed == null ? null : handed.remove(cell.address);
+    if (json != null) {
+      handIn(cell, json);
     }
     if (primitive instanceof RetainedSignal) {
       Signal<?> signal = (Signal<?>) primitive;

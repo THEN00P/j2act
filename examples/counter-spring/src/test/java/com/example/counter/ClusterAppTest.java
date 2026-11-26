@@ -57,6 +57,34 @@ class ClusterAppTest {
     }
   }
 
+  @Test
+  void aServerThatStopsHandsItsRoomToTheOtherWithItsMessages() throws Exception {
+    String database = "cluster-" + UUID.randomUUID();
+    int a = freePort();
+    int b = freePort();
+    ConfigurableApplicationContext one = server(a, database);
+    try (ConfigurableApplicationContext two = server(b, database)) {
+      // Alice's page looks the room up first, so A holds it.
+      CounterAppTest.Client alice = connect(a, "/chat/handoff?name=alice");
+      CounterAppTest.Client bob = connect(b, "/chat/handoff?name=bob");
+      String say = CounterAppTest.find(alice.html, "id=\"say\"[^>]*data-j2-change=\"([^\"]+)\"");
+      alice.send("{\"type\":\"event\",\"handler\":\"" + say + "\",\"value\":\"before\",\"id\":\"1\"}");
+      bob.await(m -> m.contains("alice: before"));
+      alice.close();
+      one.close();
+      // A stopped: the room went to B with its messages, which live in no database.
+      String reply = CounterAppTest.find(bob.html, "id=\"say\"[^>]*data-j2-change=\"([^\"]+)\"");
+      bob.send("{\"type\":\"event\",\"handler\":\"" + reply + "\",\"value\":\"after\",\"id\":\"2\"}");
+      bob.await(m -> m.contains("bob: after"));
+      CounterAppTest.Client carol = connect(b, "/chat/handoff?name=carol");
+      assertTrue(carol.html.contains("alice: before") && carol.html.contains("bob: after"), carol.html);
+      bob.close();
+      carol.close();
+    } finally {
+      one.close();
+    }
+  }
+
   private CounterAppTest.Client connect(int port, String path) throws Exception {
     String html = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).build(),
       HttpResponse.BodyHandlers.ofString()).body();

@@ -152,6 +152,8 @@ public final class Tab {
   volatile Browser hubFor;
   /** Set when this tab is a @SharedScoped store's hub (ADR 0037): no page, no socket, no user. */
   volatile SharedHub sharedFor;
+  /** While a store that moved from another server is made here: its plain values, by address (ADR 0037). */
+  volatile Map<String, String> handed;
 
   /** What this tab's code outside a component holds until the tab ends, each once (ADR 0037). */
   private final java.util.Set<Object> holding = java.util.concurrent.ConcurrentHashMap.newKeySet();

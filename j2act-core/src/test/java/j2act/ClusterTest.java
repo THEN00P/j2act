@@ -34,8 +34,11 @@ class ClusterTest {
   static final class Wires implements Peers.Transport {
     final Map<String, J2Act> engines = new ConcurrentHashMap<>();
     final ExecutorService pool = Executors.newCachedThreadPool();
+    /** Servers cut off, as by a crash: nothing they send arrives, and nothing reaches them. */
+    final java.util.Set<String> cut = ConcurrentHashMap.newKeySet();
 
     @Override public void connect(Peers peers, Node node, Link link) {
+      String from = peers.self.url();
       J2Act target = engines.get(node.url());
       if (target == null) {
         link.closed();
@@ -45,7 +48,9 @@ class ClusterTest {
       Peers.Pipe toTarget = new Peers.Pipe(pool);
       Connection back = new Connection() {
         @Override public void send(String message) {
-          toLink.run(() -> link.onText(message));
+          if (!cut.contains(from) && !cut.contains(node.url())) {
+            toLink.run(() -> link.onText(message));
+          }
         }
 
         @Override public void close() {
@@ -54,7 +59,9 @@ class ClusterTest {
       };
       link.over(new Peers.Socket() {
         @Override public void send(String frame) {
-          toTarget.run(() -> target.onMessage(back, frame));
+          if (!cut.contains(from) && !cut.contains(node.url())) {
+            toTarget.run(() -> target.onMessage(back, frame));
+          }
         }
 
         @Override public void close() {
@@ -241,8 +248,9 @@ class ClusterTest {
       type(alice, "post", "before");
       bob.awaitPatch(fromBob, "messages:before;posts:1;");
 
-      // A goes, and with it the store's live values: B takes it over once the lease ran out.
+      // A crashes, and with it the store's live values: B takes it over once the lease ran out.
       wires.engines.remove("http://a");
+      wires.cut.add("http://a");
       a.close();
       Harness.eventually(() -> !b.engine.peers.remote.toString().isEmpty() && b.engine.peers.remote.owned(
         b.engine.sharedId(Room.class, "lobby")) != null, "B holds it now");
@@ -399,6 +407,69 @@ class ClusterTest {
       Harness.eventually(() -> sizeOn(held) == 2, "B reads them again");
     } catch (InterruptedException e) {
       throw new IllegalStateException(e);
+    }
+  }
+
+  @Test
+  void aHolderThatStopsHandsItsStoresOverWithTheirValues() {
+    Harness a = server("http://a");
+    try (Harness b = server("http://b")) {
+      BrowserStoreTest.Page alice = new BrowserStoreTest.Page(a.engine, "/", Exchange.empty()).connect();
+      BrowserStoreTest.Page bob = new BrowserStoreTest.Page(b.engine, "/", Exchange.empty()).connect();
+      String id = a.engine.sharedId(Room.class, "lobby");
+      assertNotNull(a.engine.peers.remote.owned(id), "A holds it");
+      int fromBob = bob.conn.size();
+      type(alice, "post", "before");
+      bob.awaitPatch(fromBob, "messages:before;posts:1;");
+
+      // A stops: the room goes to B as it was, not only its Retained State, of which it has none.
+      a.close();
+      assertNotNull(b.engine.peers.remote.owned(id), "B holds it as soon as A is gone");
+      fromBob = bob.conn.size();
+      type(bob, "post", "after");
+      bob.awaitPatch(fromBob, "messages:before,after;posts:2;");
+      Room room = b.engine.sharedStore(Room.class, "lobby");
+      assertEquals(2, room.posts.get().intValue());
+    } finally {
+      a.close();
+    }
+  }
+
+  @Test
+  void aBatchThatReachesTheHolderAsTheStoreMovesLandsOnceWhereItWent() throws Exception {
+    Harness a = server("http://a");
+    try (Harness b = server("http://b")) {
+      BrowserStoreTest.Page alice = new BrowserStoreTest.Page(a.engine, "/", Exchange.empty()).connect();
+      BrowserStoreTest.Page bob = new BrowserStoreTest.Page(b.engine, "/", Exchange.empty()).connect();
+      String id = a.engine.sharedId(Room.class, "lobby");
+      SharedHub held = a.engine.peers.remote.owned(id).entry;
+      int fromBob = bob.conn.size();
+      type(alice, "post", "before");
+      bob.awaitPatch(fromBob, "messages:before;posts:1;");
+
+      // The holder's lane is busy; it starts to stop, so the store freezes next, and Bob's batch comes after that.
+      java.util.concurrent.CountDownLatch busy = new java.util.concurrent.CountDownLatch(1);
+      held.hub.host.job(() -> {
+        try {
+          busy.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+      });
+      Thread stopping = new Thread(a::close);
+      stopping.start();
+      Thread.sleep(150);
+      fromBob = bob.conn.size();
+      type(bob, "post", "during");
+      Thread.sleep(150);
+      busy.countDown();
+      stopping.join(10_000);
+      bob.awaitPatch(fromBob, "messages:before,during;posts:2;");
+      Room room = b.engine.sharedStore(Room.class, "lobby");
+      Thread.sleep(300);
+      assertEquals(2, room.posts.get().intValue(), "applied once, on B");
+    } finally {
+      a.close();
     }
   }
 }

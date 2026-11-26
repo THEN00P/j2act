@@ -28,9 +28,14 @@ final class HomeLeases implements SharedLeases {
 
   /** The server whose URL hashes highest with the store's id, of those up now. */
   Node home(String store) {
+    return home(store, peers.live());
+  }
+
+  /** The same of among: where a store goes, so each store of a server that stops goes to a server of its own. */
+  Node home(String store, java.util.Collection<Node> among) {
     Node best = null;
     long top = Long.MIN_VALUE;
-    for (Node node : peers.live()) {
+    for (Node node : among) {
       long score = hash(store + "|" + node.url());
       if (best == null || score > top || score == top && node.url().compareTo(best.url()) < 0) {
         best = node;
@@ -94,6 +99,32 @@ final class HomeLeases implements SharedLeases {
       return;
     }
     peers.link(home).send(Peers.message("release", "store", lease.store, "epoch", lease.epoch));
+  }
+
+  @Override public Lease handOver(Lease lease, Node to, Duration term) {
+    Node home = home(lease.store);
+    if (home.equals(peers.self)) {
+      return handOverHere(lease, to, term.toMillis());
+    }
+    Map<String, Object> answer = peers.await(peers.ask(peers.link(home), Peers.message("handover", "store",
+      lease.store, "url", lease.holder.url(), "id", lease.holder.id(), "epoch", lease.epoch, "toUrl", to.url(),
+      "toId", to.id(), "term", term.toMillis())));
+    return Boolean.TRUE.equals(answer.get("held")) ? lease(lease.store, answer) : null;
+  }
+
+  /** As the store's home: the lease goes to to, if it is still the one its holder has. */
+  private Lease handOverHere(Lease lease, Node to, long term) {
+    synchronized (granted) {
+      Lease current = granted.get(lease.store);
+      long now = System.currentTimeMillis();
+      if (current != null && (!current.holder.equals(lease.holder) || current.epoch != lease.epoch
+          || current.expiresAt <= now)) {
+        return null;
+      }
+      Lease next = new Lease(lease.store, to, lease.epoch + 1, now + term);
+      granted.put(lease.store, next);
+      return next;
+    }
   }
 
   /** As the store's home: its holder, or candidate when it has none. */
@@ -205,6 +236,13 @@ final class HomeLeases implements SharedLeases {
                 granted.remove(store);
               }
             }
+            return;
+          }
+          case "handover": {
+            Lease next = handOverHere(new Lease(store, new Node((String) m.get("id"), (String) m.get("url")),
+              ((Number) m.get("epoch")).longValue(), 0), new Node((String) m.get("toId"), (String) m.get("toUrl")),
+              ((Number) m.get("term")).longValue());
+            link.send(next == null ? Peers.answer(m, "held", false) : answer(m, next));
             return;
           }
           case "who": {

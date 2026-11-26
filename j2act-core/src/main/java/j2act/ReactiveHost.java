@@ -382,7 +382,7 @@ final class ReactiveHost {
   }
 
   /** On this lane, held by a page's delivery: another graph's writes, applied as its, in their order. */
-  private void applyHere(ReactiveHost from, List<Runnable> writes) {
+  void applyHere(ReactiveHost from, List<Runnable> writes) {
     Tab owner = tab;
     if (owner == null || owner.disposed) {
       return;

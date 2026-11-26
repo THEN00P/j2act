@@ -653,7 +653,12 @@ public final class J2Act implements AutoCloseable {
     String id = sharedId(type, key);
     j2act.cluster.SharedLeases.Lease lease = leases().acquire(id, peers.self, peers.cluster.term());
     if (lease.holder.equals(peers.self)) {
-      SharedHub entry = newLocal(type, key);
+      Remote.Owned held = peers.remote.owned(id);
+      if (held != null) {
+        // Another server opened it here first, or it moved here: this server's pages read that one.
+        return held.entry;
+      }
+      SharedHub entry = newLocal(type, key, null);
       peers.remote.own(id, entry, lease);
       return entry;
     }
@@ -693,8 +698,45 @@ public final class J2Act implements AutoCloseable {
         return;
       }
       SharedHub here = shared.get(new SharedId(type, key));
-      SharedHub entry = here != null && here.stub == null ? here : newLocal(type, key);
+      SharedHub entry = here != null && here.stub == null ? here : newLocal(type, key, null);
+      if (here == null) {
+        // This server's own pages find it too; with a stub here, they go on reading it through that.
+        shared.put(new SharedId(type, key), entry);
+      }
       peers.remote.own(id, entry, lease);
+    }
+  }
+
+  /**
+   * A store another server held and handed this one as it stopped (ADR 0037): it goes on here, the same instance to
+   * the servers that read it, with its plain values and its Retained State, and its revisions numbered on from there.
+   */
+  @SuppressWarnings("unchecked")
+  void takeShared(j2act.cluster.SharedLeases.Lease lease, String typeName, String keyJson, String keyType,
+      SharedHub.Handed handed, java.util.List<String> applied) {
+    Class<? extends Store> type;
+    Object key;
+    try {
+      type = (Class<? extends Store>) Class.forName(typeName, false, resourceLoader);
+      key = keyJson == null ? Store.APPLICATION : json.read(keyJson, Class.forName(keyType, false, resourceLoader));
+    } catch (ClassNotFoundException e) {
+      throw new IllegalStateException(e.getMessage() + " is not on this server: every server runs the same build", e);
+    }
+    requireShared(type);
+    String id = lease.store;
+    synchronized (SHARED_LOCKS[Math.floorMod(id.hashCode(), SHARED_LOCKS.length)]) {
+      if (peers.remote.owned(id) != null) {
+        throw new IllegalStateException("this server holds " + id + " already");
+      }
+      SharedHub here = shared.get(new SharedId(type, key));
+      if (here != null && here.stub == null) {
+        throw new IllegalStateException("this server has a store of its own for " + id);
+      }
+      SharedHub entry = newLocal(type, key, handed);
+      if (here == null) {
+        shared.put(new SharedId(type, key), entry);
+      }
+      peers.remote.own(id, entry, lease, applied);
     }
   }
 
@@ -737,37 +779,52 @@ public final class J2Act implements AutoCloseable {
       stub.onRevision(m);
     } else if ("gone".equals(type)) {
       stub.onGone(m);
+    } else if ("moved".equals(type)) {
+      stub.onMoved(m);
     }
   }
 
   /** A new hub for the key: held here, or in a cluster wherever its lease says (ADR 0037). */
   private SharedHub newShared(Class<? extends Store> type, Object key) {
-    return peers == null ? newLocal(type, key) : newClustered(type, key);
+    return peers == null ? newLocal(type, key, null) : newClustered(type, key);
   }
 
-  /** A hub held here, with its Retained State back if it saved some, and its store made on its lane. */
-  private SharedHub newLocal(Class<? extends Store> type, Object key) {
+  /**
+   * A hub held here, with its Retained State back if it saved some, and its store made on its lane; or, for a store
+   * that moved here from a server that stopped, with what it had there.
+   */
+  private SharedHub newLocal(Class<? extends Store> type, Object key, SharedHub.Handed handed) {
     // No user's request: a shared store reads nobody's identity (ADR 0037).
     Tab hub = new Tab(this, new ReactiveHost(this), "shared:" + newSecret(9), newSecret(18), Exchange.empty(), "/");
-    SharedHub entry = new SharedHub(this, type, key, newSecret(12), hub);
+    SharedHub entry = new SharedHub(this, type, key, handed != null ? handed.generation : newSecret(12), hub);
     hub.sharedFor = entry;
     hub.host.unread = () -> idleShared(entry);
-    String storageId = entry.storageId();
-    try {
-      Optional<String> stored = snapshots.storage.load(storageId);
-      if (stored.isPresent()) {
-        snapshots.storage.delete(storageId);
-        Retained.Snapshot snapshot = Retained.decode(stored.get());
-        if (snapshot.expiresAt > clock.millis()) {
-          hub.snapshot.restore(new ConcurrentHashMap<>(snapshot.entries));
+    if (handed != null) {
+      hub.snapshot.restore(handed.retained);
+      hub.handed = new ConcurrentHashMap<>(handed.values);
+      hub.host.hop(() -> hub.host.published().revision = handed.revision + 1);
+    } else {
+      String storageId = entry.storageId();
+      try {
+        Optional<String> stored = snapshots.storage.load(storageId);
+        if (stored.isPresent()) {
+          snapshots.storage.delete(storageId);
+          Retained.Snapshot snapshot = Retained.decode(stored.get());
+          if (snapshot.expiresAt > clock.millis()) {
+            hub.snapshot.restore(new ConcurrentHashMap<>(snapshot.entries));
+          }
         }
+      } catch (RuntimeException e) {
+        log(System.Logger.Level.WARNING, "a shared store's retained state could not be restored", e);
       }
-    } catch (RuntimeException e) {
-      log(System.Logger.Level.WARNING, "a shared store's retained state could not be restored", e);
     }
     // Its effects need no socket: they run for everyone.
     hub.goLive();
-    makeStore(entry, type, key);
+    try {
+      makeStore(entry, type, key);
+    } finally {
+      hub.handed = null;
+    }
     return entry;
   }
 
@@ -1567,10 +1624,22 @@ public final class J2Act implements AutoCloseable {
    * waiting up to its timeout, and their sockets close without a word: the pages reconnect
    * to the next server, hear "expired" and remount with their snapshots (ADR 0026).
    */
-  @Override public void close() {
-    if (peers != null) {
-      peers.close();
+  /**
+   * Leaves the cluster (ADR 0037): the shared stores this server holds move to the other servers with their values,
+   * and it stops talking to them. close() does this first; a container calls it earlier, while this server's web
+   * server still answers, since the other servers may reach this one over its socket. Nothing without a cluster.
+   */
+  public void leaveCluster() {
+    if (peers == null || peers.closed()) {
+      return;
     }
+    peers.remote.handOff(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(
+      Math.min(shutdownSaveMillis > 0 ? shutdownSaveMillis : 5000, peers.cluster.callTimeout().toMillis())));
+    peers.close();
+  }
+
+  @Override public void close() {
+    leaveCluster();
     sweeper.shutdownNow();
     if (dev != null) {
       dev.close();

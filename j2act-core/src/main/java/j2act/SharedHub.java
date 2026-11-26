@@ -28,6 +28,27 @@ final class SharedHub {
   boolean retired;
   /** Gone: the next lookup for the key makes another. Guarded by this. */
   boolean ended;
+  /** It moved to another server as this one stopped (ADR 0037): it ends here saving nothing. */
+  volatile boolean handedOff;
+
+  /** What a store has as it moves from a server that stops (ADR 0037). */
+  static final class Handed {
+    final String generation;
+    /** The last revision it published there: here it goes on from the next. */
+    final long revision;
+    /** Its plain values as JSON, by address. */
+    final java.util.Map<String, String> values;
+    final java.util.Map<String, String> retained;
+
+    Handed(String generation, long revision, java.util.Map<String, String> values,
+        java.util.Map<String, String> retained) {
+      this.generation = generation;
+      this.revision = revision;
+      this.values = values;
+      this.retained = retained;
+    }
+  }
+
   /** Completes once the latest retirement's snapshot reached storage. Guarded by this. */
   CompletableFuture<Void> saved = CompletableFuture.completedFuture(null);
 

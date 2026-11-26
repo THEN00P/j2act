@@ -96,6 +96,25 @@ public final class DatabaseLeases implements SharedLeases {
     }
   }
 
+  @Override public Lease handOver(Lease lease, Node to, Duration term) {
+    long expires = System.currentTimeMillis() + term.toMillis();
+    try (Connection c = dataSource.getConnection();
+         PreparedStatement s = c.prepareStatement("UPDATE j2act_shared_lease SET holder_url = ?, holder_id = ?,"
+           + " epoch = ?, expires_at = ? WHERE id = ? AND holder_url = ? AND epoch = ? AND expires_at > ?")) {
+      s.setString(1, to.url());
+      s.setString(2, to.id());
+      s.setLong(3, lease.epoch + 1);
+      s.setLong(4, expires);
+      s.setString(5, id(lease.store));
+      s.setString(6, lease.holder.url());
+      s.setLong(7, lease.epoch);
+      s.setLong(8, System.currentTimeMillis());
+      return s.executeUpdate() == 1 ? new Lease(lease.store, to, lease.epoch + 1, expires) : null;
+    } catch (SQLException e) {
+      throw new IllegalStateException("the lease of a shared store could not be handed over: " + e.getMessage(), e);
+    }
+  }
+
   private static Lease read(Connection c, String store, String id) throws SQLException {
     try (PreparedStatement s = c.prepareStatement(
         "SELECT holder_url, holder_id, epoch, expires_at FROM j2act_shared_lease WHERE id = ?")) {

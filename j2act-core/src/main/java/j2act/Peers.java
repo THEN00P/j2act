@@ -65,6 +65,30 @@ final class Peers {
     tick();
   }
 
+  boolean closed() {
+    return closed;
+  }
+
+  /**
+   * Every server but this one that discovery names now, or that a link reaches, up or not: where a store may go as
+   * this server stops. Blocking.
+   */
+  Set<Node> everyOther() {
+    Set<Node> all = new LinkedHashSet<>(members);
+    try {
+      all.addAll(cluster.discovery().discoverPeers());
+    } catch (RuntimeException e) {
+      engine.log(System.Logger.Level.WARNING, "looking for the cluster's servers failed", e);
+    }
+    for (Link link : links.values()) {
+      if (link.node != null) {
+        all.add(link.node);
+      }
+    }
+    all.remove(self);
+    return all;
+  }
+
   void close() {
     closed = true;
     remote.close();
@@ -372,6 +396,7 @@ final class Peers {
       case "lease":
       case "renew":
       case "release":
+      case "handover":
       case "who":
         homeLeases.onRequest(link, type, m);
         return;

@@ -2,6 +2,7 @@ package j2act.jdbc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import j2act.cluster.Node;
@@ -73,6 +74,15 @@ class ClusterTablesTest {
     assertFalse(leases.renew(first, Duration.ofSeconds(5)), "A lost it and cannot renew it");
     assertTrue(leases.renew(second, Duration.ofSeconds(5)));
     leases.release(second);
-    assertEquals(a, leases.acquire(store, a, Duration.ofSeconds(5)).holder, "a released lease is free");
+    SharedLeases.Lease third = leases.acquire(store, a, Duration.ofSeconds(5));
+    assertEquals(a, third.holder, "a released lease is free");
+
+    // A stops and hands the store to B, which holds it at once, with a higher epoch.
+    SharedLeases.Lease handed = leases.handOver(third, b, Duration.ofSeconds(5));
+    assertEquals(b, handed.holder);
+    assertEquals(third.epoch + 1, handed.epoch);
+    assertEquals(b, leases.acquire(store, a, Duration.ofSeconds(5)).holder, "B holds it now");
+    assertFalse(leases.renew(third, Duration.ofSeconds(5)), "A gave it away");
+    assertNull(leases.handOver(third, a, Duration.ofSeconds(5)), "nor can it give it again");
   }
 }

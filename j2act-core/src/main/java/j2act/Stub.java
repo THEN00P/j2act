@@ -207,6 +207,18 @@ final class Stub {
     }
   }
 
+  /**
+   * The holder stopped and handed the store to another server, the same instance there (ADR 0037): this stub goes on
+   * with that one at once, and what it sent and was not applied goes there.
+   */
+  void onMoved(Map<String, Object> m) {
+    if (m.get("gen").equals(generation)) {
+      live = false;
+      owner = Node.at((String) m.get("holder"));
+      connect();
+    }
+  }
+
   /** A link went: if it was the one to the holder, the store is out of reach until the lease is asked again. */
   void lost(Link l) {
     if (l == link) {
@@ -380,7 +392,8 @@ final class Stub {
     Map<String, Object> m = Peers.message("batch", "store", store, "gen", gen, "id", id);
     m.put("ops", new ArrayList<>(batch));
     peers.ask(link, m).whenComplete((answer, error) -> {
-      if (error != null) {
+      if (error != null || Boolean.TRUE.equals(answer.get("moved"))) {
+        // Lost on the way, or not applied as the store moved: again, to whichever server has it then.
         engine.afterMillis(200, () -> send(id, batch, answered, deadline, gen));
       } else if (Boolean.TRUE.equals(answer.get("ok"))) {
         // On the stub's lane, after the revision the holder sent before this answer.

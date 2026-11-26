@@ -35,4 +35,10 @@ public interface SharedLeases {
 
   /** The holder gives the store up, as when it ends there. */
   void release(Lease lease);
+
+  /**
+   * The holder gives the store to another server, as when it stops and the store moves there with its values: to
+   * holds it from now on, with a higher epoch, for a term. Null when the lease is no longer the holder's. Blocking.
+   */
+  Lease handOver(Lease lease, Node to, Duration term);
 }
