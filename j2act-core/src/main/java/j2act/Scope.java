@@ -454,14 +454,22 @@ final class Scope {
     }
     Scope previousScope = Tracking.swapScope(this);
     Cell cell;
+    // A stub of a store held on another server binds what the holder feeds (ADR 0037).
+    Stub stub = tab.sharedFor != null ? tab.sharedFor.stub : null;
     try {
-      cell = tab.rt.runWithOwner(slot, () -> tab.rt.untrack(() -> primitive.createCell(tab, address + "#" + index)));
+      cell = tab.rt.runWithOwner(slot, () -> tab.rt.untrack(() -> stub != null
+        ? Stubs.cell(primitive, tab, address + "#" + index, stub, store)
+        : primitive.createCell(tab, address + "#" + index)));
     } finally {
       Tracking.swapScope(previousScope);
     }
     cell.owner = this;
     cells.add(cell);
     tab.cells.put(cell.address, cell);
+    if (stub != null) {
+      primitive.attach(cell, Stubs.runs(primitive));
+      return;
+    }
     if (primitive instanceof RetainedSignal) {
       Signal<?> signal = (Signal<?>) primitive;
       tab.snapshot.retain(this, primitive, signal.retainedName, signal.stackName, signal.initial(), (ValueCell) cell);

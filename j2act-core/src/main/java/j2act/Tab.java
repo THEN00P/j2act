@@ -165,6 +165,20 @@ public final class Tab {
     return true;
   }
 
+  /** On this lane: onStore's body, with the store; a copy of a store on another server sends it there (ADR 0037). */
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void applyCall(Store store, Reactive.OnStore body) {
+    SharedHub shared = sharedFor;
+    if (shared != null && shared.stub != null) {
+      shared.stub.call(body);
+      return;
+    }
+    Tracking.in(this, store.scope, () -> {
+      body.accept(store);
+      return null;
+    });
+  }
+
   /** A hub: a tab with no page that holds stores for other tabs. */
   boolean isHub() {
     return hubFor != null || sharedFor != null;

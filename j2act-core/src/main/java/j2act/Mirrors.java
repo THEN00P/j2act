@@ -9,7 +9,7 @@ import java.util.Map;
  * source answers with its state now and sends every later revision, which this graph applies in one job of its own. A
  * mirror nothing here reads any more unsubscribes. Lane-only, the host's.
  */
-final class Mirrors {
+final class Mirrors implements Published.Reader {
 
   /** What this graph holds of another graph's value or store. */
   interface Mirror {
@@ -133,7 +133,7 @@ final class Mirrors {
     ReactiveHost from = source.tab.host;
     if (host.mayInline(from)) {
       Published.State[] first = new Published.State[1];
-      from.hop(() -> first[0] = from.published().subscribe(source, host));
+      from.hop(() -> first[0] = from.published().subscribe(source, this));
       M made = made(make, first[0]);
       cells.put(source, made);
       return made;
@@ -142,7 +142,7 @@ final class Mirrors {
     M made = made(make, null);
     cells.put(source, made);
     from.job(() -> {
-      Published.State first = from.published().subscribe(source, host);
+      Published.State first = from.published().subscribe(source, this);
       host.job(() -> {
         if (cells.get(source) == made) {
           made.accept(first);
@@ -236,7 +236,7 @@ final class Mirrors {
    * Any thread. A revision of another graph for this one. What arrives before this lane gets to it is one job, so a
    * page whose lane fell behind renders once with the latest state, not once for every revision in between.
    */
-  void deliver(ReactiveHost from, long revision, List<Published.Update> updates) {
+  @Override public void deliver(ReactiveHost from, long revision, List<Published.Update> updates) {
     arriving.add(new Object[] {from, revision, updates});
     if (draining.compareAndSet(false, true)) {
       host.job(this::drainArriving);
@@ -312,7 +312,7 @@ final class Mirrors {
       byRoot.remove(((StoreMirror) mirror).shape.targetOf(((StoreMirror) mirror).view));
     }
     ReactiveHost from = source.tab.host;
-    from.job(() -> from.published().unsubscribe(source, host));
+    from.job(() -> from.published().unsubscribe(source, this));
     // Not while the engine is unlinking it: at the end of this job.
     host.later(() -> ((Cell) mirror).dispose());
   }
@@ -325,7 +325,7 @@ final class Mirrors {
     }
     cells.clear();
     for (ReactiveHost from : sources) {
-      from.job(() -> from.published().forget(host));
+      from.job(() -> from.published().forget(this));
     }
   }
 }

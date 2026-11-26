@@ -344,75 +344,67 @@ class ValueCell extends Cell {
   }
 
   final void write(Object next) {
-    if (tab.lane.isCurrent()) {
-      markRetainedDirty();
-      rt.write(node, next);
-      return;
-    }
-    if (queuedByReader(() -> {
-      markRetainedDirty();
-      rt.write(node, next);
-    })) {
-      return;
-    }
-    Action.Call call = Action.Call.current();
-    if (call != null && call.tab.host != tab.host) {
-      call.queue(this, () -> {
-        markRetainedDirty();
-        rt.write(node, next);
-      }, () -> pendingOn(call.tab));
-      return;
-    }
-    if (call != null) {
-      call.enter(tab, () -> {
-        markRetainedDirty();
-        return rt.write(node, next);
-      });
-      return;
-    }
-    tab.host.writeFromOutside(() -> {
-      if (!tab.disposed) {
-        Tracking.in(tab, null, () -> {
-          markRetainedDirty();
-          return rt.write(node, next);
-        });
-      }
-    });
+    send(writeOp(next));
   }
 
   @SuppressWarnings("unchecked")
   final void update(UnaryOperator fn) {
+    send(updateOp(fn));
+  }
+
+  /** The write, made where it is called: a copy of a store on another server encodes it there and then (ADR 0037). */
+  Runnable writeOp(Object next) {
+    return () -> applyWrite(next);
+  }
+
+  @SuppressWarnings("rawtypes")
+  Runnable updateOp(UnaryOperator fn) {
+    return () -> applyUpdate(fn);
+  }
+
+  /** On this cell's lane: the write itself. A copy of a store on another server sends it there (ADR 0037). */
+  void applyWrite(Object next) {
+    markRetainedDirty();
+    rt.write(node, next);
+  }
+
+  /** On this cell's lane: the read-modify-write itself, fn on what the value is now. */
+  @SuppressWarnings("unchecked")
+  void applyUpdate(UnaryOperator fn) {
+    markRetainedDirty();
+    rt.update(node, fn);
+  }
+
+  /**
+   * Runs a write where it belongs: at once on this cell's lane; with the writes of the job or the action of the graph
+   * whose code made it, when that is another (ADR 0037); in the action's transaction from its body; and from any other
+   * thread as a write from outside (ADR 0014).
+   */
+  private void send(Runnable apply) {
     if (tab.lane.isCurrent()) {
-      markRetainedDirty();
-      rt.update(node, fn);
+      apply.run();
       return;
     }
-    if (queuedByReader(() -> {
-      markRetainedDirty();
-      rt.update(node, fn);
-    })) {
+    if (queuedByReader(apply)) {
       return;
     }
     Action.Call call = Action.Call.current();
     if (call != null && call.tab.host != tab.host) {
-      call.queue(this, () -> {
-        markRetainedDirty();
-        rt.update(node, fn);
-      }, () -> pendingOn(call.tab));
+      call.queue(this, apply, () -> pendingOn(call.tab));
       return;
     }
     if (call != null) {
       call.enter(tab, () -> {
-        markRetainedDirty();
-        return rt.update(node, fn);
+        apply.run();
+        return null;
       });
       return;
     }
     tab.host.writeFromOutside(() -> {
       if (!tab.disposed) {
         Tracking.in(tab, null, () -> {
-          markRetainedDirty();
-          return rt.update(node, fn);
+          apply.run();
+          return null;
         });
       }
     });

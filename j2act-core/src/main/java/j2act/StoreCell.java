@@ -163,12 +163,39 @@ class StoreCell extends Cell {
 
   <T> void update(Consumer<T> change) {
     requireAction();
-    write(() -> shape.update(view, change), mirror -> mirror.shape.update(mirror.view, change));
+    write(changeOp(change), mirror -> mirror.shape.update(mirror.view, change));
   }
 
   void set(Object value) {
     requireAction();
-    write(() -> shape.set(view, value), mirror -> mirror.shape.set(mirror.view, value));
+    write(setOp(value), mirror -> mirror.shape.set(mirror.view, value));
+  }
+
+  /** The write, made where it is called: a copy of a store on another server encodes it there and then (ADR 0037). */
+  Runnable changeOp(Consumer<?> change) {
+    return () -> applyChange(change);
+  }
+
+  Runnable setOp(Object value) {
+    return () -> applySet(value);
+  }
+
+  Runnable pathOp(String[] path, Object value) {
+    return () -> applyPath(path, value);
+  }
+
+  /** On this cell's lane: the change itself, on a draft of what the store has now. A copy on another server sends it. */
+  @SuppressWarnings("unchecked")
+  void applyChange(Consumer<?> change) {
+    shape.update(view, (Consumer<Object>) change);
+  }
+
+  void applySet(Object value) {
+    shape.set(view, value);
+  }
+
+  void applyPath(String[] path, Object value) {
+    shape.writePath(view, path, value);
   }
 
   /** The whole value as real objects, tracked. */
@@ -194,7 +221,7 @@ class StoreCell extends Cell {
   }
 
   void writePath(String[] path, Object value) {
-    write(() -> shape.writePath(view, path, value), mirror -> mirror.shape.writePath(mirror.view, path, value));
+    write(pathOp(path, value), mirror -> mirror.shape.writePath(mirror.view, path, value));
   }
 
   /**

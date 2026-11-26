@@ -69,6 +69,11 @@ public class Stored<T> extends Primitive implements Supplier<T> {
     this.derive = null;
   }
 
+  /** Whether an action's writes to it are guesses. */
+  boolean isOptimistic() {
+    return optimistic;
+  }
+
   /** The current value. Tracked. Changing what this returns changes nothing on the page: use update. */
   @Override
   @SuppressWarnings("unchecked")
@@ -80,6 +85,19 @@ public class Stored<T> extends Primitive implements Supplier<T> {
   /** Runs change on a draft and writes what it changed. Reads inside the lambda see its own writes. */
   public void update(Consumer<T> change) {
     ((StoreCell) requireCell()).update(change);
+  }
+
+  /**
+   * Runs change on a draft of what the store has, on its lane, also when that is a shared store's on another server
+   * (ADR 0037), where the lambda goes and runs. What it captures has to be a value JSON can carry or a shared store.
+   */
+  public void update(Change<T> change) {
+    ((StoreCell) requireCell()).update(change);
+  }
+
+  /** A change to a store that can run on another server (ADR 0037). */
+  @FunctionalInterface
+  public interface Change<T> extends Consumer<T>, java.io.Serializable {
   }
 
   /** Replaces the value. */

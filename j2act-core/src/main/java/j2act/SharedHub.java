@@ -18,6 +18,8 @@ final class SharedHub {
   final Tab hub;
   /** The store itself. */
   volatile Store store;
+  /** For a store whose holder is another server: what talks to it there (ADR 0037); null for one held here. */
+  volatile Stub stub;
   /** Components that looked it up and are still on a page, and code holding it outside one. Guarded by this. */
   int holders;
   /** Counts holds and lets-go, so a grace timer started before the latest one ends nothing. Guarded by this. */

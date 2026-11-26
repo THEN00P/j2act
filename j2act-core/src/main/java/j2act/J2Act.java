@@ -66,6 +66,8 @@ public final class J2Act implements AutoCloseable {
   final Executor executor;
   /** Where blocking work runs: a share of executor, in turns per tab (ADR 0037). */
   final Work work;
+  /** This server's part of a cluster, or null for a server on its own (ADR 0037). */
+  final Peers peers;
   final MembersInjector injector;
   /** The container's lookup by type, or null without one (ADR 0030). */
   private final Function<Class<?>, Object> storeLookup;
@@ -632,8 +634,119 @@ public final class J2Act implements AutoCloseable {
     }
   }
 
-  /** A new hub for the key, with its Retained State back if it saved some, and its store made on its lane. */
+  /** The leases of the cluster's stores: the configured ones, or those each store's home server keeps. */
+  j2act.cluster.SharedLeases leases() {
+    j2act.cluster.SharedLeases configured = peers.cluster.leases();
+    return configured != null ? configured : peers.homeLeases;
+  }
+
+  /** A store's id in the cluster: its class and its key as JSON. */
+  String sharedId(Class<?> type, Object key) {
+    return type.getName() + "|" + (key == Store.APPLICATION ? "" : json.write(key));
+  }
+
+  /**
+   * Where a store lives in a cluster (ADR 0037): this server, when its lease says so, or a stub of it whose values
+   * come from the server that holds it. The first lookup of a store on a server waits for the lease.
+   */
+  private SharedHub newClustered(Class<? extends Store> type, Object key) {
+    String id = sharedId(type, key);
+    j2act.cluster.SharedLeases.Lease lease = leases().acquire(id, peers.self, peers.cluster.term());
+    if (lease.holder.equals(peers.self)) {
+      SharedHub entry = newLocal(type, key);
+      peers.remote.own(id, entry, lease);
+      return entry;
+    }
+    Tab hub = new Tab(this, new ReactiveHost(this), "shared:" + newSecret(9), newSecret(18), Exchange.empty(), "/");
+    SharedHub entry = new SharedHub(this, type, key, newSecret(12), hub);
+    String keyJson = key == Store.APPLICATION ? null : json.write(key);
+    entry.stub = new Stub(peers, entry, id, type.getName(), keyJson, key == Store.APPLICATION ? null
+      : key.getClass().getName());
+    peers.stubs.put(id, entry.stub);
+    hub.sharedFor = entry;
+    hub.host.unread = () -> idleShared(entry);
+    makeStore(entry, type, key);
+    entry.stub.start(lease.holder);
+    return entry;
+  }
+
+  /**
+   * Another server, or a stub here, opens a store whose lease this server has (ADR 0037): it starts here if it has
+   * not, apart from what this server's own pages may have of it as a stub.
+   */
+  @SuppressWarnings("unchecked")
+  void openOwned(String id, String typeName, String keyJson, String keyType, j2act.cluster.SharedLeases.Lease lease) {
+    if (peers.remote.owned(id) != null) {
+      return;
+    }
+    Class<? extends Store> type;
+    Object key;
+    try {
+      type = (Class<? extends Store>) Class.forName(typeName, false, resourceLoader);
+      key = keyJson == null ? Store.APPLICATION : json.read(keyJson, Class.forName(keyType, false, resourceLoader));
+    } catch (ClassNotFoundException e) {
+      throw new IllegalStateException(e.getMessage() + " is not on this server: every server runs the same build", e);
+    }
+    requireShared(type);
+    synchronized (SHARED_LOCKS[Math.floorMod(id.hashCode(), SHARED_LOCKS.length)]) {
+      if (peers.remote.owned(id) != null) {
+        return;
+      }
+      SharedHub here = shared.get(new SharedId(type, key));
+      SharedHub entry = here != null && here.stub == null ? here : newLocal(type, key);
+      peers.remote.own(id, entry, lease);
+    }
+  }
+
+  /** One more holder of a store held here, for a server that opened it; false when it ends meanwhile. */
+  boolean holdShared(SharedHub entry) {
+    synchronized (entry) {
+      if (entry.ended) {
+        return false;
+      }
+      entry.retired = false;
+      entry.holders++;
+      entry.changes++;
+      return true;
+    }
+  }
+
+  void letGoShared(SharedHub entry) {
+    releaseShared(entry);
+  }
+
+  /** A store whose lease this server lost ends at once, saving nothing: another server holds it now. */
+  void endShared(SharedHub entry) {
+    synchronized (entry) {
+      if (entry.ended) {
+        return;
+      }
+      entry.ended = true;
+      shared.remove(new SharedId(entry.type, entry.key), entry);
+    }
+    entry.hub.post(() -> entry.hub.dispose(null));
+  }
+
+  /** Another server's message for a stub here. */
+  void stub(Link link, String type, java.util.Map<String, Object> m) {
+    Stub stub = peers.stubs.get((String) m.get("store"));
+    if (stub == null) {
+      return;
+    }
+    if ("rev".equals(type)) {
+      stub.onRevision(m);
+    } else if ("gone".equals(type)) {
+      stub.onGone(m);
+    }
+  }
+
+  /** A new hub for the key: held here, or in a cluster wherever its lease says (ADR 0037). */
   private SharedHub newShared(Class<? extends Store> type, Object key) {
+    return peers == null ? newLocal(type, key) : newClustered(type, key);
+  }
+
+  /** A hub held here, with its Retained State back if it saved some, and its store made on its lane. */
+  private SharedHub newLocal(Class<? extends Store> type, Object key) {
     // No user's request: a shared store reads nobody's identity (ADR 0037).
     Tab hub = new Tab(this, new ReactiveHost(this), "shared:" + newSecret(9), newSecret(18), Exchange.empty(), "/");
     SharedHub entry = new SharedHub(this, type, key, newSecret(12), hub);
@@ -654,6 +767,13 @@ public final class J2Act implements AutoCloseable {
     }
     // Its effects need no socket: they run for everyone.
     hub.goLive();
+    makeStore(entry, type, key);
+    return entry;
+  }
+
+  /** Makes the store on its hub's lane, with its key there for its field initializers. */
+  private void makeStore(SharedHub entry, Class<? extends Store> type, Object key) {
+    Tab hub = entry.hub;
     Object previous = Store.MAKING_KEY.get();
     Store.MAKING_KEY.set(key);
     try {
@@ -673,7 +793,6 @@ public final class J2Act implements AutoCloseable {
         Store.MAKING_KEY.set(previous);
       }
     }
-    return entry;
   }
 
   /** One holder let go; the last one gives it a grace window. */
@@ -723,7 +842,10 @@ public final class J2Act implements AutoCloseable {
     hub.post(() -> {
       hub.snapshot.persisting();
       hub.snapshot.stored = true;
-      snapshots.persistHub(hub, entry.storageId(), null, "a shared store").whenComplete((v, e) -> {
+      // A stub's values are the holder's, which saves them (ADR 0037).
+      CompletableFuture<Void> saving = entry.stub != null ? CompletableFuture.completedFuture(null)
+        : snapshots.persistHub(hub, entry.storageId(), null, "a shared store");
+      saving.whenComplete((v, e) -> {
         boolean end;
         synchronized (entry) {
           // Only the latest retirement ends it, as for a browser.
@@ -734,6 +856,12 @@ public final class J2Act implements AutoCloseable {
           }
         }
         if (end) {
+          if (entry.stub != null) {
+            entry.stub.close();
+            peers.stubs.remove(entry.stub.store, entry.stub);
+          } else if (peers != null) {
+            peers.remote.ended(entry);
+          }
           hub.post(() -> hub.dispose(null));
         }
         saved.complete(null);
@@ -822,6 +950,10 @@ public final class J2Act implements AutoCloseable {
     sweeper.scheduleWithFixedDelay(this::sweep, every, every, TimeUnit.MILLISECONDS);
     if (checkpointMillis > 0) {
       sweeper.scheduleWithFixedDelay(this::checkpoint, checkpointMillis, checkpointMillis, TimeUnit.MILLISECONDS);
+    }
+    this.peers = b.cluster == null ? null : new Peers(this, b.cluster);
+    if (peers != null) {
+      peers.start();
     }
     this.dev = DevMode.detect(resourceLoader);
     if (dev != null) {
@@ -1101,6 +1233,9 @@ public final class J2Act implements AutoCloseable {
   // ---- socket
 
   public void onMessage(Connection connection, String text) {
+    if (peers != null && peers.onMessage(connection, text)) {
+      return;
+    }
     if (text.length() > maxFrameSize) {
       log(System.Logger.Level.WARNING, "socket frame of " + text.length() + " chars over the limit; closing", null);
       onClose(connection);
@@ -1241,6 +1376,9 @@ public final class J2Act implements AutoCloseable {
   }
 
   public void onClose(Connection connection) {
+    if (peers != null) {
+      peers.onClose(connection);
+    }
     Tab tab = byConnection.remove(connection);
     if (tab != null) {
       tab.post(() -> tab.detach(connection));
@@ -1430,6 +1568,9 @@ public final class J2Act implements AutoCloseable {
    * to the next server, hear "expired" and remount with their snapshots (ADR 0026).
    */
   @Override public void close() {
+    if (peers != null) {
+      peers.close();
+    }
     sweeper.shutdownNow();
     if (dev != null) {
       dev.close();
@@ -1695,6 +1836,17 @@ public final class J2Act implements AutoCloseable {
     /** Pool for lanes and query runs; defaults to an owned pool of 32 daemon threads (ADR 0017). */
     public Builder withExecutor(Executor executor) {
       this.executor = executor;
+      return this;
+    }
+
+    private j2act.cluster.Cluster cluster;
+
+    /**
+     * Shares @SharedScoped stores with the other servers of a cluster (ADR 0037): each store lives on one of them, and
+     * the others' pages read and write it through that one.
+     */
+    public Builder withCluster(j2act.cluster.Cluster cluster) {
+      this.cluster = cluster;
       return this;
     }
 

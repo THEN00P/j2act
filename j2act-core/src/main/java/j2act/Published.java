@@ -81,13 +81,19 @@ final class Published {
     }
   }
 
+  /** What reads a host's values: another graph's mirrors here, or another server (ADR 0037). */
+  interface Reader {
+    /** A revision of from's: every value it changed that this reader reads. Any thread. */
+    void deliver(ReactiveHost from, long revision, List<Update> updates);
+  }
+
   private static final class Entry {
     final Cell cell;
     /**
      * Each reader's mirrors of the value: one subscribes and one unsubscribes, so a mirror made again before the old
      * one's unsubscribe arrived keeps getting revisions.
      */
-    final Map<ReactiveHost, Integer> readers = new LinkedHashMap<>();
+    final Map<Reader, Integer> readers = new LinkedHashMap<>();
     State last;
     Node tap;
 
@@ -109,7 +115,7 @@ final class Published {
    * Lane-only. reader reads cell from now on: it gets the state the value is in now, and every revision after that
    * changes it, so nothing that happens in between is lost.
    */
-  State subscribe(Cell cell, ReactiveHost reader) {
+  State subscribe(Cell cell, Reader reader) {
     Entry entry = entries.get(cell);
     if (entry == null) {
       entry = new Entry(cell);
@@ -117,13 +123,17 @@ final class Published {
       entry.tap = tap(cell);
       entry.last = stateOf(cell).at(revision);
       host.lastStates.put(cell, entry.last);
+      if (cell instanceof Stub.Stubbed) {
+        // A stub's value comes from the server that holds the store, from now on (ADR 0037).
+        host.tab.sharedFor.stub.subscribe(cell.address);
+      }
     }
     entry.readers.merge(reader, 1, Integer::sum);
     return entry.last;
   }
 
   /** Lane-only. reader no longer reads cell. */
-  void unsubscribe(Cell cell, ReactiveHost reader) {
+  void unsubscribe(Cell cell, Reader reader) {
     Entry entry = entries.get(cell);
     if (entry == null) {
       return;
@@ -132,10 +142,17 @@ final class Published {
     if (entry.readers.isEmpty()) {
       entries.remove(cell);
       host.lastStates.remove(cell);
+      unstub(cell);
       if (entry.tap != null) {
         host.rt.disposeNode(entry.tap);
       }
       unreadIfNone();
+    }
+  }
+
+  private void unstub(Cell cell) {
+    if (cell instanceof Stub.Stubbed) {
+      host.tab.sharedFor.stub.unsubscribe(cell.address);
     }
   }
 
@@ -151,11 +168,12 @@ final class Published {
   }
 
   /** Lane-only. A reader's graph ended. */
-  void forget(ReactiveHost reader) {
+  void forget(Reader reader) {
     for (Entry entry : new ArrayList<>(entries.values())) {
       if (entry.readers.remove(reader) != null && entry.readers.isEmpty()) {
         entries.remove(entry.cell);
         host.lastStates.remove(entry.cell);
+        unstub(entry.cell);
         if (entry.tap != null) {
           host.rt.disposeNode(entry.tap);
         }
@@ -169,7 +187,7 @@ final class Published {
     if (entries.isEmpty()) {
       return;
     }
-    Map<ReactiveHost, List<Update>> out = null;
+    Map<Reader, List<Update>> out = null;
     long next = revision + 1;
     for (Entry entry : entries.values()) {
       if (entry.cell.disposed) {
@@ -184,7 +202,7 @@ final class Published {
       if (out == null) {
         out = new LinkedHashMap<>();
       }
-      for (ReactiveHost reader : entry.readers.keySet()) {
+      for (Reader reader : entry.readers.keySet()) {
         out.computeIfAbsent(reader, r -> new ArrayList<>()).add(new Update(entry.cell, entry.last));
       }
     }
@@ -192,10 +210,8 @@ final class Published {
       return;
     }
     revision = next;
-    for (Map.Entry<ReactiveHost, List<Update>> e : out.entrySet()) {
-      ReactiveHost reader = e.getKey();
-      List<Update> updates = e.getValue();
-      reader.mirrors.deliver(host, next, updates);
+    for (Map.Entry<Reader, List<Update>> e : out.entrySet()) {
+      e.getKey().deliver(host, next, e.getValue());
     }
   }
 

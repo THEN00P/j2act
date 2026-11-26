@@ -141,6 +141,26 @@ final class Feed {
     return s != null && s.failed;
   }
 
+  /**
+   * The source is out of reach (ADR 0037): what reads this keeps the value it had, as pending, until a state comes
+   * again.
+   */
+  void stale() {
+    Published.State s = state;
+    if (s == null || s.pending) {
+      return;
+    }
+    state = new Published.State(s.hasValue, s.value, true, s.error, s.failed, s.revision);
+    if (waiting == null) {
+      rt.write(version, ++versions);
+    }
+  }
+
+  /** The source started anew and numbers its revisions from the start again: its next state is taken. */
+  void restart() {
+    revision = -1;
+  }
+
   /** The revision of the last state taken. */
   long revision() {
     return revision;

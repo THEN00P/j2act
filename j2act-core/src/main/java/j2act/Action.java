@@ -110,11 +110,13 @@ public final class Action<V, R> {
       tab.host.job(() -> Tracking.in(tab, scope, () -> {
         if (failed == null && call.sends()) {
           // Its writes to other graphs land there first, and their revision here, then it ends (ADR 0037).
-          call.send(apply -> {
+          call.send((apply, lost) -> {
             // What the other graphs published of its writes, its pending's end and its own end: one change here.
             apply.run();
             call.ended();
-            run.end(ended, null);
+            Throwable cause = lost instanceof java.util.concurrent.CompletionException && lost.getCause() != null
+              ? lost.getCause() : lost;
+            run.end(cause == null ? ended : null, cause);
           });
         } else {
           call.ended();
@@ -148,18 +150,23 @@ public final class Action<V, R> {
      * action's writes commit at its end. Meanwhile the page shows the value as pending, as for its own held writes.
      */
     void queue(Cell cell, Runnable write, Supplier<?> onPage) {
-      synchronized (outgoing) {
-        outgoing.computeIfAbsent(cell.tab.host, h -> new java.util.ArrayList<>()).add(() -> {
-          if (!cell.tab.disposed) {
-            write.run();
-          }
-        });
-      }
+      queueTo(cell.tab, write);
       Object feed = enter(tab, onPage);
       if (feed instanceof Feed) {
         synchronized (outgoing) {
           sending.add((Feed) feed);
         }
+      }
+    }
+
+    /** A write to a graph other than the action's, held until the body ends. */
+    void queueTo(Tab target, Runnable write) {
+      synchronized (outgoing) {
+        outgoing.computeIfAbsent(target.host, h -> new java.util.ArrayList<>()).add(() -> {
+          if (!target.disposed) {
+            write.run();
+          }
+        });
       }
     }
 
@@ -188,7 +195,7 @@ public final class Action<V, R> {
      * Lane-only, the action's tab's. Sends the writes, one batch per graph, as one change. Once every graph applied its
      * batch and published it, done runs on this lane with what applies those revisions here.
      */
-    void send(java.util.function.Consumer<Runnable> done) {
+    void send(java.util.function.BiConsumer<Runnable, Throwable> done) {
       java.util.Map<ReactiveHost, java.util.List<Runnable>> batches;
       synchronized (outgoing) {
         batches = new java.util.LinkedHashMap<>(outgoing);
@@ -199,12 +206,12 @@ public final class Action<V, R> {
         tab.host.mirrors.await(to);
         sent.add(new ReactiveHost.Batch(to, writes));
       });
-      tab.host.deliver(sent, () -> Tracking.in(tab, null, () -> {
+      tab.host.deliver(sent, failure -> Tracking.in(tab, null, () -> {
         java.util.List<Runnable> published = new java.util.ArrayList<>();
         for (ReactiveHost.Batch batch : sent) {
           published.add(tab.host.mirrors.heard(batch.to));
         }
-        done.accept(() -> published.forEach(Runnable::run));
+        done.accept(() -> published.forEach(Runnable::run), failure);
         return null;
       }));
     }

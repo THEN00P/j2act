@@ -90,6 +90,12 @@ public abstract class Store {
     store.primitives.add(primitive);
   }
 
+  /** The @SharedScoped store's place, or null for any other store (ADR 0037). */
+  SharedHub sharedHub() {
+    bindIfPending();
+    return scope == null ? null : scope.tab.sharedFor;
+  }
+
   /** Binds this store to the tab making it, if that has not happened yet: a lifecycle callback needs its values. */
   void bindIfPending() {
     Tab tab = pending;

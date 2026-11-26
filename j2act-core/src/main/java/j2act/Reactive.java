@@ -1001,6 +1001,28 @@ public final class Reactive {
     return tab.engine.sharedStore(tab, store, null);
   }
 
+  /**
+   * Runs body on a store's own lane with the store itself (ADR 0037), as one write of the job or the action that calls
+   * it: for a domain method whose reads and writes belong together, such as "post unless the room is closed", and for
+   * a shared store on another server, where body goes and runs. What body captures has to be a value JSON can carry
+   * or a shared store. In body the store's values are what the store has, not what the page shows.
+   */
+  public static <S extends Store> void onStore(S store, OnStore<S> body) {
+    store.bindIfPending();
+    Scope scope = store.scope;
+    if (scope == null) {
+      throw new IllegalStateException("onStore(...) takes a store j2act made, from useSharedStore, useBrowserStore or"
+        + " useTabStore (ADR 0037)");
+    }
+    Tab hub = scope.tab;
+    Writes.to(hub, () -> hub.applyCall(store, body));
+  }
+
+  /** What onStore runs on a store's lane (ADR 0037). */
+  @FunctionalInterface
+  public interface OnStore<S extends Store> extends java.util.function.Consumer<S>, java.io.Serializable {
+  }
+
   public static Application useApplication() {
     return ambientTab("useApplication()").engine.application;
   }

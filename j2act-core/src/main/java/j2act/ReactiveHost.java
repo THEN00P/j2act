@@ -4,6 +4,7 @@ import j2act.internal.signals.Runtime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.Deque;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -195,6 +196,12 @@ final class ReactiveHost {
       }
     }
     writing = null;
+    Tab t = tab;
+    Stub stub = t == null || t.sharedFor == null ? null : t.sharedFor.stub;
+    if (stub != null) {
+      // What this job wrote to a store held on another server goes there as one batch (ADR 0037).
+      stub.flush();
+    }
     sendOutgoing();
   }
 
@@ -322,13 +329,13 @@ final class ReactiveHost {
    * in both at once. A store's graph waits for no older lane: each batch goes as a job of its own there. done, if any,
    * runs in a later job of this graph's, after the revisions they made had reached it.
    */
-  void deliver(List<Batch> batches, Runnable done) {
+  void deliver(List<Batch> batches, java.util.function.Consumer<Throwable> done) {
     if (isStoreHost()) {
       int[] left = {batches.size()};
       for (Batch batch : batches) {
         batch.to.applyBatch(this, batch.writes, () -> {
           if (--left[0] == 0 && done != null) {
-            job(done);
+            job(() -> done.accept(null));
           }
         });
       }
@@ -341,6 +348,7 @@ final class ReactiveHost {
       }
     }
     targets.sort(java.util.Comparator.comparingLong(h -> h.seq));
+    List<CompletableFuture<Void>> remote = new ArrayList<>();
     Runnable body = () -> {
       for (Batch batch : batches) {
         batch.to.applyHere(this, batch.writes);
@@ -349,12 +357,27 @@ final class ReactiveHost {
     for (int i = targets.size() - 1; i >= 0; i--) {
       ReactiveHost target = targets.get(i);
       Runnable inner = body;
-      body = () -> target.hop(inner);
+      body = () -> {
+        Stub.takeSent();
+        target.hop(inner);
+        // A stub sent what it took on to the server holding its store: done waits for that server too (ADR 0037).
+        Tab hub = target.tab;
+        Stub stub = hub == null || hub.sharedFor == null ? null : hub.sharedFor.stub;
+        CompletableFuture<Void> answered = stub == null ? null : Stub.takeSent();
+        if (answered != null) {
+          remote.add(answered);
+        }
+      };
     }
     body.run();
     if (done != null) {
-      // After the revisions the targets posted while this lane waited for them.
-      job(done);
+      if (remote.isEmpty()) {
+        // After the revisions the targets posted while this lane waited for them.
+        job(() -> done.accept(null));
+      } else {
+        CompletableFuture.allOf(remote.toArray(new CompletableFuture<?>[0]))
+          .whenComplete((v, e) -> job(() -> done.accept(e)));
+      }
     }
   }
 
