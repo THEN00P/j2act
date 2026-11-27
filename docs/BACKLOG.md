@@ -27,7 +27,7 @@ Deferred until core is solid (avoid rewrite hell). Signals plus button callbacks
 
 - **The database joins the graph**: record what a load read and what a transaction wrote, through Hibernate's events, and re-run what overlaps, as Convex does for its own database. Plain JPA code becomes reactive, and writes from outside j2act can come in through something like Debezium. Large enough to be its own library rather than part of this repo.
 
-- **Shared stores across a cluster**: the keyed form of `@BrowserScoped`, one reactive owner per key, such as a chat room, on one server of a cluster. Needs its own ADR. The spike and its open questions are in `docs/spikes/shared-scope.md`. Then Solid's `broadcast(fn)`, which renders once per key and writes the same bytes to every viewer.
+- **Shared stores, what ADR 0037 leaves open**: sending less to pages that are hidden or not looking at a room, as Discord does for passive sessions; moving a live store between servers without losing its plain values; a load test of a large room.
 
 - **Optimistic onMutate helpers**: snapshot/rollback conventions on Mutation, TanStack-style.
 - **S3-direct upload SPI**: StorageBackend behind the locked granular upload() shape (presigned chunks, no server bytes). Shape already covers it.

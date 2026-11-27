@@ -48,20 +48,23 @@ final class Handlers {
       handlerId = tab.engine.newSecret(12);
     }
     byId.put(handlerId, new Entry(scope, event, handler));
-    scope.handlerIds.put(slot, handlerId);
+    scope.handlerIdsToWrite().put(slot, handlerId);
     return handlerId;
   }
 
   /** Called at the start of a scope's render: its current ids become reusable candidates. */
   void begin(Scope scope) {
+    scope.touched();
     scope.previousHandlerIds = scope.handlerIds;
-    scope.handlerIds = new LinkedHashMap<>();
+    scope.handlerIds = Scope.NO_IDS;
+    scope.beginSharedReads();
   }
 
   /** Called at the end of a scope's render: ids of elements that did not render again are dropped. */
   void end(Scope scope) {
     scope.droppedHandlers.addAll(scope.previousHandlerIds.values());
-    scope.previousHandlerIds.clear();
+    scope.previousHandlerIds = Scope.NO_IDS;
+    scope.endSharedReads();
   }
 
   /** The pass that stopped using these showed, so nothing on the page can send them any more. */
@@ -74,19 +77,22 @@ final class Handlers {
 
   /** A render stopped partway, and its output is dropped: what was on screen keeps its handlers. */
   void abort(Scope scope) {
-    scope.handlerIds.putAll(scope.previousHandlerIds);
-    scope.previousHandlerIds.clear();
+    if (!scope.previousHandlerIds.isEmpty()) {
+      scope.handlerIdsToWrite().putAll(scope.previousHandlerIds);
+    }
+    scope.previousHandlerIds = Scope.NO_IDS;
+    scope.abortSharedReads();
   }
 
   void remove(Scope scope) {
     for (String handlerId : scope.handlerIds.values()) {
       byId.remove(handlerId);
     }
-    scope.handlerIds.clear();
+    scope.handlerIds = Scope.NO_IDS;
     for (String handlerId : scope.actionHandlerIds.values()) {
       byId.remove(handlerId);
     }
-    scope.actionHandlerIds.clear();
+    scope.actionHandlerIds = Scope.NO_IDS;
     end(scope);
     drop(scope);
   }
@@ -97,7 +103,7 @@ final class Handlers {
    */
   String registerAction(Scope scope, String key, Object handler) {
     String handlerId = tab.engine.newSecret(12);
-    String previous = scope.actionHandlerIds.put(key, handlerId);
+    String previous = scope.actionHandlerIdsToWrite().put(key, handlerId);
     if (previous != null) {
       byId.remove(previous);
     }

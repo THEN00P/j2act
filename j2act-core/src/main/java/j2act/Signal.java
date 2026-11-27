@@ -57,6 +57,21 @@ public class Signal<T> extends Primitive implements Supplier<T> {
     ((ValueCell) requireCell()).update(fn);
   }
 
+  /**
+   * Read-modify-write that runs on the lane of the value, also when that is a shared store's on another server
+   * (ADR 0037), where the lambda goes and runs on what the store has then. A lambda written here is one of these: what
+   * it captures has to be a value JSON can carry, such as a String, a number or a record, or a shared store, and
+   * nothing it does outside the value should matter, since the store decides when it runs.
+   */
+  public void update(Update<T> fn) {
+    ((ValueCell) requireCell()).update(fn);
+  }
+
+  /** A read-modify-write that can run on another server (ADR 0037). */
+  @FunctionalInterface
+  public interface Update<T> extends UnaryOperator<T>, java.io.Serializable {
+  }
+
   @Override Cell createCell(Tab tab, String address) {
     return source != null ? ValueCell.derived(tab, address, source, loading) : new ValueCell(tab, address, initial);
   }

@@ -1,5 +1,7 @@
 # Port Solid 2's reactive engine
 
+> ADR 0037 changes "One `Runtime` per browser" and the first rejected alternative: each tab has its own graph, and a browser's stores are a shared store keyed by its cookie. It also replaces the direction for shared state at the end of this ADR.
+
 ADR 0031 adopted Solid 2's API and semantics, and the first implementation wrote its own engine to provide them: first a cell class per primitive, then one `Node` with three places. Each round found bugs at a similar rate, because the rules were decided separately at every event: a write, a landing, a guess, a merge and a commit each walked the graph and decided for themselves. Solid's engine does not work that way, and it has written down why: events only mark, one pass recomputes in height order, and one place decides what commits, parks or reveals. A hold comes from a render effect's read throwing `NotReady` during that pass, where ours tried to predict who would reload.
 
 So j2act stops writing its own engine. It ports `@solidjs/signals` file by file, and builds on top of it. The port was written against commit `9449845` on `next` (`2.0.0-rc.20`), and is now pinned at `68406c2` on `main` (`2.0.3`, the stable release).

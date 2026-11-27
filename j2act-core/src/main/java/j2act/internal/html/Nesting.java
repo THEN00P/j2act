@@ -63,6 +63,21 @@ public final class Nesting {
       return new Open(name.toLowerCase(java.util.Locale.ROOT), up);
     }
 
+    /** Whether two are the same elements open, by name, from the innermost out. */
+    public static boolean same(Open a, Open b) {
+      while (a != null && b != null) {
+        if (a == b) {
+          return true;
+        }
+        if (!a.name.equals(b.name)) {
+          return false;
+        }
+        a = a.up;
+        b = b.up;
+      }
+      return a == b;
+    }
+
     /** Whether `other` is this one or an element this one is in. */
     public boolean within(Open other) {
       for (Open o = this; o != null; o = o.up) {

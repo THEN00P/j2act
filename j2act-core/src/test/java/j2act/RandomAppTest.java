@@ -63,6 +63,7 @@ import org.junit.jupiter.api.Test;
  */
 class RandomAppTest {
 
+
   private static final String PLANNED = "on purpose";
   static volatile World world;
 
@@ -109,10 +110,16 @@ class RandomAppTest {
 
     volatile int kept;
 
+    /**
+     * The browser's lane applies a tab's writes when the tab's job ends, and an action's when the action ends well
+     * (ADR 0037): what the pages end up showing is the write it applied last, so that is where this is noted.
+     */
     void write(Signal<Integer> n) {
       int value = written.incrementAndGet();
-      shown = value;
-      n.set(value);
+      n.update(old -> {
+        shown = value;
+        return value;
+      });
     }
   }
 
@@ -427,14 +434,14 @@ class RandomAppTest {
             () -> queryParam("q"), "data-q"),
           // Keyed rows, each its own region with regions on, as the enhancer leaves each(...)'s rows.
           // The rows turn and grow and shrink with n, so a list's operations move, insert and remove them.
-          T.tag("ul", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.span("[row" + me.id + "." + k + "="
-            + (shared.n.get() + k) + "]").withKey(k))))),
+          T.tag("ul", r(() -> T.each(rowsFor(shared.n.get()), k -> rr(new Object[] {me, shared, k}, () -> T.span("[row"
+            + me.id + "." + k + "=" + (shared.n.get() + k) + "]").withKey(k))))),
           // Where the parser reshapes what it reads (BrowserParse): rows in a table's tbody, SVG and the HTML inside
           // its foreignObject, and a p; and, below, rows straight in a table, which the parser puts in a tbody of its
           // own, a template's content and a pending element's, out of the document, a p holding a div, which the parser
           // closes first, also below a span, an li in an li, and a tbody straight in a table, whose markers stand.
-          T.tag("table", T.tag("tbody", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr",
-            T.tag("td", "[body" + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k)))))),
+          T.tag("table", T.tag("tbody", r(() -> T.each(rowsFor(shared.n.get()), k -> rr(new Object[] {me, shared, k},
+            () -> T.tag("tr", T.tag("td", "[body" + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k)))))),
           T.tag("svg", ra(T.tag("circle"), () -> shared.n.get(), "r"),
             r(() -> T.tag("text", "[svg" + me.id + "=" + shared.n.get() + "]")),
             T.tag("foreignObject", r(() -> T.span("[fo" + me.id + "=" + shared.n.get() + "]")))),
@@ -506,8 +513,31 @@ class RandomAppTest {
           loading(() -> r(() -> T.span("[remote=" + shared.remote.get() + "]"))).withFallback(T.span("[remote=loading]")),
           loading(() -> T.div().withId("inner" + me.id + "n" + shared.n.get()).withClient(inner)).withFallback(T.span("[inner=loading]"))));
         kids.add(r(() -> child.get() ? new Child(url) : null));
-        kids.add(T.tag("table", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr", T.tag("td", "[bare"
-          + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k))))));
+        kids.add(T.tag("table", r(() -> T.each(rowsFor(shared.n.get()), k -> rr(new Object[] {me, shared, k},
+          () -> T.tag("tr", T.tag("td", "[bare" + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k))))));
+        // Unkeyed rows, kept for their item only where they stay, as the enhancer's rows are: these shift as n turns.
+        kids.add(T.tag("ol", r(() -> T.each(rowsFor(shared.n.get()), k -> rr(new Object[] {me, shared, k},
+          () -> T.span("[at" + me.id + "." + k + "=" + (shared.n.get() + k) + "]"))))));
+        // Lists kept by key (each(items, key, row), KeyedRows): a list's own scope, which what is around it holds the
+        // markers of; in a tbody, straight in a table, where its rows cannot stand between markers, rows that hold a list
+        // of their own, rows of a row function that holds what the view read, and rows of controlled fields.
+        kids.add(T.tag("ul", r(() -> kk(rowsFor(shared.n.get()), k -> k, kr(new Object[] {me, shared},
+          k -> T.span("[key" + me.id + "." + k + "=" + (shared.n.get() + k) + "]"))))));
+        kids.add(T.tag("table", T.tag("tbody", r(() -> kk(rowsFor(shared.n.get()), k -> k, kr(new Object[] {me, shared},
+          k -> T.tag("tr", T.tag("td", "[kbody" + me.id + "." + k + "=" + (shared.n.get() + k) + "]"))))))));
+        kids.add(T.tag("table", r(() -> kk(rowsFor(shared.n.get()), k -> k, kr(new Object[] {me, shared},
+          k -> T.tag("tr", T.tag("td", "[kbare" + me.id + "." + k + "=" + (shared.n.get() + k) + "]")))))));
+        kids.add(T.div(r(() -> kk(rowsFor(shared.n.get()), k -> k, kr(new Object[] {me, shared},
+          k -> T.div(T.span("[kout" + me.id + "." + k + "]"), T.tag("ul", r(() -> kk(rowsFor(shared.n.get() + k), j -> j,
+            kr(new Object[] {me, shared, k}, j -> T.span("[kin" + me.id + "." + k + "." + j + "=" + shared.n.get()
+              + "]")))))))))));
+        kids.add(T.div(r(() -> {
+          int now = shared.n.get();
+          return kk(rowsFor(now), k -> k, kr(new Object[] {me, now}, k -> T.span("[kcap" + me.id + "." + k + "=" + (now + k)
+            + "]")));
+        })));
+        kids.add(T.div(r(() -> kk(rowsFor(shared.n.get()), k -> k, kr(new Object[] {me, shared},
+          k -> T.input().attr("value", "kf" + me.id + "." + k + "=" + (shared.n.get() + k)))))));
         kids.add(T.tag("template", r(() -> T.span("[tpl" + me.id + "=" + shared.n.get() + "]"))));
         kids.add(T.tag("iframe", r(() -> new Text("[ifr" + me.id + "=" + shared.n.get() + "]"))));
         kids.add(T.tag("noscript", r(() -> new Text("[nos" + me.id + "=" + shared.n.get() + "]"))));
@@ -807,17 +837,31 @@ class RandomAppTest {
       return tab;
     }
 
-    /** Waits until every lane has done what it was given so far. */
+    /**
+     * Waits until every lane has done what it was given so far: the tabs' and their browsers' (ADR 0037), a few times
+     * over, since a write goes from a tab to its browser and the browser's revision back.
+     */
     void settleLanes() {
-      for (BrowserTab tab : tabs) {
-        CompletableFuture<Void> done = new CompletableFuture<>();
-        tab.tab.host.job(() -> done.complete(null));
-        try {
-          done.get(5, TimeUnit.SECONDS);
-        } catch (Exception e) {
-          fail("a lane is stuck\n" + log, e);
+      for (int round = 0; round < 3; round++) {
+        for (Browser browser : h.engine.browsers.values()) {
+          settle(browser.hub.host);
         }
+        for (BrowserTab tab : tabs) {
+          settle(tab.tab.host);
+        }
+      }
+      for (BrowserTab tab : tabs) {
         tab.apply();
+      }
+    }
+
+    private void settle(ReactiveHost host) {
+      CompletableFuture<Void> done = new CompletableFuture<>();
+      host.job(() -> done.complete(null));
+      try {
+        done.get(5, TimeUnit.SECONDS);
+      } catch (Exception e) {
+        fail("a lane is stuck\n" + log, e);
       }
     }
 
@@ -1110,7 +1154,7 @@ class RandomAppTest {
 
     /** What must be true of every tab at rest. */
     void check() {
-      int n = w.written.get();
+      int n = w.shown;
       for (BrowserTab tab : tabs) {
         String at = "tab" + tabs.indexOf(tab) + " wanted " + tab.wanted;
         expect(tab, tab.problems.isEmpty(), at + ": " + tab.problems);
@@ -1161,6 +1205,38 @@ class RandomAppTest {
             String cell = "[" + table + pageId + "." + k + "=" + (n + k) + "]";
             expect(tab, tab.doc.contains(cell), at + ": wanted " + cell);
           }
+        }
+        StringBuilder keyed = new StringBuilder();
+        Matcher key = Pattern.compile("\\[key" + pageId + "\\.(\\d+)=(\\d+)\\]").matcher(tab.doc);
+        while (key.find()) {
+          keyed.append(key.group(1)).append(',');
+          expect(tab, Integer.parseInt(key.group(2)) == n + Integer.parseInt(key.group(1)), at + ": keyed " + key.group());
+        }
+        expect(tab, keyed.toString().equals(wantedRows.toString()), at + ": keyed rows " + keyed + " for n=" + n);
+        StringBuilder captured = new StringBuilder();
+        Matcher cap = Pattern.compile("\\[kcap" + pageId + "\\.(\\d+)=(\\d+)\\]").matcher(tab.doc);
+        while (cap.find()) {
+          captured.append(cap.group(1)).append(',');
+          expect(tab, Integer.parseInt(cap.group(2)) == n + Integer.parseInt(cap.group(1)), at + ": captured " + cap.group());
+        }
+        expect(tab, captured.toString().equals(wantedRows.toString()), at + ": captured rows " + captured + " for n=" + n);
+        for (int k : rowsFor(n)) {
+          for (String table : new String[] {"kbare", "kbody"}) {
+            String cell = "[" + table + pageId + "." + k + "=" + (n + k) + "]";
+            expect(tab, tab.doc.contains(cell), at + ": wanted " + cell);
+          }
+          StringBuilder inner = new StringBuilder();
+          Matcher in = Pattern.compile("\\[kin" + pageId + "\\." + k + "\\.(\\d+)=(\\d+)\\]").matcher(tab.doc);
+          while (in.find()) {
+            inner.append(in.group(1)).append(',');
+            expect(tab, Integer.parseInt(in.group(2)) == n, at + ": inner " + in.group());
+          }
+          StringBuilder wantedInner = new StringBuilder();
+          for (int j : rowsFor(n + k)) {
+            wantedInner.append(j).append(',');
+          }
+          expect(tab, inner.toString().equals(wantedInner.toString()), at + ": inner rows of " + k + ": " + inner);
+          expect(tab, tab.doc.contains("[kout" + pageId + "." + k + "]"), at + ": wanted outer row " + k);
         }
         for (String shown : new String[] {"svg", "fo", "pspan", "tpl", "pend", "ifr", "nos", "pdiv", "psd", "lili",
           "tsec"}) {
@@ -1478,6 +1554,33 @@ class RandomAppTest {
 
   static DomContent r(java.util.function.Supplier<? extends DomContent> content) {
     return regions ? j2act.internal.regions.Regions.of(content) : content.get();
+  }
+
+  /** A row of each(...) as the enhancer leaves it, with what it was given: kept while the list gives it the same. */
+  static DomContent rr(Object[] args, java.util.function.Supplier<? extends DomContent> content) {
+    return regions ? j2act.internal.regions.Regions.row(args, content) : content.get();
+  }
+
+  /** each(items, key, row). */
+  static <X> DomContent kk(java.util.Collection<X> items, java.util.function.Function<X, Object> key,
+      java.util.function.Function<X, DomContent> row) {
+    return j2act.internal.regions.Regions.keyed(items, key, row);
+  }
+
+  /**
+   * A keyed list's row function as the enhancer leaves it, with regions on: a bridge returning each row as a region of
+   * its own, given what the row function holds and its item (Regions.Bridged). Plain, the list makes each row one.
+   */
+  @SuppressWarnings("unchecked")
+  static <X> java.util.function.Function<X, DomContent> kr(Object[] held, java.util.function.Function<X, DomContent> row) {
+    if (!regions) {
+      return row;
+    }
+    return (java.util.function.Function<X, DomContent> & j2act.internal.regions.Regions.Bridged) item -> {
+      Object[] args = Arrays.copyOf(held, held.length + 1);
+      args[held.length] = item;
+      return j2act.internal.regions.Regions.row(args, () -> row.apply(item));
+    };
   }
 
   /** An attribute set as the enhancer leaves it, with regions on: its value a supplier, its call a setter. */

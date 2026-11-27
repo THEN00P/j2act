@@ -23,6 +23,37 @@ public final class ListView<E> extends AbstractList<E> implements StoreView, Ran
     return target;
   }
 
+  /**
+   * Its elements for a keyed list's rows (ADR 0036), subscribing to its membership and order ($TRACK), as mapArray
+   * reads a list, and to none of its slots: a row reads what it shows of its element itself. An element of a class
+   * that does not track its fields is read whole, as a reader of one always is, so a change in it runs the list
+   * again, which then hands its row the element as it is now.
+   */
+  public Object[] rows() {
+    return shape.at(target, () -> {
+      shape.rt.storeTrack(target);
+      Object[] out = shape.rt.untrack(() -> {
+        int size = shape.rt.storeLength(target);
+        Object[] values = new Object[size];
+        for (int i = 0; i < size; i++) {
+          values[i] = shape.rt.storeGet(target, i);
+        }
+        return values;
+      });
+      for (int i = 0; i < out.length; i++) {
+        Object value = out[i];
+        if (value instanceof BeanView && !JavaShape.tracks(((BeanView) value).type)) {
+          // Read whole where the list reads it: what changes in it runs the list again.
+          out[i] = shape.present(value);
+        } else {
+          Object v = value;
+          out[i] = shape.rt.untrack(() -> shape.present(v));
+        }
+      }
+      return out;
+    });
+  }
+
   @Override public int size() {
     return shape.at(target, () -> shape.rt.storeLength(target));
   }
@@ -36,7 +67,9 @@ public final class ListView<E> extends AbstractList<E> implements StoreView, Ran
         shape.rt.storeLength(target);
         throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
       }
-      return (E) shape.present(shape.rt.storeGet(target, index));
+      Object value = shape.rt.storeGet(target, index);
+      shape.noted(target, index, value, true);
+      return (E) shape.present(value);
     });
   }
 

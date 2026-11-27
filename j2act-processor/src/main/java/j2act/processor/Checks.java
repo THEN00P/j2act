@@ -43,6 +43,11 @@ final class Checks {
 
   private static final Set<String> ROUTE_READS = new HashSet<>(Arrays.asList("pathParam", "queryParam", "auth"));
 
+  /** What differs between the readers of a shared store, which its code cannot use (ADR 0037). */
+  private static final Set<String> READER_READS = new HashSet<>(Arrays.asList("auth", "pathParam", "queryParam",
+    "useTab", "useTabStore", "useBrowser", "useBrowserStore", "navigate", "liveWhileHidden"));
+  private static final String SHARED_SCOPED = "j2act.SharedScoped";
+
   /** Setters of URL-valued attributes in the generated tags. */
   private static final Set<String> URL_SETTERS = new HashSet<>(Arrays.asList(
     "withHref", "withSrc", "withAction", "withFormaction", "withPoster", "withCite", "withData",
@@ -145,6 +150,7 @@ final class Checks {
       readsInAsync(node, scope);
       transactionalSelfCall(node, scope);
       partGetters(node, scope);
+      readerReadInShared(node, scope);
     } else if (node.kind == Node.Kind.REF) {
       transactionalSelfCall(node, scope);
     } else if (node.kind == Node.Kind.NEW && !allowsUnsafe && scope.isType(scope.typeNamed(node.type), UNSAFE_HTML)) {
@@ -363,6 +369,9 @@ final class Checks {
     }
     String where;
     if (call.name.equals("each") && scope.isOwnedBy(scope.candidates(call), TAG_HELPERS)) {
+      if (call.args.size() == 3) {
+        return; // each(items, key, row): every row is keyed by its item's key.
+      }
       where = "each()";
     } else if (call.name.equals("map") && call.receiver != null && call.args.size() == 1
         && scope.isType(scope.typeOf(call.receiver), STREAM)) {
@@ -514,6 +523,40 @@ final class Checks {
       node = node.receiver;
     }
     return node;
+  }
+
+  // ---- what a shared store's code cannot read (ADR 0037)
+
+  /**
+   * A @SharedScoped store's code runs once for every reader of the store, so a call that answers for one reader,
+   * such as auth() or pathParam(), has no single answer there. The runtime refuses it too; this says so at compile time.
+   */
+  private void readerReadInShared(Node call, Scope scope) {
+    if (!READER_READS.contains(call.name) || !isSharedStore(scope.type)) {
+      return;
+    }
+    boolean reactive = call.receiver == null || call.receiver.is(Node.Kind.IDENT, "Reactive")
+      || call.receiver.is(Node.Kind.IDENT, REACTIVE);
+    if (!reactive || !scope.isOwnedBy(scope.candidates(call), REACTIVE)) {
+      return;
+    }
+    source.report(Diagnostic.Kind.ERROR, "j2act: " + call.name + "() differs between the readers of a @SharedScoped"
+      + " store, whose code runs once for all of them, so " + scope.type.getSimpleName() + " cannot use it (ADR 0037)",
+      call, scope.type);
+  }
+
+  /** The type or a superclass is @SharedScoped, which is inherited. */
+  private boolean isSharedStore(TypeElement type) {
+    for (TypeElement t = type; t != null; ) {
+      for (AnnotationMirror annotation : t.getAnnotationMirrors()) {
+        if (((TypeElement) annotation.getAnnotationType().asElement()).getQualifiedName().contentEquals(SHARED_SCOPED)) {
+          return true;
+        }
+      }
+      TypeMirror parent = t.getSuperclass();
+      t = parent instanceof DeclaredType ? (TypeElement) ((DeclaredType) parent).asElement() : null;
+    }
+    return false;
   }
 
   // ---- transactions skipped by self-calls (ADR 0030)

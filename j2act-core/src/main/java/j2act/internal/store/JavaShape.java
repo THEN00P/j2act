@@ -48,6 +48,38 @@ public final class JavaShape implements StoreShape {
     this.rt = rt;
   }
 
+  /**
+   * Told of each tracked read by what it read (ADR 0037): an element of a list or a map that is an object, which a
+   * reader needs to be there; one value, a field, a scalar element or whether a set holds something; or a whole
+   * object, as a reader of a class that does not track its fields reads it.
+   */
+  public interface Reads {
+    int ELEMENT = 1;
+    int VALUE = 2;
+    int WHOLE = 3;
+
+    void read(StoreTarget target, Object key, int kind);
+  }
+
+  private Reads reads;
+
+  public void reads(Reads reads) {
+    this.reads = reads;
+  }
+
+  /** A tracked read of key in target, of what kind. */
+  void noted(StoreTarget target, Object key, Object value, boolean element) {
+    if (reads != null && rt.getObserver() != null) {
+      reads.read(target, key, element && value instanceof StoreView ? Reads.ELEMENT : Reads.VALUE);
+    }
+  }
+
+  void notedWhole(StoreTarget target) {
+    if (reads != null && rt.getObserver() != null) {
+      reads.read(target, null, Reads.WHOLE);
+    }
+  }
+
   // ---- the seam
 
   @Override public boolean isWrappable(Object value) {
@@ -444,6 +476,7 @@ public final class JavaShape implements StoreShape {
       Object given = tracks(bean.type) ? rt.handOut(bean) : j2act.internal.signals.Stores.NOT_FINE;
       if (given == j2act.internal.signals.Stores.NOT_FINE) {
         given = rt.deep(bean);
+        notedWhole(bean.target);
       }
       if (handed != null) {
         handed.check();
@@ -465,6 +498,7 @@ public final class JavaShape implements StoreShape {
     }
     return at(owner.target, () -> {
       Object value = rt.storeGet(owner.target, name);
+      noted(owner.target, name, value, false);
       below(value);
       Object now;
       if (value instanceof BeanView) {
@@ -496,7 +530,9 @@ public final class JavaShape implements StoreShape {
       return;
     }
     at(owner.target, () -> {
-      below(rt.storeGet(owner.target, name));
+      Object value = rt.storeGet(owner.target, name);
+      noted(owner.target, name, value, false);
+      below(value);
       return null;
     });
   }
@@ -590,6 +626,47 @@ public final class JavaShape implements StoreShape {
   }
 
   /**
+   * A copy of another graph's store, as this graph reads it (ADR 0037): an optimistic store whose derive answers what
+   * the other graph last published, each answer merged into the last, so a reader here is told only of what changed.
+   * Rows pair by their id field when their class has one, as Solid's reconcile pairs by id, and by position
+   * otherwise, and what changed in a paired row is told property by property. Optimistic, so an action here can show
+   * its guess at once.
+   */
+  public Object createMirror(j2act.internal.signals.Stores.Derive derive, Object seed, boolean optimistic) {
+    rt.storeShape(this);
+    return optimistic ? rt.createOptimisticStore(derive, seed, JavaShape::mirrorKey, false, false)
+      : rt.createProjection(derive, seed, JavaShape::mirrorKey, false, false);
+  }
+
+  /**
+   * An empty value of the kind a store's view holds, for a copy of it whose first answer has not come: a list, a map
+   * or a set, or the store's own copy of an object of the bean's class with nothing in it.
+   */
+  public Object emptyLike(Object view) {
+    if (view instanceof ListView) {
+      return new ArrayList<>();
+    }
+    if (view instanceof MapView) {
+      return new LinkedHashMap<>();
+    }
+    if (view instanceof SetView) {
+      return new java.util.LinkedHashSet<>();
+    }
+    Kinds.Layout l = view instanceof BeanView ? Kinds.layout(((BeanView) view).type) : null;
+    return l == null ? new ArrayList<>() : new Copy(l, new Object[l.fields.length]);
+  }
+
+  private static Object mirrorKey(Object row) {
+    if (row == null || row instanceof List || row instanceof Map || row instanceof Set || row instanceof StoreView
+        || row instanceof Copy || Kinds.of(row) == Kinds.Kind.VALUE) {
+      return null;
+    }
+    Kinds.Layout l = layout(row);
+    Integer id = l == null ? null : l.index.get("id");
+    return id == null ? null : Kinds.read(l.fields[id], row);
+  }
+
+  /**
    * A row's key. The engine asks it of every object it pairs, as Solid asks `row.id`, and an object below a row,
    * such as its address, is not a row: a key typed for the row's class has no key for it.
    */
@@ -603,6 +680,11 @@ public final class JavaShape implements StoreShape {
     } catch (ClassCastException e) {
       return null;
     }
+  }
+
+  /** Marks the store as about to change, so isPending is true for it until the action around this ends. */
+  public void affects(Object view) {
+    rt.storeAffects(view);
   }
 
   /** The node behind a derived store, for refresh. */
@@ -630,7 +712,12 @@ public final class JavaShape implements StoreShape {
 
   /** One property, by the fields that lead to it: tracked, and only that property. */
   public Object readPath(Object view, String[] path) {
-    return at(targetOf(view), () -> present(rt.storeGet(follow(view, path, path.length - 1), path[path.length - 1])));
+    return at(targetOf(view), () -> {
+      StoreTarget owner = follow(view, path, path.length - 1);
+      Object value = rt.storeGet(owner, path[path.length - 1]);
+      noted(owner, path[path.length - 1], value, false);
+      return present(value);
+    });
   }
 
   /** Writes one property, with no draft. */
@@ -643,7 +730,10 @@ public final class JavaShape implements StoreShape {
 
   /** The whole value as real objects, tracked: whoever reads it runs again on any change in it. */
   public Object deep(Object view) {
-    return at(targetOf(view), () -> rt.deep(view));
+    return at(targetOf(view), () -> {
+      notedWhole(targetOf(view));
+      return rt.deep(view);
+    });
   }
 
   /** Puts back a value a snapshot kept. */

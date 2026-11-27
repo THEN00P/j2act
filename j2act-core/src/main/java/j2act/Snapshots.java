@@ -203,18 +203,30 @@ final class Snapshots {
    * left; writes land in the order the lane took them (ADR 0030).
    */
   CompletableFuture<Void> persistBrowser(Browser browser) {
-    Tab hub = browser.hub;
+    SharedHub cluster = browser.cluster;
+    if (cluster != null && (cluster.stub != null || cluster.handedOff)) {
+      // Its values are the server's that holds them, which saves them (ADR 0037).
+      return CompletableFuture.completedFuture(null);
+    }
+    String principal;
+    synchronized (browser) {
+      principal = browser.principal;
+    }
+    return persistHub(browser.hub, browser.storageId, principal, "a browser");
+  }
+
+  /** Lane-only, the hub's: saves a hub's Retained State under id, or deletes what was saved when it has none. */
+  CompletableFuture<Void> persistHub(Tab hub, String id, String principal, String what) {
     // A write still held has not committed, so this save cannot have it: the next checkpoint looks again.
     hub.snapshot.dirty = hub.rt.holding();
-    String id = Retained.id("browser:" + browser.cookie);
     String snapshot = null;
     try {
       Map<String, String> entries = hub.snapshot.values();
       if (!entries.isEmpty()) {
-        snapshot = Retained.encode(engine.clock.millis() + retentionMillis, browser.principal, entries);
+        snapshot = Retained.encode(engine.clock.millis() + retentionMillis, principal, entries);
       }
     } catch (RuntimeException e) {
-      engine.log(System.Logger.Level.WARNING, "a browser's retained state could not be saved", e);
+      engine.log(System.Logger.Level.WARNING, what + "'s retained state could not be saved", e);
       return hub.snapshot.writes;
     }
     String taken = snapshot;
@@ -230,7 +242,7 @@ final class Snapshots {
           storage.delete(id);
         }
       } catch (RuntimeException e) {
-        engine.log(System.Logger.Level.WARNING, "a browser's retained state could not be saved", e);
+        engine.log(System.Logger.Level.WARNING, what + "'s retained state could not be saved", e);
       }
     }, engine.executor);
   }

@@ -59,6 +59,11 @@ public final class AuthCtx {
     return claims.get(key);
   }
 
+  /** The claims' names, to carry them to another server of a cluster (ADR 0037). */
+  java.util.Set<String> claimKeys() {
+    return claims.keySet();
+  }
+
   @Override public boolean equals(Object o) {
     if (!(o instanceof AuthCtx)) {
       return false;

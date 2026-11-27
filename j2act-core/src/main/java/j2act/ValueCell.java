@@ -83,6 +83,16 @@ class ValueCell extends Cell {
       : kind == Kind.DEFERRED ? rt.deferredNode(compute, options) : rt.memoNode(compute, options);
   }
 
+  /** A value whose compute is the subclass's, made once the cell exists: a mirror of another graph's (ADR 0037). */
+  ValueCell(Tab tab, String address, Function<ValueCell, Node.Compute> compute,
+      j2act.internal.signals.Runtime.Options<Object> options) {
+    super(tab, address);
+    this.rt = tab.rt;
+    this.source = null;
+    Node.Compute body = compute.apply(this);
+    this.node = rt.memoNode(body, options);
+  }
+
   static ValueCell memo(Tab tab, String address, Supplier<?> body) {
     return memo(tab, address, body, null);
   }
@@ -123,7 +133,7 @@ class ValueCell extends Cell {
     return cell;
   }
 
-  final boolean isAsync() {
+  boolean isAsync() {
     return asyncBody != null || source != null;
   }
 
@@ -254,8 +264,34 @@ class ValueCell extends Cell {
     return failedNode;
   }
 
+  /** What a snapshot of failed() says now, untracked: for another graph's view of this value (ADR 0037). */
+  boolean committedFailed() {
+    return staleOnError && failedNode != null && Boolean.TRUE.equals(rt.committed(failedNode));
+  }
+
+  /**
+   * This value as code running here sees it (ADR 0037): itself on its own lane, and on another graph's lane that
+   * graph's mirror of it.
+   */
+  final ValueCell here() {
+    if (tab.lane.isCurrent()) {
+      return this;
+    }
+    Action.Call call = Action.Call.current();
+    Tab reader = call != null ? call.tab : Tab.current();
+    if (reader == null || reader.host == tab.host) {
+      return this;
+    }
+    if (reader.lane.isCurrent()) {
+      return reader.host.mirrors.of(this);
+    }
+    ValueCell[] mirror = new ValueCell[1];
+    reader.host.hop(() -> mirror[0] = reader.host.mirrors.of(this));
+    return mirror[0];
+  }
+
   /** Tracked: the last load failed, whether or not the value stays through it. */
-  final boolean readFailed() {
+  boolean readFailed() {
     return onLane(() -> {
       if (staleOnError && (Boolean) rt.read(failedNode())) {
         return true;
@@ -276,15 +312,23 @@ class ValueCell extends Cell {
   @SuppressWarnings("unchecked")
   final Object read() {
     if (tab.lane.isCurrent()) {
-      Scope reader = Tracking.scope();
-      if (tab.hubFor != null && reader != null && reader.tab != tab) {
-        // A tab that leaves this browser re-renders whoever read its state (ADR 0030).
-        reader.tab.readBrowserGeneration();
-      }
       return rt.read(node);
+    }
+    // Code on another graph's lane reads that graph's mirror, also while an action's body is in it (ADR 0037).
+    Tab reader = Tab.current();
+    if (reader != null && reader.host != tab.host && reader.lane.isCurrent()) {
+      if (tab.hubFor != null && reader.hubFor == null) {
+        // A tab that leaves this browser re-renders whoever read its state (ADR 0030).
+        reader.readBrowserGeneration();
+      }
+      return reader.host.mirrors.read(this);
     }
     Action.Call call = Action.Call.current();
     if (call != null) {
+      if (call.tab.host != tab.host) {
+        // What the action's own page shows of it (ADR 0037).
+        return call.enter(call.tab, () -> call.tab.host.mirrors.readUntracked(this));
+      }
       return call.enter(tab, () -> rt.read(node));
     }
     Object[] value = new Object[1];
@@ -300,58 +344,113 @@ class ValueCell extends Cell {
   }
 
   final void write(Object next) {
-    if (tab.lane.isCurrent()) {
-      markRetainedDirty();
-      rt.write(node, next);
-      return;
-    }
-    Action.Call call = Action.Call.current();
-    if (call != null) {
-      call.enter(tab, () -> {
-        markRetainedDirty();
-        return rt.write(node, next);
-      });
-      return;
-    }
-    tab.host.writeFromOutside(() -> {
-      if (!tab.disposed) {
-        Tracking.in(tab, null, () -> {
-          markRetainedDirty();
-          return rt.write(node, next);
-        });
-      }
-    });
+    send(writeOp(next));
   }
 
   @SuppressWarnings("unchecked")
   final void update(UnaryOperator fn) {
+    send(updateOp(fn));
+  }
+
+  /** The write, made where it is called: a copy of a store on another server encodes it there and then (ADR 0037). */
+  Runnable writeOp(Object next) {
+    return () -> applyWrite(next);
+  }
+
+  @SuppressWarnings("rawtypes")
+  Runnable updateOp(UnaryOperator fn) {
+    return () -> applyUpdate(fn);
+  }
+
+  /** On this cell's lane: the write itself. A copy of a store on another server sends it there (ADR 0037). */
+  void applyWrite(Object next) {
+    markRetainedDirty();
+    rt.write(node, next);
+  }
+
+  /** On this cell's lane: the read-modify-write itself, fn on what the value is now. */
+  @SuppressWarnings("unchecked")
+  void applyUpdate(UnaryOperator fn) {
+    markRetainedDirty();
+    rt.update(node, fn);
+  }
+
+  /**
+   * Runs a write where it belongs: at once on this cell's lane; with the writes of the job or the action of the graph
+   * whose code made it, when that is another (ADR 0037); in the action's transaction from its body; and from any other
+   * thread as a write from outside (ADR 0014).
+   */
+  private void send(Runnable apply) {
     if (tab.lane.isCurrent()) {
-      markRetainedDirty();
-      rt.update(node, fn);
+      apply.run();
+      return;
+    }
+    if (queuedByReader(apply)) {
       return;
     }
     Action.Call call = Action.Call.current();
+    if (call != null && call.tab.host != tab.host) {
+      call.queue(this, apply, () -> pendingOn(call.tab));
+      return;
+    }
     if (call != null) {
       call.enter(tab, () -> {
-        markRetainedDirty();
-        return rt.update(node, fn);
+        apply.run();
+        return null;
       });
       return;
     }
     tab.host.writeFromOutside(() -> {
       if (!tab.disposed) {
         Tracking.in(tab, null, () -> {
-          markRetainedDirty();
-          return rt.update(node, fn);
+          apply.run();
+          return null;
         });
       }
     });
   }
 
-  /** On a lane, from a guess inside an action. */
+  /**
+   * On tab's lane: an action there wrote this value, so isPending(...) on the page says so until the action ends, as
+   * for its own writes. What the page shows changes when the store has the write, with the action's end.
+   */
+  private Feed pendingOn(Tab tab) {
+    Mirrors.Mirror mirror = tab.host.mirrors.existing(this);
+    if (mirror == null) {
+      return null;
+    }
+    mirror.feed().sending(1);
+    return mirror.feed();
+  }
+
+  /**
+   * A write from code on another graph's lane (ADR 0037): it goes with that job's other writes to this graph, once the
+   * job ends. False when no other graph's code is running here.
+   */
+  private boolean queuedByReader(Runnable write) {
+    Tab reader = Tab.current();
+    if (reader == null || reader.host == tab.host || !reader.lane.isCurrent()) {
+      return false;
+    }
+    reader.host.queueWrite(tab.host, () -> {
+      if (!tab.disposed) {
+        write.run();
+      }
+    });
+    return true;
+  }
+
+  /** On a lane, from a guess inside an action. A guess at another graph's value shows only on the action's page. */
   @SuppressWarnings("unchecked")
   final void guess(UnaryOperator fn) {
     Action.Call call = Action.Call.current();
+    if (call.tab.host != tab.host) {
+      call.enter(call.tab, () -> {
+        MirrorCell mirror = call.tab.host.mirrors.of(this);
+        return mirror.rt.guess(mirror.node, fn);
+      });
+      return;
+    }
     call.enter(tab, () -> rt.guess(node, fn));
   }
 
@@ -361,6 +460,11 @@ class ValueCell extends Cell {
   }
 
   /** What is committed, off the lane or on it: what a snapshot takes. */
+  /** A value written, not computed: what a store moving to another server takes along (ADR 0037). */
+  boolean plain() {
+    return getClass() == ValueCell.class && body == null && asyncBody == null && source == null && restore == null;
+  }
+
   final Object committed() {
     return tab.lane.isCurrent() ? rt.committed(node) : onLane(() -> rt.committed(node));
   }

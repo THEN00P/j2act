@@ -87,7 +87,7 @@ class EnhancedAppTest {
     compile(compiler, plain);
     compile(compiler, enhanced);
     Enhancer.Report report = new Enhancer(classpath()).enhance(enhanced);
-    assertEquals(2, report.tracked, "Profile and Saved, and not Pet, nor any page or component: " + report);
+    assertEquals(3, report.tracked, "Profile, Saved and Line, and not Pet, nor any page or component: " + report);
     verify(enhanced);
     List<String> steps = Arrays.asList("rename", "move", "move", "rename", "pet");
     int[] runs = new int[2];
@@ -220,6 +220,222 @@ class EnhancedAppTest {
       }
       assertEquals(uids[0], uids[1], name + ", " + compiler.getClass().getSimpleName());
     }
+  }
+
+  @Test void javacRoomPagesKeepTheirSizeAsLinesComeAndGo() throws Exception {
+    keepsSize(ToolProvider.getSystemJavaCompiler(), "fixtures.RoomPage");
+  }
+
+  @Test void ecjRoomPagesKeepTheirSizeAsLinesComeAndGo() throws Exception {
+    keepsSize(new EclipseCompiler(), "fixtures.RoomPage");
+  }
+
+  /**
+   * ADR 0036: each(items, key, row), enhanced: a line's row runs once, when it comes, and the view never runs again,
+   * for the list runs on its own; and it stays its size as lines come and go.
+   */
+  @Test void javacKeyedRoomPagesRunEachRowOnce() throws Exception {
+    keepsSize(ToolProvider.getSystemJavaCompiler(), "fixtures.KeyedRoomPage");
+  }
+
+  @Test void ecjKeyedRoomPagesRunEachRowOnce() throws Exception {
+    keepsSize(new EclipseCompiler(), "fixtures.KeyedRoomPage");
+  }
+
+  /**
+   * ADR 0036, 0037: a page of a shared room whose lines come and go stays the size of what it shows, enhanced. Found
+   * by tools/chat-load.mjs: each line that ever was kept its rows' nodes (a slot made as if the list's first node ran),
+   * its records (a hand-out's walk left a witness on each) and what the rows read (a region's reads went to its
+   * creator, which never ran again).
+   */
+  private void keepsSize(JavaCompiler compiler, String pageClass) throws Exception {
+    Path enhanced = Files.createTempDirectory("j2act-enhanced");
+    compile(compiler, enhanced);
+    new Enhancer(classpath()).enhance(enhanced);
+    try (URLClassLoader loader = new URLClassLoader(new URL[] {enhanced.toUri().toURL()},
+      EnhancedAppTest.class.getClassLoader())) {
+      Class<?> page = loader.loadClass(pageClass);
+      boolean keyed = pageClass.endsWith("KeyedRoomPage");
+      @SuppressWarnings("unchecked")
+      Class<? extends Store> roomType = (Class<? extends Store>) loader.loadClass("fixtures.Room");
+      try (Harness h = new Harness(() -> {
+        try {
+          return (LiveComponent) page.getConstructor().newInstance();
+        } catch (ReflectiveOperationException e) {
+          throw new IllegalStateException(e);
+        }
+      })) {
+        h.load();
+        h.connect();
+        Object room = h.engine.sharedStore(roomType, "room");
+        java.lang.reflect.Method post = roomType.getMethod("post", String.class, String.class);
+        java.lang.reflect.Method drop = roomType.getMethod("dropOldestUnpinned");
+        int[][] sizes = new int[2][];
+        List<java.lang.ref.WeakReference<Object>> firstRows = new ArrayList<>();
+        int n = 0;
+        for (int round = 0; round < 2; round++) {
+          for (int i = 0; i < 100; i++) {
+            // Writes from outside a tab land in their order, later: the test counts the lines itself.
+            post.invoke(room, i % 2 == 0 ? "ada" : "bob", "m" + (++n));
+            if (n > 5) {
+              drop.invoke(room);
+            }
+            // One line at a time, as people post: writes from outside a tab that come together land together.
+            String shown = ": m" + n + "<";
+            Harness.eventually(() -> h.page().contains(shown), "line " + n + " shows");
+          }
+          String last = ": m" + n + "<";
+          String gone = ": m" + (n - 4) + "<";
+          // m1 stays pinned, with the last four.
+          // The four last lines, and the one before them gone: the page as it stays until the next line.
+          Harness.eventually(() -> h.page().contains(last) && !h.page().contains(gone), "the last four lines show");
+          Tab tab = h.engine.liveTab(h.token);
+          int[] now = new int[3];
+          tab.host.hop(() -> {
+            try {
+              now[0] = owned(tab.rootOwner);
+              now[1] = liveRecords(tab.host.mirrors);
+              now[2] = reads(tab.root);
+            } catch (ReflectiveOperationException e) {
+              throw new IllegalStateException(e);
+            }
+          });
+          sizes[round] = now;
+          if (round == 1) {
+            // Each row runs as if under the list's node now, never one that went: that would keep it, and with it
+            // every node that went after it, as JFR found on the chat demo.
+            int[] stale = new int[1];
+            tab.host.hop(() -> {
+              try {
+                for (Scope row : listScope(tab.root).children.values()) {
+                  Object under = field(row.slot, "parentComputed");
+                  if (under instanceof j2act.internal.signals.Owner
+                      && tab.rt.isDisposed((j2act.internal.signals.Owner) under)) {
+                    stale[0]++;
+                  }
+                }
+              } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+              }
+            });
+            assertEquals(0, stale[0], "rows running under a node that went");
+          }
+          if (round == 0) {
+            tab.host.hop(() -> {
+              Scope list = listScope(tab.root);
+              for (Scope row : list.children.values()) {
+                if (!(row.html != null && row.html.contains(": m1<"))) {
+                  cuts(row, firstRows);
+                }
+              }
+              // And the rows its last run made, which the rows' scopes took the nodes of.
+              Object made = ((CutTag) list.instance).current();
+              if (made instanceof Fragment) {
+                List<DomContent> rows = ((Fragment) made).children;
+                for (DomContent row : rows.subList(Math.min(1, rows.size()), rows.size())) {
+                  firstRows.add(new java.lang.ref.WeakReference<>(row));
+                }
+              }
+            });
+          }
+        }
+        // Every line of the first round is gone: so are its rows' regions, once nothing holds them.
+        int kept = firstRows.size();
+        for (int i = 0; i < 20 && kept > 0; i++) {
+          System.gc();
+          Thread.sleep(50);
+          kept = 0;
+          for (java.lang.ref.WeakReference<Object> ref : firstRows) {
+            kept += ref.get() == null ? 0 : 1;
+          }
+        }
+        assertEquals(0, kept, kept + " of the first round's " + firstRows.size() + " regions are still held");
+        // A line's row runs when it comes, and is kept while its line is in the room (ADR 0036): not once per change.
+        int rows = page.getField("rows").getInt(null);
+        assertTrue(rows <= 2 * n, rows + " row runs for " + n + " lines");
+        if (keyed) {
+          // Kept by its key: a line's row runs when it comes, and again only when the store hands out another object
+          // for it, which it now and then does (a handful of 200 here, varying run to run): a new object is a new item,
+          // as for Solid's mapArray. The view runs only for the page itself.
+          assertTrue(rows >= n && rows <= n + n / 10, rows + " row runs for " + n + " lines");
+          assertEquals(1, page.getField("views").getInt(null), "the view ran again");
+        }
+        String what = "owners, records, reads after 100 lines and after 200: " + Arrays.toString(sizes[0]) + " "
+          + Arrays.toString(sizes[1]);
+        assertTrue(sizes[1][0] <= sizes[0][0] + 4, what);
+        assertTrue(sizes[1][1] <= sizes[0][1] + 2, what);
+        assertTrue(sizes[1][2] <= sizes[0][2] + 8, what);
+      }
+    }
+  }
+
+  /** The region that shows the lines: the one whose scope has a row per line. */
+  private static Scope listScope(Scope scope) {
+    if (scope.instance instanceof CutTag && scope.children.size() >= 4) {
+      return scope;
+    }
+    for (Scope child : scope.children.values()) {
+      Scope found = listScope(child);
+      if (found != null) {
+        return found;
+      }
+    }
+    return null;
+  }
+
+  /** The regions showing now, weakly. */
+  private static void cuts(Scope scope, List<java.lang.ref.WeakReference<Object>> into) {
+    if (scope.instance instanceof CutTag) {
+      into.add(new java.lang.ref.WeakReference<>(scope.instance));
+    }
+    for (Scope child : scope.children.values()) {
+      cuts(child, into);
+    }
+  }
+
+  private static Object field(Object of, String name) throws ReflectiveOperationException {
+    for (Class<?> c = of.getClass(); c != null; c = c.getSuperclass()) {
+      try {
+        Field f = c.getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(of);
+      } catch (NoSuchFieldException e) {
+        // up
+      }
+    }
+    throw new NoSuchFieldException(name);
+  }
+
+  private static int owned(Object owner) throws ReflectiveOperationException {
+    int n = 1;
+    for (Object child = field(owner, "firstChild"); child != null; child = field(child, "nextSibling")) {
+      n += owned(child);
+    }
+    return n;
+  }
+
+  /** The records of the page's copies of other graphs' stores that are still live. */
+  private static int liveRecords(Mirrors mirrors) throws ReflectiveOperationException {
+    int n = 0;
+    for (Object root : ((java.util.Map<?, ?>) field(mirrors, "byRoot")).keySet()) {
+      Object family = field(root, "fam");
+      n += ((java.util.Set<?>) field(family, "live")).size();
+    }
+    return n;
+  }
+
+  private static int reads(Scope scope) throws ReflectiveOperationException {
+    int n = scope.sharedReads().size();
+    Object cut = field(scope, "cutReads");
+    if (cut != null) {
+      for (Object list : ((java.util.Map<?, ?>) cut).values()) {
+        n += ((List<?>) list).size();
+      }
+    }
+    for (Scope child : scope.children.values()) {
+      n += reads(child);
+    }
+    return n;
   }
 
   private static final class Run {

@@ -46,6 +46,147 @@ final class Scope {
   private boolean htmlBeforeEmbedded;
   /** What the last pass of the first half gave. */
   String rendered;
+  /** For a region's scope: the content its last pass rendered, all of it (Renderer.kept). */
+  Object renderedContent;
+  /**
+   * The tab's count when this scope or one below it last began a render, and when each walk after a patch last went
+   * through it: a walk passes over a scope whose HTML it saw last time, the very string, with nothing below it
+   * rendered since, so a patch of a list that kept its rows does not walk them (ADR 0036).
+   */
+  long stamp;
+  long onPageStamp = -1;
+  /** The patch that sent this as a stub, or left it alone as a row of a list it patched (Tab.behindThisPatch). */
+  long notCarriedIn = -1;
+  private long pageHasStamp = -1;
+  private String pageHasHtml;
+
+  /** The HTML holdsControlled last looked at, and what it found. */
+  private String controlledIn;
+  private boolean controlled;
+
+  /**
+   * Whether its HTML holds a controlled field, which every patch carries whole, as the client merges typing with each
+   * answer (ADR 0034): a walk that passes over what the page has as it is cannot pass over this.
+   */
+  boolean holdsControlled() {
+    if (rowScopes != null) {
+      for (Scope row : rowScopes) {
+        if (!row.detached && row.holdsControlled()) {
+          return true;
+        }
+      }
+      return false;
+    }
+    String now = html;
+    if (now != controlledIn) {
+      controlledIn = now;
+      controlled = now != null && now.contains("data-j2-controlled=\"");
+    }
+    return controlled || listsWithin > 0 && listHoldsControlled(this);
+  }
+
+  /** Whether a list below, whose rows its HTML holds only the markers of, holds a controlled field. */
+  private static boolean listHoldsControlled(Scope scope) {
+    for (Scope child : scope.children.values()) {
+      if (child.detached) {
+        continue;
+      }
+      if (child.rowScopes != null ? child.holdsControlled() : child.listsWithin > 0 && listHoldsControlled(child)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ---- a list (ADR 0036, KeyedRows)
+
+  /**
+   * A list's rows, in its order: its scope's children, which its HTML does not hold. It renders only its markers, all
+   * that what is around it holds of it, and the page has its rows as pageRows says, each as its onPage says. Null for
+   * any other scope.
+   */
+  List<Scope> rowScopes;
+  /** The lists below, which its HTML holds only the markers of. */
+  int listsWithin;
+  /** The list pass that last placed it as a row (Renderer.renderRows), and the list it is a row of now. */
+  long rowMark;
+  Scope rowIn;
+  /** For a list's operations: where it stands now, and the operations' marks of the rows now and on the page. */
+  int opsAt;
+  long opsNow;
+  long opsWas;
+  long opsStay;
+
+  boolean isList() {
+    return rowScopes != null;
+  }
+
+  /** It is a list from now on, or no longer one: what is around it counts it. */
+  void listFrom(List<Scope> rows) {
+    boolean was = rowScopes != null;
+    if (was && rows == null) {
+      for (Scope row : rowScopes) {
+        if (row.rowIn == this) {
+          row.rowIn = null;
+        }
+      }
+    }
+    rowScopes = rows;
+    if (was != (rows != null)) {
+      for (Scope s = parent; s != null; s = s.parent) {
+        s.listsWithin += rows != null ? 1 : -1;
+      }
+    }
+  }
+
+  /**
+   * Whether the page has this list's rows as they are: the same rows in the same order, each as it renders now. A row
+   * that has a list of its own patches that list itself, as any list does.
+   */
+  boolean rowsOnPage() {
+    List<Scope> now = rowScopes;
+    List<Scope> had = pageRows;
+    if (now == null || had == null || !placed || now.size() != had.size()) {
+      return false;
+    }
+    for (int i = 0; i < now.size(); i++) {
+      Scope row = now.get(i);
+      if (had.get(i) != row) {
+        return false;
+      }
+      String has = row.onPage();
+      String text = row.rowText();
+      if (has == null || text == null || !has.equals(text)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * What a list carries of this row: what it showed, or, before its own pass showed, what it rendered in the list's
+   * pass, as what is around any scope carries what it rendered there. A hold can keep a row's pass from showing while
+   * its list's goes, and the list never goes without a row it holds.
+   */
+  String rowText() {
+    return html != null ? html : embedded != null ? embedded : rendered;
+  }
+
+  /** Whether this holds child where its HTML says: in a list, by being one of its rows. */
+  boolean holds(Scope child, String in) {
+    if (rowScopes != null) {
+      return children.get(child.address) == child;
+    }
+    return in != null && in.contains(child.mark());
+  }
+
+  /** A render of this scope begins: it and every scope around it have changed below. */
+  void touched() {
+    long now = ++tab.stamps;
+    for (Scope s = this; s != null; s = s.parent) {
+      s.stamp = now;
+    }
+  }
   /** What the last pass of the second half showed. */
   String html;
   /** What a parent's pass carried inside its own patch, so this scope has no patch of its own to send. */
@@ -54,9 +195,62 @@ final class Scope {
   String sent;
   /**
    * What the client is known to have for this scope, from the socket patches that brought it: a patch around it
-   * sends a stub instead when this is still its html (ADR 0036). Null when in doubt.
+   * sends a stub instead when this is still its html (ADR 0036). Null when in doubt. Read with onPage(): what patches
+   * of scopes below it changed of it is owed, and put in only when it is read.
    */
-  String onPage;
+  private String onPage;
+  /** Splices owed to onPage by patches of scopes below: what the page had of one, what it has now, and if once only. */
+  private java.util.ArrayList<Object[]> owed;
+
+  String onPage() {
+    if (owed != null) {
+      String s = onPage;
+      for (Object[] splice : owed) {
+        if (s == null) {
+          break;
+        }
+        String was = (String) splice[0];
+        int at = s.indexOf(was);
+        // Once only, to be told exactly; what carries its own scope's mark near its start is there no other time.
+        if (at < 0 || splice[2] == null && s.indexOf(was, at + 1) >= 0) {
+          s = null;
+          break;
+        }
+        s = s.substring(0, at) + splice[1] + s.substring(at + was.length());
+      }
+      onPage = s;
+      owed = null;
+    }
+    return onPage;
+  }
+
+  void setOnPage(String html) {
+    onPage = html;
+    owed = null;
+  }
+
+  /**
+   * A patch of a scope below went, which put now where the page had was: owed to this one's until it is read, so a
+   * patch does not build the page's HTML again at every level above it. Put in now and then, so none piles up.
+   */
+  void owe(String was, String now, boolean unique) {
+    if (onPage == null) {
+      return;
+    }
+    if (owed == null) {
+      owed = new java.util.ArrayList<>();
+    }
+    Object[] last = owed.isEmpty() ? null : owed.get(owed.size() - 1);
+    if (last != null && last[1] == was) {
+      // The same scope's next patch, from what its last one left: one splice, from what the page had before both.
+      last[1] = now;
+      return;
+    }
+    owed.add(new Object[] {was, now, unique ? Boolean.TRUE : null});
+    if (owed.size() >= 32) {
+      onPage();
+    }
+  }
   /**
    * Whether the client has an element for this scope, from the socket patches that brought one. A patch of a scope
    * that has none, as a child's ahead of its parent's during a hold, is not applied, so it tells nothing.
@@ -81,15 +275,53 @@ final class Scope {
   /** Children no pass placed again and handlers no element uses: the page has them until the patch goes (ADR 0013). */
   final List<Scope> removing = new ArrayList<>();
   final List<String> droppedHandlers = new ArrayList<>();
-  Map<String, Scope> children = new LinkedHashMap<>();
-  Map<String, Scope> previousChildren = new LinkedHashMap<>();
+  /**
+   * Its children by address, in the order they were placed: one shared empty map until a pass places one, as most
+   * scopes, a row's text say, have none. A pass writes them with placeChild.
+   */
+  Map<String, Scope> children = NO_CHILDREN;
+  /** The children of the pass before, while a pass runs; the shared empty map otherwise. */
+  Map<String, Scope> previousChildren = NO_CHILDREN;
   /** Handler id per element position and event ("path|event"), kept while that element keeps rendering. */
-  Map<String, String> handlerIds = new LinkedHashMap<>();
-  Map<String, String> previousHandlerIds = new LinkedHashMap<>();
+  Map<String, String> handlerIds = NO_IDS;
+  Map<String, String> previousHandlerIds = NO_IDS;
   /** Callbacks passed to client actions called outside render, by action and argument (ADR 0022). */
-  final Map<String, String> actionHandlerIds = new LinkedHashMap<>();
+  Map<String, String> actionHandlerIds = NO_IDS;
   /** Live components passed to client actions, by action and argument; this scope owns them. */
-  final Map<String, Scope> actionScopes = new LinkedHashMap<>();
+  Map<String, Scope> actionScopes = NO_CHILDREN;
+
+  static final Map<String, Scope> NO_CHILDREN = java.util.Collections.emptyMap();
+  static final Map<String, String> NO_IDS = java.util.Collections.emptyMap();
+
+  /** Places a child: the first makes its map. */
+  void placeChild(String address, Scope child) {
+    if (children == NO_CHILDREN) {
+      children = new LinkedHashMap<>();
+    }
+    children.put(address, child);
+  }
+
+  /** Where a handler id goes, made on first use. */
+  Map<String, String> handlerIdsToWrite() {
+    if (handlerIds == NO_IDS) {
+      handlerIds = new LinkedHashMap<>();
+    }
+    return handlerIds;
+  }
+
+  Map<String, String> actionHandlerIdsToWrite() {
+    if (actionHandlerIds == NO_IDS) {
+      actionHandlerIds = new LinkedHashMap<>();
+    }
+    return actionHandlerIds;
+  }
+
+  Map<String, Scope> actionScopesToWrite() {
+    if (actionScopes == NO_CHILDREN) {
+      actionScopes = new LinkedHashMap<>();
+    }
+    return actionScopes;
+  }
   /** Rendered outside its parent's render, as an action argument: it patches as its own root. */
   boolean detached;
   /** Primitive count after the first render; later renders must create exactly as many (ADR 0019). */
@@ -128,7 +360,18 @@ final class Scope {
     this.codeEpoch = tab.engine.codeEpoch;
     this.slot = region.creator == parent || region.creator.disposed ? tab.rt.createSlotOwner(parent.slot)
       : tab.rt.createSlotOwner(region.creator.slot, region.running);
+    if (region.running instanceof Node && region.creator != parent && !region.creator.disposed) {
+      // A row of a list region runs as if that region's node were running: when the region's node is replaced, the
+      // row goes on under the new one, and the old one is not kept by every row made while it ran.
+      runsUnder = region.running;
+      tab.slotsRunning.computeIfAbsent(runsUnder, n -> java.util.Collections.newSetFromMap(
+        new java.util.IdentityHashMap<>())).add(this);
+    }
+    region.running = null;
   }
+
+  /** The node of a region this scope's slot runs as if under, while it does (tab.slotsRunning). */
+  private Object runsUnder;
 
   /** `above` is what a scope with no parent still belongs to: the boundary of its tab. */
   Scope(Tab tab, Scope parent, String address, Owner above) {
@@ -352,6 +595,10 @@ final class Scope {
       // No setup and no primitives: a later description only brings what the view's new run made.
       CutTag cut = (CutTag) component;
       cut.placed = true;
+      if (cut instanceof RegionTag) {
+        // Whichever of its objects comes, its node is this scope's from now on.
+        ((RegionTag) cut).shownIn = this;
+      }
       if (instance == null) {
         instance = component;
         component.scope = this;
@@ -360,9 +607,22 @@ final class Scope {
       } else {
         CutTag shown = (CutTag) instance;
         if (shown.node != cut.node) {
-          // Its view ran again: this run's node takes over, and the last one goes.
+          // Its view ran again: this run's node takes over, and the last one goes, with the slots that ran under it.
+          java.util.Set<Scope> under = tab.slotsRunning.remove(shown.node);
           shown.release();
           shown.node = cut.node;
+          if (under != null) {
+            for (Scope s : under) {
+              tab.rt.runSlotUnder(s.slot, cut.node);
+              s.runsUnder = cut.node;
+            }
+            java.util.Set<Scope> now = tab.slotsRunning.get(cut.node);
+            if (now == null) {
+              tab.slotsRunning.put(cut.node, under);
+            } else {
+              now.addAll(under);
+            }
+          }
           boolean inTransition = cut.node != null && tab.rt.uninitialized(cut.node);
           if (effect != null && (inTransition || effectForTransition)) {
             // A node born in a transition has no value outside it, and this effect was born outside it: it would wait
@@ -440,6 +700,24 @@ final class Scope {
     }
   }
 
+  /**
+   * A value of a store that moved here from a server that stopped (ADR 0037): it starts as it was there, read back as
+   * the type its field declares, before anything reads it.
+   */
+  private void handIn(Cell cell, String json) {
+    try {
+      Object value = tab.engine.json.read(json, Ops.typeOf(store, cell.address));
+      if (cell instanceof StoreCell) {
+        ((StoreCell) cell).restore(value);
+      } else {
+        ((ValueCell) cell).restoreValue(value);
+      }
+    } catch (RuntimeException e) {
+      tab.engine.log(System.Logger.Level.WARNING, cell.address + " that moved here no longer reads as its field's type;"
+        + " it starts from its initial value", e);
+    }
+  }
+
   void bindPrimitive(Primitive primitive, int index) {
     if (index < cells.size()) {
       Cell cell = cells.get(index);
@@ -454,14 +732,27 @@ final class Scope {
     }
     Scope previousScope = Tracking.swapScope(this);
     Cell cell;
+    // A stub of a store held on another server binds what the holder feeds (ADR 0037).
+    Stub stub = tab.cluster != null ? tab.cluster.stub : null;
     try {
-      cell = tab.rt.runWithOwner(slot, () -> tab.rt.untrack(() -> primitive.createCell(tab, address + "#" + index)));
+      cell = tab.rt.runWithOwner(slot, () -> tab.rt.untrack(() -> stub != null
+        ? Stubs.cell(primitive, tab, address + "#" + index, stub, store)
+        : primitive.createCell(tab, address + "#" + index)));
     } finally {
       Tracking.swapScope(previousScope);
     }
     cell.owner = this;
     cells.add(cell);
     tab.cells.put(cell.address, cell);
+    if (stub != null) {
+      primitive.attach(cell, Stubs.runs(primitive));
+      return;
+    }
+    Map<String, String> handed = tab.handed;
+    String json = handed == null ? null : handed.remove(cell.address);
+    if (json != null) {
+      handIn(cell, json);
+    }
     if (primitive instanceof RetainedSignal) {
       Signal<?> signal = (Signal<?>) primitive;
       tab.snapshot.retain(this, primitive, signal.retainedName, signal.stackName, signal.initial(), (ValueCell) cell);
@@ -618,11 +909,29 @@ final class Scope {
   /** The second half: the frame can show, so its patch is on its way, and what it replaced goes with that. */
   private void shown(String value) {
     htmlBeforeEmbedded = false;
+    if (rowScopes != null) {
+      // Its HTML is its markers, the same each time: its rows are what changes, and it patches them itself, or what is
+      // around it carries them as they are when its patch goes.
+      html = value;
+      sent = value;
+      if (rowsOnPage()) {
+        if (!tab.patchWaitsAround(this)) {
+          pageHas(value);
+        }
+      } else {
+        tab.queuePatch(this);
+      }
+      return;
+    }
     value = withLatestChildren(value);
     html = value;
     if (value == embedded) {
-      // What is around it brings this along, in its own patch.
+      // What is around it brings this along, in its own patch. A list's patch is its rows as they showed when it went,
+      // which a hold can have kept this from yet: one more goes, unless the page has this already.
       sent = value;
+      if (parent != null && parent.isList() && !value.equals(onPage())) {
+        tab.queuePatch(parent);
+      }
     } else if (value.equals(sent)) {
       // If what is around it has a patch waiting, this came along in that, and goes when it does.
       if (!tab.patchWaitsAround(this)) {
@@ -659,14 +968,28 @@ final class Scope {
     }
     removing.clear();
     tab.handlers.drop(this);
-    for (Scope child : new ArrayList<>(children.values())) {
-      if (!child.disposed && !child.detached && child.broughtBy(what)) {
-        child.pageHas(child.html);
+    if (rowScopes != null) {
+      // A list brings all of its rows, each as it is: the page has those, or what its patch made of them.
+      for (Scope row : new ArrayList<>(rowScopes)) {
+        if (!row.disposed && !row.detached
+            && (row.pageHasHtml != row.rowText() || row.pageHasStamp != row.stamp || row.holdsControlled())) {
+          row.pageHas(row.rowText());
+        }
+      }
+    } else {
+      Around around = new Around(what);
+      for (Scope child : new ArrayList<>(children.values())) {
+        if (!child.disposed && !child.detached && around.brought(child)
+            && (child.pageHasHtml != child.html || child.pageHasStamp != child.stamp || child.holdsControlled())) {
+          child.pageHas(child.html);
+        }
       }
     }
     if (fallbackScope != null && fallbackScope.html != null && what.contains(fallbackScope.html)) {
       fallbackScope.pageHas(fallbackScope.html);
     }
+    pageHasHtml = what;
+    pageHasStamp = stamp;
   }
 
   /** The user changed, so what the last render stopped using goes now, though the patch saying so may have to wait. */
@@ -693,7 +1016,7 @@ final class Scope {
       // A pass of its parent removed this, but the patch saying so has not gone.
       return true;
     }
-    if (parent.html == null || !parent.html.contains(mark())) {
+    if (parent.html == null || !parent.holds(this, parent.html)) {
       return false;
     }
     Scope top = parent;
@@ -728,7 +1051,7 @@ final class Scope {
       return this == tab.rootOnPage ? has : null;
     }
     String around = parent.shows();
-    return around != null && around.contains(mark()) ? has : null;
+    return around != null && parent.holds(this, around) ? has : null;
   }
 
   /** The pass of a parent placing this scope: runs its effect inside that pass, and stops if it stopped. */
@@ -769,11 +1092,131 @@ final class Scope {
     tab.rt.setLeftBehind(slot, behind);
   }
 
+  /** Other graphs' parts this scope's last render read (ADR 0037), and the render's before, while it runs. Lane-only. */
+  private java.util.List<SharedRead> sharedReads = java.util.Collections.emptyList();
+  private java.util.List<SharedRead> previousSharedReads;
+
+  java.util.List<SharedRead> sharedReads() {
+    return sharedReads;
+  }
+
+  /** A render read another graph's part. */
+  void sharedRead(SharedRead read) {
+    if (sharedReads.isEmpty() && !(sharedReads instanceof ArrayList)) {
+      sharedReads = new ArrayList<>();
+    }
+    sharedReads.add(read);
+  }
+
+  /**
+   * What the cuts this scope's view made read in their supplier's last run, by their node (ADR 0036, 0037): a region
+   * runs again on its own, and each run's reads replace its last ones. Lane-only.
+   */
+  private Map<Object, List<SharedRead>> cutReads;
+
+  void cutReads(Object node, List<SharedRead> reads) {
+    if (reads == null || reads.isEmpty()) {
+      if (cutReads != null) {
+        cutReads.remove(node);
+      }
+      return;
+    }
+    if (cutReads == null) {
+      cutReads = new java.util.IdentityHashMap<>();
+    }
+    cutReads.put(node, reads);
+  }
+
+  List<SharedRead> cutReadsOf(Node node) {
+    List<SharedRead> reads = cutReads == null || node == null ? null : cutReads.get(node);
+    return reads == null ? java.util.Collections.emptyList() : reads;
+  }
+
+  /**
+   * A read of another graph's value with this scope current: a cut's supplier running keeps it for its next run, and
+   * this scope's render, if it is rendering, for what it renders now.
+   */
+  static void noteSharedRead(Scope scope, SharedRead read) {
+    CutTag cut = CutTag.computing();
+    if (cut == null) {
+      scope.sharedRead(read);
+      return;
+    }
+    cut.collect(read);
+    if (scope.rendering) {
+      scope.sharedRead(read);
+    }
+  }
+
+  /** A render starts: what it reads replaces what the last one read, once it ends. */
+  void beginSharedReads() {
+    previousSharedReads = sharedReads;
+    sharedReads = java.util.Collections.emptyList();
+  }
+
+  /** A render stopped partway and its output is dropped: what is on screen was rendered from what it read before. */
+  void abortSharedReads() {
+    if (previousSharedReads != null) {
+      sharedReads = previousSharedReads;
+      previousSharedReads = null;
+    }
+  }
+
+  void endSharedReads() {
+    previousSharedReads = null;
+  }
+
+  /** What lets go when this scope ends, such as a hold on a shared store it looked up (ADR 0037). Lane-only. */
+  private java.util.List<Runnable> releases;
+
+  /** What this scope holds already, so it holds each once however often it looks it up. Lane-only. */
+  private java.util.Set<Object> holding;
+
+  /** Holds key until this scope ends, unless it already does; true if it took the hold. */
+  boolean holdOnce(Object key, Runnable release) {
+    if (holding == null) {
+      holding = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    }
+    if (!holding.add(key)) {
+      return false;
+    }
+    onDispose(release);
+    return true;
+  }
+
+  void onDispose(Runnable release) {
+    if (releases == null) {
+      releases = new ArrayList<>();
+    }
+    releases.add(release);
+  }
+
   void dispose() {
     if (disposed) {
       return;
     }
     disposed = true;
+    listFrom(null);
+    if (runsUnder != null) {
+      java.util.Set<Scope> under = tab.slotsRunning.get(runsUnder);
+      if (under != null) {
+        under.remove(this);
+        if (under.isEmpty()) {
+          tab.slotsRunning.remove(runsUnder);
+        }
+      }
+      runsUnder = null;
+    }
+    if (releases != null) {
+      for (Runnable release : releases) {
+        try {
+          release.run();
+        } catch (RuntimeException e) {
+          tab.engine.log(System.Logger.Level.WARNING, "letting go of a shared store failed", e);
+        }
+      }
+      releases = null;
+    }
     if (instance instanceof CutTag && instance.scope == this) {
       ((CutTag) instance).release();
     }
@@ -784,11 +1227,11 @@ final class Scope {
     for (Scope child : new ArrayList<>(children.values())) {
       child.dispose();
     }
-    children.clear();
+    children = NO_CHILDREN;
     for (Scope live : new ArrayList<>(actionScopes.values())) {
       live.dispose();
     }
-    actionScopes.clear();
+    actionScopes = NO_CHILDREN;
     for (Scope old : removing) {
       old.dispose();
     }

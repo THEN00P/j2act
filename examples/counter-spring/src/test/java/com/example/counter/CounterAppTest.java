@@ -114,6 +114,26 @@ class CounterAppTest {
     client.close();
   }
 
+  /**
+   * ADR 0013: the socket keeps the container's small buffer, and a message longer than it comes in parts, put together
+   * up to j2act's frame limit; one past the limit closes the socket.
+   */
+  @Test
+  void aLongMessageComesInPartsAndOneOverTheLimitClosesTheSocket() throws Exception {
+    Client client = connect("/chat/long" + System.nanoTime() + "?name=ann");
+    String say = find(client.html, "id=\"say\"[^>]*data-j2-change=\"([^\"]+)\"");
+    String text = "x".repeat(100_000) + "end";
+    client.send("{\"type\":\"event\",\"handler\":\"" + say + "\",\"value\":\"" + text + "\",\"id\":\"1\"}");
+    client.await(m -> m.contains(text));
+    client.send("{\"type\":\"event\",\"handler\":\"" + say + "\",\"value\":\"" + "y".repeat(j2Act.maxFrameSize())
+      + "\",\"id\":\"2\"}");
+    long deadline = System.currentTimeMillis() + 5000;
+    while (System.currentTimeMillis() < deadline && !client.closed) {
+      Thread.sleep(20);
+    }
+    assertTrue(client.closed, "the socket closes for a message over the limit");
+  }
+
   // ---- helpers
 
   private HttpResponse<String> get(String path) throws Exception {
@@ -122,7 +142,11 @@ class CounterAppTest {
   }
 
   private Client connect() throws Exception {
-    String html = get("/").body();
+    return connect("/");
+  }
+
+  private Client connect(String path) throws Exception {
+    String html = get(path).body();
     Client client = new Client(html);
     client.socket = http.newWebSocketBuilder()
       .buildAsync(URI.create("ws://localhost:" + port + "/_j2act/ws"), client)
@@ -146,7 +170,13 @@ class CounterAppTest {
     final List<String> messages = new CopyOnWriteArrayList<>();
     private final StringBuilder partial = new StringBuilder();
     WebSocket socket;
+    volatile boolean closed;
     private int ack;
+
+    @Override public CompletionStage<?> onClose(WebSocket ws, int status, String reason) {
+      closed = true;
+      return null;
+    }
 
     Client(String html) {
       this.html = html;

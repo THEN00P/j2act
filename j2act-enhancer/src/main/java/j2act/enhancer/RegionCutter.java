@@ -56,6 +56,14 @@ final class RegionCutter {
 
   static final String DOM_CONTENT = "j2act/DomContent";
   private static final String REGIONS = "j2act/internal/regions/Regions";
+  /** What a row's bridge implements besides its function (Regions.Bridged). */
+  private static final String BRIDGED = "j2act/internal/regions/Regions$Bridged";
+  /** each(items, key, row). */
+  private static final String KEYED_EACH = "(Ljava/util/Collection;Ljava/util/function/Function;"
+    + "Ljava/util/function/Function;)Lj2act/DomContent;";
+  private static final Handle ALT_METAFACTORY = new Handle(Opcodes.H_INVOKESTATIC,
+    "java/lang/invoke/LambdaMetafactory", "altMetafactory", "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+      + "Ljava/lang/invoke/MethodType;[Ljava/lang/Object;)Ljava/lang/invoke/CallSite;", false);
   private static final Handle METAFACTORY = new Handle(Opcodes.H_INVOKESTATIC, "java/lang/invoke/LambdaMetafactory",
     "metafactory", "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;"
       + "Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)"
@@ -229,7 +237,9 @@ final class RegionCutter {
       }
       Type[] args = Type.getArgumentTypes(call.desc);
       int base = sources[c].getStackSize() - args.length;
-      for (int j = 0; j < args.length; j++) {
+      // each(items, key, row): the key is no row, and only the row is made a region.
+      boolean keyed = call.desc.equals(KEYED_EACH);
+      for (int j = keyed ? args.length - 1 : 0; j < args.length; j++) {
         String d = args[j].getDescriptor();
         if (!d.equals("Ljava/util/function/Function;") && !d.equals("Ljava/util/function/BiFunction;")) {
           continue;
@@ -309,6 +319,18 @@ final class RegionCutter {
     MethodNode bridge = new MethodNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC,
       "j2act$row$" + n, desc, null, null);
     InsnList r = bridge.instructions;
+    // What the row was given, the item and what its lambda captured: the same again keeps the row as it is.
+    r.add(new LdcInsnNode(params.length));
+    r.add(new TypeInsnNode(Opcodes.ANEWARRAY, "java/lang/Object"));
+    slot = 0;
+    for (int i = 0; i < params.length; i++) {
+      r.add(new InsnNode(Opcodes.DUP));
+      r.add(new LdcInsnNode(i));
+      r.add(new VarInsnNode(params[i].getOpcode(Opcodes.ILOAD), slot));
+      box(r, params[i]);
+      r.add(new InsnNode(Opcodes.AASTORE));
+      slot += params[i].getSize();
+    }
     slot = 0;
     for (Type param : params) {
       r.add(new VarInsnNode(param.getOpcode(Opcodes.ILOAD), slot));
@@ -318,16 +340,37 @@ final class RegionCutter {
       METAFACTORY, Type.getType("()Ljava/lang/Object;"), new Handle(Opcodes.H_INVOKESTATIC, owner.name, body.name, desc, itf),
       Type.getType("()L" + DOM_CONTENT + ";")));
     r.add(new MethodInsnNode(Opcodes.INVOKESTATIC, REGIONS, "row",
-      "(Ljava/util/function/Supplier;)L" + DOM_CONTENT + ";", false));
+      "([Ljava/lang/Object;Ljava/util/function/Supplier;)L" + DOM_CONTENT + ";", false));
     r.add(new InsnNode(Opcodes.ARETURN));
     bridge.maxLocals = slot;
-    bridge.maxStack = slot + 1;
+    bridge.maxStack = slot + 6;
 
+    // The lambda says what it is, so that each(items, key, row) takes the row it returns as the region it is.
+    lambda.bsm = ALT_METAFACTORY;
     lambda.bsmArgs = new Object[] {lambda.bsmArgs[0], new Handle(Opcodes.H_INVOKESTATIC, owner.name, bridge.name, desc, itf),
-      Type.getMethodType(Type.getObjectType(DOM_CONTENT), instantiated.getArgumentTypes())};
+      Type.getMethodType(Type.getObjectType(DOM_CONTENT), instantiated.getArgumentTypes()),
+      java.lang.invoke.LambdaMetafactory.FLAG_MARKERS, 1, Type.getObjectType(BRIDGED)};
     setters.add(body);
     setters.add(bridge);
     return true;
+  }
+
+  /** Boxes a primitive on the stack as the metafactory would, for an Object[] slot. */
+  private static void box(InsnList insns, Type type) {
+    String box;
+    switch (type.getSort()) {
+      case Type.BOOLEAN: box = "java/lang/Boolean"; break;
+      case Type.CHAR: box = "java/lang/Character"; break;
+      case Type.BYTE: box = "java/lang/Byte"; break;
+      case Type.SHORT: box = "java/lang/Short"; break;
+      case Type.INT: box = "java/lang/Integer"; break;
+      case Type.FLOAT: box = "java/lang/Float"; break;
+      case Type.LONG: box = "java/lang/Long"; break;
+      case Type.DOUBLE: box = "java/lang/Double"; break;
+      default: return;
+    }
+    insns.add(new MethodInsnNode(Opcodes.INVOKESTATIC, box, "valueOf",
+      "(" + type.getDescriptor() + ")L" + box + ";", false));
   }
 
   /** Classes whose with*(...) and attr(...) set attributes: core's tags and the generated ones. */

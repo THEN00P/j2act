@@ -23,9 +23,12 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
 
   final String name;
   final Map<String, String> attributes = new LinkedHashMap<>();
-  /** Attributes this render removed on purpose, e.g. withCondChecked(false): controlled, not absent. */
-  final Set<String> removed = new HashSet<>();
-  final Map<String, Handler<?>> events = new LinkedHashMap<>();
+  /**
+   * Attributes this render removed on purpose, e.g. withCondChecked(false): controlled, not absent. This, events and
+   * actions are shared empty ones until written, as most tags have none and a list's rows keep theirs.
+   */
+  Set<String> removed = java.util.Collections.emptySet();
+  Map<String, Handler<?>> events = java.util.Collections.emptyMap();
   Object key;
   /** Attribute values the enhancer cut out of the view, which run again on their own (ADR 0036). */
   final java.util.List<AttrTag> attrRegions = new java.util.ArrayList<>(0);
@@ -41,7 +44,28 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   /** A Mount, or a client handle without props (ADR 0022). */
   Object client;
   /** Client actions bound to an event's gesture, by event name (ADR 0022). */
-  final Map<String, ActionBinding> actions = new LinkedHashMap<>();
+  Map<String, ActionBinding> actions = java.util.Collections.emptyMap();
+
+  Set<String> removedToWrite() {
+    if (removed.isEmpty() && !(removed instanceof HashSet)) {
+      removed = new HashSet<>();
+    }
+    return removed;
+  }
+
+  private Map<String, Handler<?>> eventsToWrite() {
+    if (events.isEmpty() && !(events instanceof LinkedHashMap)) {
+      events = new LinkedHashMap<>();
+    }
+    return events;
+  }
+
+  private Map<String, ActionBinding> actionsToWrite() {
+    if (actions.isEmpty() && !(actions instanceof LinkedHashMap)) {
+      actions = new LinkedHashMap<>();
+    }
+    return actions;
+  }
 
   /** One action bound to an event: the recorded client call, and what takes its result. */
   static final class ActionBinding {
@@ -75,7 +99,7 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
     wrote(name);
     if (value == null) {
       attributes.remove(name);
-      removed.add(name);
+      removedToWrite().add(name);
     } else {
       attributes.put(name, String.valueOf(value));
       removed.remove(name);
@@ -208,21 +232,21 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   }
 
   private T on(String event, Handler<?> handler) {
-    events.put(event, handler);
+    eventsToWrite().put(event, handler);
     actions.remove(event);
     return self();
   }
 
   private T bindIgnoringResult(String event, Supplier<? extends CompletionStage<?>> action) {
     events.remove(event);
-    actions.put(event, new ActionBinding(action, ignored -> { }));
+    actionsToWrite().put(event, new ActionBinding(action, ignored -> { }));
     return self();
   }
 
   @SuppressWarnings("unchecked")
   private <V> T bind(String event, Supplier<? extends CompletionStage<V>> action, Consumer<? super V> then) {
     events.remove(event);
-    actions.put(event, new ActionBinding(action, (Consumer<Object>) then));
+    actionsToWrite().put(event, new ActionBinding(action, (Consumer<Object>) then));
     return self();
   }
 
@@ -244,12 +268,12 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   }
 
   public T onInput(Handler<ValueEvent> handler) {
-    events.put("input", handler);
+    eventsToWrite().put("input", handler);
     return self();
   }
 
   public T onChange(Handler<ValueEvent> handler) {
-    events.put("change", handler);
+    eventsToWrite().put("change", handler);
     return self();
   }
 
@@ -270,12 +294,12 @@ public abstract class Tag<T extends Tag<T>> implements DomContent, GlobalAttribu
   }
 
   public T onFocus(Handler<ValueEvent> handler) {
-    events.put("focus", handler);
+    eventsToWrite().put("focus", handler);
     return self();
   }
 
   public T onBlur(Handler<ValueEvent> handler) {
-    events.put("blur", handler);
+    eventsToWrite().put("blur", handler);
     return self();
   }
 

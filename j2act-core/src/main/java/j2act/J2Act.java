@@ -64,6 +64,10 @@ public final class J2Act implements AutoCloseable {
 
   final PageResolver resolver;
   final Executor executor;
+  /** Where blocking work runs: a share of executor, in turns per tab (ADR 0037). */
+  final Work work;
+  /** This server's part of a cluster, or null for a server on its own (ADR 0037). */
+  final Peers peers;
   final MembersInjector injector;
   /** The container's lookup by type, or null without one (ADR 0030). */
   private final Function<Class<?>, Object> storeLookup;
@@ -212,7 +216,7 @@ public final class J2Act implements AutoCloseable {
     if (cookie == null) {
       return false;
     }
-    Browser browser = browsers.get(cookie);
+    Browser browser = browsers.get(Browser.idOf(cookie));
     Retained.Snapshot stored = browser == null ? snapshots.browserSnapshot(cookie) : null;
     if (browser == null && stored == null) {
       return false; // nothing of it is left to protect: its first use makes a fresh browser
@@ -224,7 +228,7 @@ public final class J2Act implements AutoCloseable {
         if (browser.ended) {
           // It retired since the lookup, with its snapshot saved, and its hub is gone: whoever logged
           // in has to go on that snapshot, or it stays anonymous for another account to restore.
-          browsers.remove(cookie, browser);
+          browsers.remove(browser.id, browser);
           return cookieBelongsElsewhere(tab, () -> principal);
         }
         bound = browser.principal;
@@ -302,9 +306,6 @@ public final class J2Act implements AutoCloseable {
       tab.browser = joined;
       tab.joinedBrowser();
       if (minted) {
-        synchronized (hosts) {
-          hosts.put(cookie, tab.host);
-        }
         tab.browserCookie = cookie;
         tab.mintedBrowserCookie = tab.pendingBrowserCookie = browserCookieHeader(cookie);
         if (tab.connection != null) {
@@ -317,18 +318,20 @@ public final class J2Act implements AutoCloseable {
 
   /** Joins the browser with this cookie, made or restored if need be; null when it belongs to someone else. */
   private Browser join(String cookie, Tab tab, String principal) {
+    String id = Browser.idOf(cookie);
     while (true) {
-      Browser browser = browsers.get(cookie);
+      Browser browser = browsers.get(id);
       if (browser == null) {
         // One maker per cookie, so the hub that consumes the snapshot is the one that stays.
-        synchronized (BROWSER_LOCKS[Math.floorMod(cookie.hashCode(), BROWSER_LOCKS.length)]) {
-          browser = browsers.get(cookie);
+        synchronized (BROWSER_LOCKS[Math.floorMod(id.hashCode(), BROWSER_LOCKS.length)]) {
+          browser = browsers.get(id);
           if (browser == null) {
             browser = newBrowser(cookie, tab, principal);
             if (browser == null) {
               return null;
             }
-            browsers.put(cookie, browser);
+            browsers.putIfAbsent(id, browser);
+            browser = browsers.get(id);
           }
         }
       }
@@ -340,12 +343,21 @@ public final class J2Act implements AutoCloseable {
           if (browser.principal == null && principal != null) {
             recordPrincipal(browser, principal);
           }
+          if (browser.cookie == null) {
+            // Held here for another server's tabs until now: this server has its cookie too.
+            browser.cookie = cookie;
+          }
           // A browser still saving after its last tab comes back as it was: its values are all here.
           browser.retired = false;
           browser.joins++;
           browser.tabs.add(tab);
-          return browser;
+        } else {
+          browser = null;
         }
+      }
+      if (browser != null) {
+        browser.tabsChanged();
+        return browser;
       }
       // It ended between the lookup and the lock, after its snapshot landed: the next one restores it.
     }
@@ -353,8 +365,71 @@ public final class J2Act implements AutoCloseable {
 
   /** A new hub, with its retained values back if it saved some for this identity; null when they belong to another user. */
   private Browser newBrowser(String cookie, Tab tab, String principal) {
+    if (peers != null) {
+      return newClusteredBrowser(cookie, tab, principal);
+    }
+    return newLocalBrowser(cookie, Browser.idOf(cookie), Browser.storageIdOf(cookie), tab.exchange, null, principal);
+  }
+
+  /** A browser's id in the cluster: of the cookie's hash, never the cookie. */
+  static String browserStoreId(String browserId) {
+    return "browser|" + browserId;
+  }
+
+  /**
+   * A browser's hub in a cluster (ADR 0037): held here when its lease says so, else a stub of the server that holds
+   * it, which says whether the browser is this principal's before anything of it shows here.
+   */
+  private Browser newClusteredBrowser(String cookie, Tab tab, String principal) {
+    String id = Browser.idOf(cookie);
+    String storeId = browserStoreId(id);
+    j2act.cluster.SharedLeases.Lease lease = leases().acquire(storeId, peers.self, peers.cluster.term());
+    if (lease.holder.equals(peers.self)) {
+      Remote.Owned held = peers.remote.owned(storeId);
+      if (held != null) {
+        // Held here for another server's tabs already: join checks the principal.
+        return held.entry.browser;
+      }
+      Browser browser = newLocalBrowser(cookie, id, Browser.storageIdOf(cookie), tab.exchange, null, principal);
+      if (browser != null) {
+        clusterBrowser(browser, newSecret(12));
+        peers.remote.own(storeId, browser.cluster, lease);
+      }
+      return browser;
+    }
+    Tab hub = new Tab(this, new ReactiveHost(this), "browser:" + newSecret(9), newSecret(18), tab.exchange, "/");
+    Browser browser = new Browser(this, cookie, hub, principal);
+    hub.hubFor = browser;
+    SharedHub entry = clusterBrowser(browser, newSecret(12));
+    entry.stub = new Stub(peers, entry, storeId, "browser", id, null);
+    entry.stub.opening(browser.storageId, principal, tab.currentAuth());
+    peers.stubs.put(storeId, entry.stub);
+    entry.stub.start(lease.holder);
+    Boolean mine = entry.stub.whetherMine(peers.cluster.callTimeout().toMillis());
+    if (Boolean.FALSE.equals(mine)) {
+      entry.stub.close();
+      peers.stubs.remove(storeId, entry.stub);
+      hub.post(() -> hub.dispose(null));
+      return null;
+    }
+    return browser;
+  }
+
+  private SharedHub clusterBrowser(Browser browser, String generation) {
+    SharedHub entry = new SharedHub(this, browser, generation);
+    browser.cluster = entry;
+    browser.hub.cluster = entry;
+    return entry;
+  }
+
+  /**
+   * A browser's hub held here, with its retained values back if it saved some for this identity; null when they
+   * belong to another user. With no cookie, it is held for another server's tabs, opened with their identity.
+   */
+  private Browser newLocalBrowser(String cookie, String browserId, String storageId, Exchange exchange,
+      AuthCtx openedAs, String principal) {
     Map<String, String> entries = null;
-    String id = Retained.id("browser:" + cookie);
+    String id = storageId;
     try {
       Optional<String> stored = snapshots.storage.load(id);
       if (stored.isPresent()) {
@@ -370,14 +445,79 @@ public final class J2Act implements AutoCloseable {
     } catch (RuntimeException e) {
       log(System.Logger.Level.WARNING, "a browser's retained state could not be restored", e);
     }
-    synchronized (hosts) {
-      hosts.putIfAbsent(cookie, tab.host);
+    // A graph of its own (ADR 0037): its tabs read its values through their own.
+    Tab hub = new Tab(this, new ReactiveHost(this), "browser:" + newSecret(9), newSecret(18), exchange, "/");
+    if (openedAs != null) {
+      hub.presetAuth(openedAs);
     }
-    Tab hub = new Tab(this, tab.host, "browser:" + newSecret(9), newSecret(18), tab.exchange, "/");
-    Browser browser = new Browser(this, cookie, hub, principal);
+    Browser browser = new Browser(this, cookie, browserId, storageId, hub, principal);
     hub.hubFor = browser;
     hub.snapshot.restore(entries);
     return browser;
+  }
+
+  /**
+   * Another server's tab opens a browser whose lease this server has (ADR 0037): it is held here from now on, restored
+   * from its Retained State, unless that is another principal's. False when it is.
+   */
+  boolean openBrowserHere(String storeId, String browserId, String storageId, String principal, AuthCtx auth,
+      j2act.cluster.SharedLeases.Lease lease) {
+    synchronized (BROWSER_LOCKS[Math.floorMod(browserId.hashCode(), BROWSER_LOCKS.length)]) {
+      if (peers.remote.owned(storeId) != null) {
+        return true;
+      }
+      Browser browser = browsers.get(browserId);
+      if (browser == null || browser.cluster == null || browser.cluster.stub != null) {
+        browser = newLocalBrowser(null, browserId, storageId, Exchange.empty(), auth, principal);
+        if (browser == null) {
+          return false;
+        }
+        Browser here = browsers.get(browserId);
+        if (here == null) {
+          // This server's own tabs of it, when one comes, go on with this one.
+          browsers.put(browserId, browser);
+        }
+      }
+      clusterBrowser(browser, newSecret(12));
+      peers.remote.own(storeId, browser.cluster, lease);
+      return true;
+    }
+  }
+
+  /**
+   * A browser's stores another server held and handed this one as it stopped (ADR 0037): they go on here with their
+   * plain values and Retained State, each made when one of its tabs asks for it again.
+   */
+  void takeBrowser(j2act.cluster.SharedLeases.Lease lease, String browserId, String storageId, String principal,
+      AuthCtx auth, SharedHub.Handed handed, java.util.List<String> applied) {
+    String storeId = lease.store;
+    synchronized (BROWSER_LOCKS[Math.floorMod(browserId.hashCode(), BROWSER_LOCKS.length)]) {
+      if (peers.remote.owned(storeId) != null) {
+        throw new IllegalStateException("this server holds that browser's stores already");
+      }
+      Tab hub = new Tab(this, new ReactiveHost(this), "browser:" + newSecret(9), newSecret(18), Exchange.empty(), "/");
+      hub.presetAuth(auth);
+      Browser browser = new Browser(this, null, browserId, storageId, hub, principal);
+      hub.hubFor = browser;
+      hub.snapshot.restore(new ConcurrentHashMap<>(handed.retained));
+      // Its stores are made when a tab asks for them again: each takes its values from here then.
+      hub.handed = new ConcurrentHashMap<>(handed.values);
+      hub.host.hop(() -> hub.host.published().revision = handed.revision + 1);
+      clusterBrowser(browser, handed.generation);
+      Browser here = browsers.get(browserId);
+      if (here == null) {
+        browsers.put(browserId, browser);
+      }
+      peers.remote.own(storeId, browser.cluster, lease, applied);
+    }
+  }
+
+  /** The store of type on a browser's hub held here, made with the container or as a tab's would be. */
+  Store browserStoreOnHub(Tab hub, Class<? extends Store> type) {
+    if (storeLookup != null) {
+      return Tracking.in(hub, null, () -> type.cast(storeLookup.apply(type)));
+    }
+    return hub.store(type, () -> newStore(type), null);
   }
 
   /** A 303 for a page load, carrying the browser cookie its render minted, so the next page joins the same browser. */
@@ -425,8 +565,17 @@ public final class J2Act implements AutoCloseable {
    * already in storage is saved again at once, so storage never holds this user's values as
    * anonymous ones another account could restore after a crash.
    */
-  private void recordPrincipal(Browser browser, String principal) {
+  void recordPrincipal(Browser browser, String principal) {
     browser.principal = principal;
+    SharedHub cluster = browser.cluster;
+    if (cluster != null && cluster.stub != null) {
+      // The server holding its stores records it, and says so to the others (ADR 0037).
+      cluster.stub.principal(principal);
+      return;
+    }
+    if (cluster != null) {
+      peers.remote.principalIs(cluster, principal);
+    }
     Tab hub = browser.hub;
     hub.post(() -> {
       if (hub.disposed) {
@@ -439,15 +588,37 @@ public final class J2Act implements AutoCloseable {
     });
   }
 
+  /**
+   * The server holding a browser's stores says whose it is (ADR 0037). A tab here of another identity leaves it, as
+   * when its own identity changed: what it shows of the browser goes, and its cookie with it.
+   */
+  void browserPrincipalHeard(Browser browser, String principal) {
+    synchronized (browser) {
+      if (principal == null || principal.equals(browser.principal)) {
+        return;
+      }
+      browser.principal = principal;
+    }
+    for (Tab tab : browser.tabs) {
+      tab.post(() -> identityChanged(tab, tab.currentAuth()));
+    }
+  }
+
   /** A tab of this browser ended or left it; the last one gives the browser the grace window a tab has. */
   void leaveBrowser(Tab tab, Browser browser) {
     boolean empty;
     long joins;
     synchronized (browser) {
       browser.tabs.remove(tab);
-      empty = browser.tabs.isEmpty() && !browser.retired;
+      empty = browser.tabs.isEmpty() && browser.remoteHolds == 0 && !browser.retired;
       joins = browser.joins;
     }
+    browser.tabsChanged();
+    idleBrowser(browser, empty, joins);
+  }
+
+  /** With no tab here and no other server holding it, a browser retires after the grace window a tab has. */
+  private void idleBrowser(Browser browser, boolean empty, long joins) {
     if (empty) {
       // A full grace window after the latest tab left: a tab that came and went meanwhile restarts it.
       later(browser.hub, reconnectGraceMillis, () -> {
@@ -465,7 +636,7 @@ public final class J2Act implements AutoCloseable {
   private CompletableFuture<Void> retireBrowser(Browser browser, boolean closing) {
     CompletableFuture<Void> saved;
     synchronized (browser) {
-      if (browser.ended || browser.retired || !closing && !browser.tabs.isEmpty()) {
+      if (browser.ended || browser.retired || !closing && (!browser.tabs.isEmpty() || browser.remoteHolds > 0)) {
         return browser.saved;
       }
       // Stays in browsers until its snapshot landed: a tab arriving meanwhile revives it, and none waits.
@@ -485,10 +656,17 @@ public final class J2Act implements AutoCloseable {
           end = closing || browser.retired && browser.saved == saved;
           if (end) {
             browser.ended = true;
-            browsers.remove(browser.cookie, browser);
+            browsers.remove(browser.id, browser);
           }
         }
         if (end) {
+          SharedHub c = browser.cluster;
+          if (c != null && c.stub != null) {
+            c.stub.close();
+            peers.stubs.remove(c.stub.store, c.stub);
+          } else if (c != null && !c.handedOff) {
+            peers.remote.ended(c);
+          }
           hub.post(() -> hub.dispose(null));
         }
         saved.complete(null);
@@ -534,6 +712,442 @@ public final class J2Act implements AutoCloseable {
       return type.cast(storeLookup.apply(type));
     }
     return browserOf(tab).hub.store(type, () -> newStore(type), null);
+  }
+
+  // ---- shared stores (ADR 0037)
+
+  /** A @SharedScoped store's class and key. */
+  private static final class SharedId {
+    final Class<?> type;
+    final Object key;
+
+    SharedId(Class<?> type, Object key) {
+      this.type = type;
+      this.key = key;
+    }
+
+    @Override public boolean equals(Object other) {
+      return other instanceof SharedId && ((SharedId) other).type == type && ((SharedId) other).key.equals(key);
+    }
+
+    @Override public int hashCode() {
+      return type.hashCode() * 31 + key.hashCode();
+    }
+  }
+
+  /** The @SharedScoped stores live on this server, by class and key. */
+  final ConcurrentHashMap<SharedId, SharedHub> shared = new ConcurrentHashMap<>();
+
+  /**
+   * The instance of a @SharedScoped store for key, made on first use (ADR 0037). What looked it up holds it: a
+   * component until it leaves the page, other code of a tab until the tab ends, a store until its own end.
+   */
+  <S extends Store> S sharedStore(Tab tab, Class<S> type, Object key) {
+    requireShared(type);
+    SharedHub entry = joinShared(type, key == null ? Store.APPLICATION : key);
+    Scope scope = Tracking.scope() != null ? Tracking.scope() : Scope.settingUp();
+    Runnable release = () -> releaseShared(entry);
+    boolean held;
+    if (scope != null && !scope.disposed && scope.tab == tab) {
+      held = scope.holdOnce(entry, release);
+    } else {
+      held = tab.holdOnce(entry, release);
+    }
+    if (!held) {
+      // It holds the store already: the lookup's count goes again.
+      releaseShared(entry);
+    }
+    return type.cast(entry.store);
+  }
+
+  /**
+   * The instance of a @SharedScoped store for key, from code outside any tab, such as a message listener (ADR 0037).
+   * Nothing holds it: it lives while pages read it or hold it, and a grace window after this call.
+   */
+  public <S extends Store> S sharedStore(Class<S> type, Object key) {
+    requireShared(type);
+    SharedHub entry = joinShared(type, key == null ? Store.APPLICATION : key);
+    releaseShared(entry);
+    return type.cast(entry.store);
+  }
+
+  private static void requireShared(Class<?> type) {
+    if (!Scope.storeClass(type).isAnnotationPresent(SharedScoped.class)) {
+      throw new IllegalArgumentException(type.getName() + " is not a shared store: annotate it @SharedScoped (ADR 0037)");
+    }
+  }
+
+  private static final Object[] SHARED_LOCKS = new Object[64];
+
+  static {
+    for (int i = 0; i < SHARED_LOCKS.length; i++) {
+      SHARED_LOCKS[i] = new Object();
+    }
+  }
+
+  /** The live hub for the key, made or revived, with one more holder. */
+  private SharedHub joinShared(Class<? extends Store> type, Object key) {
+    SharedId id = new SharedId(type, key);
+    while (true) {
+      SharedHub entry = shared.get(id);
+      if (entry == null) {
+        // One maker per key, so the hub that consumes the snapshot is the one that stays.
+        synchronized (SHARED_LOCKS[Math.floorMod(id.hashCode(), SHARED_LOCKS.length)]) {
+          entry = shared.get(id);
+          if (entry == null) {
+            entry = newShared(type, key);
+            shared.put(id, entry);
+          }
+        }
+      }
+      synchronized (entry) {
+        if (!entry.ended) {
+          // One saving after its last holder comes back as it was: its values are all here.
+          entry.retired = false;
+          entry.holders++;
+          entry.changes++;
+          return entry;
+        }
+      }
+      // It ended between the lookup and the lock, after its snapshot landed: the next one restores it.
+    }
+  }
+
+  /** The leases of the cluster's stores: the configured ones, or those each store's home server keeps. */
+  j2act.cluster.SharedLeases leases() {
+    j2act.cluster.SharedLeases configured = peers.cluster.leases();
+    return configured != null ? configured : peers.homeLeases;
+  }
+
+  /** A store's id in the cluster: its class and its key as JSON. */
+  String sharedId(Class<?> type, Object key) {
+    return type.getName() + "|" + (key == Store.APPLICATION ? "" : json.write(key));
+  }
+
+  /**
+   * Where a store lives in a cluster (ADR 0037): this server, when its lease says so, or a stub of it whose values
+   * come from the server that holds it. The first lookup of a store on a server waits for the lease.
+   */
+  private SharedHub newClustered(Class<? extends Store> type, Object key) {
+    String id = sharedId(type, key);
+    j2act.cluster.SharedLeases.Lease lease = leases().acquire(id, peers.self, peers.cluster.term());
+    if (lease.holder.equals(peers.self)) {
+      Remote.Owned held = peers.remote.owned(id);
+      if (held != null) {
+        // Another server opened it here first, or it moved here: this server's pages read that one.
+        return held.entry;
+      }
+      SharedHub entry = newLocal(type, key, null);
+      peers.remote.own(id, entry, lease);
+      return entry;
+    }
+    Tab hub = new Tab(this, new ReactiveHost(this), "shared:" + newSecret(9), newSecret(18), Exchange.empty(), "/");
+    SharedHub entry = new SharedHub(this, type, key, newSecret(12), hub);
+    String keyJson = key == Store.APPLICATION ? null : json.write(key);
+    entry.stub = new Stub(peers, entry, id, type.getName(), keyJson, key == Store.APPLICATION ? null
+      : key.getClass().getName());
+    peers.stubs.put(id, entry.stub);
+    hub.sharedFor = entry;
+    hub.cluster = entry;
+    hub.host.unread = () -> idleShared(entry);
+    makeStore(entry, type, key);
+    entry.stub.start(lease.holder);
+    return entry;
+  }
+
+  /**
+   * Another server, or a stub here, opens a store whose lease this server has (ADR 0037): it starts here if it has
+   * not, apart from what this server's own pages may have of it as a stub.
+   */
+  @SuppressWarnings("unchecked")
+  void openOwned(String id, String typeName, String keyJson, String keyType, j2act.cluster.SharedLeases.Lease lease) {
+    if (peers.remote.owned(id) != null) {
+      return;
+    }
+    Class<? extends Store> type;
+    Object key;
+    try {
+      type = (Class<? extends Store>) Class.forName(typeName, false, resourceLoader);
+      key = keyJson == null ? Store.APPLICATION : json.read(keyJson, Class.forName(keyType, false, resourceLoader));
+    } catch (ClassNotFoundException e) {
+      throw new IllegalStateException(e.getMessage() + " is not on this server: every server runs the same build", e);
+    }
+    requireShared(type);
+    synchronized (SHARED_LOCKS[Math.floorMod(id.hashCode(), SHARED_LOCKS.length)]) {
+      if (peers.remote.owned(id) != null) {
+        return;
+      }
+      SharedHub here = shared.get(new SharedId(type, key));
+      SharedHub entry = here != null && here.stub == null ? here : newLocal(type, key, null);
+      if (here == null) {
+        // This server's own pages find it too; with a stub here, they go on reading it through that.
+        shared.put(new SharedId(type, key), entry);
+      }
+      peers.remote.own(id, entry, lease);
+    }
+  }
+
+  /**
+   * A store another server held and handed this one as it stopped (ADR 0037): it goes on here, the same instance to
+   * the servers that read it, with its plain values and its Retained State, and its revisions numbered on from there.
+   */
+  @SuppressWarnings("unchecked")
+  void takeShared(j2act.cluster.SharedLeases.Lease lease, String typeName, String keyJson, String keyType,
+      SharedHub.Handed handed, java.util.List<String> applied) {
+    Class<? extends Store> type;
+    Object key;
+    try {
+      type = (Class<? extends Store>) Class.forName(typeName, false, resourceLoader);
+      key = keyJson == null ? Store.APPLICATION : json.read(keyJson, Class.forName(keyType, false, resourceLoader));
+    } catch (ClassNotFoundException e) {
+      throw new IllegalStateException(e.getMessage() + " is not on this server: every server runs the same build", e);
+    }
+    requireShared(type);
+    String id = lease.store;
+    synchronized (SHARED_LOCKS[Math.floorMod(id.hashCode(), SHARED_LOCKS.length)]) {
+      if (peers.remote.owned(id) != null) {
+        throw new IllegalStateException("this server holds " + id + " already");
+      }
+      SharedHub here = shared.get(new SharedId(type, key));
+      if (here != null && here.stub == null) {
+        throw new IllegalStateException("this server has a store of its own for " + id);
+      }
+      SharedHub entry = newLocal(type, key, handed);
+      if (here == null) {
+        shared.put(new SharedId(type, key), entry);
+      }
+      peers.remote.own(id, entry, lease, applied);
+    }
+  }
+
+  /** One more holder of a store held here, for a server that opened it; false when it ends meanwhile. */
+  boolean holdShared(SharedHub entry) {
+    Browser browser = entry.browser;
+    if (browser != null) {
+      synchronized (browser) {
+        if (browser.ended) {
+          return false;
+        }
+        browser.retired = false;
+        browser.remoteHolds++;
+        browser.joins++;
+        return true;
+      }
+    }
+    synchronized (entry) {
+      if (entry.ended) {
+        return false;
+      }
+      entry.retired = false;
+      entry.holders++;
+      entry.changes++;
+      return true;
+    }
+  }
+
+  void letGoShared(SharedHub entry) {
+    Browser browser = entry.browser;
+    if (browser != null) {
+      boolean empty;
+      long joins;
+      synchronized (browser) {
+        browser.remoteHolds--;
+        empty = browser.tabs.isEmpty() && browser.remoteHolds == 0 && !browser.retired;
+        joins = browser.joins;
+      }
+      idleBrowser(browser, empty, joins);
+      return;
+    }
+    releaseShared(entry);
+  }
+
+  /** A store whose lease this server lost ends at once, saving nothing: another server holds it now. */
+  void endShared(SharedHub entry) {
+    Browser browser = entry.browser;
+    if (browser != null) {
+      synchronized (browser) {
+        if (browser.ended) {
+          return;
+        }
+        browser.ended = true;
+        browsers.remove(browser.id, browser);
+      }
+      // Its tabs here join it again, wherever it is now, the next time they use it.
+      for (Tab tab : browser.tabs) {
+        tab.post(tab::leaveEndedBrowser);
+      }
+      entry.hub.post(() -> entry.hub.dispose(null));
+      return;
+    }
+    synchronized (entry) {
+      if (entry.ended) {
+        return;
+      }
+      entry.ended = true;
+      shared.remove(new SharedId(entry.type, entry.key), entry);
+    }
+    entry.hub.post(() -> entry.hub.dispose(null));
+  }
+
+  /** Another server's message for a stub here. */
+  void stub(Link link, String type, java.util.Map<String, Object> m) {
+    Stub stub = peers.stubs.get((String) m.get("store"));
+    if (stub == null) {
+      return;
+    }
+    if ("rev".equals(type)) {
+      stub.onRevision(m);
+    } else if ("gone".equals(type)) {
+      stub.onGone(m);
+    } else if ("moved".equals(type)) {
+      stub.onMoved(m);
+    } else {
+      stub.onBrowser(type, m);
+    }
+  }
+
+  /** A new hub for the key: held here, or in a cluster wherever its lease says (ADR 0037). */
+  private SharedHub newShared(Class<? extends Store> type, Object key) {
+    return peers == null ? newLocal(type, key, null) : newClustered(type, key);
+  }
+
+  /**
+   * A hub held here, with its Retained State back if it saved some, and its store made on its lane; or, for a store
+   * that moved here from a server that stopped, with what it had there.
+   */
+  private SharedHub newLocal(Class<? extends Store> type, Object key, SharedHub.Handed handed) {
+    // No user's request: a shared store reads nobody's identity (ADR 0037).
+    Tab hub = new Tab(this, new ReactiveHost(this), "shared:" + newSecret(9), newSecret(18), Exchange.empty(), "/");
+    SharedHub entry = new SharedHub(this, type, key, handed != null ? handed.generation : newSecret(12), hub);
+    hub.sharedFor = entry;
+    hub.cluster = entry;
+    hub.host.unread = () -> idleShared(entry);
+    if (handed != null) {
+      hub.snapshot.restore(handed.retained);
+      hub.handed = new ConcurrentHashMap<>(handed.values);
+      hub.host.hop(() -> hub.host.published().revision = handed.revision + 1);
+    } else {
+      String storageId = entry.storageId();
+      try {
+        Optional<String> stored = snapshots.storage.load(storageId);
+        if (stored.isPresent()) {
+          snapshots.storage.delete(storageId);
+          Retained.Snapshot snapshot = Retained.decode(stored.get());
+          if (snapshot.expiresAt > clock.millis()) {
+            hub.snapshot.restore(new ConcurrentHashMap<>(snapshot.entries));
+          }
+        }
+      } catch (RuntimeException e) {
+        log(System.Logger.Level.WARNING, "a shared store's retained state could not be restored", e);
+      }
+    }
+    // Its effects need no socket: they run for everyone.
+    hub.goLive();
+    try {
+      makeStore(entry, type, key);
+    } finally {
+      hub.handed = null;
+    }
+    return entry;
+  }
+
+  /** Makes the store on its hub's lane, with its key there for its field initializers. */
+  private void makeStore(SharedHub entry, Class<? extends Store> type, Object key) {
+    Tab hub = entry.hub;
+    Object previous = Store.MAKING_KEY.get();
+    Store.MAKING_KEY.set(key);
+    try {
+      entry.store = hub.store(type, () -> {
+        Object outer = Store.MAKING_KEY.get();
+        Store.MAKING_KEY.set(key);
+        try {
+          return newStore(type);
+        } finally {
+          Store.MAKING_KEY.set(outer);
+        }
+      }, null);
+    } finally {
+      if (previous == null) {
+        Store.MAKING_KEY.remove();
+      } else {
+        Store.MAKING_KEY.set(previous);
+      }
+    }
+  }
+
+  /** One holder let go; the last one gives it a grace window. */
+  private void releaseShared(SharedHub entry) {
+    synchronized (entry) {
+      entry.holders--;
+      entry.changes++;
+    }
+    idleShared(entry);
+  }
+
+  /**
+   * Nothing may hold it any more: unless a holder or a reader comes within the grace window, it saves its Retained
+   * State and ends.
+   */
+  private void idleShared(SharedHub entry) {
+    long changes;
+    synchronized (entry) {
+      if (entry.holders > 0 || entry.ended || entry.retired) {
+        return;
+      }
+      changes = entry.changes;
+    }
+    later(entry.hub, reconnectGraceMillis, () -> {
+      synchronized (entry) {
+        if (entry.changes != changes || entry.holders > 0) {
+          return;
+        }
+      }
+      if (entry.hub.host.published().size() == 0) {
+        retireShared(entry, false);
+      }
+    });
+  }
+
+  /** Saves the Retained State of a shared store nothing holds or reads, on its hub's lane, and ends it. */
+  private CompletableFuture<Void> retireShared(SharedHub entry, boolean closing) {
+    CompletableFuture<Void> saved;
+    synchronized (entry) {
+      if (entry.ended || entry.retired || !closing && entry.holders > 0) {
+        return entry.saved;
+      }
+      entry.retired = true;
+      saved = entry.saved = new CompletableFuture<>();
+    }
+    Tab hub = entry.hub;
+    hub.post(() -> {
+      hub.snapshot.persisting();
+      hub.snapshot.stored = true;
+      // A stub's values are the holder's, which saves them (ADR 0037).
+      CompletableFuture<Void> saving = entry.stub != null ? CompletableFuture.completedFuture(null)
+        : snapshots.persistHub(hub, entry.storageId(), null, "a shared store");
+      saving.whenComplete((v, e) -> {
+        boolean end;
+        synchronized (entry) {
+          // Only the latest retirement ends it, as for a browser.
+          end = closing || entry.retired && entry.saved == saved;
+          if (end) {
+            entry.ended = true;
+            shared.remove(new SharedId(entry.type, entry.key), entry);
+          }
+        }
+        if (end) {
+          if (entry.stub != null) {
+            entry.stub.close();
+            peers.stubs.remove(entry.stub.store, entry.stub);
+          } else if (peers != null) {
+            peers.remote.ended(entry);
+          }
+          hub.post(() -> hub.dispose(null));
+        }
+        saved.complete(null);
+      });
+    });
+    return saved;
   }
 
   /** What components reach with application() (ADR 0027). */
@@ -609,11 +1223,17 @@ public final class J2Act implements AutoCloseable {
       this.ownedExecutor = Executors.newFixedThreadPool(32, daemon("j2act-worker"));
       this.executor = ownedExecutor;
     }
+    this.work = new Work(this, executor, b.blockingWork > 0 ? b.blockingWork : Work.share(executor),
+      b.blockingWorkPerTab);
     this.sweeper = Executors.newSingleThreadScheduledExecutor(daemon("j2act-sweeper"));
     long every = b.sweepInterval.toMillis();
     sweeper.scheduleWithFixedDelay(this::sweep, every, every, TimeUnit.MILLISECONDS);
     if (checkpointMillis > 0) {
       sweeper.scheduleWithFixedDelay(this::checkpoint, checkpointMillis, checkpointMillis, TimeUnit.MILLISECONDS);
+    }
+    this.peers = b.cluster == null ? null : new Peers(this, b.cluster);
+    if (peers != null) {
+      peers.start();
     }
     this.dev = DevMode.detect(resourceLoader);
     if (dev != null) {
@@ -893,6 +1513,9 @@ public final class J2Act implements AutoCloseable {
   // ---- socket
 
   public void onMessage(Connection connection, String text) {
+    if (peers != null && peers.onMessage(connection, text)) {
+      return;
+    }
     if (text.length() > maxFrameSize) {
       log(System.Logger.Level.WARNING, "socket frame of " + text.length() + " chars over the limit; closing", null);
       onClose(connection);
@@ -941,10 +1564,7 @@ public final class J2Act implements AutoCloseable {
     }
     if ("event".equals(type)) {
       String ack = message.get("id");
-      boolean[] ok = new boolean[1];
-      tab.lane.execute(tab.task(
-        () -> ok[0] = tab.dispatch(message),
-        () -> tab.send(Json.object("type", "ack", "id", ack, "ok", ok[0]))));
+      tab.post(() -> tab.event(message, ack));
     } else if ("callback".equals(type)) {
       // A client callback into Java: same identity re-check and stale-id rejection as events.
       tab.post(() -> tab.dispatch(message));
@@ -1036,6 +1656,9 @@ public final class J2Act implements AutoCloseable {
   }
 
   public void onClose(Connection connection) {
+    if (peers != null) {
+      peers.onClose(connection);
+    }
     Tab tab = byConnection.remove(connection);
     if (tab != null) {
       tab.post(() -> tab.detach(connection));
@@ -1145,6 +1768,18 @@ public final class J2Act implements AutoCloseable {
    * (ADR 0026), so a crash loses at most one interval.
    */
   private void checkpoint() {
+    for (SharedHub entry : shared.values()) {
+      Tab hub = entry.hub;
+      hub.post(() -> {
+        if (hub.disposed) {
+          return;
+        }
+        hub.snapshot.persisting();
+        if (hub.snapshot.dirty) {
+          snapshots.persistHub(hub, entry.storageId(), null, "a shared store");
+        }
+      });
+    }
     for (Browser browser : browsers.values()) {
       Tab hub = browser.hub;
       hub.post(() -> {
@@ -1212,7 +1847,27 @@ public final class J2Act implements AutoCloseable {
    * waiting up to its timeout, and their sockets close without a word: the pages reconnect
    * to the next server, hear "expired" and remount with their snapshots (ADR 0026).
    */
+  /**
+   * Leaves the cluster (ADR 0037): the shared stores this server holds move to the other servers with their values,
+   * and it stops talking to them. close() does this first; a container calls it earlier, while this server's web
+   * server still answers, since the other servers may reach this one over its socket. Nothing without a cluster.
+   */
+  public void leaveCluster() {
+    if (peers == null || peers.closed()) {
+      return;
+    }
+    peers.remote.handOff(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(
+      Math.min(shutdownSaveMillis > 0 ? shutdownSaveMillis : 5000, peers.cluster.callTimeout().toMillis())));
+    peers.close();
+  }
+
   @Override public void close() {
+    // With a cluster, a browser held here for another server's tabs only is in no map of this one's but the cluster's.
+    java.util.Set<Browser> everyBrowser = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    if (peers != null) {
+      everyBrowser.addAll(peers.remote.browsersHeld());
+    }
+    leaveCluster();
     sweeper.shutdownNow();
     if (dev != null) {
       dev.close();
@@ -1246,8 +1901,12 @@ public final class J2Act implements AutoCloseable {
       // Tabs end first, so their effects' cleanups and @PreDestroy can still use browser stores.
       awaitEnded(ended, deadline);
       java.util.List<CompletableFuture<Void>> browserSaves = new java.util.ArrayList<>();
-      for (Browser browser : browsers.values()) {
+      everyBrowser.addAll(browsers.values());
+      for (Browser browser : everyBrowser) {
         browserSaves.add(retireBrowser(browser, true));
+      }
+      for (SharedHub entry : shared.values()) {
+        browserSaves.add(retireShared(entry, true));
       }
       try {
         CompletableFuture.allOf(browserSaves.toArray(new CompletableFuture<?>[0]))
@@ -1265,13 +1924,21 @@ public final class J2Act implements AutoCloseable {
     // Tabs end first, so their effects' cleanups and @PreDestroy can still use browser stores.
     awaitEnded(ended, deadline);
     // Saved above if asked; either way their effects' cleanups and @PreDestroy run now.
-    for (Browser browser : browsers.values()) {
+    everyBrowser.addAll(browsers.values());
+    for (Browser browser : everyBrowser) {
       synchronized (browser) {
         browser.ended = true;
       }
       browser.hub.post(() -> browser.hub.dispose(null));
     }
     browsers.clear();
+    for (SharedHub entry : shared.values()) {
+      synchronized (entry) {
+        entry.ended = true;
+      }
+      entry.hub.post(() -> entry.hub.dispose(null));
+    }
+    shared.clear();
     if (ownedExecutor != null) {
       ownedExecutor.shutdown();
     }
@@ -1326,6 +1993,15 @@ public final class J2Act implements AutoCloseable {
     }
   }
 
+  /** Runs task on the sweeper thread after a delay. */
+  void afterMillis(long millis, Runnable task) {
+    try {
+      sweeper.schedule(task, millis, TimeUnit.MILLISECONDS);
+    } catch (java.util.concurrent.RejectedExecutionException e) {
+      // closing: nothing runs later any more
+    }
+  }
+
   void later(ReactiveHost host, long millis, Runnable task) {
     try {
       sweeper.schedule(() -> host.job(task), millis, TimeUnit.MILLISECONDS);
@@ -1334,27 +2010,16 @@ public final class J2Act implements AutoCloseable {
     }
   }
 
-  /** One runtime per browser (ADR 0033): by cookie while any tab uses it. A runtime never merges with another. */
-  private final Map<String, ReactiveHost> hosts = new java.util.concurrent.ConcurrentHashMap<>();
-
-  /** A tab on its cookie's runtime. It joins under the lock, so a last tab leaving cannot forget the runtime first. */
+  /** A tab with a graph of its own (ADR 0037): what it shares with other tabs, it reads from their graphs. */
   private Tab newTab(String cookie, Exchange exchange, String url) {
-    synchronized (hosts) {
-      ReactiveHost host = cookie == null ? new ReactiveHost(this) : hosts.computeIfAbsent(cookie, c -> new ReactiveHost(this));
-      return new Tab(this, host, newSecret(18), newSecret(18), exchange, url);
-    }
+    return new Tab(this, new ReactiveHost(this), newSecret(18), newSecret(18), exchange, url);
   }
 
-  /** Lane-only. A tab ended: a runtime no tab uses is forgotten, and its cookie's next tab makes another. */
+  /** Lane-only. A tab ended: the values of other graphs it read stop coming. */
   void leaveHost(Tab tab) {
     ReactiveHost host = tab.host;
-    synchronized (hosts) {
-      host.tabs.remove(tab);
-      if (host.tabs.isEmpty()) {
-        // Under every cookie it had: a tab that left a browser registers its runtime under its next one.
-        hosts.values().removeIf(h -> h == host);
-      }
-    }
+    host.tabs.remove(tab);
+    host.mirrors.releaseAll();
   }
 
   String newSecret(int bytes) {
@@ -1419,6 +2084,8 @@ public final class J2Act implements AutoCloseable {
     public final AtomicLong supersededRuns = new AtomicLong();
     public final AtomicLong patches = new AtomicLong();
     public final AtomicLong rejectedEvents = new AtomicLong();
+    /** Events that waited for their page to catch up with another graph first (ADR 0037). */
+    public final AtomicLong heldEvents = new AtomicLong();
     public final AtomicLong failedTasks = new AtomicLong();
     public final AtomicLong rateLimited = new AtomicLong();
   }
@@ -1468,6 +2135,37 @@ public final class J2Act implements AutoCloseable {
     /** Pool for lanes and query runs; defaults to an owned pool of 32 daemon threads (ADR 0017). */
     public Builder withExecutor(Executor executor) {
       this.executor = executor;
+      return this;
+    }
+
+    private j2act.cluster.Cluster cluster;
+
+    /**
+     * Shares @SharedScoped stores with the other servers of a cluster (ADR 0037): each store lives on one of them, and
+     * the others' pages read and write it through that one.
+     */
+    public Builder withCluster(j2act.cluster.Cluster cluster) {
+      this.cluster = cluster;
+      return this;
+    }
+
+    private int blockingWork;
+    private int blockingWorkPerTab = 4;
+
+    /**
+     * How much of the executor blocking work may use at once: async(...) bodies, action bodies and transfers, so that
+     * the rest is always there for rendering (ADR 0037). By default three quarters of a pool j2act can see the size
+     * of, and 8 threads otherwise; j2act-spring sets it from Spring's task executor, and on Jakarta EE the context
+     * parameter j2act.blockingWork does. Integer.MAX_VALUE for an executor of virtual threads.
+     */
+    public Builder withBlockingWork(int maxAtOnce) {
+      this.blockingWork = maxAtOnce;
+      return this;
+    }
+
+    /** How much blocking work of one tab or store runs at once, its turn among the others (ADR 0037); 4 by default. */
+    public Builder withBlockingWorkPerTab(int maxAtOnce) {
+      this.blockingWorkPerTab = maxAtOnce;
       return this;
     }
 

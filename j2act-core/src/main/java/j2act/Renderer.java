@@ -5,6 +5,7 @@ import j2act.internal.html.Nesting;
 import j2act.internal.signals.Errors.NotReadyError;
 import j2act.internal.signals.Errors.StatusError;
 import j2act.internal.signals.Node;
+import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +19,7 @@ final class Renderer {
 
   private final Tab tab;
   private final long epoch;
-  StringBuilder out = new StringBuilder(1024);
+  StringBuilder out = new StringBuilder(256);
   /** The CSP nonce for the bootstrap tags, set only when rendering the served page. */
   String nonce;
 
@@ -54,7 +55,7 @@ final class Renderer {
     Map<String, Scope> merged = new java.util.LinkedHashMap<>(scope.previousChildren);
     merged.putAll(scope.children);
     scope.children = merged;
-    scope.previousChildren = new java.util.LinkedHashMap<>();
+    scope.previousChildren = Scope.NO_CHILDREN;
   }
 
 
@@ -127,12 +128,17 @@ final class Renderer {
     inner.inert = inert;
     tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
-    scope.children = new java.util.LinkedHashMap<>();
+    scope.children = Scope.NO_CHILDREN;
     Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
+      List<CutTag> was = new ArrayList<>(scope.regionsMade);
       CutTag.dropUnplaced(tab, scope.regionsMade);
-      inner.renderChildren(scope, "/0", latest((Boundary<?>) scope.instance).children(), false);
+      // Rows the last render made that this one makes again with the same item are kept (ADR 0036).
+      RegionTag.reusing(tab, was, () -> {
+        inner.renderChildren(scope, "/0", latest((Boundary<?>) scope.instance).children(), false);
+        return null;
+      });
       inner.finish(scope);
     } catch (NotReadyError | StatusError e) {
       unwind(scope);
@@ -181,7 +187,7 @@ final class Renderer {
       own.dispose();
     });
     own.previousChildren = own.children;
-    own.children = new java.util.LinkedHashMap<>();
+    own.children = Scope.NO_CHILDREN;
     tab.enterRender();
     Renderer inner = new Renderer(tab, tab.renderEpoch());
     inner.open = open;
@@ -223,7 +229,7 @@ final class Renderer {
     }
     tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
-    scope.children = new java.util.LinkedHashMap<>();
+    scope.children = Scope.NO_CHILDREN;
     out.append("<div");
     attribute("data-j2-scope", scope.anchor);
     attribute("style", "display:contents");
@@ -268,12 +274,13 @@ final class Renderer {
     tab.clearDirty(scope);
     tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
-    scope.children = new java.util.LinkedHashMap<>();
+    scope.children = Scope.NO_CHILDREN;
 
     Tag<?> root;
     Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
+      List<CutTag> was = new ArrayList<>(scope.regionsMade);
       CutTag.dropUnplaced(tab, scope.regionsMade);
       scope.refreshView();
       if (scope.shapeChanged(scope.instance.getClass())) {
@@ -283,7 +290,8 @@ final class Renderer {
           + " has new fields, which stay unset until the page reloads", null);
         scope.shape = Scope.shapeOf(scope.instance.getClass());
       }
-      root = scope.renderView();
+      // Rows the last run of the view made that this one makes again with the same item are kept (ADR 0036).
+      root = RegionTag.reusing(tab, was, scope::renderView);
     } finally {
       scope.rendering = false;
       Tracking.swapScope(previousScope);
@@ -317,7 +325,14 @@ final class Renderer {
       return fits(((Hoisted) node).tree, at, open);
     }
     if (node instanceof RegionTag) {
-      return fits((DomContent) ((RegionTag) node).current(), at, open);
+      RegionTag region = (RegionTag) node;
+      Object content = region.current();
+      // What fits between its own markers, with these elements open, fits wherever a region around it stands: its
+      // markers are inside that region's. A list of rows kept as they were is not looked into row by row again.
+      if (content != null && content == region.fitContent && Nesting.Open.same(open, region.fitAt)) {
+        return true;
+      }
+      return fits((DomContent) content, at, open);
     }
     if (!(node instanceof Tag)) {
       return true;
@@ -342,6 +357,19 @@ final class Renderer {
     return true;
   }
 
+  /** Whether a region's content fits at its markers, which it remembers for the regions around it. */
+  private boolean fitsHere(RegionTag region, DomContent content) {
+    if (content != null && content == region.fitContent && Nesting.Open.same(open, region.fitAt)) {
+      return true;
+    }
+    if (!fits(content, open)) {
+      return false;
+    }
+    region.fitContent = content;
+    region.fitAt = open;
+    return true;
+  }
+
   /** Whether what the parser does leaves what is open at a region's markers alone. */
   private static boolean stays(Nesting.Fix fix, Nesting.Open at) {
     return fix == null || fix.repair == Nesting.Repair.DROPS || fix.repair == Nesting.Repair.EMPTIES
@@ -356,8 +384,6 @@ final class Renderer {
     scope.renderedEpoch = epoch;
     tab.clearDirty(scope);
     tab.handlers.begin(scope);
-    scope.previousChildren = scope.children;
-    scope.children = new java.util.LinkedHashMap<>();
     DomContent content;
     Scope previousScope = Tracking.swapScope(scope);
     try {
@@ -366,7 +392,25 @@ final class Renderer {
       Tracking.swapScope(previousScope);
     }
     RegionTag region = (RegionTag) scope.instance;
-    if (!java.util.Objects.equals(keyOf(content), region.key) || !fits(content, open)) {
+    scope.renderedContent = null;
+    if (region.rows != null && content instanceof Fragment && rowsFit((Fragment) content)) {
+      renderRows(scope, (Fragment) content);
+      return;
+    }
+    if (scope.rowScopes != null) {
+      // No longer a list, or its rows cannot stand here: what it had of rows goes as any children do, and the page has
+      // them as something else.
+      scope.listFrom(null);
+      scope.pageRows = null;
+    }
+    scope.previousChildren = scope.children;
+    scope.children = Scope.NO_CHILDREN;
+    if (region.rows != null && content != null) {
+      // Its rows would not stay between its markers: the view that made it places them, as it does any region's.
+      tab.markDirty(region.creator);
+      content = null;
+    }
+    if (!java.util.Objects.equals(keyOf(content), region.key) || !fitsHere(region, content)) {
       // Keyed by what it showed when made, as the plain build's slot would be: another key is another slot, which
       // only the view that made it can place, so that view runs again and what was here goes. And so for what the
       // parser would move out of its markers: placed by that view, it is part of what is around it.
@@ -379,6 +423,128 @@ final class Renderer {
     }
     out.append("<!--/j2:").append(scope.anchor).append("-->");
     finish(scope);
+    scope.renderedContent = content;
+  }
+
+  /** Whether every row of a list stays between its markers here: a row kept as it was is not looked into again. */
+  private boolean rowsFit(Fragment rows) {
+    for (DomContent row : rows.children) {
+      if (!fitsHere((RegionTag) row, (DomContent) ((RegionTag) row).current())) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * A list (ADR 0036, KeyedRows): its rows in its order, each the scope it was unless its row is new. What it renders
+   * is only its markers, which is all that what is around it holds of it; its rows are its scope's own (Scope.rows).
+   * A row that stays is neither rendered nor looked up again, and the children it had are changed, not made anew, so
+   * the pass does nothing for the rows that stay but see that they did.
+   */
+  private void renderRows(Scope scope, Fragment content) {
+    List<Scope> was = scope.rowScopes;
+    if (was == null) {
+      // Becoming a list: what it had are children like any, and the page has them as something else.
+      was = new ArrayList<>(scope.children.values());
+      scope.pageRows = null;
+    }
+    // Nothing swaps them: a pass that stops partway leaves the children as they are (unwind).
+    scope.previousChildren = Scope.NO_CHILDREN;
+    long mark = ++tab.rowMarks;
+    List<Scope> now = new ArrayList<>(content.children.size());
+    List<Scope> added = null;
+    try {
+      for (DomContent child : content.children) {
+        RegionTag row = (RegionTag) child;
+        java.util.function.Supplier<RegionTag> again = row.again;
+        row.again = null;
+        Scope s = row.shownIn;
+        if (s != null && !s.disposed && s.parent == scope && s.rowMark != mark && s.instance instanceof CutTag
+            && ((CutTag) s.instance).node == row.node && s.rowIn == scope) {
+          // Its own scope, where it was: kept as it is, or rendered again if what its node holds changed.
+          s.rowMark = mark;
+          s.placedOpen = open;
+          s.placedInert = inert;
+          if (!kept(s, row)) {
+            s.renderInParent();
+          }
+          now.add(s);
+          continue;
+        }
+        if (again != null) {
+          row = again.get();
+        }
+        String local = "/k" + row.listKey + "@" + RegionTag.class.getName();
+        String address = scope.address + local;
+        Scope at = scope.children.get(address);
+        if (at != null && at.rowMark == mark) {
+          // A key the list has twice: the second is a slot of its own.
+          tab.engine.log(System.Logger.Level.WARNING, "duplicate key " + row.listKey + " in each(items, key, row) at "
+            + scope.address + "; each item needs a key of its own (ADR 0036)", null);
+          local = local + "#dup" + now.size();
+          address = scope.address + local;
+          at = scope.children.get(address);
+        }
+        if (at == null) {
+          for (java.util.Iterator<Scope> it = scope.removing.iterator(); it.hasNext(); ) {
+            Scope going = it.next();
+            if (going.address.equals(address)) {
+              // Not placed by the last pass, but that pass has not shown yet, so it is still there.
+              at = going;
+              it.remove();
+              break;
+            }
+          }
+        }
+        if (at == null || at.disposed) {
+          at = new Scope(tab, scope, address, row);
+          if (added == null) {
+            added = new ArrayList<>();
+          }
+          added.add(at);
+        }
+        at.localPath = local;
+        at.bind(row);
+        scope.placeChild(address, at);
+        at.rowIn = scope;
+        at.rowMark = mark;
+        at.placedOpen = open;
+        at.placedInert = inert;
+        if (!kept(at, row)) {
+          at.renderInParent();
+        }
+        now.add(at);
+      }
+    } catch (RuntimeException | Error e) {
+      // A row stopped this pass: the list stays as it was, and the scopes made for it go as unplaced children do.
+      if (added != null) {
+        for (Scope s : added) {
+          if (scope.children.get(s.address) == s) {
+            scope.children.remove(s.address);
+            scope.removing.add(s);
+          }
+          s.rowIn = null;
+        }
+      }
+      throw e;
+    }
+    for (Scope old : was) {
+      if (old.rowMark != mark && old.rowIn == scope) {
+        scope.children.remove(old.address);
+        scope.removing.add(old);
+        old.rowIn = null;
+      } else if (old.rowMark != mark && scope.children.get(old.address) == old) {
+        // A child it had before it was a list.
+        scope.children.remove(old.address);
+        scope.removing.add(old);
+      }
+    }
+    scope.listFrom(now);
+    out.append("<!--j2:").append(scope.anchor).append("--><!--/j2:").append(scope.anchor).append("-->");
+    tab.handlers.end(scope);
+    scope.codeEpoch = tab.engine.codeEpoch;
+    scope.renderedContent = content;
   }
 
   /** An attribute region (ADR 0036): its value set on its tag, and the attributes that gives, for its patch. */
@@ -410,7 +576,7 @@ final class Renderer {
         scope.removing.add(old);
       }
     }
-    scope.previousChildren = new java.util.LinkedHashMap<>();
+    scope.previousChildren = Scope.NO_CHILDREN;
   }
 
   private void emit(Scope scope, Tag<?> root) {
@@ -669,6 +835,24 @@ final class Renderer {
   private Scope place(Scope parent, String path, ComponentTag component, boolean emit) {
     Scope child;
     String local = path + "@" + component.getClass().getName();
+    if (component instanceof RegionTag && ((RegionTag) component).again != null) {
+      // A row kept for its item goes back where it is shown, or it is made anew: its node is that scope's, and an
+      // unkeyed row that moved would land in another row's (ADR 0036).
+      RegionTag kept = (RegionTag) component;
+      Scope was = kept.shownIn;
+      java.util.function.Supplier<RegionTag> again = kept.again;
+      kept.again = null;
+      if (was == null || was.disposed || was.parent != parent || !local.equals(was.localPath)
+          || !(was.instance instanceof CutTag) || ((CutTag) was.instance).node != kept.node
+          || parent.children.containsKey(was.address)) {
+        component = again.get();
+      } else {
+        // Its own scope, where it was: no address to build or look up.
+        parent.removing.remove(was);
+        was.bind(component);
+        return placed(parent, was, component, emit);
+      }
+    }
     if (component.scope != null) {
       child = component.scope;
       if (child.parent != parent) {
@@ -708,14 +892,33 @@ final class Renderer {
       child.localPath = local;
       child.bind(component);
     }
-    parent.children.put(child.address, child);
+    return placed(parent, child, component, emit);
+  }
+
+  private Scope placed(Scope parent, Scope child, ComponentTag component, boolean emit) {
+    parent.placeChild(child.address, child);
     child.placedOpen = open;
     child.placedInert = inert;
-    String rendered = child.renderInParent();
+    String rendered = kept(child, component) ? child.rendered : child.renderInParent();
     if (emit) {
       out.append(rendered);
     }
     return child;
+  }
+
+  /**
+   * A region placed again with the node it shows already, as a row of a list kept for its unchanged item (ADR 0036):
+   * when it rendered in this very pass, or when what its node holds is the very content it last rendered, what it
+   * rendered is what it renders, and it is not rendered again. A region inside it that changed patches itself.
+   */
+  private boolean kept(Scope child, ComponentTag component) {
+    if (!(component instanceof RegionTag) || !(child.instance instanceof RegionTag) || child.rendered == null
+        || child.effect == null || child.dirty || child.renderFailure != null
+        || ((CutTag) child.instance).node != ((CutTag) component).node) {
+      return false;
+    }
+    return child.renderedEpoch == epoch
+      || child.renderedContent != null && child.renderedContent == ((RegionTag) component).current();
   }
 
   /** The head and body of a page are found by what they are, so a constant is looked into (ADR 0036). */

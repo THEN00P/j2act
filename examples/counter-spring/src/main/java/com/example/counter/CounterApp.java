@@ -12,6 +12,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 import com.example.counter.pages.AboutPage;
 import com.example.counter.pages.AppLayout;
+import com.example.counter.pages.ChatPage;
 import com.example.counter.pages.HomePage;
 import com.example.counter.pages.ItemPage;
 import com.example.counter.pages.NotFoundPage;
@@ -40,6 +41,7 @@ public class CounterApp {
         page("/report", ReportPage.class),
         page("/slow", SlowPage.class),
         page("/stores", StoresPage.class),
+        page("/chat/{room}", ChatPage.class),
         fallback(NotFoundPage.class)),
       page("/slow-alone", SlowPage.class)
     );

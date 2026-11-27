@@ -6,8 +6,8 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /** A store bound to its tab (ADR 0035): the view the engine gave for its value, reached on the tab's lane. */
-final class StoreCell extends Cell {
-  private final JavaShape shape;
+class StoreCell extends Cell {
+  final JavaShape shape;
   final Object view;
   private boolean optimistic;
 
@@ -72,6 +72,51 @@ final class StoreCell extends Cell {
     tab.host.storeTabs.put(shape.targetOf(view), tab);
   }
 
+  /** A copy of another graph's store (ADR 0037): derive answers what that graph last published. */
+  StoreCell(Tab tab, String address, j2act.internal.signals.Stores.Derive derive, Object seed, boolean optimistic) {
+    super(tab, address);
+    this.shape = tab.host.stores();
+    this.view = onLane(() -> shape.createMirror(derive, seed, optimistic));
+    tab.host.storeTabs.put(shape.targetOf(view), tab);
+  }
+
+  /** Whether an action's writes to it are guesses. */
+  boolean optimistic() {
+    return optimistic;
+  }
+
+  /** Lane-only. The committed value as objects that never change, for other graphs (ADR 0037). */
+  Object snapshotHere() {
+    return shape.snapshot(view);
+  }
+
+  /**
+   * The copy of this store that code on another graph's lane reads (ADR 0037), held by what reads it; null when code
+   * runs on this store's own lane or on no lane.
+   */
+  private StoreMirror here() {
+    if (tab.lane.isCurrent()) {
+      return null;
+    }
+    Tab reader = Tab.current();
+    if (reader == null || reader.host == tab.host || !reader.lane.isCurrent()) {
+      Action.Call call = Action.Call.current();
+      if (call != null && call.tab.host != tab.host) {
+        StoreMirror[] mirror = new StoreMirror[1];
+        call.enter(call.tab, () -> mirror[0] = call.tab.host.mirrors.storeOf(this));
+        return mirror[0];
+      }
+      return null;
+    }
+    if (tab.hubFor != null && reader.hubFor == null) {
+      // A tab that leaves this browser re-renders whoever read its state (ADR 0030).
+      reader.readBrowserGeneration();
+    }
+    StoreMirror mirror = reader.host.mirrors.storeOf(this);
+    mirror.held();
+    return mirror;
+  }
+
   /** The node behind a derived store, or null. */
   j2act.internal.signals.Node deriveNode() {
     return shape.derive(view);
@@ -90,7 +135,23 @@ final class StoreCell extends Cell {
 
   /** The value for whoever reads: a real instance for a bean, a List or a Map for those. */
   Object value() {
+    StoreMirror mirror = here();
+    if (mirror != null) {
+      return onMirror(mirror, () -> mirror.shape.value(mirror.view));
+    }
     return shape.value(view);
+  }
+
+  /** Reads a mirror where it lives: on its own lane, which is the caller's, or an action's page's. */
+  private static <T> T onMirror(StoreMirror mirror, Supplier<T> read) {
+    if (mirror.tab.lane.isCurrent()) {
+      return read.get();
+    }
+    Object[] out = new Object[1];
+    mirror.tab.host.hop(() -> out[0] = mirror.tab.rt.untrack(read::get));
+    @SuppressWarnings("unchecked")
+    T value = (T) out[0];
+    return value;
   }
 
   private void requireAction() {
@@ -102,12 +163,39 @@ final class StoreCell extends Cell {
 
   <T> void update(Consumer<T> change) {
     requireAction();
-    write(() -> shape.update(view, change));
+    write(changeOp(change), mirror -> mirror.shape.update(mirror.view, change));
   }
 
   void set(Object value) {
     requireAction();
-    write(() -> shape.set(view, value));
+    write(setOp(value), mirror -> mirror.shape.set(mirror.view, value));
+  }
+
+  /** The write, made where it is called: a copy of a store on another server encodes it there and then (ADR 0037). */
+  Runnable changeOp(Consumer<?> change) {
+    return () -> applyChange(change);
+  }
+
+  Runnable setOp(Object value) {
+    return () -> applySet(value);
+  }
+
+  Runnable pathOp(String[] path, Object value) {
+    return () -> applyPath(path, value);
+  }
+
+  /** On this cell's lane: the change itself, on a draft of what the store has now. A copy on another server sends it. */
+  @SuppressWarnings("unchecked")
+  void applyChange(Consumer<?> change) {
+    shape.update(view, (Consumer<Object>) change);
+  }
+
+  void applySet(Object value) {
+    shape.set(view, value);
+  }
+
+  void applyPath(String[] path, Object value) {
+    shape.writePath(view, path, value);
   }
 
   /** The whole value as real objects, tracked. */
@@ -125,19 +213,53 @@ final class StoreCell extends Cell {
   }
 
   Object readPath(String[] path) {
+    StoreMirror mirror = here();
+    if (mirror != null) {
+      return onMirror(mirror, () -> mirror.shape.readPath(mirror.view, path));
+    }
     return shape.readPath(view, path);
   }
 
   void writePath(String[] path, Object value) {
-    write(() -> shape.writePath(view, path, value));
+    write(pathOp(path, value), mirror -> mirror.shape.writePath(mirror.view, path, value));
   }
 
-  private void write(Runnable write) {
+  /**
+   * A write, on this store's lane. From another graph's code (ADR 0037) it goes with the rest of that job's writes to
+   * this graph, or with its action's when the action ends; in an action, an optimistic store's copy there shows it as
+   * a guess meanwhile, and isPending(...) there says any other is pending until the action ends.
+   */
+  private void write(Runnable write, Consumer<StoreMirror> guess) {
     if (tab.lane.isCurrent()) {
       write.run();
       return;
     }
+    Tab reader = Tab.current();
+    if (reader != null && reader.host != tab.host && reader.lane.isCurrent()) {
+      reader.host.queueWrite(tab.host, () -> {
+        if (!disposed) {
+          write.run();
+        }
+      });
+      return;
+    }
     Action.Call call = Action.Call.current();
+    if (call != null && call.tab.host != tab.host) {
+      call.queue(this, write, () -> {
+        if (optimistic) {
+          // A guess on the page's copy, which shows at once and is undone when the action ends.
+          guess.accept(call.tab.host.mirrors.storeOf(this));
+          return null;
+        }
+        Mirrors.Mirror mirror = call.tab.host.mirrors.existing(this);
+        if (mirror == null) {
+          return null;
+        }
+        mirror.feed().sending(1);
+        return mirror.feed();
+      });
+      return;
+    }
     if (call != null) {
       call.enter(tab, () -> {
         write.run();

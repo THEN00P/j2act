@@ -532,6 +532,11 @@ public final class Runtime {
     return count;
   }
 
+  /** Whether anything reads it now. */
+  public boolean observed(Node node) {
+    return node.subs != null;
+  }
+
   /** Whether its last run read anything that could run it again. */
   public boolean hasSources(Node node) {
     return node.deps != null;
@@ -548,6 +553,12 @@ public final class Runtime {
       owner.ctx = placing.ctx;
     }
     return owner;
+  }
+
+  /** Whether nothing it read changed since it last ran: it is not waiting to run again. */
+  public boolean upToDate(Node node) {
+    return (node.flags & (Constants.REACTIVE_CHECK | Constants.REACTIVE_DIRTY | Constants.REACTIVE_IN_HEAP)) == 0
+      && (node.statusFlags & (Constants.STATUS_PENDING | Constants.STATUS_ERROR)) == 0;
   }
 
   public boolean pending(Node node) {
@@ -639,6 +650,14 @@ public final class Runtime {
       owner.parentComputed = running instanceof Node ? (Node) running : running.parentComputed;
     }
     return owner;
+  }
+
+  /**
+   * A slot made with `running` as what runs, by createSlotOwner(parent, running), goes on as if `next` were: the node
+   * that took over from that one, so the one that went is not kept by the slot.
+   */
+  public void runSlotUnder(Owner owner, Node next) {
+    owner.parentComputed = next;
   }
 
   /** Who runs this owner's nodes after it now: the view placing it again. */

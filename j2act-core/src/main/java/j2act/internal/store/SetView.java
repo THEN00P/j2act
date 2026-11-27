@@ -24,7 +24,19 @@ public final class SetView<E> extends AbstractSet<E> implements StoreView {
   }
 
   @Override public boolean contains(Object o) {
-    return shape.at(target, () -> shape.rt.storeHas(target, o));
+    return shape.at(target, () -> {
+      boolean has = shape.rt.storeHas(target, o);
+      shape.noted(target, o, has, false);
+      return has;
+    });
+  }
+
+  /** Solid's $TRACK: subscribes to its membership and order, as mapArray reads a list, and not to any element. */
+  public void track() {
+    shape.at(target, () -> {
+      shape.rt.storeTrack(target);
+      return null;
+    });
   }
 
   @Override public int size() {

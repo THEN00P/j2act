@@ -377,6 +377,20 @@ public final class Reactive {
   }
 
   /**
+   * Keeps this page getting what shared and browser stores change while nobody looks at it (ADR 0037), for as long as
+   * this component is on it: for a title that counts unread messages, or a sound when one arrives. Other hidden pages
+   * get nothing until they are shown again, and then the state each value is in.
+   */
+  public static void liveWhileHidden() {
+    Tab tab = readerTab("liveWhileHidden()");
+    if (tab.isHub()) {
+      throw new IllegalStateException("liveWhileHidden() is for a component on a page, not a store (ADR 0037)");
+    }
+    tab.host.mirrors.keepLive(1);
+    onCleanup(() -> tab.host.mirrors.keepLive(-1));
+  }
+
+  /**
    * Runs once, when the page is live and this component's data is on screen: the socket is
    * connected, everything loading here and below finished, and the update showing it was sent
    * (ADR 0031). What it returns, or null, runs on unmount.
@@ -417,27 +431,23 @@ public final class Reactive {
     if (tab.lane.isCurrent()) {
       tab.rt.onSupersede(thread::interrupt);
     }
-    try {
-      tab.engine.executor.execute(() -> {
-        if (!thread.begin()) {
-          result.cancel(false);
-          return;
-        }
-        Tab.LOADING.set(tab);
-        Scope previous = Tracking.swapScope(scope);
-        try {
-          result.complete(work.load());
-        } catch (Throwable t) {
-          result.completeExceptionally(t);
-        } finally {
-          Tab.LOADING.remove();
-          Tracking.swapScope(previous);
-          thread.end();
-        }
-      });
-    } catch (java.util.concurrent.RejectedExecutionException e) {
-      result.completeExceptionally(e);
-    }
+    tab.engine.work.execute(tab, () -> {
+      if (!thread.begin()) {
+        result.cancel(false);
+        return;
+      }
+      Tab.LOADING.set(tab);
+      Scope previous = Tracking.swapScope(scope);
+      try {
+        result.complete(work.load());
+      } catch (Throwable t) {
+        result.completeExceptionally(t);
+      } finally {
+        Tab.LOADING.remove();
+        Tracking.swapScope(previous);
+        thread.end();
+      }
+    }, () -> result.completeExceptionally(new java.util.concurrent.RejectedExecutionException("the executor refused it")));
     return result;
   }
 
@@ -635,7 +645,7 @@ public final class Reactive {
 
   /** Tracked: the last load of this async memo failed; for showing it beside a withStaleOnError() value. */
   public static boolean failed(Supplier<?> memo) {
-    return valueOf(memo, "failed").readFailed();
+    return valueOf(memo, "failed").here().readFailed();
   }
 
   /**
@@ -651,10 +661,10 @@ public final class Reactive {
       throw new IllegalStateException("isPending(...) needs a tab: call it from a view, a memo, a handler or an effect");
     }
     if (tab.lane.isCurrent()) {
-      return tab.rt.isPending(fn);
+      return tab.host.mirrors.isPending(fn);
     }
     boolean[] answer = new boolean[1];
-    tab.host.hop(() -> answer[0] = tab.rt.isPending(fn));
+    tab.host.hop(() -> answer[0] = tab.host.mirrors.isPending(fn));
     return answer[0];
   }
 
@@ -663,7 +673,7 @@ public final class Reactive {
    * action around this call ends, for a refresh that should show (ADR 0031).
    */
   public static void affects(Supplier<?> memo) {
-    ValueCell cell = valueOf(memo, "affects");
+    ValueCell cell = valueOf(memo, "affects").here();
     Action.Call call = Action.Call.current();
     if (call != null) {
       call.enter(cell.tab, () -> {
@@ -964,28 +974,69 @@ public final class Reactive {
 
   /** The tab this code runs in (ADR 0030): its id, and requestPause() to ask the page to pause. */
   public static Tab useTab() {
-    return ambientTab("useTab()");
+    return readerTab("useTab()");
   }
 
   /** This tab's instance of a @TabScoped store (ADR 0030); with Spring or CDI, the container's. */
   public static <S extends Store> S useTabStore(Class<S> store) {
-    Tab tab = ambientTab("useTabStore(" + store.getSimpleName() + ".class)");
+    Tab tab = readerTab("useTabStore(" + store.getSimpleName() + ".class)");
     return tab.engine.store(tab, store);
   }
 
   /** Every tab of this browser (ADR 0030). Its first use joins the tab to its browser. */
   public static Browser useBrowser() {
-    Tab tab = ambientTab("useBrowser()");
+    Tab tab = readerTab("useBrowser()");
     return tab.engine.browserOf(tab);
   }
 
   /** This browser's instance of a @BrowserScoped store, shared live by all its tabs (ADR 0030). */
   public static <S extends Store> S useBrowserStore(Class<S> store) {
-    Tab tab = ambientTab("useBrowserStore(" + store.getSimpleName() + ".class)");
+    Tab tab = readerTab("useBrowserStore(" + store.getSimpleName() + ".class)");
     return tab.engine.browserStore(tab, store);
   }
 
   /** The deployment this code runs in (ADR 0027): what spans every page. */
+  /**
+   * The instance of a @SharedScoped store for key, such as a chat room's id (ADR 0037): the same for everyone who asks
+   * with an equal key, made on first use. The component asking holds it while it is on a page.
+   */
+  public static <S extends Store> S useSharedStore(Class<S> store, Object key) {
+    if (key == null) {
+      throw new IllegalArgumentException("useSharedStore(" + store.getSimpleName() + ".class, null): a key is needed;"
+        + " the store of the whole application is useSharedStore(" + store.getSimpleName() + ".class) (ADR 0037)");
+    }
+    Tab tab = ambientTab("useSharedStore(" + store.getSimpleName() + ".class, ...)");
+    return tab.engine.sharedStore(tab, store, key);
+  }
+
+  /** The one instance of a @SharedScoped store for the whole application (ADR 0037). */
+  public static <S extends Store> S useSharedStore(Class<S> store) {
+    Tab tab = ambientTab("useSharedStore(" + store.getSimpleName() + ".class)");
+    return tab.engine.sharedStore(tab, store, null);
+  }
+
+  /**
+   * Runs body on a store's own lane with the store itself (ADR 0037), as one write of the job or the action that calls
+   * it: for a domain method whose reads and writes belong together, such as "post unless the room is closed", and for
+   * a shared store on another server, where body goes and runs. What body captures has to be a value JSON can carry
+   * or a shared store. In body the store's values are what the store has, not what the page shows.
+   */
+  public static <S extends Store> void onStore(S store, OnStore<S> body) {
+    store.bindIfPending();
+    Scope scope = store.scope;
+    if (scope == null) {
+      throw new IllegalStateException("onStore(...) takes a store j2act made, from useSharedStore, useBrowserStore or"
+        + " useTabStore (ADR 0037)");
+    }
+    Tab hub = scope.tab;
+    Writes.to(hub, () -> hub.applyCall(store, body));
+  }
+
+  /** What onStore runs on a store's lane (ADR 0037). */
+  @FunctionalInterface
+  public interface OnStore<S extends Store> extends java.util.function.Consumer<S>, java.io.Serializable {
+  }
+
   public static Application useApplication() {
     return ambientTab("useApplication()").engine.application;
   }
@@ -1002,18 +1053,35 @@ public final class Reactive {
 
   /** The tab's identity (ADR 0004). Tracked: a view branching on it re-runs when it changes. */
   public static AuthCtx auth() {
-    return ambientTab("auth()").readAuth();
+    return readerTab("auth()").readAuth();
   }
 
   /** Soft-navigates to an app path after the current event, like a link click (ADR 0011). */
   public static void navigate(String path) {
-    Tab tab = ambientTab("navigate()");
+    Tab tab = readerTab("navigate()");
     tab.post(() -> tab.navigate(path, "push"));
   }
 
   private static ValueCell routeCell() {
     Scope scope = Tracking.scope();
-    return scope != null ? scope.routeCell() : ambientTab("pathParam()").handlersRoute();
+    if (scope != null) {
+      notShared(scope.tab, "pathParam() or queryParam()");
+      return scope.routeCell();
+    }
+    return readerTab("pathParam() or queryParam()").handlersRoute();
+  }
+
+  /** The tab of the reader that what runs belongs to: not a shared store's hub, which has none (ADR 0037). */
+  private static Tab readerTab(String what) {
+    return notShared(ambientTab(what), what);
+  }
+
+  private static Tab notShared(Tab tab, String what) {
+    if (tab.sharedFor != null) {
+      throw new IllegalStateException("a @SharedScoped store's code runs once for every reader, so it cannot use "
+        + what + ", which differs between them (ADR 0037)");
+    }
+    return tab;
   }
 
   private static Tab ambientTab(String what) {

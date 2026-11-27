@@ -1,6 +1,7 @@
 package j2act;
 
 import j2act.internal.signals.Runtime;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Supplier;
@@ -86,35 +87,44 @@ public final class Action<V, R> {
   private void start(Tab tab, Scope scope, V variables, CompletableFuture<R> result) {
     Runtime.ActionRun run = tab.rt.openAction((CompletableFuture<Object>) (CompletableFuture<?>) result);
     Call call = new Call(tab, run);
-    try {
-      tab.engine.executor.execute(() -> {
-        R value = null;
-        Throwable failure = null;
-        Call.CURRENT.set(call);
-        Tab.RUNNING_FOR.set(tab);
-        Tab.LOADING.set(tab);
-        Scope previous = Tracking.swapScope(scope);
-        try {
-          value = body.run(variables);
-        } catch (Throwable t) {
-          failure = t;
-        } finally {
-          Tracking.swapScope(previous);
-          Tab.RUNNING_FOR.remove();
-          Tab.LOADING.remove();
-          Call.CURRENT.remove();
-        }
-        R ended = value;
-        Throwable failed = failure;
-        // Not tab.post: it ends even if the tab has, and what waits on its future runs as this tab's.
-        tab.host.job(() -> Tracking.in(tab, scope, () -> {
+    tab.engine.work.execute(tab, () -> {
+      R value = null;
+      Throwable failure = null;
+      Call.CURRENT.set(call);
+      Tab.RUNNING_FOR.set(tab);
+      Tab.LOADING.set(tab);
+      Scope previous = Tracking.swapScope(scope);
+      try {
+        value = body.run(variables);
+      } catch (Throwable t) {
+        failure = t;
+      } finally {
+        Tracking.swapScope(previous);
+        Tab.RUNNING_FOR.remove();
+        Tab.LOADING.remove();
+        Call.CURRENT.remove();
+      }
+      R ended = value;
+      Throwable failed = failure;
+      // Not tab.post: it ends even if the tab has, and what waits on its future runs as this tab's.
+      tab.host.job(() -> Tracking.in(tab, scope, () -> {
+        if (failed == null && call.sends()) {
+          // Its writes to other graphs land there first, and their revision here, then it ends (ADR 0037).
+          call.send((apply, lost) -> {
+            // What the other graphs published of its writes, its pending's end and its own end: one change here.
+            apply.run();
+            call.ended();
+            Throwable cause = lost instanceof java.util.concurrent.CompletionException && lost.getCause() != null
+              ? lost.getCause() : lost;
+            run.end(cause == null ? ended : null, cause);
+          });
+        } else {
+          call.ended();
           run.end(ended, failed);
-          return null;
-        }));
-      });
-    } catch (RejectedExecutionException e) {
-      run.end(null, e);
-    }
+        }
+        return null;
+      }));
+    }, () -> tab.host.job(() -> run.end(null, new RejectedExecutionException("the executor refused it"))));
   }
 
   /** One run of an action, on its body's thread: every read and write it makes hops into its transaction. */
@@ -123,7 +133,6 @@ public final class Action<V, R> {
 
     final Tab tab;
     private final Runtime.ActionRun run;
-
     Call(Tab tab, Runtime.ActionRun run) {
       this.tab = tab;
       this.run = run;
@@ -131,6 +140,80 @@ public final class Action<V, R> {
 
     static Call current() {
       return CURRENT.get();
+    }
+
+    /** Writes to other graphs' values, by graph, in order: sent when the body ended well, dropped if it failed. */
+    private final java.util.Map<ReactiveHost, java.util.List<Runnable>> outgoing = new java.util.LinkedHashMap<>();
+
+    /**
+     * A write to a value of another graph (ADR 0037): held until the body ends, then sent with the rest, as an
+     * action's writes commit at its end. Meanwhile the page shows the value as pending, as for its own held writes.
+     */
+    void queue(Cell cell, Runnable write, Supplier<?> onPage) {
+      queueTo(cell.tab, write);
+      Object feed = enter(tab, onPage);
+      if (feed instanceof Feed) {
+        synchronized (outgoing) {
+          sending.add((Feed) feed);
+        }
+      }
+    }
+
+    /** A write to a graph other than the action's, held until the body ends. */
+    void queueTo(Tab target, Runnable write) {
+      synchronized (outgoing) {
+        outgoing.computeIfAbsent(target.host, h -> new java.util.ArrayList<>()).add(() -> {
+          if (!target.disposed) {
+            write.run();
+          }
+        });
+      }
+    }
+
+    /** The mirrors here this action's writes make pending until it ends. */
+    private final java.util.List<Feed> sending = new java.util.ArrayList<>();
+
+    /** Lane-only, the action's tab's: it ended, so what it wrote is no longer pending here. */
+    void ended() {
+      java.util.List<Feed> feeds;
+      synchronized (outgoing) {
+        feeds = new java.util.ArrayList<>(sending);
+        sending.clear();
+      }
+      for (Feed feed : feeds) {
+        feed.sending(-1);
+      }
+    }
+
+    boolean sends() {
+      synchronized (outgoing) {
+        return !outgoing.isEmpty();
+      }
+    }
+
+    /**
+     * Lane-only, the action's tab's. Sends the writes, one batch per graph, as one change. Once every graph applied its
+     * batch and published it, done runs on this lane with what applies those revisions here.
+     */
+    void send(java.util.function.BiConsumer<Runnable, Throwable> done) {
+      java.util.Map<ReactiveHost, java.util.List<Runnable>> batches;
+      synchronized (outgoing) {
+        batches = new java.util.LinkedHashMap<>(outgoing);
+        outgoing.clear();
+      }
+      java.util.List<ReactiveHost.Batch> sent = new java.util.ArrayList<>();
+      batches.forEach((to, writes) -> {
+        tab.host.mirrors.await(to);
+        sent.add(new ReactiveHost.Batch(to, writes));
+      });
+      tab.host.deliver(sent, failure -> Tracking.in(tab, null, () -> {
+        java.util.List<Runnable> published = new java.util.ArrayList<>();
+        for (ReactiveHost.Batch batch : sent) {
+          published.add(tab.host.mirrors.heard(batch.to));
+        }
+        done.accept(() -> published.forEach(Runnable::run), failure);
+        return null;
+      }));
     }
 
     /** Runs fn on the lane in this action's transaction. */
