@@ -28,10 +28,16 @@ public final class J2ActEndpoint extends Endpoint {
       close(session, "cross-origin socket refused");
       return;
     }
-    session.setMaxTextMessageBufferSize(j2Act.maxFrameSize());
+    // The container's own buffer stays: a longer message comes in parts (Parts), j2act's limit checked on the whole.
     JakartaConnection connection = new JakartaConnection(session);
     session.getUserProperties().put(CONNECTION, connection);
-    session.addMessageHandler(String.class, (MessageHandler.Whole<String>) text -> j2Act.onMessage(connection, text));
+    j2act.internal.socket.Parts parts = new j2act.internal.socket.Parts();
+    session.addMessageHandler(String.class, (MessageHandler.Partial<String>) (part, last) -> {
+      String text = parts.add(part, last, j2Act.maxFrameSize());
+      if (text != null) {
+        j2Act.onMessage(connection, text);
+      }
+    });
   }
 
   @Override public void onClose(Session session, CloseReason reason) {

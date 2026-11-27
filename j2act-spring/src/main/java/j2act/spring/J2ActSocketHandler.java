@@ -24,13 +24,20 @@ public class J2ActSocketHandler extends TextWebSocketHandler {
   }
 
   @Override public void afterConnectionEstablished(WebSocketSession session) {
-    // Tomcat's default is 8 KiB; j2act enforces its own frame limit (ADR 0013).
-    session.setTextMessageSizeLimit(j2Act.maxFrameSize());
+    // The container's own buffer, Tomcat's 8 KiB, stays: a longer message comes in parts (Parts).
     session.getAttributes().put(CONNECTION, new SpringConnection(session));
   }
 
+  @Override public boolean supportsPartialMessages() {
+    return true;
+  }
+
   @Override protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-    j2Act.onMessage(connection(session), message.getPayload());
+    SpringConnection connection = (SpringConnection) connection(session);
+    String text = connection.parts.add(message.getPayload(), message.isLast(), j2Act.maxFrameSize());
+    if (text != null) {
+      j2Act.onMessage(connection, text);
+    }
   }
 
   @Override public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
@@ -43,6 +50,8 @@ public class J2ActSocketHandler extends TextWebSocketHandler {
 
   static final class SpringConnection implements Connection {
     private final WebSocketSession session;
+    /** A message that came in parts, so far. */
+    final j2act.internal.socket.Parts parts = new j2act.internal.socket.Parts();
 
     SpringConnection(WebSocketSession raw) {
       this.session = new ConcurrentWebSocketSessionDecorator(raw, 10_000, 1 << 20);

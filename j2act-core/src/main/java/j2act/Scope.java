@@ -155,11 +155,21 @@ final class Scope {
         return false;
       }
       String has = row.onPage();
-      if (has == null || row.html == null || !has.equals(row.html)) {
+      String text = row.rowText();
+      if (has == null || text == null || !has.equals(text)) {
         return false;
       }
     }
     return true;
+  }
+
+  /**
+   * What a list carries of this row: what it showed, or, before its own pass showed, what it rendered in the list's
+   * pass, as what is around any scope carries what it rendered there. A hold can keep a row's pass from showing while
+   * its list's goes, and the list never goes without a row it holds.
+   */
+  String rowText() {
+    return html != null ? html : embedded != null ? embedded : rendered;
   }
 
   /** Whether this holds child where its HTML says: in a list, by being one of its rows. */
@@ -265,15 +275,53 @@ final class Scope {
   /** Children no pass placed again and handlers no element uses: the page has them until the patch goes (ADR 0013). */
   final List<Scope> removing = new ArrayList<>();
   final List<String> droppedHandlers = new ArrayList<>();
-  Map<String, Scope> children = new LinkedHashMap<>();
-  Map<String, Scope> previousChildren = new LinkedHashMap<>();
+  /**
+   * Its children by address, in the order they were placed: one shared empty map until a pass places one, as most
+   * scopes, a row's text say, have none. A pass writes them with placeChild.
+   */
+  Map<String, Scope> children = NO_CHILDREN;
+  /** The children of the pass before, while a pass runs; the shared empty map otherwise. */
+  Map<String, Scope> previousChildren = NO_CHILDREN;
   /** Handler id per element position and event ("path|event"), kept while that element keeps rendering. */
-  Map<String, String> handlerIds = new LinkedHashMap<>();
-  Map<String, String> previousHandlerIds = new LinkedHashMap<>();
+  Map<String, String> handlerIds = NO_IDS;
+  Map<String, String> previousHandlerIds = NO_IDS;
   /** Callbacks passed to client actions called outside render, by action and argument (ADR 0022). */
-  final Map<String, String> actionHandlerIds = new LinkedHashMap<>();
+  Map<String, String> actionHandlerIds = NO_IDS;
   /** Live components passed to client actions, by action and argument; this scope owns them. */
-  final Map<String, Scope> actionScopes = new LinkedHashMap<>();
+  Map<String, Scope> actionScopes = NO_CHILDREN;
+
+  static final Map<String, Scope> NO_CHILDREN = java.util.Collections.emptyMap();
+  static final Map<String, String> NO_IDS = java.util.Collections.emptyMap();
+
+  /** Places a child: the first makes its map. */
+  void placeChild(String address, Scope child) {
+    if (children == NO_CHILDREN) {
+      children = new LinkedHashMap<>();
+    }
+    children.put(address, child);
+  }
+
+  /** Where a handler id goes, made on first use. */
+  Map<String, String> handlerIdsToWrite() {
+    if (handlerIds == NO_IDS) {
+      handlerIds = new LinkedHashMap<>();
+    }
+    return handlerIds;
+  }
+
+  Map<String, String> actionHandlerIdsToWrite() {
+    if (actionHandlerIds == NO_IDS) {
+      actionHandlerIds = new LinkedHashMap<>();
+    }
+    return actionHandlerIds;
+  }
+
+  Map<String, Scope> actionScopesToWrite() {
+    if (actionScopes == NO_CHILDREN) {
+      actionScopes = new LinkedHashMap<>();
+    }
+    return actionScopes;
+  }
   /** Rendered outside its parent's render, as an action argument: it patches as its own root. */
   boolean detached;
   /** Primitive count after the first render; later renders must create exactly as many (ADR 0019). */
@@ -924,8 +972,8 @@ final class Scope {
       // A list brings all of its rows, each as it is: the page has those, or what its patch made of them.
       for (Scope row : new ArrayList<>(rowScopes)) {
         if (!row.disposed && !row.detached
-            && (row.pageHasHtml != row.html || row.pageHasStamp != row.stamp || row.holdsControlled())) {
-          row.pageHas(row.html);
+            && (row.pageHasHtml != row.rowText() || row.pageHasStamp != row.stamp || row.holdsControlled())) {
+          row.pageHas(row.rowText());
         }
       }
     } else {
@@ -1179,11 +1227,11 @@ final class Scope {
     for (Scope child : new ArrayList<>(children.values())) {
       child.dispose();
     }
-    children.clear();
+    children = NO_CHILDREN;
     for (Scope live : new ArrayList<>(actionScopes.values())) {
       live.dispose();
     }
-    actionScopes.clear();
+    actionScopes = NO_CHILDREN;
     for (Scope old : removing) {
       old.dispose();
     }

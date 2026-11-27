@@ -1425,9 +1425,12 @@ public final class Tab {
     StringBuilder out = new StringBuilder(list.html.length() + 64 * list.rowScopes.size());
     out.append("<!--j2:").append(list.anchor).append("-->");
     for (Scope row : list.rowScopes) {
-      if (row.html != null && !row.detached) {
-        out.append(stubbed(row, row.html));
+      String text = row.rowText();
+      if (text == null || row.detached) {
+        continue;
       }
+      // A row whose own pass has not shown goes as it rendered in the list's, whole.
+      out.append(row.html != null ? stubbed(row, row.html) : whole(row, text, false));
     }
     return out.append("<!--/j2:").append(list.anchor).append("-->").toString();
   }
@@ -1442,7 +1445,7 @@ public final class Tab {
       StringBuilder out = new StringBuilder(64 * scope.rowScopes.size() + 32);
       out.append("<!--j2:").append(scope.anchor).append("-->");
       for (Scope row : scope.rowScopes) {
-        String part = rendered ? row.rendered : row.html;
+        String part = rendered ? row.rendered : row.rowText();
         if (part != null && !row.detached) {
           out.append(whole(row, part, rendered));
         }
@@ -1570,7 +1573,7 @@ public final class Tab {
     long mark = ++list.tab.rowMarks;
     for (int i = 0; i < rows.size(); i++) {
       Scope row = rows.get(i);
-      if (row.html == null || row.disposed || row.detached) {
+      if (row.rowText() == null || row.disposed || row.detached) {
         return null;
       }
       row.opsAt = i;
@@ -1604,13 +1607,13 @@ public final class Tab {
     for (Scope row : rows) {
       String after = previous == null ? null : previous.anchor;
       if (row.opsWas != mark) {
-        op(ops, "i", row.anchor, after, whole(row, row.html, false));
+        op(ops, "i", row.anchor, after, whole(row, row.rowText(), false));
       } else {
         if (row.opsStay != mark) {
           op(ops, "m", row.anchor, after, null);
         }
-        if (!row.html.equals(row.onPage()) || row.holdsControlled()) {
-          op(ops, "p", row.anchor, null, withStubs(row));
+        if (!row.rowText().equals(row.onPage()) || row.holdsControlled()) {
+          op(ops, "p", row.anchor, null, row.html != null ? withStubs(row) : whole(row, row.rowText(), false));
         } else {
           // What this patch does not carry carries nothing below it as it was (behindThisPatch, onPage).
           row.notCarriedIn = patch;
@@ -1744,8 +1747,10 @@ public final class Tab {
         if (row.detached || row.notCarriedIn == patch) {
           continue;
         }
-        if (row.onPage() != row.html || row.onPageStamp != row.stamp || !row.placed || row.holdsControlled()) {
-          onPage(row, row.html);
+        String text = row.rowText();
+        if (text != null && (row.onPage() != text || row.onPageStamp != row.stamp || !row.placed
+            || row.holdsControlled())) {
+          onPage(row, text);
         }
       }
       return;
@@ -1787,8 +1792,8 @@ public final class Tab {
     if (scope.isList()) {
       // Its rows went with it, each whole or as a stub.
       for (Scope row : scope.rowScopes) {
-        if (row.notCarriedIn != patchStamp && !row.disposed && row.html != null && !row.detached) {
-          behindThisPatch(row, row.html, scopes, next);
+        if (row.notCarriedIn != patchStamp && !row.disposed && row.rowText() != null && !row.detached) {
+          behindThisPatch(row, row.rowText(), scopes, next);
         }
       }
       return;

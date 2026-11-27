@@ -106,6 +106,38 @@ Separate graphs keep users apart only if their work does not compete for the sam
 
 A page whose lane falls behind takes every revision waiting for it in one job and renders once, with the latest state. A page whose socket is slow keeps a bounded queue of what it has not acknowledged (ADR 0032): when it is full, what changes waits as dirty, and the latest render goes when the client catches up, never the steps in between.
 
+## Fine-grained revisions (planned)
+
+Status: proposed, not built. What follows replaces how a deep store reaches a page; nothing changes for the developer.
+
+**Why.** Inside one graph a store write runs only what read the parts it wrote: that is what Solid is for. Between graphs it is not so today. A revision carries a deep store's whole snapshot, and every page reconciles its copy against it, so a post to a 150-line room has each page walk all 150 lines to find the one that came, then the list's run looks at each line again, and its pass and patch look at each row's scope. The store's own write knew what changed; the revision throws that away and a thousand pages work it out again. Measured on the chat demo (16 cores, 100 messages a second): about 140 µs of CPU per page and message, most of it these walks and the garbage they make; and 2.7 MB per page for a 150-line room, 2.0 MB after the two memory fixes below. A busy chat on a regular day, 30,000 viewers at 20 messages a second, is 600,000 deliveries a second before hidden pages and batching cut it; on a few servers that wants a page cost of a few tens of µs at most.
+
+**What a revision carries.** The snapshot stays, for a page that subscribes, one shown again after it was hidden, one that missed a revision, a check of what a click was rendered from, and another server catching up. Beside it, each revision carries the changes from the revision before, worked out once on the store's lane, never per reader:
+
+- a field, a map's key or a record written: its path and its new value;
+- a list: what came, went and moved, as positions: remove at, insert at with the value, move from to. The store's lane compares the list's last snapshot with its new one by identity, which costs one pass over pointers per revision for all readers together, and finds `add`, `removeIf`, a sort or a `set(fromDb)` alike;
+- inside a list's element that is the same element, by identity of its id where its class has one, as reconcile pairs them: the paths below it that changed, the same way down.
+
+Across servers the changes travel as JSON with the revision, as the snapshot does now.
+
+**How a page applies them.** A page that has exactly the revision before applies the changes to its copy as store writes, in the job that takes the revision, so only the nodes of written parts run, as if the page's own code had written them. A page that has anything else reconciles against the snapshot, as today. Reconcile stays the anchor: a test applies every change both ways and wants the same copy and the same nodes run.
+
+**A list's positions.** Solid's store moves a list's elements one index at a time, so a removal at the front writes every index after it. The port gets one more primitive, a splice: one copy of the backing array, the length, the list's membership, and exactly the index nodes that a write of each index would set, which are none when nothing reads by index, as a keyed list does not. It must behave as the index writes do in every frame Solid has (committed, staged, held, guessed), so the differential test runs splices against Solid doing the same writes index by index.
+
+An element's place in its list (its target's key in its parent) moves with every splice before it. Today what a page read inside a row is recorded by that place (`SharedRead`), so a delete near the top makes every later row's click wait until the page catches up. A row's place becomes its element's id where its class has one, so a splice moves no place anyone holds, and a click in a row waits only when that row changed.
+
+**A keyed list follows the changes.** The list's run gets the splices since its last run from its list, and moves its rows by them, making rows only for what was inserted, without reading the other elements. A run that missed some, or a list replaced whole by a reconcile, reads them all as now. The list's pass and patch take the same positions: the rows it inserts, removes and moves are known, so neither looks at a row that stayed. What the page has of each row is kept as a set of the rows it does not have as they are, which a row's showing and a patch change, so asking whether the page has the list as it is costs nothing.
+
+**Memory.** What a page holds of a room is its copy's targets and nodes, and three to four scopes per line (the row and each part of it the enhancer cut out). The changes above need nothing more per page. To bring a 150-line room under half a megabyte a page: the shared empty maps and lists a scope and a tag start with (done), the socket's own buffer (done), lighter targets and slot maps, and a scope per row part only where the part reads something.
+
+**What must hold.** Every `RandomAppTest` and `ConsistencyTest` seed, with pages that apply changes and pages that reconcile mixed; the differential test for splices; the hidden page, the missed revision, the second server and the handed-over store each falling back to the snapshot; and `chat-load.mjs` at the busy-chat profile, where per-page CPU per message and memory per page are the measures.
+
+**Decisions to make.**
+
+1. The splice primitive goes into the Solid port, beyond what Solid has, kept equal to index writes by the differential test; the alternative, keeping the port as it is, keeps the per-page walk for any list that loses an element.
+2. A row's recorded place becomes its id where its class has one; a class without an id keeps its index, and the waiting that comes with it.
+3. The order: the changes and their application first (the walk of the copy goes), then the keyed list and its patch following them (the other two walks go), then memory.
+
 ## More than one server
 
 The developer's code does not change. `withCluster(Cluster.builder().self(url).discovery(...).build())`, or the `j2act.cluster.*` properties on Spring and context parameters on Jakarta EE, makes servers a cluster. Each shared store lives on one of them, the holder of its lease; every other server whose pages read it has a stub of it, a hub whose values come from the holder, subscribed once however many of its users watch, and whose pages read the stub as they read any hub. For a 20,000-user chat on 20 servers, one message is 20 updates between servers, then each server renders its own users.

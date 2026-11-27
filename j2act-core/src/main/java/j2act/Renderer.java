@@ -55,7 +55,7 @@ final class Renderer {
     Map<String, Scope> merged = new java.util.LinkedHashMap<>(scope.previousChildren);
     merged.putAll(scope.children);
     scope.children = merged;
-    scope.previousChildren = new java.util.LinkedHashMap<>();
+    scope.previousChildren = Scope.NO_CHILDREN;
   }
 
 
@@ -128,7 +128,7 @@ final class Renderer {
     inner.inert = inert;
     tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
-    scope.children = new java.util.LinkedHashMap<>();
+    scope.children = Scope.NO_CHILDREN;
     Scope previousScope = Tracking.swapScope(scope);
     scope.rendering = true;
     try {
@@ -187,7 +187,7 @@ final class Renderer {
       own.dispose();
     });
     own.previousChildren = own.children;
-    own.children = new java.util.LinkedHashMap<>();
+    own.children = Scope.NO_CHILDREN;
     tab.enterRender();
     Renderer inner = new Renderer(tab, tab.renderEpoch());
     inner.open = open;
@@ -229,7 +229,7 @@ final class Renderer {
     }
     tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
-    scope.children = new java.util.LinkedHashMap<>();
+    scope.children = Scope.NO_CHILDREN;
     out.append("<div");
     attribute("data-j2-scope", scope.anchor);
     attribute("style", "display:contents");
@@ -274,7 +274,7 @@ final class Renderer {
     tab.clearDirty(scope);
     tab.handlers.begin(scope);
     scope.previousChildren = scope.children;
-    scope.children = new java.util.LinkedHashMap<>();
+    scope.children = Scope.NO_CHILDREN;
 
     Tag<?> root;
     Scope previousScope = Tracking.swapScope(scope);
@@ -404,7 +404,7 @@ final class Renderer {
       scope.pageRows = null;
     }
     scope.previousChildren = scope.children;
-    scope.children = new java.util.LinkedHashMap<>();
+    scope.children = Scope.NO_CHILDREN;
     if (region.rows != null && content != null) {
       // Its rows would not stay between its markers: the view that made it places them, as it does any region's.
       tab.markDirty(region.creator);
@@ -450,7 +450,7 @@ final class Renderer {
       scope.pageRows = null;
     }
     // Nothing swaps them: a pass that stops partway leaves the children as they are (unwind).
-    scope.previousChildren = new java.util.LinkedHashMap<>();
+    scope.previousChildren = Scope.NO_CHILDREN;
     long mark = ++tab.rowMarks;
     List<Scope> now = new ArrayList<>(content.children.size());
     List<Scope> added = null;
@@ -506,7 +506,7 @@ final class Renderer {
         }
         at.localPath = local;
         at.bind(row);
-        scope.children.put(address, at);
+        scope.placeChild(address, at);
         at.rowIn = scope;
         at.rowMark = mark;
         at.placedOpen = open;
@@ -576,7 +576,7 @@ final class Renderer {
         scope.removing.add(old);
       }
     }
-    scope.previousChildren = new java.util.LinkedHashMap<>();
+    scope.previousChildren = Scope.NO_CHILDREN;
   }
 
   private void emit(Scope scope, Tag<?> root) {
@@ -896,7 +896,7 @@ final class Renderer {
   }
 
   private Scope placed(Scope parent, Scope child, ComponentTag component, boolean emit) {
-    parent.children.put(child.address, child);
+    parent.placeChild(child.address, child);
     child.placedOpen = open;
     child.placedInert = inert;
     String rendered = kept(child, component) ? child.rendered : child.renderInParent();

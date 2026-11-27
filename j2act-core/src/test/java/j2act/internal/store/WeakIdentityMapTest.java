@@ -63,4 +63,42 @@ class WeakIdentityMapTest {
     assertTrue(weak.size() >= 1);
     assertEquals("kept", weak.get(kept));
   }
+
+  /** Keys that go while the map is in use: those still held answer as they were put, whatever went around them. */
+  @Test
+  void keysThatGoLeaveTheOthersAsTheyWere() throws Exception {
+    Random random = new Random(11);
+    WeakIdentityMap<Integer> weak = new WeakIdentityMap<>();
+    Map<Object, Integer> held = new IdentityHashMap<>();
+    List<Object> alive = new ArrayList<>();
+    for (int round = 0; round < 40; round++) {
+      for (int step = 0; step < 5000; step++) {
+        int op = random.nextInt(10);
+        if (op < 4 || alive.isEmpty()) {
+          Object key = new Object();
+          alive.add(key);
+          held.put(key, step);
+          assertEquals(null, weak.put(key, step));
+        } else if (op < 6) {
+          // Let one go: nothing holds it any more.
+          Object key = alive.remove(random.nextInt(alive.size()));
+          held.remove(key);
+        } else if (op < 7) {
+          Object key = alive.get(random.nextInt(alive.size()));
+          assertEquals(held.remove(key), weak.remove(key));
+          alive.remove(key);
+        } else {
+          Object key = alive.get(random.nextInt(alive.size()));
+          assertEquals(held.get(key), weak.get(key), "round " + round + " step " + step);
+        }
+      }
+      if (round % 4 == 0) {
+        System.gc();
+        Thread.sleep(5);
+      }
+    }
+    for (Object key : alive) {
+      assertEquals(held.get(key), weak.get(key));
+    }
+  }
 }

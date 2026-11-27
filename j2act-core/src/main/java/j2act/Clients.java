@@ -259,7 +259,7 @@ final class Clients {
     live.values().removeIf(scope -> scope.disposed);
     Scope scope = new Scope(tab, owner, owner.address + "/action:" + key);
     scope.detached = true;
-    owner.actionScopes.put(key, scope);
+    owner.actionScopesToWrite().put(key, scope);
     live.put(scope.anchor, scope);
     scope.bind(component);
     return tab.renderDetached(scope);

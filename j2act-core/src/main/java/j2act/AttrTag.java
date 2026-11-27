@@ -132,7 +132,7 @@ final class AttrTag extends CutTag {
         tag.attributes.put(name, was);
       }
       if (baselineRemoved.contains(name)) {
-        tag.removed.add(name);
+        tag.removedToWrite().add(name);
       } else {
         tag.removed.remove(name);
       }
