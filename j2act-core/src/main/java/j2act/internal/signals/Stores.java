@@ -2417,6 +2417,12 @@ public final class Stores {
     if (visited.put(src, Boolean.TRUE) != null) {
       return;
     }
+    if (!subscribe && src == t.walkedFrom && !t.ch) {
+      // A hand-out's walk went through this very object before, and nothing below it was an object: its fields are
+      // the same, as a write gives a record a new object, so there is nothing to wrap.
+      return;
+    }
+    boolean leaf = true;
     if (subscribe) {
       rt.core.read(getDeepNode(t));
       // A chained backing changes without this store's nodes moving: witness the inner store too.
@@ -2431,6 +2437,7 @@ public final class Stores {
       if (child == null || !shape.isObject(child)) {
         continue;
       }
+      leaf = false;
       if (t.ch && shape.targetOf(child) == null) {
         child = resolveChainedRaw(t, key, child);
       }
@@ -2448,6 +2455,9 @@ public final class Stores {
       if (ct != null) {
         walkDeep(ct, visited, subscribe);
       }
+    }
+    if (!subscribe) {
+      t.walkedFrom = leaf ? src : null;
     }
   }
 
@@ -2499,13 +2509,30 @@ public final class Stores {
     if (t0 == null || !same(t0.px, value) || snapshots == null) {
       return NOT_FINE;
     }
+    if (t0.handed != null && !t0.ch && t0.pb == null) {
+      // A record with nothing below it, handed out from this very object before: the same object again, as the walk
+      // and the snapshot would give it, without them.
+      if (t0.fam != null) {
+        pullFamily(t0);
+      }
+      if (t0.handedFrom == snapshotBacking(t0) && t0.handedFrom == enumerationSource(t0)) {
+        return t0.handed;
+      }
+    }
     rt.core.untrack(() -> {
       walkDeep(t0, shape.identityMap(), false);
       return null;
     });
     SnapshotRun run = new SnapshotRun(true);
     Object result = rt.core.untrack(() -> snapshotWalk(value, run, t0.fam));
-    return run.cycle || run.coarse ? NOT_FINE : result;
+    if (run.cycle || run.coarse) {
+      return NOT_FINE;
+    }
+    Object backing = snapshotBacking(t0);
+    boolean leaf = t0.walkedFrom != null && t0.walkedFrom == backing;
+    t0.handedFrom = leaf ? backing : null;
+    t0.handed = leaf ? result : null;
+    return result;
   }
 
   /** What handOut answers when a reader has to read deep. */
@@ -2591,6 +2618,10 @@ public final class Stores {
     if (kept != null) {
       // The record did not change since the last snapshot: it is that snapshot's object if nothing below it did.
       seen.put(src, keptBuilt);
+      if (kept.length == 2) {
+        // Nothing below it was an object, and its own object is the same: a write gives a record a new one.
+        return keptBuilt;
+      }
       int i = 2;
       boolean same = true;
       for (Object key : shape.keys(src)) {

@@ -157,6 +157,8 @@ public final class Tab {
    * one in a cluster, as has a browser's; null without one.
    */
   volatile SharedHub cluster;
+  /** Counts patches sent, so a walk after one knows what that one did not carry (Scope.notCarriedIn). */
+  long patchStamp;
   /** Counts renders begun, for what the walks after a patch may pass over (Scope.touched). */
   long stamps;
   /** Slots of region scopes made as if a node of a region were running, by that node (Scope's region constructor). */
@@ -1286,6 +1288,7 @@ public final class Tab {
         for (Scope s = scope.parent; s != null; s = s.parent) {
           s.sent = null;
         }
+        patchStamp++;
         if (scope.instance instanceof AttrTag) {
           // An attribute region: only the attributes it sets (ADR 0036).
           send(Json.object("type", "attrs", "anchor", scope.anchor, "values", scope.html));
@@ -1333,8 +1336,9 @@ public final class Tab {
       return html;
     }
     int at;
-    if (scope.html.equals(scope.onPage) && !scope.html.contains("data-j2-controlled=\"")
+    if (scope.html.equals(scope.onPage()) && !scope.html.contains("data-j2-controlled=\"")
       && !scope.placedInert && keptWhereItStands(scope) && (at = html.indexOf(scope.html)) >= 0) {
+      scope.notCarriedIn = scope.tab.patchStamp;
       return html.substring(0, at) + "<!--j2=" + scope.anchor + "-->" + html.substring(at + scope.html.length());
     }
     for (Scope child : scope.children.values()) {
@@ -1350,24 +1354,32 @@ public final class Tab {
    */
   private static void pageGot(Scope scope) {
     if (scope.parent == null || scope.placed) {
-      // What is around it on the page now holds this in place of what it had, when that can be told exactly.
-      String was = scope.onPage;
-      String now = scope.html;
-      for (Scope s = scope.parent; s != null; s = s.parent) {
-        String around = s.onPage;
-        int at = was == null || around == null || scope.instance instanceof AttrTag ? -1 : around.indexOf(was);
-        if (at < 0 || around.indexOf(was, at + 1) >= 0) {
-          for (Scope up = s; up != null; up = up.parent) {
-            up.onPage = null;
-          }
-          break;
+      // What is around it on the page now holds this in place of what it had, when that can be told exactly: owed to
+      // each scope around it, which puts it in when it is read.
+      String was = scope.onPage();
+      if (was == null || scope.instance instanceof AttrTag) {
+        for (Scope up = scope.parent; up != null; up = up.parent) {
+          up.setOnPage(null);
         }
-        s.onPage = around.substring(0, at) + now + around.substring(at + was.length());
-        was = around;
-        now = s.onPage;
+      } else {
+        boolean unique = marksItself(scope, was);
+        for (Scope up = scope.parent; up != null; up = up.parent) {
+          up.owe(was, scope.html, unique);
+        }
       }
       onPage(scope, scope.html);
     }
+  }
+
+  /** Whether html begins with what marks its scope, which no other part of the page carries. */
+  private static boolean marksItself(Scope scope, String html) {
+    String mark = scope.mark();
+    if (scope.instance instanceof RegionTag) {
+      return html.startsWith(mark);
+    }
+    int end = html.indexOf('>');
+    int at = html.indexOf(mark);
+    return at >= 0 && end >= 0 && at < end;
   }
 
   /** A scope's HTML for its patch, with a stub for each scope below that the page already has. */
@@ -1386,18 +1398,19 @@ public final class Tab {
    * always patched, as the client merges typing with every answer (ADR 0034). Null when the region is not that.
    */
   private static String listOps(Scope list) {
-    if (!(list.instance instanceof RegionTag) || !list.placed || list.pageRows == null || list.onPage == null) {
+    if (!(list.instance instanceof RegionTag) || !list.placed || list.pageRows == null || list.onPage() == null) {
       return null;
     }
     // And what the page has of it is only those rows, one after another, as what it renders now must be too.
     List<String> had = new ArrayList<>(list.pageRows.size());
     for (Scope row : list.pageRows) {
-      if (row.onPage == null) {
+      String rowHad = row.onPage();
+      if (rowHad == null) {
         return null;
       }
-      had.add(row.onPage);
+      had.add(rowHad);
     }
-    if (!rowsMake(list.onPage, list.anchor, had)) {
+    if (!rowsMake(list.onPage(), list.anchor, had)) {
       return null;
     }
     List<Scope> rows = new ArrayList<>(list.children.values());
@@ -1418,6 +1431,7 @@ public final class Tab {
       now.put(rows.get(i), i);
     }
     StringBuilder ops = new StringBuilder("[");
+    List<Scope> untouched = new ArrayList<>();
     for (Scope old : list.pageRows) {
       if (!now.containsKey(old)) {
         op(ops, "r", old.anchor, null, null);
@@ -1440,11 +1454,17 @@ public final class Tab {
         if (!stay.contains(row)) {
           op(ops, "m", row.anchor, after, null);
         }
-        if (!row.html.equals(row.onPage) || row.html.contains("data-j2-controlled=\"")) {
+        if (!row.html.equals(row.onPage()) || row.html.contains("data-j2-controlled=\"")) {
           op(ops, "p", row.anchor, null, withStubs(row));
+        } else {
+          untouched.add(row);
         }
       }
       previous = row;
+    }
+    // What this patch does not carry, a row it moves at most, carries nothing below it as it was (behindThisPatch).
+    for (Scope row : untouched) {
+      row.notCarriedIn = list.tab.patchStamp;
     }
     return ops.append(']').toString();
   }
@@ -1530,14 +1550,15 @@ public final class Tab {
 
   /** A patch with this html went: what is in it, the page has once the client applied it. */
   private static void onPage(Scope scope, String html) {
-    scope.onPage = html;
+    scope.setOnPage(html);
     scope.placed = true;
     scope.pageRows = scope.instance instanceof RegionTag ? new ArrayList<>(scope.children.values()) : null;
     scope.onPageStamp = scope.stamp;
     Around around = new Around(html);
     for (Scope child : scope.children.values()) {
       if (!child.detached && around.brought(child)) {
-        if (child.onPage != child.html || child.onPageStamp != child.stamp || !child.placed) {
+        if (child.onPage() != child.html || child.onPageStamp != child.stamp || !child.placed
+            || child.holdsControlled()) {
           onPage(child, child.html);
         }
       } else {
@@ -1549,7 +1570,7 @@ public final class Tab {
   }
 
   private static void forgetOnPage(Scope scope) {
-    scope.onPage = null;
+    scope.setOnPage(null);
     scope.pageRows = null;
     scope.placed = false;
     for (Scope child : scope.children.values()) {
@@ -1565,15 +1586,17 @@ public final class Tab {
     Around marks = new Around(sent);
     Around brought = new Around(sent);
     for (Scope child : scope.children.values()) {
+      if (child.notCarriedIn == patchStamp) {
+        // Sent as a stub, or left alone in a list: the page keeps what it has of it, and of all below it.
+        continue;
+      }
       if (child.disposed || child.html == null || child.detached || !marks.contains(child.mark())) {
         continue;
       }
       if (brought.brought(child)) {
-        if (child.behindHtml != child.html || child.behindStamp != child.stamp) {
-          child.behindHtml = child.html;
-          child.behindStamp = child.stamp;
-          behindThisPatch(child, child.html, scopes, next);
-        }
+        // Always: what it finds goes into this send, and a row this patch carries whole can carry what is below it
+        // as it was, again.
+        behindThisPatch(child, child.html, scopes, next);
       } else {
         // Next, even if it already went: this patch replaced it.
         scopes.subList(next, scopes.size()).remove(child);

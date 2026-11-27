@@ -18,6 +18,13 @@ import java.util.function.BiPredicate;
 public final class StoreTarget implements Node.Host {
   /** Committed backing: the source object, shared, or an owned copy. */
   Object v;
+  /**
+   * For a record with nothing below it (j2act's hand-out, ADR 0036): the object a hand-out's walk last went through,
+   * and what a hand-out last built from it, the same for as long as the record keeps that object.
+   */
+  Object walkedFrom;
+  Object handedFrom;
+  Object handed;
   /** Pending backing for the current batch, null when settled. */
   Object pb;
   /** The committed backing is another store's view: this store is chained to it. */

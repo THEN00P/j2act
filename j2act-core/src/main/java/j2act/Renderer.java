@@ -19,7 +19,7 @@ final class Renderer {
 
   private final Tab tab;
   private final long epoch;
-  StringBuilder out = new StringBuilder(1024);
+  StringBuilder out = new StringBuilder(256);
   /** The CSP nonce for the bootstrap tags, set only when rendering the served page. */
   String nonce;
 

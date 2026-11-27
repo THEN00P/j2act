@@ -55,10 +55,27 @@ final class Scope {
    */
   long stamp;
   long onPageStamp = -1;
+  /** The patch that sent this as a stub, or left it alone as a row of a list it patched (Tab.behindThisPatch). */
+  long notCarriedIn = -1;
   private long pageHasStamp = -1;
   private String pageHasHtml;
-  long behindStamp = -1;
-  String behindHtml;
+
+  /** The HTML holdsControlled last looked at, and what it found. */
+  private String controlledIn;
+  private boolean controlled;
+
+  /**
+   * Whether its HTML holds a controlled field, which every patch carries whole, as the client merges typing with each
+   * answer (ADR 0034): a walk that passes over what the page has as it is cannot pass over this.
+   */
+  boolean holdsControlled() {
+    String now = html;
+    if (now != controlledIn) {
+      controlledIn = now;
+      controlled = now != null && now.contains("data-j2-controlled=\"");
+    }
+    return controlled;
+  }
 
   /** A render of this scope begins: it and every scope around it have changed below. */
   void touched() {
@@ -75,9 +92,62 @@ final class Scope {
   String sent;
   /**
    * What the client is known to have for this scope, from the socket patches that brought it: a patch around it
-   * sends a stub instead when this is still its html (ADR 0036). Null when in doubt.
+   * sends a stub instead when this is still its html (ADR 0036). Null when in doubt. Read with onPage(): what patches
+   * of scopes below it changed of it is owed, and put in only when it is read.
    */
-  String onPage;
+  private String onPage;
+  /** Splices owed to onPage by patches of scopes below: what the page had of one, what it has now, and if once only. */
+  private java.util.ArrayList<Object[]> owed;
+
+  String onPage() {
+    if (owed != null) {
+      String s = onPage;
+      for (Object[] splice : owed) {
+        if (s == null) {
+          break;
+        }
+        String was = (String) splice[0];
+        int at = s.indexOf(was);
+        // Once only, to be told exactly; what carries its own scope's mark near its start is there no other time.
+        if (at < 0 || splice[2] == null && s.indexOf(was, at + 1) >= 0) {
+          s = null;
+          break;
+        }
+        s = s.substring(0, at) + splice[1] + s.substring(at + was.length());
+      }
+      onPage = s;
+      owed = null;
+    }
+    return onPage;
+  }
+
+  void setOnPage(String html) {
+    onPage = html;
+    owed = null;
+  }
+
+  /**
+   * A patch of a scope below went, which put now where the page had was: owed to this one's until it is read, so a
+   * patch does not build the page's HTML again at every level above it. Put in now and then, so none piles up.
+   */
+  void owe(String was, String now, boolean unique) {
+    if (onPage == null) {
+      return;
+    }
+    if (owed == null) {
+      owed = new java.util.ArrayList<>();
+    }
+    Object[] last = owed.isEmpty() ? null : owed.get(owed.size() - 1);
+    if (last != null && last[1] == was) {
+      // The same scope's next patch, from what its last one left: one splice, from what the page had before both.
+      last[1] = now;
+      return;
+    }
+    owed.add(new Object[] {was, now, unique ? Boolean.TRUE : null});
+    if (owed.size() >= 32) {
+      onPage();
+    }
+  }
   /**
    * Whether the client has an element for this scope, from the socket patches that brought one. A patch of a scope
    * that has none, as a child's ahead of its parent's during a hold, is not applied, so it tells nothing.
@@ -742,7 +812,7 @@ final class Scope {
     Around around = new Around(what);
     for (Scope child : new ArrayList<>(children.values())) {
       if (!child.disposed && !child.detached && around.brought(child)
-          && (child.pageHasHtml != child.html || child.pageHasStamp != child.stamp)) {
+          && (child.pageHasHtml != child.html || child.pageHasStamp != child.stamp || child.holdsControlled())) {
         child.pageHas(child.html);
       }
     }
