@@ -1,7 +1,10 @@
 package j2act;
 
 import j2act.internal.regions.Regions;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -12,7 +15,8 @@ import java.util.function.Supplier;
 final class RegionTag extends CutTag {
 
   static {
-    Regions.install(content -> of(content, false), content -> of(content, true), AttrTag::of, Hoisted::new);
+    Regions.install(content -> of(content, false), (args, content) -> of(content, true, args), AttrTag::of,
+      Hoisted::new);
   }
 
   /** Where the regions a running region's supplier makes are listed, while it runs. */
@@ -34,21 +38,166 @@ final class RegionTag extends CutTag {
     return creator != null && creator.rendering ? creator.regionsMade : null;
   }
 
+  /**
+   * What the last run of what is running now made (ADR 0036): a view's or a region's. A row of each(...) whose item and
+   * captured values are the very ones it had then is that row again, as Solid's mapArray keeps a row whose item is
+   * still in the list: its node already shows what it reads, so it neither runs nor renders again. A region of the
+   * same call site, made anew, takes the one before as where its own rows come from.
+   */
+  private static final ThreadLocal<Previous> PREVIOUS = new ThreadLocal<>();
+
+  static final class Previous {
+    private final Map<Object, ArrayDeque<RegionTag>> rows = new HashMap<>();
+    private final List<RegionTag> others = new ArrayList<>();
+    private int next;
+
+    Previous(Tab tab, List<CutTag> made) {
+      for (CutTag cut : made) {
+        if (!(cut instanceof RegionTag)) {
+          continue;
+        }
+        RegionTag r = (RegionTag) cut;
+        if (r.rowArgs == null) {
+          others.add(r);
+        } else if (r.placed && r.node != null && !tab.rt.isDisposed(r.node)) {
+          rows.computeIfAbsent(new RowKey(r.site, r.rowArgs), k -> new ArrayDeque<>()).add(r);
+        }
+      }
+    }
+
+    RegionTag row(Class<?> site, Object[] args) {
+      ArrayDeque<RegionTag> same = rows.get(new RowKey(site, args));
+      return same == null ? null : same.poll();
+    }
+
+    /** The region of this call site that the last run made, in its order. */
+    RegionTag before(Class<?> site) {
+      for (int i = next; i < others.size(); i++) {
+        if (others.get(i).site == site) {
+          next = i + 1;
+          return others.get(i);
+        }
+      }
+      return null;
+    }
+  }
+
+  /** Runs body with what the last run made as where rows may come from; for a view's render. */
+  static <T> T reusing(Tab tab, List<CutTag> made, java.util.function.Supplier<T> body) {
+    Previous outer = PREVIOUS.get();
+    PREVIOUS.set(new Previous(tab, made));
+    try {
+      return body.get();
+    } finally {
+      if (outer == null) {
+        PREVIOUS.remove();
+      } else {
+        PREVIOUS.set(outer);
+      }
+    }
+  }
+
+  /** A row's call site and arguments: the same only for the very same objects, or equal values. */
+  private static final class RowKey {
+    final Class<?> site;
+    final Object[] args;
+    final int hash;
+
+    RowKey(Class<?> site, Object[] args) {
+      this.site = site;
+      this.args = args;
+      int h = site.hashCode();
+      for (Object arg : args) {
+        h = h * 31 + (valueLike(arg) ? arg.hashCode() : System.identityHashCode(arg));
+      }
+      this.hash = h;
+    }
+
+    @Override public int hashCode() {
+      return hash;
+    }
+
+    @Override public boolean equals(Object other) {
+      if (!(other instanceof RowKey) || ((RowKey) other).site != site || ((RowKey) other).args.length != args.length) {
+        return false;
+      }
+      Object[] theirs = ((RowKey) other).args;
+      for (int i = 0; i < args.length; i++) {
+        Object a = args[i];
+        Object b = theirs[i];
+        if (a != b && !(valueLike(a) && a.equals(b))) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    /** Values that stand for themselves: a boxed primitive, a string or an enum, never an object a row reads. */
+    private static boolean valueLike(Object o) {
+      return o instanceof String || o instanceof Number || o instanceof Boolean || o instanceof Character
+        || o instanceof Enum;
+    }
+  }
+
+  /**
+   * For a row kept in this run: how to make it anew, should it be placed anywhere but the scope that shows it, as an
+   * unkeyed row that moved, which a row of another item now holds (Renderer.place).
+   */
+  Supplier<RegionTag> again;
+  /** The scope that shows its node. */
+  Scope shownIn;
+  /** The content last found to fit between its markers, and the elements open there then (Renderer.fits). */
+  Object fitContent;
+  j2act.internal.html.Nesting.Open fitAt;
+
+  /** The call site of its supplier, and for a row of each(...) what its row was given. */
+  private Class<?> site;
+  private Object[] rowArgs;
+  /** Until its first run: the region of its call site the last run made, whose rows its own may be. */
+  private RegionTag before;
+
   /** row: it stays a region even when it read nothing, as a row of a list does. */
   static DomContent of(Supplier<? extends DomContent> content, boolean row) {
+    return of(content, row, null);
+  }
+
+  /** A row of each(...) and what it was given, which keeps it when the list runs again (ADR 0036). */
+  static DomContent of(Supplier<? extends DomContent> content, boolean row, Object[] args) {
     Scope creator = Tracking.scope();
     Tab tab = Tab.current();
     List<CutTag> into = listFor(creator);
     if (tab == null || into == null) {
       return content.get();
     }
+    Previous previous = PREVIOUS.get();
+    if (args != null && previous != null) {
+      RegionTag same = previous.row(content.getClass(), args);
+      if (same != null) {
+        // The same item, the same values: the row it was, which shows what it reads already.
+        into.add(same);
+        // A row never folds, so what it makes anew is a region too.
+        same.again = () -> (RegionTag) make(tab, creator, into, content, true, args, null);
+        return same;
+      }
+    }
+    return make(tab, creator, into, content, row, args, previous);
+  }
+
+  private static DomContent make(Tab tab, Scope creator, List<CutTag> into, Supplier<? extends DomContent> content,
+      boolean row, Object[] args, Previous previous) {
     RegionTag region = new RegionTag(tab, creator);
+    region.site = content.getClass();
+    region.rowArgs = args;
+    region.before = previous == null ? null : previous.before(region.site);
     region.start(() -> {
+      List<CutTag> was = new ArrayList<>(region.made.isEmpty() && region.before != null ? region.before.made
+        : region.made);
+      region.before = null;
       dropUnplaced(tab, region.made);
       List<CutTag> outer = IN_REGION.get();
       IN_REGION.set(region.made);
       try {
-        return content.get();
+        return reusing(tab, was, content);
       } finally {
         if (outer == null) {
           IN_REGION.remove();

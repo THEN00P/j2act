@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 public final class Regions {
 
   private static volatile Function<Supplier<? extends DomContent>, DomContent> factory;
-  private static volatile Function<Supplier<? extends DomContent>, DomContent> rows;
+  private static volatile BiFunction<Object[], Supplier<? extends DomContent>, DomContent> rows;
   private static volatile Attribute attributes;
   private static volatile Function<DomContent, DomContent> hoists;
 
@@ -37,7 +37,8 @@ public final class Regions {
 
   /** Called once by the engine. */
   public static void install(Function<Supplier<? extends DomContent>, DomContent> make,
-      Function<Supplier<? extends DomContent>, DomContent> row, Attribute attribute, Function<DomContent, DomContent> hoist) {
+      BiFunction<Object[], Supplier<? extends DomContent>, DomContent> row, Attribute attribute,
+      Function<DomContent, DomContent> hoist) {
     factory = make;
     rows = row;
     attributes = attribute;
@@ -57,7 +58,16 @@ public final class Regions {
    * reads nothing, so that a list of rows changes by moving, inserting and removing them, not by sending them all.
    */
   public static DomContent row(Supplier<? extends DomContent> content) {
-    return rows.apply(content);
+    return rows.apply(null, content);
+  }
+
+  /**
+   * A row of each(...), with what its row was given: the item, and what the row's lambda captured. When the list runs
+   * again and gives a row the very same, that row is kept as it is, as Solid's mapArray keeps a row whose item is
+   * still in the list, and neither runs nor renders again.
+   */
+  public static DomContent row(Object[] args, Supplier<? extends DomContent> content) {
+    return rows.apply(args, content);
   }
 
   /**

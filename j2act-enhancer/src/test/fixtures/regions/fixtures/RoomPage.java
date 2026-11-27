@@ -10,6 +10,7 @@ import j2act.View;
 /** The chat demo's page: a row per line, with a delete button on the reader's own lines. */
 public final class RoomPage extends LiveComponent {
   public static int views;
+  public static int rows;
 
   @Override protected View setup() {
     Room room = useSharedStore(Room.class, "room");
@@ -22,10 +23,13 @@ public final class RoomPage extends LiveComponent {
       head(title("room")),
       body(
         p(count + " lines"),
-        div(each(room.lines(), line -> div(
-          span(line.getAuthor() + ": " + line.getText()),
-          name.equals(line.getAuthor()) ? button("delete " + line.getId()).onClick(e -> room.dropOldest()) : null
-        ).withKey(line.getId()))).withId("lines")));
+        div(each(room.lines(), line -> {
+          rows++;
+          return div(
+            span(line.getAuthor() + ": " + line.getText()),
+            name.equals(line.getAuthor()) ? button("delete " + line.getId()).onClick(e -> room.dropOldest()) : null
+          ).withKey(line.getId());
+        })).withId("lines")));
     };
   }
 }

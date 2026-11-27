@@ -337,6 +337,9 @@ class EnhancedAppTest {
           }
         }
         assertEquals(0, kept, kept + " of the first round's " + firstRows.size() + " regions are still held");
+        // A line's row runs when it comes, and is kept while its line is in the room (ADR 0036): not once per change.
+        int rows = page.getField("rows").getInt(null);
+        assertTrue(rows <= 2 * n, rows + " row runs for " + n + " lines");
         String what = "owners, records, reads after 100 lines and after 200: " + Arrays.toString(sizes[0]) + " "
           + Arrays.toString(sizes[1]);
         assertTrue(sizes[1][0] <= sizes[0][0] + 4, what);

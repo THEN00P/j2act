@@ -1388,27 +1388,25 @@ public final class Tab {
       return null;
     }
     // And what the page has of it is only those rows, one after another, as what it renders now must be too.
-    StringBuilder had = new StringBuilder("<!--j2:").append(list.anchor).append("-->");
+    List<String> had = new ArrayList<>(list.pageRows.size());
     for (Scope row : list.pageRows) {
       if (row.onPage == null) {
         return null;
       }
-      had.append(row.onPage);
+      had.add(row.onPage);
     }
-    had.append("<!--/j2:").append(list.anchor).append("-->");
-    if (!had.toString().equals(list.onPage)) {
+    if (!rowsMake(list.onPage, list.anchor, had)) {
       return null;
     }
     List<Scope> rows = new ArrayList<>(list.children.values());
-    StringBuilder whole = new StringBuilder("<!--j2:").append(list.anchor).append("-->");
+    List<String> whole = new ArrayList<>(rows.size());
     for (Scope row : rows) {
       if (!(row.instance instanceof RegionTag) || row.html == null || row.disposed || row.detached) {
         return null;
       }
-      whole.append(row.html);
+      whole.add(row.html);
     }
-    whole.append("<!--/j2:").append(list.anchor).append("-->");
-    if (!whole.toString().equals(list.html)) {
+    if (!rowsMake(list.html, list.anchor, whole)) {
       return null;
     }
     java.util.Set<Scope> before = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
@@ -1447,6 +1445,33 @@ public final class Tab {
       previous = row;
     }
     return ops.append(']').toString();
+  }
+
+  /**
+   * Whether html is exactly the region's markers around these rows, one after another: compared where they stand, not
+   * by building the list's HTML again for every patch of it.
+   */
+  private static boolean rowsMake(String html, String anchor, List<String> rows) {
+    if (html == null) {
+      return false;
+    }
+    String open = "<!--j2:" + anchor + "-->";
+    String close = "<!--/j2:" + anchor + "-->";
+    int length = open.length() + close.length();
+    for (String row : rows) {
+      length += row.length();
+    }
+    if (html.length() != length || !html.startsWith(open) || !html.endsWith(close)) {
+      return false;
+    }
+    int at = open.length();
+    for (String row : rows) {
+      if (!html.regionMatches(at, row, 0, row.length())) {
+        return false;
+      }
+      at += row.length();
+    }
+    return true;
   }
 
   private static void op(StringBuilder ops, String kind, String anchor, String after, String html) {

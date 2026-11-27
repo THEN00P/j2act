@@ -46,6 +46,8 @@ final class Scope {
   private boolean htmlBeforeEmbedded;
   /** What the last pass of the first half gave. */
   String rendered;
+  /** For a region's scope: the content its last pass rendered, all of it (Renderer.kept). */
+  Object renderedContent;
   /** What the last pass of the second half showed. */
   String html;
   /** What a parent's pass carried inside its own patch, so this scope has no patch of its own to send. */
@@ -363,6 +365,10 @@ final class Scope {
       // No setup and no primitives: a later description only brings what the view's new run made.
       CutTag cut = (CutTag) component;
       cut.placed = true;
+      if (cut instanceof RegionTag) {
+        // Whichever of its objects comes, its node is this scope's from now on.
+        ((RegionTag) cut).shownIn = this;
+      }
       if (instance == null) {
         instance = component;
         component.scope = this;

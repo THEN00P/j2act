@@ -309,6 +309,18 @@ final class RegionCutter {
     MethodNode bridge = new MethodNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC,
       "j2act$row$" + n, desc, null, null);
     InsnList r = bridge.instructions;
+    // What the row was given, the item and what its lambda captured: the same again keeps the row as it is.
+    r.add(new LdcInsnNode(params.length));
+    r.add(new TypeInsnNode(Opcodes.ANEWARRAY, "java/lang/Object"));
+    slot = 0;
+    for (int i = 0; i < params.length; i++) {
+      r.add(new InsnNode(Opcodes.DUP));
+      r.add(new LdcInsnNode(i));
+      r.add(new VarInsnNode(params[i].getOpcode(Opcodes.ILOAD), slot));
+      box(r, params[i]);
+      r.add(new InsnNode(Opcodes.AASTORE));
+      slot += params[i].getSize();
+    }
     slot = 0;
     for (Type param : params) {
       r.add(new VarInsnNode(param.getOpcode(Opcodes.ILOAD), slot));
@@ -318,16 +330,34 @@ final class RegionCutter {
       METAFACTORY, Type.getType("()Ljava/lang/Object;"), new Handle(Opcodes.H_INVOKESTATIC, owner.name, body.name, desc, itf),
       Type.getType("()L" + DOM_CONTENT + ";")));
     r.add(new MethodInsnNode(Opcodes.INVOKESTATIC, REGIONS, "row",
-      "(Ljava/util/function/Supplier;)L" + DOM_CONTENT + ";", false));
+      "([Ljava/lang/Object;Ljava/util/function/Supplier;)L" + DOM_CONTENT + ";", false));
     r.add(new InsnNode(Opcodes.ARETURN));
     bridge.maxLocals = slot;
-    bridge.maxStack = slot + 1;
+    bridge.maxStack = slot + 6;
 
     lambda.bsmArgs = new Object[] {lambda.bsmArgs[0], new Handle(Opcodes.H_INVOKESTATIC, owner.name, bridge.name, desc, itf),
       Type.getMethodType(Type.getObjectType(DOM_CONTENT), instantiated.getArgumentTypes())};
     setters.add(body);
     setters.add(bridge);
     return true;
+  }
+
+  /** Boxes a primitive on the stack as the metafactory would, for an Object[] slot. */
+  private static void box(InsnList insns, Type type) {
+    String box;
+    switch (type.getSort()) {
+      case Type.BOOLEAN: box = "java/lang/Boolean"; break;
+      case Type.CHAR: box = "java/lang/Character"; break;
+      case Type.BYTE: box = "java/lang/Byte"; break;
+      case Type.SHORT: box = "java/lang/Short"; break;
+      case Type.INT: box = "java/lang/Integer"; break;
+      case Type.FLOAT: box = "java/lang/Float"; break;
+      case Type.LONG: box = "java/lang/Long"; break;
+      case Type.DOUBLE: box = "java/lang/Double"; break;
+      default: return;
+    }
+    insns.add(new MethodInsnNode(Opcodes.INVOKESTATIC, box, "valueOf",
+      "(" + type.getDescriptor() + ")L" + box + ";", false));
   }
 
   /** Classes whose with*(...) and attr(...) set attributes: core's tags and the generated ones. */

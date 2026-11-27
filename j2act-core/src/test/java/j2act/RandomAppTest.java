@@ -63,6 +63,7 @@ import org.junit.jupiter.api.Test;
  */
 class RandomAppTest {
 
+
   private static final String PLANNED = "on purpose";
   static volatile World world;
 
@@ -433,14 +434,14 @@ class RandomAppTest {
             () -> queryParam("q"), "data-q"),
           // Keyed rows, each its own region with regions on, as the enhancer leaves each(...)'s rows.
           // The rows turn and grow and shrink with n, so a list's operations move, insert and remove them.
-          T.tag("ul", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.span("[row" + me.id + "." + k + "="
-            + (shared.n.get() + k) + "]").withKey(k))))),
+          T.tag("ul", r(() -> T.each(rowsFor(shared.n.get()), k -> rr(new Object[] {me, shared, k}, () -> T.span("[row"
+            + me.id + "." + k + "=" + (shared.n.get() + k) + "]").withKey(k))))),
           // Where the parser reshapes what it reads (BrowserParse): rows in a table's tbody, SVG and the HTML inside
           // its foreignObject, and a p; and, below, rows straight in a table, which the parser puts in a tbody of its
           // own, a template's content and a pending element's, out of the document, a p holding a div, which the parser
           // closes first, also below a span, an li in an li, and a tbody straight in a table, whose markers stand.
-          T.tag("table", T.tag("tbody", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr",
-            T.tag("td", "[body" + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k)))))),
+          T.tag("table", T.tag("tbody", r(() -> T.each(rowsFor(shared.n.get()), k -> rr(new Object[] {me, shared, k},
+            () -> T.tag("tr", T.tag("td", "[body" + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k)))))),
           T.tag("svg", ra(T.tag("circle"), () -> shared.n.get(), "r"),
             r(() -> T.tag("text", "[svg" + me.id + "=" + shared.n.get() + "]")),
             T.tag("foreignObject", r(() -> T.span("[fo" + me.id + "=" + shared.n.get() + "]")))),
@@ -512,8 +513,11 @@ class RandomAppTest {
           loading(() -> r(() -> T.span("[remote=" + shared.remote.get() + "]"))).withFallback(T.span("[remote=loading]")),
           loading(() -> T.div().withId("inner" + me.id + "n" + shared.n.get()).withClient(inner)).withFallback(T.span("[inner=loading]"))));
         kids.add(r(() -> child.get() ? new Child(url) : null));
-        kids.add(T.tag("table", r(() -> T.each(rowsFor(shared.n.get()), k -> r(() -> T.tag("tr", T.tag("td", "[bare"
-          + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k))))));
+        kids.add(T.tag("table", r(() -> T.each(rowsFor(shared.n.get()), k -> rr(new Object[] {me, shared, k},
+          () -> T.tag("tr", T.tag("td", "[bare" + me.id + "." + k + "=" + (shared.n.get() + k) + "]")).withKey(k))))));
+        // Unkeyed rows, kept for their item only where they stay, as the enhancer's rows are: these shift as n turns.
+        kids.add(T.tag("ol", r(() -> T.each(rowsFor(shared.n.get()), k -> rr(new Object[] {me, shared, k},
+          () -> T.span("[at" + me.id + "." + k + "=" + (shared.n.get() + k) + "]"))))));
         kids.add(T.tag("template", r(() -> T.span("[tpl" + me.id + "=" + shared.n.get() + "]"))));
         kids.add(T.tag("iframe", r(() -> new Text("[ifr" + me.id + "=" + shared.n.get() + "]"))));
         kids.add(T.tag("noscript", r(() -> new Text("[nos" + me.id + "=" + shared.n.get() + "]"))));
@@ -1498,6 +1502,11 @@ class RandomAppTest {
 
   static DomContent r(java.util.function.Supplier<? extends DomContent> content) {
     return regions ? j2act.internal.regions.Regions.of(content) : content.get();
+  }
+
+  /** A row of each(...) as the enhancer leaves it, with what it was given: kept while the list gives it the same. */
+  static DomContent rr(Object[] args, java.util.function.Supplier<? extends DomContent> content) {
+    return regions ? j2act.internal.regions.Regions.row(args, content) : content.get();
   }
 
   /** An attribute set as the enhancer leaves it, with regions on: its value a supplier, its call a setter. */

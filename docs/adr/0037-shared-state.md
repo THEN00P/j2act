@@ -149,4 +149,4 @@ The developer's code does not change. `withCluster(Cluster.builder().self(url).d
 ## Open
 
 - Ordering across stores: a store's own write to another store, such as a channel's effect writing the guild's unread count, reaches a page in two revisions, one per store. A click is checked against both stores' published states at once, and a page's writes to both land at once.
-- A load test of a large room: messages per second, open windows and latency, with real sockets, uneven permissions and slow readers.
+- More pages per server for a busy room. `tools/chat-load.mjs` measures it over real sockets, with uneven permissions and readers that stop reading: on 16 cores, one server takes about 600 pages of a 100-message room at 100 messages a second with a p99 of about 300 ms, and two servers 360 pages at 50 a second with one of 500 ms; a reader that stops reading costs about 1 MB, and holds nobody up. Past that each page's work per change still grows with the rows it shows: its copy of the store reconciles the list, and the patch's bookkeeping walks it.

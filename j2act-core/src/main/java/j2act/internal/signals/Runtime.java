@@ -555,6 +555,12 @@ public final class Runtime {
     return owner;
   }
 
+  /** Whether nothing it read changed since it last ran: it is not waiting to run again. */
+  public boolean upToDate(Node node) {
+    return (node.flags & (Constants.REACTIVE_CHECK | Constants.REACTIVE_DIRTY | Constants.REACTIVE_IN_HEAP)) == 0
+      && (node.statusFlags & (Constants.STATUS_PENDING | Constants.STATUS_ERROR)) == 0;
+  }
+
   public boolean pending(Node node) {
     return (node.statusFlags & Constants.STATUS_PENDING) != 0;
   }
