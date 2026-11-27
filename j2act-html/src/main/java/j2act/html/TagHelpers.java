@@ -79,6 +79,18 @@ public abstract class TagHelpers {
     return new Fragment(out);
   }
 
+  /**
+   * One child per item, each row known by its item's key (ADR 0036), as most lists' items have an id: a stateful row
+   * keeps its state by that key, as withKey(...) would. In a running view the rows are a region of their own, which runs
+   * again only for a change of the list: a row whose item is the very one it had stays as it is and is not rendered
+   * again, and what came, went or moved goes to the page as that alone. A list a store holds runs nothing but that: give
+   * it the store's own list, not a copy, filtered or sorted, which is a new list each time and is compared row by row.
+   */
+  public static <T> DomContent each(Collection<T> items, Function<? super T, ?> key,
+      Function<? super T, ? extends DomContent> row) {
+    return j2act.internal.regions.Regions.keyed(items, key, row);
+  }
+
   /** Like each, with the zero-based index first. */
   public static <T> Fragment each(Collection<T> items, BiFunction<Integer, ? super T, ? extends DomContent> row) {
     List<DomContent> out = new ArrayList<>();

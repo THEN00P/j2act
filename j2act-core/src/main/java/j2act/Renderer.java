@@ -384,8 +384,6 @@ final class Renderer {
     scope.renderedEpoch = epoch;
     tab.clearDirty(scope);
     tab.handlers.begin(scope);
-    scope.previousChildren = scope.children;
-    scope.children = new java.util.LinkedHashMap<>();
     DomContent content;
     Scope previousScope = Tracking.swapScope(scope);
     try {
@@ -395,6 +393,23 @@ final class Renderer {
     }
     RegionTag region = (RegionTag) scope.instance;
     scope.renderedContent = null;
+    if (region.rows != null && content instanceof Fragment && rowsFit((Fragment) content)) {
+      renderRows(scope, (Fragment) content);
+      return;
+    }
+    if (scope.rowScopes != null) {
+      // No longer a list, or its rows cannot stand here: what it had of rows goes as any children do, and the page has
+      // them as something else.
+      scope.listFrom(null);
+      scope.pageRows = null;
+    }
+    scope.previousChildren = scope.children;
+    scope.children = new java.util.LinkedHashMap<>();
+    if (region.rows != null && content != null) {
+      // Its rows would not stay between its markers: the view that made it places them, as it does any region's.
+      tab.markDirty(region.creator);
+      content = null;
+    }
     if (!java.util.Objects.equals(keyOf(content), region.key) || !fitsHere(region, content)) {
       // Keyed by what it showed when made, as the plain build's slot would be: another key is another slot, which
       // only the view that made it can place, so that view runs again and what was here goes. And so for what the
@@ -408,6 +423,127 @@ final class Renderer {
     }
     out.append("<!--/j2:").append(scope.anchor).append("-->");
     finish(scope);
+    scope.renderedContent = content;
+  }
+
+  /** Whether every row of a list stays between its markers here: a row kept as it was is not looked into again. */
+  private boolean rowsFit(Fragment rows) {
+    for (DomContent row : rows.children) {
+      if (!fitsHere((RegionTag) row, (DomContent) ((RegionTag) row).current())) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * A list (ADR 0036, KeyedRows): its rows in its order, each the scope it was unless its row is new. What it renders
+   * is only its markers, which is all that what is around it holds of it; its rows are its scope's own (Scope.rows).
+   * A row that stays is neither rendered nor looked up again, and the children it had are changed, not made anew, so
+   * the pass does nothing for the rows that stay but see that they did.
+   */
+  private void renderRows(Scope scope, Fragment content) {
+    List<Scope> was = scope.rowScopes;
+    if (was == null) {
+      // Becoming a list: what it had are children like any, and the page has them as something else.
+      was = new ArrayList<>(scope.children.values());
+      scope.pageRows = null;
+    }
+    // Nothing swaps them: a pass that stops partway leaves the children as they are (unwind).
+    scope.previousChildren = new java.util.LinkedHashMap<>();
+    long mark = ++tab.rowMarks;
+    List<Scope> now = new ArrayList<>(content.children.size());
+    List<Scope> added = null;
+    try {
+      for (DomContent child : content.children) {
+        RegionTag row = (RegionTag) child;
+        java.util.function.Supplier<RegionTag> again = row.again;
+        row.again = null;
+        Scope s = row.shownIn;
+        if (s != null && !s.disposed && s.parent == scope && s.rowMark != mark && s.instance instanceof CutTag
+            && ((CutTag) s.instance).node == row.node && s.rowIn == scope) {
+          // Its own scope, where it was: kept as it is, or rendered again if what its node holds changed.
+          s.rowMark = mark;
+          s.placedOpen = open;
+          s.placedInert = inert;
+          if (!kept(s, row)) {
+            s.renderInParent();
+          }
+          now.add(s);
+          continue;
+        }
+        if (again != null) {
+          row = again.get();
+        }
+        String local = "/k" + row.listKey + "@" + RegionTag.class.getName();
+        String address = scope.address + local;
+        Scope at = scope.children.get(address);
+        if (at != null && at.rowMark == mark) {
+          // A key the list has twice: the second is a slot of its own.
+          tab.engine.log(System.Logger.Level.WARNING, "duplicate key " + row.listKey + " in each(items, key, row) at "
+            + scope.address + "; each item needs a key of its own (ADR 0036)", null);
+          local = local + "#dup" + now.size();
+          address = scope.address + local;
+          at = scope.children.get(address);
+        }
+        if (at == null) {
+          for (java.util.Iterator<Scope> it = scope.removing.iterator(); it.hasNext(); ) {
+            Scope going = it.next();
+            if (going.address.equals(address)) {
+              // Not placed by the last pass, but that pass has not shown yet, so it is still there.
+              at = going;
+              it.remove();
+              break;
+            }
+          }
+        }
+        if (at == null || at.disposed) {
+          at = new Scope(tab, scope, address, row);
+          if (added == null) {
+            added = new ArrayList<>();
+          }
+          added.add(at);
+        }
+        at.localPath = local;
+        at.bind(row);
+        scope.children.put(address, at);
+        at.rowIn = scope;
+        at.rowMark = mark;
+        at.placedOpen = open;
+        at.placedInert = inert;
+        if (!kept(at, row)) {
+          at.renderInParent();
+        }
+        now.add(at);
+      }
+    } catch (RuntimeException | Error e) {
+      // A row stopped this pass: the list stays as it was, and the scopes made for it go as unplaced children do.
+      if (added != null) {
+        for (Scope s : added) {
+          if (scope.children.get(s.address) == s) {
+            scope.children.remove(s.address);
+            scope.removing.add(s);
+          }
+          s.rowIn = null;
+        }
+      }
+      throw e;
+    }
+    for (Scope old : was) {
+      if (old.rowMark != mark && old.rowIn == scope) {
+        scope.children.remove(old.address);
+        scope.removing.add(old);
+        old.rowIn = null;
+      } else if (old.rowMark != mark && scope.children.get(old.address) == old) {
+        // A child it had before it was a list.
+        scope.children.remove(old.address);
+        scope.removing.add(old);
+      }
+    }
+    scope.listFrom(now);
+    out.append("<!--j2:").append(scope.anchor).append("--><!--/j2:").append(scope.anchor).append("-->");
+    tab.handlers.end(scope);
+    scope.codeEpoch = tab.engine.codeEpoch;
     scope.renderedContent = content;
   }
 

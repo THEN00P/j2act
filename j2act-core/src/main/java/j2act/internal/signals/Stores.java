@@ -1931,7 +1931,9 @@ public final class Stores {
           bumpDeep(t);
         }
         int structStart = i;
-        Map<Object, java.util.ArrayDeque<Integer>> prevByKey = null;
+        // The previous rows' places by key, from the first misalignment on: a key's one place, or its places in order
+        // when it has more than one, which Solid's map of arrays holds; one entry per key, as most keys are unique.
+        Map<Object, Object> prevByKey = null;
         for (; i < nlen; i++) {
           Object nv = shape.get(incoming, i);
           if (nv != null && shape.isObject(nv)) {
@@ -1939,21 +1941,36 @@ public final class Stores {
             Object pv = null;
             if (nk != null) {
               if (prevByKey == null) {
-                prevByKey = new java.util.HashMap<>();
+                prevByKey = new java.util.HashMap<>(Math.max(16, (plen - structStart) * 4 / 3 + 1));
                 for (int j = structStart; j < plen; j++) {
                   Object p = unwrapValue(shape.get(prevView, j));
                   if (p != null && shape.isObject(p)) {
                     Object pk = keyFn.apply(p);
                     if (pk != null) {
-                      prevByKey.computeIfAbsent(pk, x -> new java.util.ArrayDeque<>()).add(j);
+                      Object had = prevByKey.putIfAbsent(pk, j);
+                      if (had instanceof Integer) {
+                        java.util.ArrayDeque<Integer> places = new java.util.ArrayDeque<>(4);
+                        places.add((Integer) had);
+                        places.add(j);
+                        prevByKey.put(pk, places);
+                      } else if (had != null) {
+                        @SuppressWarnings("unchecked")
+                        java.util.ArrayDeque<Integer> places = (java.util.ArrayDeque<Integer>) had;
+                        places.add(j);
+                      }
                     }
                   }
                 }
               }
-              java.util.ArrayDeque<Integer> m = prevByKey.get(nk);
-              if (m != null) {
-                pv = unwrapValue(shape.get(prevView, m.poll()));
-                if (m.isEmpty()) {
+              Object m = prevByKey.get(nk);
+              if (m instanceof Integer) {
+                pv = unwrapValue(shape.get(prevView, (Integer) m));
+                prevByKey.remove(nk);
+              } else if (m != null) {
+                @SuppressWarnings("unchecked")
+                java.util.ArrayDeque<Integer> places = (java.util.ArrayDeque<Integer>) m;
+                pv = unwrapValue(shape.get(prevView, places.poll()));
+                if (places.isEmpty()) {
                   prevByKey.remove(nk);
                 }
               }
@@ -2040,7 +2057,8 @@ public final class Stores {
     StoreFamily fam = t.fam;
     nv = unwrapValue(nv);
     StoreTarget ct = lookupTarget(pv, fam);
-    StoreTarget nt = lookupTarget(nv, fam);
+    // The very object, as a row that only moved is: one lookup answers both.
+    StoreTarget nt = nv == pv ? ct : lookupTarget(nv, fam);
     if (ct != null && !sameKey(ct.pk, k)) {
       // A row that is still at its own slot of the committed frame is not this slot's.
       if (same(shape.get(t.v, ct.pk), ct.v)) {

@@ -369,6 +369,9 @@ final class Checks {
     }
     String where;
     if (call.name.equals("each") && scope.isOwnedBy(scope.candidates(call), TAG_HELPERS)) {
+      if (call.args.size() == 3) {
+        return; // each(items, key, row): every row is keyed by its item's key.
+      }
       where = "each()";
     } else if (call.name.equals("map") && call.receiver != null && call.args.size() == 1
         && scope.isType(scope.typeOf(call.receiver), STREAM)) {

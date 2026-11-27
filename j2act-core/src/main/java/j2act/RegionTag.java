@@ -16,7 +16,7 @@ final class RegionTag extends CutTag {
 
   static {
     Regions.install(content -> of(content, false), (args, content) -> of(content, true, args), AttrTag::of,
-      Hoisted::new);
+      Hoisted::new, KeyedRows::of);
   }
 
   /** Where the regions a running region's supplier makes are listed, while it runs. */
@@ -150,6 +150,11 @@ final class RegionTag extends CutTag {
   Object fitContent;
   j2act.internal.html.Nesting.Open fitAt;
 
+  /** For each(items, key, row): the rows it keeps by key, which make it a list (ADR 0036). */
+  KeyedRows rows;
+  /** For a row of each(items, key, row): its item's key, which its scope's slot is. */
+  Object listKey;
+
   /** The call site of its supplier, and for a row of each(...) what its row was given. */
   private Class<?> site;
   private Object[] rowArgs;
@@ -181,6 +186,55 @@ final class RegionTag extends CutTag {
       }
     }
     return make(tab, creator, into, content, row, args, previous);
+  }
+
+  /**
+   * each(items, key, row) in a running view (ADR 0036): a region that never folds, whose node runs the list alone. Made
+   * anew by a new run of the view, it starts from the rows of the one its call site made then.
+   */
+  static DomContent keyed(Tab tab, Scope creator, List<CutTag> into, java.util.Collection<?> items,
+      java.util.function.Function<Object, Object> key, java.util.function.Function<Object, DomContent> row) {
+    Previous previous = PREVIOUS.get();
+    RegionTag region = new RegionTag(tab, creator);
+    region.site = row.getClass();
+    region.before = previous == null ? null : previous.before(region.site);
+    KeyedRows rows = region.before != null && region.before.rows != null ? new KeyedRows(region.before.rows)
+      : new KeyedRows();
+    rows.items = items;
+    rows.key = key;
+    rows.row = row;
+    region.rows = rows;
+    region.start(() -> {
+      // Only a new row function can give a row it had anew, through the enhancer's bridge: the rows it had are where
+      // such a row comes from (Previous). The same function's rows are found by their item.
+      List<CutTag> was = rows.sameRow() ? null
+        : new ArrayList<>(region.made.isEmpty() && region.before != null ? region.before.made : region.made);
+      region.before = null;
+      dropUnplaced(tab, region.made);
+      List<CutTag> outer = IN_REGION.get();
+      Previous outerPrevious = PREVIOUS.get();
+      IN_REGION.set(region.made);
+      if (was == null) {
+        PREVIOUS.remove();
+      } else {
+        PREVIOUS.set(new Previous(tab, was));
+      }
+      try {
+        return rows.run(tab, region.made);
+      } finally {
+        if (outer == null) {
+          IN_REGION.remove();
+        } else {
+          IN_REGION.set(outer);
+        }
+        if (outerPrevious == null) {
+          PREVIOUS.remove();
+        } else {
+          PREVIOUS.set(outerPrevious);
+        }
+      }
+    }, into);
+    return region;
   }
 
   private static DomContent make(Tab tab, Scope creator, List<CutTag> into, Supplier<? extends DomContent> content,
@@ -235,6 +289,7 @@ final class RegionTag extends CutTag {
   /** The view ran again and made `newer` where this one is shown: from now on its node's regions are listed here. */
   void adopt(RegionTag newer) {
     made = newer.made;
+    rows = newer.rows;
   }
 
   /** Whether a component is placed anywhere in this content, which folding it would move to another scope. */

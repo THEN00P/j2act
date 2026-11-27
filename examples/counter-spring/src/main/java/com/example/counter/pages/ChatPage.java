@@ -3,6 +3,7 @@ package com.example.counter.pages;
 import static j2act.Reactive.*;
 import static j2act.html.TagCreator.*;
 
+import com.example.counter.chat.ChatMessage;
 import com.example.counter.chat.ChatRoom;
 import j2act.LiveComponent;
 import j2act.View;
@@ -21,11 +22,12 @@ public class ChatPage extends LiveComponent {
       head(title("Chat " + pathParam("room") + " · j2act")),
       body(
         h1("Room " + pathParam("room")),
-        div(each(room.messages(), message -> div(
+        // Kept by id: a post makes its row alone, and a delete removes one, the other rows untouched (ADR 0036).
+        div(each(room.messages(), ChatMessage::getId, message -> div(
           span(message.getAuthor() + ": " + message.getText()),
           name.equals("admin") || name.equals(message.getAuthor())
             ? button("delete " + message.getId()).onClick(e -> room.delete(message.getId())) : null
-        ).withKey(message.getId()))).withId("messages"),
+        ))).withId("messages"),
         input().withId("say").withPlaceholder("Say something as " + name)
           .onChange(e -> room.post(name, e.value()))
       )

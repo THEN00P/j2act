@@ -159,6 +159,8 @@ public final class Tab {
   volatile SharedHub cluster;
   /** Counts patches sent, so a walk after one knows what that one did not carry (Scope.notCarriedIn). */
   long patchStamp;
+  /** Counts list passes and list operations, which mark the rows they looked at (Scope.rowMark, Scope.opsNow). */
+  long rowMarks;
   /** Counts renders begun, for what the walks after a patch may pass over (Scope.touched). */
   long stamps;
   /** Slots of region scopes made as if a node of a region were running, by that node (Scope's region constructor). */
@@ -1086,7 +1088,7 @@ public final class Tab {
       return null;
     }
     lastHead = mergedHead();
-    return "<!DOCTYPE html>" + root.rendered;
+    return "<!DOCTYPE html>" + whole(root, root.rendered, true);
   }
 
   /**
@@ -1262,12 +1264,17 @@ public final class Tab {
         scope.pageHas(scope.html);
         continue;
       }
+      if (scope.isList() && scope.rowsOnPage()) {
+        // What is around it carried its rows as they are: nothing is left for its own patch to say.
+        scope.pageHas(scope.html);
+        continue;
+      }
       if (connection == null) {
         if (scope != root) {
           if (scope.instance instanceof AttrTag) {
             stream.patchAttributes(scope.anchor, scope.html);
           } else {
-            stream.patch(scope.anchor, scope.html);
+            stream.patch(scope.anchor, whole(scope, scope.html, false));
           }
           scope.pageHas(scope.html);
           pageGot(scope);
@@ -1336,7 +1343,22 @@ public final class Tab {
       return html;
     }
     int at;
-    if (scope.html.equals(scope.onPage()) && !scope.html.contains("data-j2-controlled=\"")
+    if (scope.isList()) {
+      // What is around it holds its markers: a stub, when the page has its rows as they are, or its rows, each a stub
+      // where the page has it.
+      if ((at = html.indexOf(scope.html)) < 0) {
+        return html;
+      }
+      String rows;
+      if (scope.rowsOnPage() && !scope.holdsControlled() && !scope.placedInert) {
+        scope.notCarriedIn = scope.tab.patchStamp;
+        rows = "<!--j2=" + scope.anchor + "-->";
+      } else {
+        rows = rowsWithStubs(scope);
+      }
+      return html.substring(0, at) + rows + html.substring(at + scope.html.length());
+    }
+    if (scope.html.equals(scope.onPage()) && !scope.holdsControlled()
       && !scope.placedInert && keptWhereItStands(scope) && (at = html.indexOf(scope.html)) >= 0) {
       scope.notCarriedIn = scope.tab.patchStamp;
       return html.substring(0, at) + "<!--j2=" + scope.anchor + "-->" + html.substring(at + scope.html.length());
@@ -1356,14 +1378,18 @@ public final class Tab {
     if (scope.parent == null || scope.placed) {
       // What is around it on the page now holds this in place of what it had, when that can be told exactly: owed to
       // each scope around it, which puts it in when it is read.
+      // Up to a list, whose HTML holds only its markers: what it holds of a row is the row's own (ADR 0036). A list's
+      // own patch changes nothing of what is around it.
       String was = scope.onPage();
-      if (was == null || scope.instance instanceof AttrTag) {
-        for (Scope up = scope.parent; up != null; up = up.parent) {
+      if (scope.isList()) {
+        // Nothing around it changes.
+      } else if (was == null || scope.instance instanceof AttrTag) {
+        for (Scope up = scope.parent; up != null && !up.isList(); up = up.parent) {
           up.setOnPage(null);
         }
       } else {
         boolean unique = marksItself(scope, was);
-        for (Scope up = scope.parent; up != null; up = up.parent) {
+        for (Scope up = scope.parent; up != null && !up.isList(); up = up.parent) {
           up.owe(was, scope.html, unique);
         }
       }
@@ -1384,9 +1410,62 @@ public final class Tab {
 
   /** A scope's HTML for its patch, with a stub for each scope below that the page already has. */
   private static String withStubs(Scope scope) {
+    if (scope.isList()) {
+      return rowsWithStubs(scope);
+    }
     String html = scope.html;
     for (Scope child : scope.children.values()) {
       html = stubbed(child, html);
+    }
+    return html;
+  }
+
+  /** A list's markers around its rows, each a stub where the page has it as it is (ADR 0036). */
+  private static String rowsWithStubs(Scope list) {
+    StringBuilder out = new StringBuilder(list.html.length() + 64 * list.rowScopes.size());
+    out.append("<!--j2:").append(list.anchor).append("-->");
+    for (Scope row : list.rowScopes) {
+      if (row.html != null && !row.detached) {
+        out.append(stubbed(row, row.html));
+      }
+    }
+    return out.append("<!--/j2:").append(list.anchor).append("-->").toString();
+  }
+
+  /**
+   * A scope's HTML whole, as the page gets it where it has none of it: each list below with its rows, which the HTML of
+   * what is around a list holds only the markers of (ADR 0036). rendered: from what the scopes rendered, not what
+   * they showed, as the served page is.
+   */
+  static String whole(Scope scope, String html, boolean rendered) {
+    if (scope.isList()) {
+      StringBuilder out = new StringBuilder(64 * scope.rowScopes.size() + 32);
+      out.append("<!--j2:").append(scope.anchor).append("-->");
+      for (Scope row : scope.rowScopes) {
+        String part = rendered ? row.rendered : row.html;
+        if (part != null && !row.detached) {
+          out.append(whole(row, part, rendered));
+        }
+      }
+      return out.append("<!--/j2:").append(scope.anchor).append("-->").toString();
+    }
+    if (scope.listsWithin == 0 || html == null) {
+      return html;
+    }
+    for (Scope child : scope.children.values()) {
+      if (child.detached) {
+        continue;
+      }
+      if (child.isList()) {
+        // Its markers stand in what is around it as it rendered them, whichever pass of what is between brought them.
+        String markers = "<!--j2:" + child.anchor + "--><!--/j2:" + child.anchor + "-->";
+        int at = html.indexOf(markers);
+        if (at >= 0) {
+          html = html.substring(0, at) + whole(child, markers, rendered) + html.substring(at + markers.length());
+        }
+      } else if (child.listsWithin > 0) {
+        html = whole(child, html, rendered);
+      }
     }
     return html;
   }
@@ -1398,6 +1477,9 @@ public final class Tab {
    * always patched, as the client merges typing with every answer (ADR 0034). Null when the region is not that.
    */
   private static String listOps(Scope list) {
+    if (list.isList()) {
+      return keyedOps(list);
+    }
     if (!(list.instance instanceof RegionTag) || !list.placed || list.pageRows == null || list.onPage() == null) {
       return null;
     }
@@ -1467,6 +1549,107 @@ public final class Tab {
       row.notCarriedIn = list.tab.patchStamp;
     }
     return ops.append(']').toString();
+  }
+
+  /**
+   * A list's operations (ADR 0036, KeyedRows): as listOps, from the rows the page has to the rows it has now, which it
+   * knows without looking at any HTML. A row that stays and did not change is not touched, nor compared but by identity.
+   * Null when the page's rows of it are not known.
+   */
+  private static String keyedOps(Scope list) {
+    List<Scope> had = list.pageRows;
+    if (!list.placed || had == null) {
+      return null;
+    }
+    for (Scope row : had) {
+      if (row.onPage() == null) {
+        return null;
+      }
+    }
+    List<Scope> rows = list.rowScopes;
+    long mark = ++list.tab.rowMarks;
+    for (int i = 0; i < rows.size(); i++) {
+      Scope row = rows.get(i);
+      if (row.html == null || row.disposed || row.detached) {
+        return null;
+      }
+      row.opsAt = i;
+      row.opsNow = mark;
+    }
+    StringBuilder ops = new StringBuilder("[");
+    int keptCount = 0;
+    for (Scope old : had) {
+      old.opsWas = mark;
+      if (old.opsNow != mark) {
+        op(ops, "r", old.anchor, null, null);
+      } else {
+        keptCount++;
+      }
+    }
+    // The rows that stay where they are: the longest run of kept rows whose new places rise in their old order.
+    int[] places = new int[keptCount];
+    Scope[] kept = new Scope[keptCount];
+    int k = 0;
+    for (Scope old : had) {
+      if (old.opsNow == mark) {
+        kept[k] = old;
+        places[k++] = old.opsAt;
+      }
+    }
+    for (int i : longestRising(places)) {
+      kept[i].opsStay = mark;
+    }
+    Scope previous = null;
+    long patch = list.tab.patchStamp;
+    for (Scope row : rows) {
+      String after = previous == null ? null : previous.anchor;
+      if (row.opsWas != mark) {
+        op(ops, "i", row.anchor, after, whole(row, row.html, false));
+      } else {
+        if (row.opsStay != mark) {
+          op(ops, "m", row.anchor, after, null);
+        }
+        if (!row.html.equals(row.onPage()) || row.holdsControlled()) {
+          op(ops, "p", row.anchor, null, withStubs(row));
+        } else {
+          // What this patch does not carry carries nothing below it as it was (behindThisPatch, onPage).
+          row.notCarriedIn = patch;
+        }
+      }
+      previous = row;
+    }
+    return ops.append(']').toString();
+  }
+
+  /** The indices of a longest increasing subsequence of places, ascending. */
+  private static int[] longestRising(int[] places) {
+    int n = places.length;
+    int[] tails = new int[n];
+    int[] previous = new int[n];
+    int length = 0;
+    for (int i = 0; i < n; i++) {
+      int place = places[i];
+      int lo = 0;
+      int hi = length;
+      while (lo < hi) {
+        int mid = (lo + hi) >>> 1;
+        if (places[tails[mid]] < place) {
+          lo = mid + 1;
+        } else {
+          hi = mid;
+        }
+      }
+      previous[i] = lo > 0 ? tails[lo - 1] : -1;
+      tails[lo] = i;
+      if (lo == length) {
+        length++;
+      }
+    }
+    int[] out = new int[length];
+    for (int i = length > 0 ? tails[length - 1] : -1, j = length - 1; i >= 0; i = previous[i], j--) {
+      out[j] = i;
+    }
+    return out;
   }
 
   /**
@@ -1552,10 +1735,28 @@ public final class Tab {
   private static void onPage(Scope scope, String html) {
     scope.setOnPage(html);
     scope.placed = true;
-    scope.pageRows = scope.instance instanceof RegionTag ? new ArrayList<>(scope.children.values()) : null;
     scope.onPageStamp = scope.stamp;
+    long patch = scope.tab.patchStamp;
+    if (scope.isList()) {
+      // Its patch, or what was around it, brought all of its rows: as they are, or left as the page had them.
+      scope.pageRows = new ArrayList<>(scope.rowScopes);
+      for (Scope row : scope.rowScopes) {
+        if (row.detached || row.notCarriedIn == patch) {
+          continue;
+        }
+        if (row.onPage() != row.html || row.onPageStamp != row.stamp || !row.placed || row.holdsControlled()) {
+          onPage(row, row.html);
+        }
+      }
+      return;
+    }
+    scope.pageRows = scope.instance instanceof RegionTag ? new ArrayList<>(scope.children.values()) : null;
     Around around = new Around(html);
     for (Scope child : scope.children.values()) {
+      if (child.notCarriedIn == patch && child.placed) {
+        // Sent as a stub, or left alone in a list: the page keeps what it had of it, and of all below it.
+        continue;
+      }
       if (!child.detached && around.brought(child)) {
         if (child.onPage() != child.html || child.onPageStamp != child.stamp || !child.placed
             || child.holdsControlled()) {
@@ -1564,7 +1765,7 @@ public final class Tab {
       } else {
         // As it was before a hold, perhaps: the page has its element, but not what is in it now.
         forgetOnPage(child);
-        child.placed = !child.detached && html.contains(child.mark());
+        child.placed = !child.detached && scope.holds(child, html);
       }
     }
   }
@@ -1583,6 +1784,15 @@ public final class Tab {
    * is now older than the scope itself: it needs its own patch, or nothing would ever correct it.
    */
   private void behindThisPatch(Scope scope, String sent, List<Scope> scopes, int next) {
+    if (scope.isList()) {
+      // Its rows went with it, each whole or as a stub.
+      for (Scope row : scope.rowScopes) {
+        if (row.notCarriedIn != patchStamp && !row.disposed && row.html != null && !row.detached) {
+          behindThisPatch(row, row.html, scopes, next);
+        }
+      }
+      return;
+    }
     Around marks = new Around(sent);
     Around brought = new Around(sent);
     for (Scope child : scope.children.values()) {
@@ -1708,12 +1918,13 @@ public final class Tab {
   PageStream openStream(String html) {
     shellSent = true;
     rootOnPage = root;
-    if (root.html != null && !html.equals("<!DOCTYPE html>" + root.html)) {
+    if (root.html != null && !html.equals("<!DOCTYPE html>" + whole(root, root.html, false))) {
       // A change came between rendering this response and sending it: the page gets what it missed as a patch.
       root.sent = null;
       unsent.add(root);
     } else if (root.html != null) {
       // The page has what was served: stubs and list operations can start from it (ADR 0036).
+      patchStamp++;
       onPage(root, root.html);
     }
     if (!streamHasMore() || !html.endsWith("</body></html>")) {
@@ -1870,7 +2081,8 @@ public final class Tab {
 
   /** Lane-only. Renders a component given to a client action, with its own anchor (ADR 0022). */
   String renderDetached(Scope scope) {
-    return scope.renderInParent();
+    String html = scope.renderInParent();
+    return html == null ? null : whole(scope, html, true);
   }
 
   String nextAnchor() {
@@ -2067,7 +2279,7 @@ public final class Tab {
   private long handledFor(Scope scope) {
     if (!rt.holding()) {
       quietEvent = lastEvent;
-    } else if (quietEvent < lastEvent && scope.html.contains("data-j2-controlled=\"")) {
+    } else if (quietEvent < lastEvent && scope.holdsControlled()) {
       behindEvents.add(scope);
     }
     return quietEvent;

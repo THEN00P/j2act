@@ -12,4 +12,13 @@ public final class Fragment implements DomContent {
   public Fragment(Collection<? extends DomContent> children) {
     this.children = new ArrayList<>(children);
   }
+
+  private Fragment(List<DomContent> children, boolean owned) {
+    this.children = children;
+  }
+
+  /** These children, the list itself and not a copy: for a list the engine made and no one else changes. */
+  static Fragment owning(List<DomContent> children) {
+    return new Fragment(children, true);
+  }
 }

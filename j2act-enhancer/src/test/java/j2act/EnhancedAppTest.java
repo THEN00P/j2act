@@ -223,11 +223,23 @@ class EnhancedAppTest {
   }
 
   @Test void javacRoomPagesKeepTheirSizeAsLinesComeAndGo() throws Exception {
-    keepsSize(ToolProvider.getSystemJavaCompiler());
+    keepsSize(ToolProvider.getSystemJavaCompiler(), "fixtures.RoomPage");
   }
 
   @Test void ecjRoomPagesKeepTheirSizeAsLinesComeAndGo() throws Exception {
-    keepsSize(new EclipseCompiler());
+    keepsSize(new EclipseCompiler(), "fixtures.RoomPage");
+  }
+
+  /**
+   * ADR 0036: each(items, key, row), enhanced: a line's row runs once, when it comes, and the view never runs again,
+   * for the list runs on its own; and it stays its size as lines come and go.
+   */
+  @Test void javacKeyedRoomPagesRunEachRowOnce() throws Exception {
+    keepsSize(ToolProvider.getSystemJavaCompiler(), "fixtures.KeyedRoomPage");
+  }
+
+  @Test void ecjKeyedRoomPagesRunEachRowOnce() throws Exception {
+    keepsSize(new EclipseCompiler(), "fixtures.KeyedRoomPage");
   }
 
   /**
@@ -236,13 +248,14 @@ class EnhancedAppTest {
    * its records (a hand-out's walk left a witness on each) and what the rows read (a region's reads went to its
    * creator, which never ran again).
    */
-  private void keepsSize(JavaCompiler compiler) throws Exception {
+  private void keepsSize(JavaCompiler compiler, String pageClass) throws Exception {
     Path enhanced = Files.createTempDirectory("j2act-enhanced");
     compile(compiler, enhanced);
     new Enhancer(classpath()).enhance(enhanced);
     try (URLClassLoader loader = new URLClassLoader(new URL[] {enhanced.toUri().toURL()},
       EnhancedAppTest.class.getClassLoader())) {
-      Class<?> page = loader.loadClass("fixtures.RoomPage");
+      Class<?> page = loader.loadClass(pageClass);
+      boolean keyed = pageClass.endsWith("KeyedRoomPage");
       @SuppressWarnings("unchecked")
       Class<? extends Store> roomType = (Class<? extends Store>) loader.loadClass("fixtures.Room");
       try (Harness h = new Harness(() -> {
@@ -340,6 +353,13 @@ class EnhancedAppTest {
         // A line's row runs when it comes, and is kept while its line is in the room (ADR 0036): not once per change.
         int rows = page.getField("rows").getInt(null);
         assertTrue(rows <= 2 * n, rows + " row runs for " + n + " lines");
+        if (keyed) {
+          // Kept by its key: a line's row runs when it comes, and again only when the store hands out another object
+          // for it, which it now and then does (a handful of 200 here, varying run to run): a new object is a new item,
+          // as for Solid's mapArray. The view runs only for the page itself.
+          assertTrue(rows >= n && rows <= n + n / 10, rows + " row runs for " + n + " lines");
+          assertEquals(1, page.getField("views").getInt(null), "the view ran again");
+        }
         String what = "owners, records, reads after 100 lines and after 200: " + Arrays.toString(sizes[0]) + " "
           + Arrays.toString(sizes[1]);
         assertTrue(sizes[1][0] <= sizes[0][0] + 4, what);

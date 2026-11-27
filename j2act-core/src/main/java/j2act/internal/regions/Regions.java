@@ -17,6 +17,19 @@ public final class Regions {
   private static volatile BiFunction<Object[], Supplier<? extends DomContent>, DomContent> rows;
   private static volatile Attribute attributes;
   private static volatile Function<DomContent, DomContent> hoists;
+  private static volatile Keyed keyed;
+
+  /** The engine's side of each(items, key, row). */
+  public interface Keyed {
+    DomContent rows(java.util.Collection<?> items, Function<Object, Object> key, Function<Object, DomContent> row);
+  }
+
+  /**
+   * What a row's bridge is (ADR 0036): the enhancer's lambda for a row of each(...), which returns its row as a region
+   * of its own, kept while what it was given stays the very same.
+   */
+  public interface Bridged {
+  }
 
   /** The engine's side of attr(...). */
   public interface Attribute {
@@ -38,8 +51,9 @@ public final class Regions {
   /** Called once by the engine. */
   public static void install(Function<Supplier<? extends DomContent>, DomContent> make,
       BiFunction<Object[], Supplier<? extends DomContent>, DomContent> row, Attribute attribute,
-      Function<DomContent, DomContent> hoist) {
+      Function<DomContent, DomContent> hoist, Keyed keyedRows) {
     factory = make;
+    keyed = keyedRows;
     rows = row;
     attributes = attribute;
     hoists = hoist;
@@ -51,6 +65,17 @@ public final class Regions {
    */
   public static DomContent hoist(DomContent tree) {
     return hoists.apply(tree);
+  }
+
+  /**
+   * each(items, key, row) in a running view (ADR 0036): a region of rows kept by their key, which runs again for a
+   * change of the list alone, and then makes only the rows whose item is new, a change of membership or order going to
+   * the page as list operations. Anywhere else, the rows, each keyed by its item's key.
+   */
+  @SuppressWarnings("unchecked")
+  public static <T> DomContent keyed(java.util.Collection<T> items, Function<? super T, ?> key,
+      Function<? super T, ? extends DomContent> row) {
+    return keyed.rows(items, (Function<Object, Object>) key, (Function<Object, DomContent>) row);
   }
 
   /**

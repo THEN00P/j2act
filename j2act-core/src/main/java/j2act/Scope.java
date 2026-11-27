@@ -69,12 +69,105 @@ final class Scope {
    * answer (ADR 0034): a walk that passes over what the page has as it is cannot pass over this.
    */
   boolean holdsControlled() {
+    if (rowScopes != null) {
+      for (Scope row : rowScopes) {
+        if (!row.detached && row.holdsControlled()) {
+          return true;
+        }
+      }
+      return false;
+    }
     String now = html;
     if (now != controlledIn) {
       controlledIn = now;
       controlled = now != null && now.contains("data-j2-controlled=\"");
     }
-    return controlled;
+    return controlled || listsWithin > 0 && listHoldsControlled(this);
+  }
+
+  /** Whether a list below, whose rows its HTML holds only the markers of, holds a controlled field. */
+  private static boolean listHoldsControlled(Scope scope) {
+    for (Scope child : scope.children.values()) {
+      if (child.detached) {
+        continue;
+      }
+      if (child.rowScopes != null ? child.holdsControlled() : child.listsWithin > 0 && listHoldsControlled(child)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ---- a list (ADR 0036, KeyedRows)
+
+  /**
+   * A list's rows, in its order: its scope's children, which its HTML does not hold. It renders only its markers, all
+   * that what is around it holds of it, and the page has its rows as pageRows says, each as its onPage says. Null for
+   * any other scope.
+   */
+  List<Scope> rowScopes;
+  /** The lists below, which its HTML holds only the markers of. */
+  int listsWithin;
+  /** The list pass that last placed it as a row (Renderer.renderRows), and the list it is a row of now. */
+  long rowMark;
+  Scope rowIn;
+  /** For a list's operations: where it stands now, and the operations' marks of the rows now and on the page. */
+  int opsAt;
+  long opsNow;
+  long opsWas;
+  long opsStay;
+
+  boolean isList() {
+    return rowScopes != null;
+  }
+
+  /** It is a list from now on, or no longer one: what is around it counts it. */
+  void listFrom(List<Scope> rows) {
+    boolean was = rowScopes != null;
+    if (was && rows == null) {
+      for (Scope row : rowScopes) {
+        if (row.rowIn == this) {
+          row.rowIn = null;
+        }
+      }
+    }
+    rowScopes = rows;
+    if (was != (rows != null)) {
+      for (Scope s = parent; s != null; s = s.parent) {
+        s.listsWithin += rows != null ? 1 : -1;
+      }
+    }
+  }
+
+  /**
+   * Whether the page has this list's rows as they are: the same rows in the same order, each as it renders now. A row
+   * that has a list of its own patches that list itself, as any list does.
+   */
+  boolean rowsOnPage() {
+    List<Scope> now = rowScopes;
+    List<Scope> had = pageRows;
+    if (now == null || had == null || !placed || now.size() != had.size()) {
+      return false;
+    }
+    for (int i = 0; i < now.size(); i++) {
+      Scope row = now.get(i);
+      if (had.get(i) != row) {
+        return false;
+      }
+      String has = row.onPage();
+      if (has == null || row.html == null || !has.equals(row.html)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Whether this holds child where its HTML says: in a list, by being one of its rows. */
+  boolean holds(Scope child, String in) {
+    if (rowScopes != null) {
+      return children.get(child.address) == child;
+    }
+    return in != null && in.contains(child.mark());
   }
 
   /** A render of this scope begins: it and every scope around it have changed below. */
@@ -768,11 +861,29 @@ final class Scope {
   /** The second half: the frame can show, so its patch is on its way, and what it replaced goes with that. */
   private void shown(String value) {
     htmlBeforeEmbedded = false;
+    if (rowScopes != null) {
+      // Its HTML is its markers, the same each time: its rows are what changes, and it patches them itself, or what is
+      // around it carries them as they are when its patch goes.
+      html = value;
+      sent = value;
+      if (rowsOnPage()) {
+        if (!tab.patchWaitsAround(this)) {
+          pageHas(value);
+        }
+      } else {
+        tab.queuePatch(this);
+      }
+      return;
+    }
     value = withLatestChildren(value);
     html = value;
     if (value == embedded) {
-      // What is around it brings this along, in its own patch.
+      // What is around it brings this along, in its own patch. A list's patch is its rows as they showed when it went,
+      // which a hold can have kept this from yet: one more goes, unless the page has this already.
       sent = value;
+      if (parent != null && parent.isList() && !value.equals(onPage())) {
+        tab.queuePatch(parent);
+      }
     } else if (value.equals(sent)) {
       // If what is around it has a patch waiting, this came along in that, and goes when it does.
       if (!tab.patchWaitsAround(this)) {
@@ -809,11 +920,21 @@ final class Scope {
     }
     removing.clear();
     tab.handlers.drop(this);
-    Around around = new Around(what);
-    for (Scope child : new ArrayList<>(children.values())) {
-      if (!child.disposed && !child.detached && around.brought(child)
-          && (child.pageHasHtml != child.html || child.pageHasStamp != child.stamp || child.holdsControlled())) {
-        child.pageHas(child.html);
+    if (rowScopes != null) {
+      // A list brings all of its rows, each as it is: the page has those, or what its patch made of them.
+      for (Scope row : new ArrayList<>(rowScopes)) {
+        if (!row.disposed && !row.detached
+            && (row.pageHasHtml != row.html || row.pageHasStamp != row.stamp || row.holdsControlled())) {
+          row.pageHas(row.html);
+        }
+      }
+    } else {
+      Around around = new Around(what);
+      for (Scope child : new ArrayList<>(children.values())) {
+        if (!child.disposed && !child.detached && around.brought(child)
+            && (child.pageHasHtml != child.html || child.pageHasStamp != child.stamp || child.holdsControlled())) {
+          child.pageHas(child.html);
+        }
       }
     }
     if (fallbackScope != null && fallbackScope.html != null && what.contains(fallbackScope.html)) {
@@ -847,7 +968,7 @@ final class Scope {
       // A pass of its parent removed this, but the patch saying so has not gone.
       return true;
     }
-    if (parent.html == null || !parent.html.contains(mark())) {
+    if (parent.html == null || !parent.holds(this, parent.html)) {
       return false;
     }
     Scope top = parent;
@@ -882,7 +1003,7 @@ final class Scope {
       return this == tab.rootOnPage ? has : null;
     }
     String around = parent.shows();
-    return around != null && around.contains(mark()) ? has : null;
+    return around != null && parent.holds(this, around) ? has : null;
   }
 
   /** The pass of a parent placing this scope: runs its effect inside that pass, and stops if it stopped. */
@@ -1027,6 +1148,7 @@ final class Scope {
       return;
     }
     disposed = true;
+    listFrom(null);
     if (runsUnder != null) {
       java.util.Set<Scope> under = tab.slotsRunning.get(runsUnder);
       if (under != null) {

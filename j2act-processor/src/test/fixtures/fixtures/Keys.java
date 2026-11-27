@@ -20,6 +20,7 @@ public class Keys extends ComponentTag {
       each(names, name -> Row.row().withName(name).withKey(name)),
       each(names, name -> new Row().withName(name)), // expect: component in each() has no withKey
       each(names, name -> li(name)),
+      each(names, name -> name, name -> Row.row().withName(name)),
       each(names, name -> {
         return row(); // expect: component in each() has no withKey
       }),
