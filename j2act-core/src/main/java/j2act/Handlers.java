@@ -54,6 +54,7 @@ final class Handlers {
 
   /** Called at the start of a scope's render: its current ids become reusable candidates. */
   void begin(Scope scope) {
+    scope.touched();
     scope.previousHandlerIds = scope.handlerIds;
     scope.handlerIds = new LinkedHashMap<>();
     scope.beginSharedReads();

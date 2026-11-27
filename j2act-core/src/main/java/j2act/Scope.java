@@ -48,6 +48,25 @@ final class Scope {
   String rendered;
   /** For a region's scope: the content its last pass rendered, all of it (Renderer.kept). */
   Object renderedContent;
+  /**
+   * The tab's count when this scope or one below it last began a render, and when each walk after a patch last went
+   * through it: a walk passes over a scope whose HTML it saw last time, the very string, with nothing below it
+   * rendered since, so a patch of a list that kept its rows does not walk them (ADR 0036).
+   */
+  long stamp;
+  long onPageStamp = -1;
+  private long pageHasStamp = -1;
+  private String pageHasHtml;
+  long behindStamp = -1;
+  String behindHtml;
+
+  /** A render of this scope begins: it and every scope around it have changed below. */
+  void touched() {
+    long now = ++tab.stamps;
+    for (Scope s = this; s != null; s = s.parent) {
+      s.stamp = now;
+    }
+  }
   /** What the last pass of the second half showed. */
   String html;
   /** What a parent's pass carried inside its own patch, so this scope has no patch of its own to send. */
@@ -722,13 +741,16 @@ final class Scope {
     tab.handlers.drop(this);
     Around around = new Around(what);
     for (Scope child : new ArrayList<>(children.values())) {
-      if (!child.disposed && !child.detached && around.brought(child)) {
+      if (!child.disposed && !child.detached && around.brought(child)
+          && (child.pageHasHtml != child.html || child.pageHasStamp != child.stamp)) {
         child.pageHas(child.html);
       }
     }
     if (fallbackScope != null && fallbackScope.html != null && what.contains(fallbackScope.html)) {
       fallbackScope.pageHas(fallbackScope.html);
     }
+    pageHasHtml = what;
+    pageHasStamp = stamp;
   }
 
   /** The user changed, so what the last render stopped using goes now, though the patch saying so may have to wait. */

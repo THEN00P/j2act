@@ -706,9 +706,15 @@ final class Renderer {
       Scope was = kept.shownIn;
       java.util.function.Supplier<RegionTag> again = kept.again;
       kept.again = null;
-      if (was == null || was.disposed || was.parent != parent || !was.address.equals(parent.address + local)
-          || !(was.instance instanceof CutTag) || ((CutTag) was.instance).node != kept.node) {
+      if (was == null || was.disposed || was.parent != parent || !local.equals(was.localPath)
+          || !(was.instance instanceof CutTag) || ((CutTag) was.instance).node != kept.node
+          || parent.children.containsKey(was.address)) {
         component = again.get();
+      } else {
+        // Its own scope, where it was: no address to build or look up.
+        parent.removing.remove(was);
+        was.bind(component);
+        return placed(parent, was, component, emit);
       }
     }
     if (component.scope != null) {
@@ -750,6 +756,10 @@ final class Renderer {
       child.localPath = local;
       child.bind(component);
     }
+    return placed(parent, child, component, emit);
+  }
+
+  private Scope placed(Scope parent, Scope child, ComponentTag component, boolean emit) {
     parent.children.put(child.address, child);
     child.placedOpen = open;
     child.placedInert = inert;

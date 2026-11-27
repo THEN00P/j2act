@@ -157,6 +157,8 @@ public final class Tab {
    * one in a cluster, as has a browser's; null without one.
    */
   volatile SharedHub cluster;
+  /** Counts renders begun, for what the walks after a patch may pass over (Scope.touched). */
+  long stamps;
   /** Slots of region scopes made as if a node of a region were running, by that node (Scope's region constructor). */
   final Map<Object, java.util.Set<Scope>> slotsRunning = new java.util.IdentityHashMap<>();
   /** While a store that moved from another server is made here: its plain values, by address (ADR 0037). */
@@ -1531,10 +1533,13 @@ public final class Tab {
     scope.onPage = html;
     scope.placed = true;
     scope.pageRows = scope.instance instanceof RegionTag ? new ArrayList<>(scope.children.values()) : null;
+    scope.onPageStamp = scope.stamp;
     Around around = new Around(html);
     for (Scope child : scope.children.values()) {
       if (!child.detached && around.brought(child)) {
-        onPage(child, child.html);
+        if (child.onPage != child.html || child.onPageStamp != child.stamp || !child.placed) {
+          onPage(child, child.html);
+        }
       } else {
         // As it was before a hold, perhaps: the page has its element, but not what is in it now.
         forgetOnPage(child);
@@ -1564,7 +1569,11 @@ public final class Tab {
         continue;
       }
       if (brought.brought(child)) {
-        behindThisPatch(child, child.html, scopes, next);
+        if (child.behindHtml != child.html || child.behindStamp != child.stamp) {
+          child.behindHtml = child.html;
+          child.behindStamp = child.stamp;
+          behindThisPatch(child, child.html, scopes, next);
+        }
       } else {
         // Next, even if it already went: this patch replaced it.
         scopes.subList(next, scopes.size()).remove(child);
