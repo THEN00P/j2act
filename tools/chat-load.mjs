@@ -5,13 +5,22 @@
 //
 //   java -jar examples/counter-spring/target/counter-spring-*.jar --server.port=8089
 //   node tools/chat-load.mjs --url http://localhost:8089 [--readers 300] [--admins 20] [--slow 20] [--posters 10]
-//     [--rate 50] [--seconds 30] [--keep 0] [--p99 1000] [--workers 8]
+//     [--rate 50] [--seconds 30] [--keep 0] [--p99 1000] [--workers 8] [--hidden 0]
+//     [--burst 0 --burst-every 10 --burst-seconds 2]
+//
+// A busy chat on a regular day, as a big stream's: tens of messages a second with bursts after a moment on screen, a
+// room of about 150 lines, and many viewers with the chat out of sight:
+//   --readers 3000 --admins 10 --slow 10 --posters 30 --rate 20 --burst 100 --burst-every 10 --burst-seconds 2
+//     --keep 5 --hidden 1000
 //
 // --url takes several servers of one cluster, comma-separated: pages spread over them. --keep N has each poster
 // delete what it posted beyond its last N, by the delete button its page shows it, so the room stays at a steady
 // size; 0 lets it grow. Pages speak the runtime's protocol (hello, seen, event) over a WebSocket client of their own
 // on a raw TCP socket, so that a slow reader really stops reading: the server's writes to it fill the socket and
 // wait, as with a phone gone quiet. Readers run on --workers threads, so the client keeps up with the server.
+// --hidden N pages tell the server their tab is hidden (the runtime's visibility message) once open, so the server
+// skips them (ADR 0037); they must get nothing while hidden, and catch up with the room when shown at the end.
+// --burst R posts at R messages a second for --burst-seconds out of every --burst-every seconds.
 import net from "node:net";
 import crypto from "node:crypto";
 import os from "node:os";
@@ -102,7 +111,14 @@ async function page(url, room, name, kind) {
   }, why => { p.closed ??= why; });
   p.ws.send(JSON.stringify({ type: "hello", tab: find(html, /name="j2-tab" content="([^"]+)"/),
     token: find(html, /name="j2-token" content="([^"]+)"/), seen: 0 }));
-  if (kind === "slow") {
+  if (kind === "hidden") {
+    p.acks = setInterval(() => p.ws.send(JSON.stringify({ type: "seen", n: p.applied })), 100);
+    // Shown at first, as a page opens, then hidden: what it saw by then is what it had before it went.
+    setTimeout(() => {
+      p.ws.send(JSON.stringify({ type: "visibility", hidden: true }));
+      p.hiddenAt = p.seen.size;
+    }, 1000);
+  } else if (kind === "slow") {
     // Reads its hello's answer, then nothing more: what the server sends it piles up in the socket.
     setTimeout(() => p.ws.tcp.pause(), 1500);
   } else {
@@ -122,14 +138,30 @@ async function openAll(list, room) {
 /** What a page tells the coordinator at the end. */
 function result(p) {
   return { kind: p.kind, seen: p.seen.size, latencies: Int32Array.from(p.seen.values()), deletes: p.deletes.size,
-    bytes: p.bytes, closed: p.closed };
+    bytes: p.bytes, closed: p.closed, whileHidden: p.whileHidden ?? 0, caughtUp: p.caughtUp ?? false };
 }
 
 if (!isMainThread) {
   // A worker: its share of the readers, until the coordinator asks what they saw.
   const pages = await openAll(workerData.pages, workerData.room);
   parentPort.postMessage({ type: "open" });
-  parentPort.once("message", () => {
+  parentPort.on("message", m => {
+    if (m.type !== "show") return;
+    // Shown again: what came while hidden is counted, then the page has to show the room's last message.
+    for (const p of pages.filter(p => p.kind === "hidden")) {
+      p.whileHidden = p.seen.size - (p.hiddenAt ?? 0);
+      p.ws.send(JSON.stringify({ type: "visibility", hidden: false }));
+    }
+    setTimeout(() => {
+      for (const p of pages.filter(p => p.kind === "hidden")) p.caughtUp = p.seen.has(String(m.last));
+      parentPort.postMessage({ type: "shown" });
+    }, m.wait);
+  });
+  parentPort.once("message", function done(m) {
+    if (m.type === "show") {
+      parentPort.once("message", done);
+      return;
+    }
     const results = pages.map(result);
     parentPort.postMessage({ type: "done", results }, results.map(r => r.latencies.buffer));
     for (const p of pages) {
@@ -150,12 +182,18 @@ if (!isMainThread) {
   const KEEP = +(args.keep ?? 0);
   const P99 = +(args.p99 ?? 1000);
   const WORKERS = +(args.workers ?? Math.max(1, Math.min(8, Math.floor(os.cpus().length / 2))));
+  const HIDDEN = +(args.hidden ?? 0);
+  const BURST = +(args.burst ?? 0);
+  const BURST_EVERY = +(args["burst-every"] ?? 10);
+  const BURST_SECONDS = +(args["burst-seconds"] ?? 2);
   const ROOM = "load" + Date.now();
 
   console.log(`room ${ROOM} on ${urls.join(", ")}: ${READERS} readers, ${ADMINS} admins, ${SLOW} slow, ${POSTERS}`
-    + ` posters, ${RATE} messages/s for ${SECONDS} s${KEEP ? `, keeping ${KEEP} per poster` : ""}, ${WORKERS} workers`);
+    + ` posters, ${HIDDEN} hidden, ${RATE} messages/s${BURST ? ` with ${BURST}/s for ${BURST_SECONDS} s of every`
+    + ` ${BURST_EVERY} s` : ""} for ${SECONDS} s${KEEP ? `, keeping ${KEEP} per poster` : ""}, ${WORKERS} workers`);
   const opening = Date.now();
-  const kinds = [...Array(READERS).fill("reader"), ...Array(ADMINS).fill("admin"), ...Array(SLOW).fill("slow")];
+  const kinds = [...Array(READERS).fill("reader"), ...Array(ADMINS).fill("admin"), ...Array(SLOW).fill("slow"),
+    ...Array(HIDDEN).fill("hidden")];
   const shares = Array.from({ length: WORKERS }, () => []);
   kinds.forEach((kind, n) => shares[n % WORKERS].push({ url: urls[n % urls.length], kind,
     name: kind === "admin" ? "admin" : `${kind}${n}` }));
@@ -173,11 +211,19 @@ if (!isMainThread) {
 
   let seq = 0, events = 0;
   const started = Date.now();
-  const every = 1000 / RATE;
+  // When message n is due, in ms from the start: the rate, and the burst's rate in its windows.
+  const dueAt = [0];
+  const due = n => {
+    while (dueAt.length <= n) {
+      const t = dueAt[dueAt.length - 1];
+      const inBurst = BURST > 0 && (t / 1000) % BURST_EVERY >= BURST_EVERY - BURST_SECONDS;
+      dueAt.push(t + 1000 / (inBurst ? BURST : RATE));
+    }
+    return dueAt[n];
+  };
   while (Date.now() - started < SECONDS * 1000) {
     // Paced by the clock, not by the last wait, so a slow tick does not lower the rate.
-    const due = started + seq * every;
-    const wait = due - Date.now();
+    const wait = started + due(seq) - Date.now();
     if (wait > 0) await sleep(wait);
     const poster = posters[seq % posters.length];
     const id = ++seq;
@@ -193,11 +239,22 @@ if (!isMainThread) {
   }
   const posting = (Date.now() - started) / 1000;
   await sleep(3000);
+  if (HIDDEN > 0) {
+    // The hidden pages are shown, and must show the room as it is now within five seconds.
+    await Promise.all(workers.map(w => {
+      const shown = new Promise(resolve => {
+        const on = m => { if (m.type === "shown") { w.off("message", on); resolve(); } };
+        w.on("message", on);
+      });
+      w.postMessage({ type: "show", last: seq, wait: 5000 });
+      return shown;
+    }));
+  }
 
   const results = posters.map(result);
   for (const w of workers) {
     const done = new Promise(resolve => w.once("message", m => resolve(m.results)));
-    w.postMessage("done");
+    w.postMessage({ type: "done" });
     results.push(...await done);
   }
   for (const p of posters) {
@@ -226,7 +283,7 @@ if (!isMainThread) {
     if (!ok) failed++;
   };
   console.log(`posted ${seq} messages in ${posting.toFixed(1)} s: ${(seq / posting).toFixed(1)} messages/s`);
-  for (const kind of ["reader", "admin", "poster", "slow"]) {
+  for (const kind of ["reader", "admin", "poster", "slow", "hidden"]) {
     const group = byKind(kind);
     const got = group.reduce((sum, r) => sum + r.seen, 0);
     const mb = group.reduce((sum, r) => sum + r.bytes, 0) / 1e6;
@@ -242,6 +299,16 @@ if (!isMainThread) {
     const st = stats(latencies(kind));
     check(`${kind}s' p99 latency under ${P99} ms${SLOW ? ", with slow readers in the room" : ""}`, st.p99 < P99, fmt(st));
     check(`no ${kind}'s socket closed`, group.every(r => !r.closed));
+  }
+  if (HIDDEN > 0) {
+    const hidden = byKind("hidden");
+    const got = hidden.reduce((sum, r) => sum + r.whileHidden, 0);
+    // Some messages may be on their way as a page hides: a handful each, never the stream.
+    check("hidden pages got nothing while hidden", got <= hidden.length * RATE, `${got} messages to ${hidden.length}`
+      + ` hidden pages while hidden`);
+    const behind = hidden.filter(r => !r.caughtUp).length;
+    check("every hidden page, shown again, shows the room's last message", behind === 0,
+      behind ? `${behind} did not within 5 s` : "");
   }
   const readersWithButtons = byKind("reader").filter(r => r.deletes > 0).length;
   check("no reader's page got a delete button", readersWithButtons === 0,
